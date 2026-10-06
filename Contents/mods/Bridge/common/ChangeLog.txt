@@ -1,0 +1,37 @@
+[ ALERT_CONFIG ]
+link1 = Workshop = https://steamcommunity.com/sharedfiles/filedetails/?id=3800989007,
+[ ------ ]
+
+[ v0.3.9.5 ]
+A big one. Thanks to Come and See, who made a lot of it.
+
+Fighting
+- Tell her how to fight: Cover me, Clear around us or Go after them.
+- She goes around fences and doors to reach a zombie instead of running into them, and gives up on one she can't reach.
+- Weapons that hit several zombies hit several for her too. She finishes off zombies on the ground faster, the spear hits twice, and her hits can crit.
+- Aim through her and she steps out of your line of fire.
+- New lines in a fight.
+- Combat Text shows her hits.
+
+Her window
+- Appearance: body, skin, hair, hair color and make-up.
+- Save her looks and switch between them. They carry over to other worlds and servers.
+- With Spongie's Character Customisation: faces, skin details and muscle tone.
+- A bar shows how close you are.
+
+Following
+- Stay: closer or farther.
+
+Multiplayer
+- Several companions can fight the same zombie.
+
+Compatibility
+- Advanced Trajectory and its B42 fix: your bullets and explosions don't hurt her.
+- Better Containers, Tripping Zombies, Mod Update and Alert System.
+
+Fixes
+- She doesn't trample your crops.
+- She no longer climbs over a railing into a drop.
+
+Spanish translation by Layaya003, Italian by Nycotex.
+[ ------ ]
