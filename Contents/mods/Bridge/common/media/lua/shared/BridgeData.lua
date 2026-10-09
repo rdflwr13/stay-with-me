@@ -998,6 +998,7 @@ end
 BridgeData.REL_KEYS = { f = { -100, 100 }, r = { 0, 100 }, days = { 0, 100000 }, hours = { 0, 24 },
     day = { 0, 1000000 }, gainF = { -100, 100 }, gainR = { -100, 100 }, giftAt = { 0, 100000000 },
     seen = { 0, 100000000 }, askAt = { 0, 100000000 }, healAt = { 0, 100000000 },
+    valuedAt = { 0, 100000000 },
     dressF = { 0, 100 }, dressR = { 0, 100 } }
 
 

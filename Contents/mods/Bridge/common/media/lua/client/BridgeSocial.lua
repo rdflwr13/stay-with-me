@@ -162,8 +162,8 @@ end
 
 BridgeSocial.sentSign = nil
 local function sign(r)
-    return string.format("%d|%d|%d|%d|%d|%d|%.1f|%.1f|%.1f", r.f, r.r, r.days, r.day, r.gainF, r.gainR,
-        r.giftAt, r.askAt, r.healAt or 0)
+    return string.format("%d|%d|%d|%d|%d|%d|%.1f|%.1f|%.1f|%.1f", r.f, r.r, r.days, r.day, r.gainF, r.gainR,
+        r.giftAt, r.askAt, r.healAt or 0, r.valuedAt or 0)
 end
 function BridgeSocial.save(now)
     if not Bridge.mp then return end
@@ -610,6 +610,155 @@ end
 
 
 
+local RECEIVE_CAT = {
+    Ammo = "ReceiveAmmo",
+    FirstAid = "ReceiveMeds", Bandage = "ReceiveMeds", Wound = "ReceiveMeds", Medical = "ReceiveMeds",
+    Junk = "ReceiveJunk", Money = "ReceiveJunk",
+    Tool = "ReceiveTool",
+    Material = "ReceiveMaterial", RecipeResource = "ReceiveMaterial",
+    FireSource = "ReceiveFireSource",
+    LightSource = "ReceiveTorch",
+    Electronics = "ReceiveElectronics",
+    Communications = "ReceiveComms",
+    Literature = "ReceiveRead", SkillBook = "ReceiveRead",
+    Cartography = "ReceiveMap",
+    Entertainment = "ReceiveFun",
+    Sports = "ReceiveSports",
+    Instrument = "ReceiveInstrument",
+    Teddy = "ReceiveTeddy",
+    Memento = "ReceiveMemento",
+    Cooking = "ReceiveCooking",
+    Gardening = "ReceiveGardening",
+    Fishing = "ReceiveFishing",
+    Trapping = "ReceiveTrapping",
+    VehicleMaintenance = "ReceiveVehiclePart",
+    Camping = "ReceiveCamping",
+    Container = "ReceiveContainer",
+    Furniture = "ReceiveFurniture",
+    Paint = "ReceivePaint",
+    Security = "ReceiveSecurity",
+    WeaponPart = "ReceiveWeaponPart",
+    Appearance = "ReceiveMakeup", MakeUp = "ReceiveMakeup",
+    AnimalPart = "ReceiveAnimalPart", Ears = "ReceiveAnimalPart", Eye = "ReceiveAnimalPart", Tail = "ReceiveAnimalPart",
+    Animal = "ReceiveAnimal", Bug = "ReceiveAnimal", Frog = "ReceiveAnimal", Bunny = "ReceiveAnimal",
+    Fox = "ReceiveAnimal", Raccoon = "ReceiveAnimal", Duck = "ReceiveAnimal", Mole = "ReceiveAnimal",
+    Goblin = "ReceiveAnimal", Spider = "ReceiveAnimal", Hedgehog = "ReceiveAnimal", Dog = "ReceiveAnimal",
+    Beaver = "ReceiveAnimal", Badger = "ReceiveAnimal", Bear = "ReceiveAnimal", Squirrel = "ReceiveAnimal",
+    Corpse = "ReceiveCorpse",
+    Household = "ReceiveHousehold",
+
+    -- base-game categories previously unhandled
+    Explosives = "ReceiveWeapon", BrokenWeapon = "ReceiveWeapon",
+    ProtectiveGear = "ReceiveCloth", Accessory = "ReceiveItem",
+
+    -- Better Containers DisplayCategory overrides (inert if BC is not installed)
+    Cont = "ReceiveContainer", Bag = "ReceiveContainer", WaterContainer = "ReceiveContainer",
+    Med = "ReceiveMeds", Drugs = "ReceiveCigs",
+    Cook = "ReceiveCooking", Furn = "ReceiveFurniture", Mech = "ReceiveVehiclePart",
+    Appear = "ReceiveMakeup", Collect = "ReceiveTeddy", Clean = "ReceiveCleaning", Fuel = "ReceiveFuel",
+    Craft = "ReceiveMaterial", CraftCarp = "ReceiveMaterial", CraftMetal = "ReceiveMaterial", CraftTailor = "ReceiveMaterial",
+    CraftElec = "ReceiveElectronics", Elec = "ReceiveElectronics",
+    MediaA = "ReceiveFun", MediaV = "ReceiveFun",
+    LitC = "ReceiveMap", LitE = "ReceiveRead", LitR = "ReceiveRead", LitS = "ReceiveRead", LitW = "ReceiveHousehold",
+    SurCamp = "ReceiveCamping", SurFish = "ReceiveFishing", SurTrap = "ReceiveTrapping", SurBait = "ReceiveBait",
+    Farm = "ReceiveGardening", FarmSeed = "ReceiveGardening",
+    WepPart = "ReceiveWeaponPart", WepAmmoMag = "ReceiveAmmo",
+    AnimalPartWeapon = "ReceiveAnimalPart",
+    Key = "ReceiveItem", Misc = "ReceiveItem",
+    -- broken-weapon safety fallbacks (normally caught by the melee/gun checks above)
+    WepMelee = "ReceiveWeapon", WepBomb = "ReceiveWeapon",
+    WeapBlunt = "ReceiveWeapon", WeapBluntLong = "ReceiveWeapon",
+    WeapBlade = "ReceiveWeapon", WeapBladeLong = "ReceiveWeapon", WeapSpear = "ReceiveWeapon",
+    WepRange = "ReceiveGun",
+
+    -- Other sorting / category overhauls (Better Sorting, Sapph, VFE, Brita, Transmog, etc.)
+    AppearC = "ReceiveMakeup", CookB = "ReceiveCooking", MediaG = "ReceiveFun", SurFarm = "ReceiveGardening",
+    CraftAmmo = "ReceiveAmmo", CraftMas = "ReceiveMaterial",
+    WepAmmo = "ReceiveAmmo", WepAmmoMagF = "ReceiveAmmo", WepMag = "ReceiveAmmo",
+    WepBow = "ReceiveWeapon", WepShield = "ReceiveWeapon",
+    Cloth = "ReceiveCloth", ClothA = "ReceiveCloth", ClothB = "ReceiveCloth", ClothM = "ReceiveCloth",
+    ClothMisc = "ReceiveCloth", ClothAcc = "ReceiveCloth", ClothArm = "ReceiveCloth", ClothBody = "ReceiveCloth",
+    ClothFeet = "ReceiveCloth", ClothHead = "ReceiveCloth", ClothJew = "ReceiveCloth", ClothLeg = "ReceiveCloth",
+    ClothUnder = "ReceiveCloth", ClothBack = "ReceiveContainer", ClothBag = "ReceiveContainer",
+    Casings = "ReceiveAmmo", WeaponMagazine = "ReceiveAmmo", GunMag = "ReceiveAmmo", FixedMag = "ReceiveAmmo",
+    ReloadingTool = "ReceiveWeaponPart", GunClean = "ReceiveWeaponPart", Components = "ReceiveWeaponPart",
+    WeaponConversion = "ReceiveWeaponPart",
+    Devices = "ReceiveElectronics", PowerPlantParts = "ReceiveElectronics",
+    Tuning = "ReceiveVehiclePart", TuningService = "ReceiveVehiclePart", VehicleMantenance = "ReceiveVehiclePart",
+    Bulldog = "ReceiveVehiclePart", Cars = "ReceiveVehiclePart",
+    CoolerBackpack = "ReceiveContainer", Moveable = "ReceiveFurniture",
+    Tiles = "ReceivePaint", Wallpaper = "ReceivePaint", WoodStain = "ReceivePaint", Art = "ReceivePaint",
+    Toy = "ReceiveFun", Curio = "ReceiveMemento", TTPlushie = "ReceiveTeddy",
+    Tonic = "ReceiveMeds", TTTonic = "ReceiveMeds", FeminineHygiene = "ReceiveHousehold",
+    -- non-item / internal buckets: default reaction only
+    Transmog = "ReceiveItem", TransmogHide = "ReceiveItem", SurvivalGear = "ReceiveItem",
+    Box = "ReceiveItem", Mail = "ReceiveItem", TTMail = "ReceiveItem", Item = "ReceiveItem",
+    TEST = "ReceiveItem", Horse = "ReceiveItem", Magic = "ReceiveItem", ZD = "ReceiveItem",
+    VFXDistribution = "ReceiveItem",
+}
+
+local RECEIVE_GESTURE = {
+    ReceiveRotten = "NoThankYou", ReceiveTreat = "Yes",
+    ReceiveMeds = "Yes", ReceiveComms = "Yes", ReceiveInstrument = "Yes", ReceiveTeddy = "Yes",
+    ReceiveMemento = "Yes", ReceiveGardening = "Yes", ReceiveAnimal = "Yes",
+    ReceiveFun = "Clap", ReceiveSports = "Clap", ReceiveFishing = "Clap", ReceiveMakeup = "Clap",
+    ReceiveWeaponPart = "NoThankYou", ReceiveCorpse = "NoThankYou",
+    ReceiveCigs = "NoThankYou",
+}
+
+local VALUED = { ReceiveMeds = true, ReceiveMemento = true, ReceiveTeddy = true,
+    ReceiveGardening = true, ReceiveInstrument = true }
+
+
+local FIRE_TYPES = { MagnesiumFirestarter = true, DryFirestarterBlock = true, Flint = true,
+    SteelAndFlint = true, Lighter = true, Lighter_Battery = true, Matches = true, Matchbox = true }
+
+local function itemStartsFire(item)
+    local t = itemTypeName(item)
+    if FIRE_TYPES[t] then return true end
+    return t:find("Firestarter", 1, true) ~= nil
+end
+
+local function itemIsBone(item)
+    return nameHas(item, "AnimalBone", "Animal_Brain")
+end
+
+local function isUnderwear(item)
+    local loc = nil
+    pcall(function() loc = item:getBodyLocation() end)
+    if loc == nil then return false end
+    return string.lower(tostring(loc)):find("underwear", 1, true) ~= nil
+end
+
+local TOBACCO_TYPES = { CigarettePack = true, CigaretteCarton = true, CigaretteSingle = true,
+    CigaretteRolled = true, Cigar = true, Cigarillo = true, Tobacco = true, TobaccoLoose = true,
+    TobaccoChewing = true, TobaccoDried = true, SmokingPipe = true, SmokingPipe_Tobacco = true, Cigarettes = true }
+
+local function isTobacco(item)
+    if TOBACCO_TYPES[itemTypeName(item)] then return true end
+    return tostring(mcall(item, "getDisplayCategory") or "") == "Drugs"
+end
+
+local BAIT_TYPES = { Worm = true, Cricket = true, Grasshopper = true, Cockroach = true, Maggots = true,
+    Pillbug = true, Slug = true, Snail = true, Centipede = true, Millipede = true, Caterpillar = true,
+    SawflyLarva = true, Termites = true, Leech = true, Leeches = true, Tadpole = true, BaitFish = true }
+
+local function isBait(item)
+    if BAIT_TYPES[itemTypeName(item)] then return true end
+    if tostring(mcall(item, "getDisplayCategory") or "") == "SurBait" then return true end
+    return nameHas(item, "Caterpillar", "Centipede", "Millipede")
+end
+
+local function itemIsTypeFlag(item, name)
+    local yes = false
+    pcall(function()
+        yes = item ~= nil and item.isItemType ~= nil and ItemType ~= nil and ItemType[name] ~= nil
+            and item:isItemType(ItemType[name]) == true
+    end)
+    return yes
+end
+
+
 function BridgeSocial.receivePool(item)
     if item == nil then return "ReceiveItem" end
 
@@ -627,6 +776,10 @@ function BridgeSocial.receivePool(item)
         if type(c) == "number" and c <= 0.0001 then return "ReceiveTorchEmpty" end
         return "ReceiveTorch"
     end
+
+    if itemStartsFire(item) then return "ReceiveFireSource" end
+
+    if itemIsBone(item) then return "ReceiveAnimalPart" end
 
 
 
@@ -653,17 +806,12 @@ function BridgeSocial.receivePool(item)
     pcall(function() weapon = BridgeWeapon ~= nil and BridgeWeapon.isMelee ~= nil and BridgeWeapon.isMelee(item) end)
     if weapon then return "ReceiveWeapon" end
 
+    if not isMale() and isTobacco(item) then return "ReceiveCigs" end
+    if isBait(item) then return "ReceiveBait" end
+
     local food = mcall(item, "IsFood") == true
     if food and itemRotten(item) then return "ReceiveRotten" end
 
-    local cat = mcall(item, "getCategory")
-
-    if cat == "Drink" then
-        if nameHas(item, "Beer", "Whiskey", "Whisky", "Wine", "Vodka", "Rum", "Bourbon", "Tequila", "Gin") then
-            return "ReceiveBooze"
-        end
-        return "ReceiveWater"
-    end
     if mcall(item, "isWaterSource") == true then
         if mcall(item, "isTaintedWater") == true then return "ReceiveTainted" end
         return "ReceiveWater"
@@ -682,15 +830,33 @@ function BridgeSocial.receivePool(item)
         return "ReceiveFood"
     end
 
-    if cat == "Ammo" then return "ReceiveAmmo" end
-    if cat == "Medical" then return "ReceiveMeds" end
+    if mcall(item, "IsClothing") == true then
+        if not presentable(item) then
+            local broken = false
+            pcall(function()
+                broken = item:isBroken() or (item.getHolesNumber ~= nil and item:getHolesNumber() > 0)
+            end)
+            return broken and "DressBroken" or "DressDirty"
+        end
+        if not isMale() and isUnderwear(item) then return "ReceiveUndies" end
+        return "ReceiveCloth"
+    end
 
-    if mcall(item, "IsClothing") == true then return "ReceiveCloth" end
+    if nameHas(item, "Corpse") then return "ReceiveCorpse" end
+
+    local cat = tostring(mcall(item, "getDisplayCategory") or "")
+    if isMale() and cat == "Drugs" then return "ReceiveSmokes" end
+    local pool = RECEIVE_CAT[cat]
+    if pool ~= nil then return pool end
+
+    if itemIsTypeFlag(item, "MEDICAL") then return "ReceiveMeds" end
+    if itemIsTypeFlag(item, "CONTAINER") then return "ReceiveContainer" end
+    if itemIsTypeFlag(item, "LITERATURE") then return "ReceiveRead" end
+    if itemIsTypeFlag(item, "AMMO") then return "ReceiveAmmo" end
+    if itemIsTypeFlag(item, "KEY") then return "ReceiveItem" end
 
     local w = mcall(item, "getActualWeight")
     if type(w) == "number" and w > 5 then return "ReceiveHeavy" end
-
-    if cat == "Junk" or cat == "Money" then return "ReceiveJunk" end
 
     return "ReceiveItem"
 end
@@ -718,10 +884,21 @@ function BridgeSocial.received(item)
 
     if isMale() then pcall(BridgeSocial.maleGift, item, pool) end
 
+    if VALUED[pool] then
+        local r = rel()
+        if r ~= nil then
+            local now = hours()
+            if now - (r.valuedAt or 0) >= 24 then
+                r.valuedAt = now
+                gain(r, 1, 0)
+            end
+        end
+    end
 
     if pool ~= "ReceiveRotten" and pool ~= "ReceiveGun" and pool ~= "ReceiveWeapon"
         and pool ~= "ReceiveCleanWeapon"
         and pool ~= "ReceiveFuel" and pool ~= "ReceiveCleaner"
+        and pool ~= "ReceiveAmmo" and pool ~= "ReceiveMeds"
         and BridgeSocial.recvBefore(item) then
         pool = "ReceiveAgain"
     end
@@ -738,10 +915,9 @@ function BridgeSocial.received(item)
 
     if pool == "ReceiveGun" then
         BridgeSocial.gunNervous()
-    elseif pool == "ReceiveRotten" then
-        gesture("NoThankYou")
-    elseif pool == "ReceiveTreat" then
-        gesture("Yes")
+    else
+        local anim = RECEIVE_GESTURE[pool]
+        if anim ~= nil then gesture(anim) end
     end
     BridgeSocial.info = "received " .. pool
     log(BridgeSocial.info)
