@@ -4015,6 +4015,301 @@ end
 
 
 
+BridgeMove.openingWay = nil
+BridgeMove.openingBlocked = nil
+BridgeMove.doorFail = nil
+BridgeMove.doorFailObj = nil
+BridgeMove.doorFailUntil = 0
+BridgeMove.badDoors = BridgeMove.badDoors or {}
+-- [key] = { expires = tick, obj = the opening } so it can be dropped the moment
+-- the door is opened by someone else.
+local BAD_DOOR_TICKS = 90 * 60
+
+-- Is this opening blacklisted (a failed lock/barricade), not expired yet?
+function BridgeMove.badDoor(key)
+    if key == nil then return false end
+    local rec = BridgeMove.badDoors[key]
+    if rec == nil then return false end
+    if Bridge.time >= (rec.expires or 0) then
+        BridgeMove.badDoors[key] = nil
+        return false
+    end
+    return true
+end
+
+local function pruneBadDoors()
+    local now = Bridge.time
+    for key, rec in pairs(BridgeMove.badDoors) do
+        if now >= (rec.expires or 0) then
+            BridgeMove.badDoors[key] = nil
+        else
+            local open = false
+            pcall(function() open = rec.obj ~= nil and rec.obj:IsOpen() == true end)
+            if open then BridgeMove.badDoors[key] = nil end
+        end
+    end
+end
+
+-- Record a failed door/window and expose the reason for the task. The object is
+-- kept so the very same door is never retried, even if its edge key differs.
+local function blacklistDoor(body, object, reason)
+    local key = nil
+    pcall(function() key = BridgeDoors ~= nil and BridgeDoors.key(object) or nil end)
+    if key ~= nil then BridgeMove.badDoors[key] = { expires = Bridge.time + BAD_DOOR_TICKS, obj = object } end
+    BridgeMove.doorFailObj = object
+    BridgeMove.doorFailUntil = Bridge.time + BAD_DOOR_TICKS
+    BridgeMove.doorFail = reason or "locked"
+    -- Drop the waypoint to this door now so the router repicks the next opening
+    -- on the very next tick instead of walking into it until the walk times out.
+    BridgeMove.openingWay = nil
+    log(sformat("opening blacklisted (%s) %s", tostring(BridgeMove.doorFail), tostring(key)))
+    local isDoorObj = false
+    pcall(function()
+        isDoorObj = instanceof(object, "IsoDoor")
+            or (instanceof(object, "IsoThumpable") and object:isDoor())
+    end)
+    if reason ~= "barricade" and isDoorObj then
+        pcall(function() if body ~= nil then body:playSound("DoorIsLocked") end end)
+    end
+end
+BridgeMove.blacklistDoor = blacklistDoor
+
+-- Should this exact opening be skipped right now? Covers both the edge key and
+-- the object identity (double/garage doors can be reported under two keys).
+function BridgeMove.doorBlocked(object)
+    if object == nil then return false end
+    local open = false
+    pcall(function() open = object:IsOpen() == true end)
+    if open then return false end
+    if BridgeMove.doorFailObj == object and Bridge.time < (BridgeMove.doorFailUntil or 0) then return true end
+    local key = nil
+    pcall(function() key = BridgeDoors ~= nil and BridgeDoors.key(object) or nil end)
+    return BridgeMove.badDoor(key)
+end
+
+-- Windows she opened herself, to shut again once she is through (do not let
+-- zombies in). Recorded when she opens one; closed by closeWindows.
+BridgeMove.openWindows = BridgeMove.openWindows or {}
+local WINDOW_CLOSE_MS = 900
+
+function BridgeMove.noteWindowOpened(body, object)
+    if object == nil then return end
+    -- Only track windows she opens during a task (close-behind is task-only).
+    if BridgeTask == nil or not BridgeTask.active then return end
+    local x, y, z, fx, fy = nil, nil, nil, nil, nil
+    pcall(function()
+        local a, b = object:getSquare(), object:getOppositeSquare()
+        if a ~= nil then x, y, z = a:getX() + 0.5, a:getY() + 0.5, a:getZ() end
+        if b ~= nil then fx, fy = b:getX() + 0.5, b:getY() + 0.5 end
+    end)
+    if x == nil then return end
+    BridgeMove.openWindows = BridgeMove.openWindows or {}
+    for _, rec in ipairs(BridgeMove.openWindows) do
+        if rec.obj == object then rec.tick = Bridge.time return end
+    end
+    BridgeMove.openWindows[#BridgeMove.openWindows + 1] =
+        { obj = object, x = x, y = y, z = z, farX = fx, farY = fy, tick = Bridge.time }
+end
+
+function BridgeMove.closeWindows(body)
+    local list = BridgeMove.openWindows
+    if list == nil or #list == 0 then return end
+    if body == nil then return end
+    local bx, by, bz = body:getX(), body:getY(), body:getZ()
+    for i = #list, 1, -1 do
+        local rec = list[i]
+        local obj = rec.obj
+        local done = false
+        if obj == nil then
+            done = true
+        else
+            local ok, open, smashed = true, false, false
+            pcall(function()
+                ok = obj:getObjectIndex() ~= -1
+                open = obj:IsOpen() == true
+                smashed = obj:isSmashed() == true
+            end)
+            if not ok or not open or smashed then
+                done = true
+            elseif Bridge.time - rec.tick > WINDOW_CLOSE_MS then
+                done = true
+            elseif BridgeMove.pendingClimb == nil and math.abs(bz - rec.z) < 0.5 then
+                local near = dist2d(bx, by, rec.x, rec.y)
+                local far = rec.farX ~= nil and dist2d(bx, by, rec.farX, rec.farY) <= 1.0
+                if far or near > 1.6 then
+                    pcall(function() obj:ToggleWindow(body) end)
+                    log("window closed behind")
+                    done = true
+                end
+            end
+        end
+        if done then table.remove(list, i) end
+    end
+end
+
+-- Route through the cheapest usable opening of the building she must cross.
+-- Returns the near-side waypoint (three numbers) or nil.
+function BridgeMove.routeViaOpening(body, gx, gy, gz)
+    if BridgeDoors == nil or BridgeDoors.enclosureKey == nil or BridgeDoors.findOpening == nil then return nil end
+    local bsq = nil
+    pcall(function() bsq = body:getCurrentSquare() end)
+    if bsq == nil then BridgeMove.openingWay = nil return nil end
+    local bz = math.floor(gz)
+    if math.floor(body:getZ()) ~= bz then BridgeMove.openingWay = nil return nil end
+    local cell = getCell()
+    local tsq = cell:getGridSquare(math.floor(gx), math.floor(gy), bz)
+    if tsq == nil then BridgeMove.openingWay = nil return nil end
+    local bK, tK = -1, -1
+    pcall(function() bK = BridgeDoors.enclosureKey(bsq) end)
+    pcall(function() tK = BridgeDoors.enclosureKey(tsq) end)
+    if bK == tK then
+        BridgeMove.openingWay = nil
+        BridgeMove.openingBlocked = nil
+        BridgeMove.doorFail = nil
+        return nil
+    end
+    -- Leave her own building first, then enter the target's.
+    local leaving = bK ~= -1 and tK ~= bK
+    local building = nil
+    if leaving then
+        pcall(function() building = BridgeDoors.buildingOf(bsq) end)
+    elseif tK ~= -1 then
+        pcall(function() building = BridgeDoors.buildingOf(tsq) end)
+    end
+    if building == nil then BridgeMove.openingWay = nil return nil end
+
+    local way = BridgeMove.openingWay
+    if way ~= nil and way.bld ~= (leaving and bK or tK) then way = nil BridgeMove.openingWay = nil end
+    if way ~= nil then
+        if way.arrived then
+            -- At the opening: drive it here. The engine pathfinder will NOT plan
+            -- through a closed window (only doors are passable to it), so we must
+            -- open/climb the chosen opening ourselves and hold her in place.
+            if Bridge.time - (way.arrivedAt or Bridge.time) > 480 then
+                BridgeMove.openingWay = nil
+                return nil
+            end
+            local obj = way.obj
+            if obj ~= nil and way.kind == "window" then
+                local isOpen, blocked = false, false
+                pcall(function() isOpen = obj:IsOpen() == true or obj:isSmashed() == true end)
+                pcall(function() blocked = obj:isBarricaded() == true or obj:isPermaLocked() == true end)
+                if not isOpen then
+                    if blocked then
+                        blacklistDoor(body, obj, "barricade")
+                        return way.x, way.y, way.z
+                    end
+                    if way.openAt == nil then
+                        way.openAt = Bridge.time
+                        pcall(function()
+                            body:faceLocationF(way.x, way.y)
+                            body:setVariable("BumpAnimFinished", false)
+                            body:setBumpType("WindowOpen")
+                        end)
+                        log("window opening at " .. tostring(way.key))
+                    elseif way.openAt < 1.0e15 and Bridge.time - way.openAt > 20 then
+                        way.openAt = 1.0e16
+                        pcall(function() obj:ToggleWindow(body) end)
+                        pcall(function() body:playSound("OpenWindow") end)
+                        local nowOpen = false
+                        pcall(function() nowOpen = obj:IsOpen() == true or obj:isSmashed() == true end)
+                        if not nowOpen then
+                            blacklistDoor(body, obj, "locked")
+                        else
+                            BridgeMove.noteWindowOpened(body, obj)
+                            log("window opened, climbing " .. tostring(way.key))
+                        end
+                    end
+                elseif BridgeMove.pendingClimb == nil and (Bridge.time - (way.climbAt or -9999) > 30) then
+                    way.climbAt = Bridge.time
+                    pcall(function() body:faceLocationF(way.x, way.y) end)
+                    BridgeMove.askClimb(body, "window", obj)
+                    log("window climb at " .. tostring(way.key))
+                end
+                -- Park her at the opening while it is opened/climbed.
+                return way.x, way.y, way.z
+            elseif obj ~= nil and way.kind == "door" then
+                local isOpen = false
+                pcall(function() isOpen = obj:IsOpen() == true end)
+                if not isOpen then
+                    if not BridgeMove.openDoor(body, obj) then
+                        return nil -- failed/blacklisted: let the router repick
+                    end
+                end
+                -- Drive her through the doorway to the far side, so a clear
+                -- doorway can never leave her standing inside.
+                if way.far ~= nil then
+                    return way.far:getX() + 0.5, way.far:getY() + 0.5, way.far:getZ()
+                end
+                return nil
+            end
+            return nil
+        end
+        local d = dist2d(body:getX(), body:getY(), way.x, way.y)
+        if d < (way.best or math.huge) - 0.3 then way.best, way.bestAt = d, Bridge.time end
+        if d <= 0.9 then
+            -- Arrived: hold this opening and drive it (see above).
+            way.arrived = true
+            way.arrivedAt = Bridge.time
+            return nil
+        end
+        if Bridge.time - way.bestAt > 240 then
+            log("opening waypoint: no progress, going direct")
+            BridgeMove.openingWay = nil
+            return nil
+        end
+        return way.x, way.y, way.z
+    end
+
+    pruneBadDoors()
+    local plan = nil
+    local avoid = (not Bridge.follow) and BridgeMove.badDoors or nil
+    pcall(function()
+        -- Hybrid: shortest total route among openings within DETOUR_CAP of the
+        -- nearest; doors preferred; windows only when no usable door is in range.
+        plan = BridgeDoors.findOpening(building, bz, body:getX(), body:getY(), gx, gy, leaving, true, avoid)
+    end)
+    if plan == nil or plan.near == nil then
+        -- Block when the building has openings but none is usable, or when a door
+        -- just failed (covers a building the scanner could not enumerate). An
+        -- unknown/oversized building with no failure must never strand her.
+        local any = 0
+        pcall(function() any = #BridgeDoors.exteriorOpenings(building, bz) end)
+        if (any > 0 or BridgeMove.doorFail ~= nil) and not Bridge.follow then
+            local reason = BridgeMove.doorFail
+            if reason == nil then
+                reason = "locked"
+                pcall(function()
+                    for _, d in ipairs(BridgeDoors.exteriorOpenings(building, bz)) do
+                        local bar = false
+                        pcall(function() bar = d.obj:isBarricaded() == true end)
+                        if bar then reason = "barricade" break end
+                    end
+                end)
+            end
+            BridgeMove.openingBlocked = reason
+            log(sformat("opening route: none left (candidates=%d), blocked reason=%s", any, tostring(reason)))
+        else
+            log(sformat("opening route: none (candidates=%d, no failure), going direct", any))
+        end
+        return nil
+    end
+    BridgeMove.openingBlocked = nil
+    BridgeMove.doorFail = nil
+    local nx, ny = plan.near:getX() + 0.5, plan.near:getY() + 0.5
+    BridgeMove.openingWay = { x = nx, y = ny, z = bz, key = plan.key, bld = leaving and bK or tK,
+        obj = plan.obj, kind = plan.kind, far = plan.far,
+        best = math.huge, bestAt = Bridge.time }
+    log(sformat("opening route %s key=%s near=%d,%d far=%d,%d",
+        tostring(plan.kind), tostring(plan.key), plan.near:getX(), plan.near:getY(), plan.far:getX(), plan.far:getY()))
+    pcall(function()
+        log("openings: " .. tostring(BridgeDoors.debugOpenings(building, bz, leaving)))
+    end)
+    return nx, ny, bz
+end
+
+
+
 
 
 BridgeMove.pendingClimb = nil
@@ -4844,6 +5139,10 @@ function BridgeMove.crossStep(body)
                     if body:getPrimaryHandItem() ~= nil then BridgeWeapon.putAway(body) end
                 end)
             end
+            if c.kind == "window" and not BridgeMove.glassStep(body, c.object) then
+                crossEnd(body, "glass first")
+                return true
+            end
             local ok, err = pcall(function()
                 if c.kind == "fence" then
                     body:climbOverFence(c.dir)
@@ -4894,6 +5193,10 @@ function BridgeMove.crossStep(body)
     end
     if edgeDist(body, c.from, c.to) <= CROSS_CALL and Bridge.time - (c.asked or -99) >= 3 then
         c.asked = Bridge.time
+        if c.kind == "window" and not BridgeMove.glassStep(body, c.object) then
+            crossEnd(body, "glass first")
+            return true
+        end
         local ok, err = pcall(function()
             if c.kind == "fence" then
                 body:climbOverFence(c.dir)
@@ -4932,10 +5235,13 @@ end
 
 
 function BridgeMove.openDoor(body, object)
+    local key = nil
+    pcall(function() key = BridgeDoors ~= nil and BridgeDoors.key(object) or nil end)
     if object:isBarricaded() then
         BridgeMove.obstacle = "door barricaded"
         BridgeMove.doorWay = nil
         BridgeMove.noDoorUntil = Bridge.time + 1800
+        blacklistDoor(body, object, "barricade")
         return false
     end
     local locked = false
@@ -4955,6 +5261,7 @@ function BridgeMove.openDoor(body, object)
         BridgeMove.obstacle = "door locked"
         BridgeMove.doorWay = nil
         BridgeMove.noDoorUntil = Bridge.time + 1800
+        blacklistDoor(body, object, "locked")
         return false
     end
     if not object:IsOpen() then
@@ -4966,6 +5273,9 @@ function BridgeMove.openDoor(body, object)
 
 
 
+        -- From inside (or when the player just went through) a locked door is
+        -- unlocked first, exactly as vanilla does. This path is kept; only the
+        -- from-outside case above blacklists.
         if locked and instanceof(object, "IsoDoor") then
             pcall(function()
                 object:setLocked(false)
@@ -4976,11 +5286,15 @@ function BridgeMove.openDoor(body, object)
             BridgeMove.obstacle = "door blocked"
             BridgeMove.doorWay = nil
             BridgeMove.noDoorUntil = Bridge.time + 1800
+            blacklistDoor(body, object, "locked")
             return false
         end
         BridgeMove.rememberDoor(body, anchor, kind, cells, north)
         BridgeMove.obstacle = "door opened"
     end
+    -- Opened (or already open): this opening is good again.
+    if key ~= nil then BridgeMove.badDoors[key] = nil end
+    BridgeMove.doorFail = nil
     return true
 end
 
@@ -5019,6 +5333,11 @@ function BridgeMove.openAhead(body)
                 if b ~= nil then pcall(function() door = cur:getDoorTo(b) end) end
                 if door ~= nil and isDoor(door) and not door:IsOpen() and beyondEdge(cur, b, goal.x, goal.y) then
 
+                    -- A door she already failed on is not retried (task movement).
+                    if not Bridge.follow and BridgeMove.doorBlocked(door) then
+                        BridgeMove.obstacle = "door blacklisted"
+                        return false
+                    end
                     if not BridgeMove.doorOpenable(body, door) then return BridgeMove.openDoor(body, door) end
                     local fx = (cur:getX() + b:getX()) / 2 + 0.5
                     local fy = (cur:getY() + b:getY()) / 2 + 0.5
@@ -5155,18 +5474,63 @@ local function passInstead(body, kind)
 end
 
 
+-- A smashed window with the glass still in it must be cleared before climbing.
+-- Returns true when it is safe to climb now, false when the glass was cleared or
+-- handed to the clean-up job (climb on a later frame).
+function BridgeMove.glassStep(body, object)
+    local sq = nil
+    pcall(function() sq = object ~= nil and object:getSquare() or nil end)
+    if sq == nil or BridgeClean == nil or BridgeClean.squareWindow == nil then return true end
+    local g = nil
+    pcall(function() g = BridgeClean.squareWindow(sq) end)
+    if g == nil then return true end
+    -- Prefer the clean-up job: it gives the animation, sound and MP sync.
+    local delegated = false
+    if BridgeTask ~= nil and BridgeTask.requireGlass ~= nil then
+        pcall(function() delegated = BridgeTask.requireGlass(sq) == true end)
+    end
+    if not delegated then
+        pcall(function() BridgeTask.applyClean(body, sq, "window") end)
+        pcall(function() if BridgeTask.CLEAN_SOUND ~= nil then body:playSound(BridgeTask.CLEAN_SOUND) end end)
+        log("window glass cleared before climbing")
+    else
+        log("window glass queued for clean-up before climbing")
+    end
+    return false
+end
+
+
 function BridgeMove.handleObstacle(body)
 
     if BridgeMove.window then
         local w = BridgeMove.window
         body:faceLocationF(w.x, w.y)
+        -- Hold her at the window and keep the open clip alive while it plays.
+        pcall(function()
+            body:setVariable("bPathfind", false)
+            body:setMoving(false)
+            if tostring(body:getBumpType()) ~= "WindowOpen" then
+                body:setVariable("BumpAnimFinished", false)
+                body:setBumpType("WindowOpen")
+            end
+        end)
         local square = getCell():getGridSquare(w.x, w.y, w.z)
         local window = square and square:getWindow()
         if window == nil or window:IsOpen() or window:isSmashed() or (Bridge.time - w.tick) > 40 then
+            local opened = window == nil
             if window ~= nil and not window:IsOpen() and not window:isSmashed() then
                 pcall(function() window:ToggleWindow(body) end)
                 pcall(function() body:playSound("OpenWindow") end)
             end
+            pcall(function() opened = window ~= nil and (window:IsOpen() or window:isSmashed()) end)
+            if window ~= nil and not opened then
+                -- It would not open (locked/blocked): blacklist like a door.
+                blacklistDoor(body, window, "locked")
+                BridgeMove.obstacle = "window would not open"
+                BridgeMove.window = nil
+                return false
+            end
+            if window ~= nil and opened then BridgeMove.noteWindowOpened(body, window) end
             BridgeMove.window = nil
             BridgeMove.obstacle = "window opened"
             return false
@@ -5239,7 +5603,21 @@ function BridgeMove.handleObstacle(body)
             end
             if instanceof(object, "IsoWindow") then
                 if body:isFacingObject(object, 0.5) then
+                    -- A window she already failed on is not tried again.
+                    if not Bridge.follow and BridgeMove.doorBlocked(object) then
+                        BridgeMove.obstacle = "window blacklisted"
+                        return false
+                    end
+                    local wkey = nil
+                    pcall(function() wkey = BridgeDoors ~= nil and BridgeDoors.key(object) or nil end)
+                    -- If a task router owns this window, it drives the open and
+                    -- the climb itself; the collision pipeline must stay out.
+                    if BridgeMove.openingWay ~= nil and wkey ~= nil
+                        and BridgeMove.openingWay.key == wkey then
+                        return false
+                    end
                     if object:isBarricaded() then
+                        blacklistDoor(body, object, "barricade")
                         BridgeMove.obstacle = "window barricaded"
                         return false
                     elseif passInstead(body, "window") ~= nil then
@@ -5249,16 +5627,33 @@ function BridgeMove.handleObstacle(body)
                         if not object:isPermaLocked() then
                             local sq = object:getSquare()
                             BridgeMove.window = { x = sq:getX(), y = sq:getY(), z = sq:getZ(), tick = Bridge.time }
-                            body:setBumpType("WindowOpen")
+                            -- Visible reach: face the window and start the open clip
+                            -- (reset BumpAnimFinished first or the engine skips it).
+                            pcall(function()
+                                body:faceLocationF(sq:getX() + 0.5, sq:getY() + 0.5)
+                                body:setVariable("BumpAnimFinished", false)
+                                body:setBumpType("WindowOpen")
+                            end)
                             BridgeMove.obstacle = "window opening"
                             return true
                         end
+                        blacklistDoor(body, object, "locked")
                         BridgeMove.obstacle = "window locked"
                         return false
                     elseif object:canClimbThrough(body) then
+                        if not BridgeMove.glassStep(body, object) then
+                            BridgeMove.obstacle = "window glass first"
+                            return false
+                        end
                         BridgeMove.askClimb(body, "window", object)
                         BridgeMove.obstacle = "window climb"
                         return true
+                    else
+                        -- Open but not climbable (blocked by furniture/objects):
+                        -- do not keep trying it; let the router pick another.
+                        blacklistDoor(body, object, "locked")
+                        BridgeMove.obstacle = "window not climbable"
+                        return false
                     end
                 else
                     body:faceThisObject(object)
@@ -5269,6 +5664,12 @@ function BridgeMove.handleObstacle(body)
             if instanceof(object, "IsoDoor") or (instanceof(object, "IsoThumpable") and object:isDoor()) then
                 if body:isFacingObject(object, 0.5) then
 
+                    -- A door she already failed on is not tried again (per-door
+                    -- blacklist): the task repicks or gives up instead.
+                    if not Bridge.follow and BridgeMove.doorBlocked(object) then
+                        BridgeMove.obstacle = "door blacklisted"
+                        return false
+                    end
                     if object:IsOpen() or not BridgeMove.doorOpenable(body, object) then
                         return BridgeMove.openDoor(body, object)
                     end
@@ -5300,6 +5701,12 @@ local function pickSpeed(d)
 end
 
 function BridgeMove.update(body)
+    -- Verbose sessions keep the per-frame trace going (re-armed once a second)
+    -- instead of the old single 60-tick burst.
+    if Bridge.verbose and Bridge.tick - (BridgeMove.traceArm or -9999) >= 60 then
+        BridgeMove.traceArm = Bridge.tick
+        BridgeMove.traceUntil = Bridge.tick + 60 * 60 * 5
+    end
     do
         local red = BridgeData.owner()
         if red ~= nil then
@@ -5420,12 +5827,15 @@ function BridgeMove.update(body)
     local gx, gy, gz, d = BridgeMove.currentGoal(body)
     if gx ~= nil then
         local wx, wy, wz = nil, nil, nil
-        pcall(function() wx, wy, wz = BridgeMove.viaDoor(body, gx, gy, gz) end)
-        if wx ~= nil then gx, gy, gz = wx, wy, wz end
-
-        local px, py, pz = nil, nil, nil
-        pcall(function() px, py, pz = BridgeMove.gapGoal(body) end)
-        if px ~= nil then gx, gy, gz = px, py, pz end
+        pcall(function() wx, wy, wz = BridgeMove.routeViaOpening(body, gx, gy, gz) end)
+        if wx ~= nil then
+            -- A task opening is committed: do not let a gap detour override it.
+            gx, gy, gz = wx, wy, wz
+        else
+            local px, py, pz = nil, nil, nil
+            pcall(function() px, py, pz = BridgeMove.gapGoal(body) end)
+            if px ~= nil then gx, gy, gz = px, py, pz end
+        end
     end
     if gx == nil then
         BridgeMove.wasWalking = false
@@ -5703,7 +6113,10 @@ function BridgeMove.reset(body)
     BridgeMove.doorWay = nil
 
     BridgeMove.opened = {}
+    BridgeMove.openWindows = {}
     BridgeMove.gapWay = nil
+    BridgeMove.openingWay = nil
+    BridgeMove.openingBlocked = nil
     BridgeMove.seat = nil
     if BridgeMove.seatFlag and body ~= nil then
         pcall(function() body:setSittingOnFurniture(false) end)

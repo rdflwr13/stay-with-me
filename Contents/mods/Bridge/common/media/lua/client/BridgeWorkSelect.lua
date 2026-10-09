@@ -217,16 +217,40 @@ BridgeWorkSelect.kinds = {
 
 function BridgeWorkSelect.sortTargets(targets)
     local ox, oy = 0, 0
+    local bodyKey = nil
     pcall(function()
         local b = Bridge ~= nil and Bridge.body or nil
         if b ~= nil then
             ox, oy = b:getX(), b:getY()
+            if BridgeDoors ~= nil and BridgeDoors.enclosureKey ~= nil then
+                bodyKey = BridgeDoors.enclosureKey(b:getCurrentSquare())
+            end
         else
             local red = BridgeData.owner()
             if red ~= nil then ox, oy = red:getX(), red:getY() end
+            if BridgeDoors ~= nil and BridgeDoors.enclosureKey ~= nil and red ~= nil then
+                bodyKey = BridgeDoors.enclosureKey(red:getCurrentSquare())
+            end
         end
     end)
+    -- Same enclosure first (all outside before going in, and vice versa), then
+    -- nearest. Keys are computed once, never inside the comparator.
+    local keys = nil
+    if bodyKey ~= nil then
+        keys = {}
+        local cell = getCell()
+        for _, t in ipairs(targets) do
+            local k = nil
+            pcall(function() k = BridgeDoors.enclosureKey(cell:getGridSquare(t.x, t.y, t.z)) end)
+            keys[t] = k
+        end
+    end
     table.sort(targets, function(a, c)
+        if keys ~= nil then
+            local sa = keys[a] == bodyKey
+            local sc = keys[c] == bodyKey
+            if sa ~= sc then return sa end
+        end
         return (a.x - ox) ^ 2 + (a.y - oy) ^ 2 < (c.x - ox) ^ 2 + (c.y - oy) ^ 2
     end)
 end

@@ -1080,24 +1080,108 @@ function BridgeTask.dropTarget(reason)
     return true
 end
 
+-- Enclosure key of the body / a square (nil when the router is unavailable).
+function BridgeTask.enclosureKey(body)
+    if BridgeDoors == nil or BridgeDoors.enclosureKey == nil or body == nil then return nil end
+    local k = nil
+    pcall(function() k = BridgeDoors.enclosureKey(body:getCurrentSquare()) end)
+    return k
+end
 
+function BridgeTask.enclosureKeyOf(sq)
+    if BridgeDoors == nil or BridgeDoors.enclosureKey == nil or sq == nil then return nil end
+    local k = nil
+    pcall(function() k = BridgeDoors.enclosureKey(sq) end)
+    return k
+end
 
+-- Is there a usable way from her to this target (open passage, usable door or
+-- climbable window)? Only checked when the target is in a different enclosure
+-- (another building or out/in), so a target in the same area is never blocked by
+-- a fence the graph does not model. Unknown/oversized buildings and nil squares
+-- count as reachable.
+function BridgeTask.reachOk(body, targetSq)
+    if targetSq == nil or BridgeDoors == nil or BridgeDoors.canReach == nil then return true end
+    local bodySq = nil
+    pcall(function() bodySq = body:getCurrentSquare() end)
+    local bk = BridgeTask.enclosureKey(body)
+    local tk = BridgeTask.enclosureKeyOf(targetSq)
+    -- An outdoor target is never gated (fences are not modelled). Everything
+    -- else, including a target in the same building but behind an interior
+    -- blocked door, is checked room-by-room.
+    if tk == nil or tk == -1 then return true end
+    local ok = true
+    pcall(function() ok = BridgeDoors.canReach(bodySq, targetSq) == true end)
+    if not ok then
+        log(string.format("target %d,%d unreachable: no accessible opening", targetSq:getX(), targetSq:getY()))
+    end
+    return ok
+end
 
+-- Standing square next to a target: prefer the router's standNear (never across
+-- a wall or window, same building for interior objects), else the local scan.
+local function reachSpot(body, targetSq, target)
+    local spot = nil
+    if targetSq ~= nil and BridgeDoors ~= nil and BridgeDoors.standNear ~= nil then
+        local sq = nil
+        pcall(function() sq = BridgeDoors.standNear(targetSq, body) end)
+        if sq ~= nil then
+            pcall(function() spot = { x = sq:getX(), y = sq:getY(), z = sq:getZ() } end)
+        end
+    end
+    if spot == nil then spot = freeAdjacent(body, target) end
+    return spot
+end
+
+-- Shared "walk to the standing square next to a target" step for every job.
+-- Returns "walking" (caller returns true), "arrived" (caller starts work) or
+-- "unreachable" plus a reason (caller should drop the target).
 function BridgeTask.walkTo(body, target, reach)
-    local d = math.sqrt((body:getX() - (target.x + 0.5)) ^ 2 + (body:getY() - (target.y + 0.5)) ^ 2)
-    if d <= reach then return "arrived", nil end
+    local bodyZ = math.floor(body:getZ())
+    local targetSq = nil
+    pcall(function() targetSq = getCell():getGridSquare(target.x, target.y, target.z) end)
+    -- Cross-floor targets are handled by the engine (it uses the stairs), so no
+    -- same-floor adjacent standing spot is required for them.
+    local sameFloor = targetSq == nil or math.floor(targetSq:getZ()) == bodyZ
 
-    if BridgeTask.spot == nil then
-        BridgeTask.spot = freeAdjacent(body, target)
+    local d = math.sqrt((body:getX() - (target.x + 0.5)) ^ 2 + (body:getY() - (target.y + 0.5)) ^ 2)
+    if sameFloor and d <= reach then return "arrived", nil end
+
+    -- The opening router gave up on every opening for this enclosure: abort
+    -- without bumping instead of walking into the wall.
+    if BridgeMove ~= nil and BridgeMove.openingBlocked ~= nil then
+        local why = BridgeMove.openingBlocked
+        BridgeMove.openingBlocked = nil
+        BridgeTask.info = "openings exhausted"
+        return "unreachable", why
+    end
+
+    -- Reachability gate: a target behind a locked door (no usable opening) is
+    -- refused immediately, before she ever walks into the wall. Cross-floor
+    -- targets are exempt (canReach already treats a different floor as reachable).
+    if sameFloor and not BridgeTask.reachOk(body, targetSq) then
+        BridgeTask.info = "no accessible opening"
+        return "unreachable", blockedReason(target)
+    end
+
+    if not sameFloor then
+        -- Target on another floor: walk to the target itself; the engine climbs
+        -- the stairs. Only rebuild the spot if it is not already on that floor.
+        if BridgeTask.spot == nil or math.floor(BridgeTask.spot.z or target.z) ~= math.floor(target.z) then
+            BridgeTask.spot = { x = target.x, y = target.y, z = target.z }
+        end
+    elseif BridgeTask.spot == nil then
+        BridgeTask.spot = reachSpot(body, targetSq, target)
         if BridgeTask.spot == nil then
             BridgeTask.info = "no reachable spot"
+            log(string.format("no spot for target %d,%d,%d (body z=%s)", target.x, target.y, target.z, tostring(bodyZ)))
             return "unreachable", nil
         end
     end
 
     local sx, sy = BridgeTask.spot.x + 0.5, BridgeTask.spot.y + 0.5
     local dSpot = math.sqrt((body:getX() - sx) ^ 2 + (body:getY() - sy) ^ 2)
-    if dSpot <= BridgeTask.STOP_DIST then return "arrived", nil end
+    if sameFloor and dSpot <= BridgeTask.STOP_DIST then return "arrived", nil end
 
 
 
@@ -1107,9 +1191,16 @@ function BridgeTask.walkTo(body, target, reach)
         BridgeTask.pathFails = 0
     end
 
+    -- While she is detouring to a door/window the straight-line distance to the
+    -- target can grow: that is progress, not a stall.
+    if BridgeMove ~= nil and BridgeMove.openingWay ~= nil then
+        BridgeTask.progressAt = Bridge.time
+        BridgeTask.pathFails = 0
+    end
 
-
-
+    -- Definitive no-route: the engine path finder reported failure. Two in a
+    -- row (with a re-check between) means there really is no way there now,
+    -- e.g. a locked door or a barricade she cannot open.
     local failed = false
     pcall(function()
         failed = BridgeMove ~= nil and not BridgeMove.pathing
@@ -1168,7 +1259,37 @@ function BridgeTask.walkTo(body, target, reach)
     return "walking", nil
 end
 
+-- Route a smashed window (glass still in it) through the clean-up sub-task: it
+-- gives the animation, the sound and the MP sync. Returns true when the square
+-- is (or becomes) her target, so the caller must not climb yet. Only the
+-- clean-up job understands window squares; other jobs clear the glass inline.
+function BridgeTask.requireGlass(sq)
+    if sq == nil or not BridgeTask.active or BridgeTask.kind ~= "cleanUp" then return false end
+    local t = { x = sq:getX(), y = sq:getY(), z = sq:getZ() }
+    local cur = BridgeTask.current
+    if cur ~= nil and cur.x == t.x and cur.y == t.y and cur.z == t.z then return true end
+    for i = 1, #BridgeTask.queue do
+        local q = BridgeTask.queue[i]
+        if q.x == t.x and q.y == t.y and q.z == t.z then
+            BridgeTask.mustTarget = t
+            return true
+        end
+    end
+    -- Not in the job at all: put back the unfinished target, then take the glass.
+    if cur ~= nil then
+        table.insert(BridgeTask.queue, 1, cur)
+        BridgeTask.current = nil
+        BridgeTask.cleanApplied = {}
+        BridgeTask.spot = nil
+        pcall(stopCleanSound, Bridge.body)
+    end
+    table.insert(BridgeTask.queue, 1, t)
+    BridgeTask.mustTarget = t
+    log(string.format("glass window %d,%d queued for clean-up", t.x, t.y))
+    return true
+end
 
+-- Say specifically what she is missing (axe / cleaning tool / cleaner).
 function BridgeTask.speakMissing(kind)
     local def = kind ~= nil and BridgeTask.kinds[kind] or nil
     local missing = nil
@@ -1245,6 +1366,7 @@ function BridgeTask.reset()
     BridgeTask.chopRestSitAt = nil
     BridgeTask.chopResumeAt = nil
     BridgeTask.savedPrimary, BridgeTask.savedSecondary = nil, nil
+    BridgeTask.mustTarget = nil
     restoreForcedWalk()
     Bridge.target = nil
 end
@@ -1271,6 +1393,10 @@ function BridgeTask.start(kind, targets)
     BridgeTask.kind = kind
     BridgeTask.queue = {}
     for i = 1, #targets do BridgeTask.queue[i] = targets[i] end
+    -- Same-enclosure grouping (all outside before going in, and vice versa).
+    if BridgeWorkSelect ~= nil and BridgeWorkSelect.sortTargets ~= nil then
+        pcall(BridgeWorkSelect.sortTargets, BridgeTask.queue)
+    end
     BridgeTask.prevMode = BridgeData.modeOf(Bridge.store)
     BridgeTask.body = Bridge.body
     rememberHands(Bridge.body)
@@ -1296,6 +1422,13 @@ function BridgeTask.start(kind, targets)
     BridgeTask.spokeUnreachable = false
     BridgeTask.blockedReason = nil
     BridgeTask.lastNoPathAt = nil
+    if BridgeMove ~= nil then
+        BridgeMove.openingBlocked = nil
+        BridgeMove.openingWay = nil
+        BridgeMove.doorFail = nil
+        BridgeMove.doorFailObj = nil
+        BridgeMove.doorFailUntil = 0
+    end
     BridgeTask.deferred = {}
     BridgeTask.needImplement = nil
     BridgeTask.needFluid = nil
@@ -1314,6 +1447,7 @@ function BridgeTask.start(kind, targets)
     BridgeTask.chopRest = false
     BridgeTask.chopRestSitAt = nil
     BridgeTask.chopResumeAt = nil
+    BridgeTask.mustTarget = nil
     BridgeTask.info = "start " .. tostring(kind)
     Bridge.follow = false
     Bridge.target = nil
@@ -1647,6 +1781,10 @@ function BridgeTask.kinds.chopTree.update(body)
     end
 
     local tree = resolveTree(target)
+    if tree ~= nil then
+        log(string.format("tree target %d,%d enclosure=%s", target.x, target.y,
+            tostring(BridgeTask.enclosureKeyOf(getCell():getGridSquare(target.x, target.y, target.z)))))
+    end
     if tree == nil then
         BridgeTask.clearChop(body)
         BridgeTask.info = "tree down"
@@ -1671,11 +1809,8 @@ function BridgeTask.kinds.chopTree.update(body)
         end)
     end
 
-    if math.abs(body:getZ() - target.z) >= 1 then
-        BridgeTask.info = "other floor"
-        return BridgeTask.dropTarget(nil)
-    end
-
+    -- Cross-floor targets are fine now: walkTo walks her to the stairs and up/
+    -- down, and only reports "arrived" once she is on the target's floor.
     local reach = BridgeTask.CHOP_RANGE
     if BridgeTask.phase == "chop" then reach = BridgeTask.CHOP_RANGE + 1.0 end
     local walk, why = BridgeTask.walkTo(body, target, reach)
@@ -1868,10 +2003,13 @@ function BridgeTask.kinds.cleanUp.update(body)
     local target = BridgeTask.current
     if target == nil then
         if #BridgeTask.queue == 0 then return BridgeTask.finish() end
-
-
+        -- Drop every square she cannot do (noting what is missing) and take the
+        -- closest one she can actually reach. Same enclosure first: finish this
+        -- side before crossing, and only cross once it is empty.
         local bx, by = body:getX(), body:getY()
         local bestI, bestD = nil, nil
+        local bestAnyI, bestAnyD = nil, nil
+        local bodyKey = BridgeTask.enclosureKey(body)
         local i = 1
         while i <= #BridgeTask.queue do
             local t = BridgeTask.queue[i]
@@ -1880,10 +2018,24 @@ function BridgeTask.kinds.cleanUp.update(body)
                 table.remove(BridgeTask.queue, i)
             else
                 local d = (bx - t.x) ^ 2 + (by - t.y) ^ 2
-                if bestD == nil or d < bestD then bestD = d; bestI = i end
+                if bestAnyD == nil or d < bestAnyD then bestAnyD = d; bestAnyI = i end
+                if bodyKey == nil or BridgeTask.enclosureKeyOf(sq) == bodyKey then
+                    if bestD == nil or d < bestD then bestD = d; bestI = i end
+                end
                 i = i + 1
             end
         end
+        -- The router asked for a specific square (glass in a window she must
+        -- climb through): take it now if it is still doable.
+        local must = BridgeTask.mustTarget
+        if must ~= nil then
+            BridgeTask.mustTarget = nil
+            for j = 1, #BridgeTask.queue do
+                local t = BridgeTask.queue[j]
+                if t.x == must.x and t.y == must.y and t.z == must.z then bestI = j break end
+            end
+        end
+        if bestI == nil then bestI, bestD = bestAnyI, bestAnyD end
         if bestI == nil then
             BridgeTask.info = "nothing reachable"
             return BridgeTask.finish()
@@ -1910,6 +2062,7 @@ function BridgeTask.kinds.cleanUp.update(body)
     end
 
     local square = getCell():getGridSquare(target.x, target.y, target.z)
+    log(string.format("target %d,%d enclosure=%s", target.x, target.y, tostring(BridgeTask.enclosureKeyOf(square))))
 
 
 
@@ -1936,11 +2089,8 @@ function BridgeTask.kinds.cleanUp.update(body)
         beginCleanHands(body, kind, tool, cleaner)
     end
 
-    if math.abs(body:getZ() - target.z) >= 1 then
-        BridgeTask.info = "other floor"
-        return BridgeTask.dropTarget(nil)
-    end
-
+    -- Cross-floor targets are fine now: walkTo walks her to the stairs and up/
+    -- down, and only reports "arrived" once she is on the target's floor.
     local reach = BridgeTask.CLEAN_RANGE
 
     if kind == "window" or kind == "glass" then reach = 1.0 end

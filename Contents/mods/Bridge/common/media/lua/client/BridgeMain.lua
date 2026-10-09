@@ -3203,8 +3203,13 @@ local function updateZombieBody(body)
 
 
     if Bridge.zombieTicks % 5 == 0 then
+        -- Doors she passed close behind her both while following and on jobs.
         local okDoor, errDoor = pcall(function() BridgeMove.closeBehind(body) end)
         if not okDoor then BridgeMove.doorLast = "error: " .. tostring(errDoor) end
+        -- Windows she opened close behind her only during a job.
+        if BridgeTask ~= nil and BridgeTask.active then
+            pcall(function() BridgeMove.closeWindows(body) end)
+        end
     end
 
 
