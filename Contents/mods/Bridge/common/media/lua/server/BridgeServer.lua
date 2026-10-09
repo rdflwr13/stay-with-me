@@ -1218,6 +1218,13 @@ BridgeServer.Commands.state = function(player, args)
             end
         end
     end
+    if args.kills ~= nil then
+        local k = BridgeData.cleanCount(args.kills)
+        if k > (rec.kills or 0) then
+            rec.kills = k
+            changed = true
+        end
+    end
     if changed then transmit() end
 end
 

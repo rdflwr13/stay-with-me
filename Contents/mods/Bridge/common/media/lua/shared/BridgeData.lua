@@ -1031,6 +1031,16 @@ function BridgeData.cleanRel(t)
 end
 
 
+function BridgeData.cleanCount(n)
+    n = tonumber(n)
+    if n == nil or n ~= n then return 0 end
+    n = math.floor(n)
+    if n < 0 then n = 0 end
+    if n > 1000000000 then n = 1000000000 end
+    return n
+end
+
+
 function BridgeData.relTier(rel)
     local f = rel and rel.f or 0
     if f < 0 then return "Cold" end

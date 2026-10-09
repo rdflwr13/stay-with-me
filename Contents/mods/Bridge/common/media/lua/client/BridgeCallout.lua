@@ -67,6 +67,11 @@ BridgeCallout.SAY = {
 
 BridgeCallout.REPEAT_GAP = 8
 
+BridgeCallout.MILESTONES = { [1] = true, [5] = true, [10] = true, [25] = true, [50] = true,
+    [100] = true, [250] = true, [500] = true, [1000] = true }
+BridgeCallout.MILESTONE_CAP = 1000
+BridgeCallout.MILESTONE_AFTER = 3
+
 
 BridgeCallout.EVENTS = {
     EvBehind     = { slot = "Behind",     cooldown = 45 },
@@ -201,6 +206,7 @@ end
 local function dropCarLines()
     BridgeCallout.deferred = {}
     BridgeCallout.pendingKill = nil
+    BridgeCallout.milestoneDue = nil
     BridgeCallout.wasFighting = false
     BridgeCallout.fightingAt = -99999
     BridgeCallout.finisherTarget = nil
@@ -398,6 +404,45 @@ function BridgeCallout.kill(z)
     return false
 end
 
+function BridgeCallout.forceMilestone(n)
+    n = tonumber(n)
+    if n == nil or n ~= n then return false end
+    n = math.floor(n)
+    local key = "IGUI_NotAlone_KillMilestone_" .. n
+    local text = nil
+    pcall(function() text = getTextOrNull(key) end)
+    if type(text) ~= "string" or text == "" or text == key then return false end
+    if Bridge.quiet() then
+        pcall(function() Bridge.bridgeEvent("KillMilestone" .. n, text) end)
+    else
+        Bridge.speakText(text)
+    end
+    BridgeCallout.lastAny = Bridge.time
+    BridgeCallout.deferred = {}
+    BridgeCallout.milestoneDue = nil
+    if BridgeMoments ~= nil then
+        BridgeMoments.cool["KillMilestone"] = Bridge.time
+        BridgeMoments.lastLine = Bridge.time
+    end
+    BridgeCallout.info = "KillMilestone" .. tostring(n)
+    log("milestone " .. tostring(n))
+    return true
+end
+
+function BridgeCallout.milestone(n)
+    n = tonumber(n)
+    if n == nil or n ~= n then return false end
+    n = math.floor(n)
+    if n > BridgeCallout.MILESTONE_CAP or not BridgeCallout.MILESTONES[n] then return false end
+    local wait = BridgeCallout.MILESTONE_AFTER * BridgeCallout.SEC
+    local since = Bridge.time - BridgeCallout.lastAny
+    if since < wait then
+        BridgeCallout.milestoneDue = { n = n, at = Bridge.time + (wait - since) }
+        return true
+    end
+    return BridgeCallout.forceMilestone(n)
+end
+
 function BridgeCallout.breakOff()
     return say("EvBreakOff")
 end
@@ -469,6 +514,17 @@ function BridgeCallout.update(body)
     if not Bridge.alive() then return end
     local red = BridgeData.owner()
     if red == nil then return end
+
+    local due = BridgeCallout.milestoneDue
+    if due ~= nil then
+        local at = due.at or 0
+        if Bridge.time >= at then
+            BridgeCallout.milestoneDue = nil
+            BridgeCallout.forceMilestone(due.n)
+        elseif Bridge.time - at > 8 * BridgeCallout.SEC then
+            BridgeCallout.milestoneDue = nil
+        end
+    end
 
     local prevAttack = BridgeCallout.attackPrev
     local h2h, atk = attackSignals(red)

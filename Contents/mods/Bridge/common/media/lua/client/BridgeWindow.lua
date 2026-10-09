@@ -290,6 +290,8 @@ function BridgeWindowInfo:render()
     end
     self:drawText(fitText(UIFont.Small, shown, room), lookX, y, 0.6, 0.6, 0.6, 1, UIFont.Small)
 
+    y = y + BTN_H + PAD
+    self:drawText(BridgeData.text("Kills", tostring(Bridge.store.kills or 0)), x, y, 1, 1, 1, 1, UIFont.Small)
 
 end
 
@@ -757,9 +759,12 @@ function BridgeWindow.neededSize()
     pcall(function() status = BridgeMenu.status(true) end)
 
     local lookLabel = tr("LookDefault")
+    local killsLabel = ""
+    pcall(function() killsLabel = BridgeData.text("Kills", tostring(Bridge.store and Bridge.store.kills or 0)) end)
     local colW = math.max(
         textW(UIFont.Medium, name()),
         textW(UIFont.Small, status),
+        textW(UIFont.Small, killsLabel),
         textW(UIFont.Small, tr("Goodbye")) + PAD * 2,
         textW(UIFont.Small, tr("Call", name())) + PAD * 2,
         textW(UIFont.Small, tr("WindowAppearance")) + PAD + textW(UIFont.Small, lookLabel) + PAD + textW(UIFont.Small, getText("IGUI_PlayerStats_Change")) + PAD * 2)
@@ -772,7 +777,7 @@ function BridgeWindow.neededSize()
     w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowName") .. " " .. name()))
     local tickH = math.max(BTN_H, FONT_S) + gap
     local infoH = math.max(PAD * 2 + 2 + AVATAR_H + AVATAR_BORDER * 2,
-        PAD + FONT_M + 2 + PAD + FONT_S + 4 + BridgeWindow.REL_BAR_H + PAD + BTN_H + PAD * 2 + BTN_H + PAD)
+        PAD + FONT_M + 2 + PAD + FONT_S + 4 + BridgeWindow.REL_BAR_H + PAD + FONT_S + PAD + BTN_H + PAD * 2 + BTN_H + PAD)
     local setH = PAD + #BridgeWindow.TICKS * (tickH + PAD) + PAD + FONT_S + PAD / 2 + BTN_H + PAD + FONT_S + 4 + BTN_H + PAD
     local contentH = math.max(infoH, setH)
     if BridgeWindow.STATSMENU_ENABLE == 1 then

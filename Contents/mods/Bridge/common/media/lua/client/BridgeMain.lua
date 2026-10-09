@@ -660,6 +660,13 @@ function Bridge.refreshStore()
         elseif Bridge.localRel == nil and type(incoming) == "table" then
             Bridge.localRel = incoming
         end
+
+        local incomingKills = tonumber(Bridge.store.kills) or 0
+        if Bridge.localKills ~= nil and incomingKills < Bridge.localKills then
+            Bridge.store.kills = Bridge.localKills
+        elseif incomingKills > (Bridge.localKills or 0) then
+            Bridge.localKills = incomingKills
+        end
     end
 end
 
@@ -2524,6 +2531,9 @@ end
 
 
 function Bridge.onHitZombie(zombie, attacker, bodyPart, weapon)
+    if instanceof(attacker, "IsoPlayer") then
+        pcall(function() if BridgeKills ~= nil then BridgeKills.clear(zombie) end end)
+    end
     local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY_VAR) end)
     if ok then pcall(function() Bridge.spyHit(zombie, attacker, isBody and not reusedBody(zombie)) end) end
     if not ok or not isBody or reusedBody(zombie) then return end
@@ -4198,7 +4208,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     rest = true, stop = true, mode = true, sit = true, stand = true, sleep = true, anim = true, walk = true,
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
-    lose = true, despawn = true }
+    kills = true, lose = true, despawn = true }
 
 
 
@@ -4394,6 +4404,25 @@ function Bridge.run(line)
             BridgeFight.fatigue = clampf(cur - delta / 100)
         end
         return string.format("stamina=%.0f%% (fatigue=%.2f)", (1 - BridgeFight.fatigue) * 100, BridgeFight.fatigue)
+    end
+    if cmd == "kills" then
+        if BridgeKills == nil then return "no kills module" end
+        local sub = parts[3]
+        if sub == nil then return "kills=" .. tostring(BridgeKills.count()) end
+        if sub == "reset" or sub == "clear" then
+            return "kills=" .. tostring(BridgeKills.setCount(0))
+        end
+        local n = tonumber(parts[4])
+        if n == nil then return "kills [[set|add] <n>] | kills reset" end
+        if sub == "set" then
+            n = BridgeKills.setCount(n)
+        elseif sub == "add" then
+            n = BridgeKills.setCount(BridgeKills.count() + n)
+        else
+            return "kills [[set|add] <n>] | kills reset"
+        end
+        pcall(function() if BridgeCallout ~= nil then BridgeCallout.forceMilestone(n) end end)
+        return "kills=" .. tostring(n)
     end
     if cmd == "update" then
         Bridge.manualUpdate = (parts[3] == "on")
@@ -5164,6 +5193,7 @@ function Bridge.writeState()
         add("tick", Bridge.tick)
         add("ack", Bridge.ack)
         add("result", Bridge.result)
+        pcall(function() add("kills", BridgeKills ~= nil and BridgeKills.count() or 0) end)
         add("follow", tostring(Bridge.follow))
         add("mode", Bridge.mode)
         pcall(function()

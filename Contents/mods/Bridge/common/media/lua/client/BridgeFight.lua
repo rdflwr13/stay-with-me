@@ -659,6 +659,7 @@ local function hitTarget(body, item, victim, noMiss, fixedDmg)
     victim:Hit(item, fake, dmg, false, 1, false)
 
     pcall(function() BridgeCallout.kill(victim) end)
+    pcall(function() if BridgeKills ~= nil then BridgeKills.credit(victim) BridgeKills.confirm(victim) end end)
 
     tire(item, rawDmg, hpBefore, isProne(victim), body)
     pcall(function() victim:playSound(item:getZombieHitSound()) end)
@@ -1136,6 +1137,7 @@ local function shoveApply(body, victim, dot, d, crit)
         pcall(function() victim:setStaggerBack(true) end)
     end
     pcall(function() BridgeCallout.kill(victim) end)
+    pcall(function() if BridgeKills ~= nil then BridgeKills.credit(victim) BridgeKills.confirm(victim) end end)
 end
 
 
