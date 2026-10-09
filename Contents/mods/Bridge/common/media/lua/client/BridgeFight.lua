@@ -4,7 +4,9 @@
 
 BridgeFight = BridgeFight or {}
 
-local PRONE_WEIGHT = 2.0
+local PRONE_BONUS = 2.0
+local PRONE_BONUS_RANGE = 4.0
+local FENCE_HOP_PENALTY = 1.5
 
 
 local TIRED_SAY = 0.5
@@ -14,6 +16,7 @@ local ATTACK_TIME = 28
 local SWING_LEN = 60
 local SWING_MIN = 35
 local SWING_MAX = 120
+local HIT_FALLBACK_MAX = 50
 
 
 
@@ -49,7 +52,7 @@ for _, n in ipairs({ "Attack2H1", "Attack2H2", "Attack2H3", "Attack2H4", "Attack
     "Attack1H1", "Attack1H2", "Attack1H3", "Attack1H4", "Attack1H5", "Attack1HFloor", "Attack1HFloorB",
     "AttackS1", "AttackS2", "AttackS1B", "AttackS2B", "AttackS1Floor", "AttackS1FloorB", "AttackKnife", "AttackKnifeB", "AttackKnifeFloor",
     "AttackKnifeFloorB", "AttackStomp", "AttackStompB", "AttackBareHands1", "AttackBareHands2", "AttackBareHands3",
-    "AttackBareHands4", "AttackBareHands5", "AttackBareHands6" }) do ATTACK_NODES[n] = true end
+    "AttackBareHands4", "AttackBareHands5", "AttackBareHands6", "Shove" }) do ATTACK_NODES[n] = true end
 function BridgeFight.isAttackNode(name) return type(name) == "string" and ATTACK_NODES[name] == true end
 
 local BARRIER_STATE = { thump = true, climbfence = true, climbwindow = true }
@@ -74,8 +77,20 @@ local STALE_END_MAX = 40
 
 
 
-local SKILL_LEVEL = 0
 local CRIT_PER_LEVEL = 3
+local SKILL_DMG_PER_LEVEL = 0.10
+local SKILL_SPEED_PER_LEVEL = 0.03
+local STR_DMG_PER_LEVEL = 0.05
+local STR_CENTER = 5
+local STR_PUSH_BASE = 0.75
+local STR_PUSH_PER_LEVEL = 0.05
+local FIT_SPEED_PER_LEVEL = 0.02
+local FIT_DRAIN_BASE = 1.00
+local FIT_DRAIN_PER_LEVEL = 0.057
+local FIT_DRAIN_MIN = 0.43
+local FIT_RECOVER_BASE = 1.00
+local FIT_RECOVER_PER_LEVEL = 0.06
+local FIT_RECOVER_MAX = 1.60
 local TIRED_CRIT = 20
 local MISS_CHANCE = 15
 local CROWD_RADIUS = 2.0
@@ -95,6 +110,9 @@ local FATIGUE_MULT = 1.0
 local END_TWOHAND_DIV = 1.5
 local END_TWOHAND_SCALE = 10
 local END_CLOSE_KILL = 0.2
+
+
+local CHOP_STAMINA_MULT = 0.5
 local FATIGUE_REST = 1 / 10800
 local FATIGUE_REST_SIT = 2
 local FATIGUE_REST_BUSY = 0.5
@@ -118,6 +136,24 @@ local REACH_CACHE_MAX = 400
 local reachCache = setmetatable({}, { __mode = "k" })
 local reachCacheN = 0
 
+
+
+
+local SHOVE_ON            = 1
+local SHOVE_UNARMED       = 1
+local SHOVE_DEFENSIVE     = 1
+local SHOVE_RANGE         = 1.3
+local SHOVE_DOT           = 0.5
+local SHOVE_MAX           = 3
+local SHOVE_MIN_CROWD     = 2
+local SHOVE_PANIC_RANGE   = 0.85
+local SHOVE_COOLDOWN      = 120
+local SHOVE_STREAK_MAX    = 2
+local SHOVE_FORCE_MULT    = 1.0
+local SHOVE_KNOCKDOWN     = 1
+local SHOVE_BEHIND_BONUS  = 5
+local SHOVE_BEHIND_UNARMED_BONUS = 30
+
 BridgeFight.enabled = true
 BridgeFight.guardOnly = false
 BridgeFight.target = nil
@@ -127,6 +163,10 @@ BridgeFight.hit = false
 BridgeFight.lastPick = 0
 BridgeFight.info = "none"
 BridgeFight.approachStart = 0
+BridgeFight.playerFightUntil = 0
+BridgeFight.playerTarget = nil
+BridgeFight.lastHitChar = nil
+BridgeFight.lastHitHealth = nil
 
 
 
@@ -143,12 +183,70 @@ BridgeFight.fatigue = 0
 BridgeFight.crowd = 0
 BridgeFight.lastMiss = MISS_CHANCE
 BridgeFight.saidTired = false
+BridgeFight.kind = "hit"
+BridgeFight.shoveStreak = 0
+BridgeFight.shoveReadyAt = 0
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeFight] " .. tostring(text)) end end
 local function warn(text) print("[BridgeFight] " .. tostring(text)) end
 
 
 local function vlog(text) if Bridge ~= nil and Bridge.verbose then log(text) end end
+
+
+
+BridgeFight.COMBAT_DEBUG = false
+local function dbg(text)
+    if BridgeFight.COMBAT_DEBUG and BridgeLog ~= nil and BridgeLog.on() then print("[BridgeFight] " .. tostring(text)) end
+end
+
+
+
+
+local function weaponSkill(item)
+    if BridgeSkills == nil or BridgeSkills.categoryFor == nil then return nil, 0, 0 end
+    local cat = BridgeSkills.categoryFor(item)
+    if cat == nil then return nil, 0, 0 end
+    local raw = BridgeSkills.level(cat) or 0
+    local eff = (cat == "Axe") and raw or math.max(0, raw - 1)
+    return cat, raw, eff
+end
+
+local function strengthLevel()
+    if BridgeSkills == nil or BridgeSkills.level == nil then return STR_CENTER end
+    return BridgeSkills.level("Strength") or STR_CENTER
+end
+
+local function damageMultiplier(skillEff, str)
+    return 1 + SKILL_DMG_PER_LEVEL * (skillEff or 0) + STR_DMG_PER_LEVEL * ((str or STR_CENTER) - STR_CENTER)
+end
+
+local function pushMultiplier(str)
+    return STR_PUSH_BASE + STR_PUSH_PER_LEVEL * (str or 0)
+end
+
+
+
+
+local function fitnessLevel()
+    if BridgeSkills == nil or BridgeSkills.level == nil then return 0 end
+    return BridgeSkills.level("Fitness") or 0
+end
+
+local function fitnessSpeedAdd(n)
+    n = math.max(0, math.min(10, n or 0))
+    return FIT_SPEED_PER_LEVEL * n
+end
+
+local function fitnessDrainMult(n)
+    n = math.max(0, math.min(10, n or 0))
+    return math.max(FIT_DRAIN_MIN, FIT_DRAIN_BASE - FIT_DRAIN_PER_LEVEL * n)
+end
+
+local function fitnessRecoverMult(n)
+    n = math.max(0, math.min(10, n or 0))
+    return math.min(FIT_RECOVER_MAX, FIT_RECOVER_BASE + FIT_RECOVER_PER_LEVEL * n)
+end
 
 local function dist(a, b)
     local dx, dy = a:getX() - b:getX(), a:getY() - b:getY()
@@ -212,6 +310,15 @@ local function isProne(z)
     local crawl = false
     pcall(function() crawl = z:isCrawling() end)
     return z:isProne() or crawl or asn == "onground" or asn == "sitonground"
+        or string.sub(asn, 1, 5) == "getup"
+end
+
+
+
+local function isKnockedDown(z)
+    local down, crawl = false, true
+    pcall(function() down = isProne(z) crawl = z:isCrawling() end)
+    return down and not crawl
 end
 
 
@@ -252,13 +359,19 @@ local function swingFrames(item)
     pcall(function() anim = item:getSwingAnim() end)
     pcall(function() speed = item:getBaseSpeed() end)
     if type(speed) ~= "number" or speed <= 0 then speed = 1.0 end
+    local _, _, eff = weaponSkill(item)
+    speed = speed + SKILL_SPEED_PER_LEVEL * (eff or 0)
+    speed = speed + fitnessSpeedAdd(fitnessLevel())
     local len = math.floor((SWING_BY_ANIM[anim] or SWING_DEFAULT) / speed + 0.5)
     if len < SWING_MIN then len = SWING_MIN end
     if len > SWING_MAX then len = SWING_MAX end
 
     len = math.floor(len * (1 + TIRED_SWING * BridgeFight.fatigue) + 0.5)
-    return len, math.floor(len * 0.45 + 0.5)
+
+
+    return len, math.min(math.floor(len * 0.45 + 0.5), HIT_FALLBACK_MAX)
 end
+BridgeFight.swingFrames = swingFrames
 
 
 
@@ -335,21 +448,59 @@ local function tire(item, dealt, hp, prone, body)
     elseif dealt ~= nil and dealt > 0 then
         scale = math.min(math.min(dealt, hp or dealt) / maxD, 1)
     end
-    BridgeFight.lastTire = cost * scale * FATIGUE_MULT
-    BridgeFight.fatigue = math.min(1, BridgeFight.fatigue + cost * scale * FATIGUE_MULT)
+    local fitDrain = fitnessDrainMult(fitnessLevel())
+    BridgeFight.lastTire = cost * scale * FATIGUE_MULT * fitDrain
+    BridgeFight.fatigue = math.min(1, BridgeFight.fatigue + cost * scale * FATIGUE_MULT * fitDrain)
     sayFatigue()
 end
 
 
-local function rest(busy)
+local function rest(busy, sitting)
     if BridgeFight.fatigue <= 0 then return end
     local r = FATIGUE_REST * (busy and FATIGUE_REST_BUSY or 1)
 
-    if Bridge.pose ~= nil then r = r * FATIGUE_REST_SIT end
+    if Bridge.pose ~= nil or sitting then r = r * FATIGUE_REST_SIT end
 
     r = r * (Bridge.dt or 1)
+    r = r * fitnessRecoverMult(fitnessLevel())
     BridgeFight.fatigue = math.max(0, BridgeFight.fatigue - r)
     sayFatigue()
+end
+BridgeFight.rest = rest
+
+
+
+
+
+
+function BridgeFight.tireTree(axe, body)
+    local w, fat, charFat, endu = 1.0, 1.0, 1.0, 1.0
+    local useEnd = true
+    pcall(function() useEnd = axe:isUseEndurance() end)
+    if axe == nil or body == nil or not useEnd then return 0 end
+    pcall(function() w = axe:getWeight() end)
+    pcall(function() fat = axe:getFatigueMod(body) end)
+    pcall(function() charFat = body:getFatigueMod() end)
+    pcall(function() endu = axe:getEnduranceMod() end)
+    if type(w) ~= "number" or w <= 0 then w = 1.0 end
+    if type(fat) ~= "number" or fat <= 0 then fat = 1.0 end
+    if type(charFat) ~= "number" or charFat <= 0 then charFat = 1.0 end
+    if type(endu) ~= "number" or endu <= 0 then endu = 1.0 end
+    local use = w * fat * charFat * endu * 0.1 * 0.041
+    local two = false
+    pcall(function() two = axe:isTwoHandWeapon() end)
+    if two then use = use + w / 1.5 / 10 / 20 end
+    local fitLevel = fitnessLevel()
+    use = use * CHOP_STAMINA_MULT
+    use = use * fitnessDrainMult(fitLevel)
+    if use > 0 then
+        BridgeFight.lastTire = use
+        BridgeFight.fatigue = math.min(1, BridgeFight.fatigue + use)
+        dbg(string.format("FIT chop L%d drain x%.2f rec x%.2f fatigue=%.2f",
+            fitLevel, fitnessDrainMult(fitLevel), fitnessRecoverMult(fitLevel), BridgeFight.fatigue))
+        sayFatigue()
+    end
+    return use
 end
 
 local function critRoll(item)
@@ -358,7 +509,8 @@ local function critRoll(item)
     pcall(function() critMult = item:getCriticalDamageMultiplier() end)
     if type(critChance) ~= "number" then critChance = 0 end
     if type(critMult) ~= "number" or critMult <= 0 then critMult = 1 end
-    critChance = math.max(0, math.min(90, critChance + CRIT_PER_LEVEL * SKILL_LEVEL - TIRED_CRIT * BridgeFight.fatigue))
+    local _, _, eff = weaponSkill(item)
+    critChance = math.max(10, math.min(90, critChance + CRIT_PER_LEVEL * eff - TIRED_CRIT * BridgeFight.fatigue))
     return ZombRand(100) < critChance, critChance, critMult
 end
 
@@ -430,6 +582,13 @@ local function hitTarget(body, item, victim, noMiss, fixedDmg)
     end
     local dmg, rawDmg
     local headFloor = false
+
+
+
+    local cat, rawSkill, eff = weaponSkill(item)
+    local str = strengthLevel()
+    local fitN = fitnessLevel()
+    local mult = damageMultiplier(eff, str)
     if type(fixedDmg) == "number" then
         dmg = fixedDmg
         rawDmg = BridgeFight.lastRawDmg or fixedDmg
@@ -440,7 +599,7 @@ local function hitTarget(body, item, victim, noMiss, fixedDmg)
         dmg = dmgMin + (dmgMax - dmgMin) * ZombRandFloat(0, 1)
         rawDmg = dmg
         if crit then dmg = dmg * math.max(2, critMult) end
-        dmg = dmg * (0.3 + 0.1 * SKILL_LEVEL) / 0.3
+        dmg = dmg * mult
         dmg = dmg * (1 - TIRED_DAMAGE * BridgeFight.fatigue)
         if GROUND_BONUS_ON == 1 and BridgeFight.floorSwing then
             dmg = dmg * math.max(critMult, 5)
@@ -452,6 +611,14 @@ local function hitTarget(body, item, victim, noMiss, fixedDmg)
         BridgeFight.lastRawDmg = rawDmg
         BridgeFight.lastHitDmg = dmg
     end
+    dbg(string.format("HIT %s roll=%.3f crit=%s skill=%s L%d(eff %d, +%d%%) str=%d(+%d%%) mult=%.2f dmg=%.3f fatigue=%.2f fit=L%d(spd+%.0f%% drain x%.2f rec x%.2f)",
+        tostring(item:getType()), rawDmg or 0,
+        crit and ("x" .. tostring(math.max(2, critMult))) or "no",
+        tostring(cat or "-"), rawSkill or 0, eff or 0,
+        math.floor(SKILL_DMG_PER_LEVEL * (eff or 0) * 100 + 0.5),
+        str or STR_CENTER, math.floor(STR_DMG_PER_LEVEL * ((str or STR_CENTER) - STR_CENTER) * 100 + 0.5),
+        mult, dmg, BridgeFight.fatigue,
+        fitN, fitnessSpeedAdd(fitN) * 100, fitnessDrainMult(fitN), fitnessRecoverMult(fitN)))
     BridgeFight.lastHead = headFloor
     local hpBefore = 0
     pcall(function() hpBefore = victim:getHealth() end)
@@ -510,6 +677,10 @@ local function hitTarget(body, item, victim, noMiss, fixedDmg)
             body:addBlood(nil, false, false, false)
         end
     end)
+
+    BridgeFight.shoveStreak = 0
+
+    pcall(function() BridgeSkills.add("Strength", 1, "hit") end)
     return "hit"
 end
 
@@ -563,7 +734,11 @@ end
 
 function BridgeFight.mode()
     if BridgeFight.guardOnly then return BridgeData.COMBAT.bodyguard end
-    return BridgeData.COMBAT[BridgeData.combatOf(Bridge.store)] or BridgeData.COMBAT.bodyguard
+    local m = BridgeData.COMBAT[BridgeData.combatOf(Bridge.store)] or BridgeData.COMBAT.bodyguard
+    if m.assist and (Bridge.time or 0) >= (BridgeFight.playerFightUntil or 0) then
+        return BridgeData.COMBAT.stayback or m
+    end
+    return m
 end
 
 
@@ -571,9 +746,21 @@ function BridgeFight.threat(z, body, red, mode)
     mode = mode or BridgeFight.mode()
     local bySelf = BridgeFight.guardOnly or mode.rank == "self"
     local d = bySelf and dist(z, body) or dist(z, red)
-    local prone = false
-    pcall(function() prone = isProne(z) or z:isCrawling() end)
-    return d + (prone and PRONE_WEIGHT or 0)
+
+
+    local down = false
+    pcall(function() down = isKnockedDown(z) end)
+    if down and d > PRONE_BONUS_RANGE then down = false end
+    local score = d - (down and PRONE_BONUS or 0)
+
+
+
+    if d <= 6.0 then
+        local clear = true
+        pcall(function() clear = BridgeMove.lineClear(body, z:getX(), z:getY(), z:getZ()) == true end)
+        if not clear then score = score + FENCE_HOP_PENALTY end
+    end
+    return score
 end
 
 
@@ -624,8 +811,7 @@ local function pickTarget(body, red, mode)
         local busy = false
         pcall(function()
             local st = z:getActionStateName()
-            busy = (st == "climbfence" or st == "climbwindow" or st == "pathfind")
-                or (st == "thump" and barrierSide(z, body))
+            busy = (st == "thump" and barrierSide(z, body))
         end)
 
 
@@ -755,8 +941,13 @@ function BridgeFight.reset(body)
     BridgeFight.target = nil
     BridgeFight.state = "idle"
     BridgeFight.hit = false
+    BridgeFight.kind = "hit"
     BridgeFight.info = "none"
     BridgeFight.targetInfo = "none"
+    BridgeFight.playerTarget = nil
+    BridgeFight.playerFightUntil = 0
+    BridgeFight.lastHitChar = nil
+    BridgeFight.lastHitHealth = nil
 end
 
 
@@ -847,10 +1038,237 @@ function BridgeFight.multiHit(body, item, primary)
 end
 
 
+
+
+
+
+local function bareHands()
+    if BridgeFight.bareHands == nil then
+        BridgeFight.bareHands = instanceItem("Base.BareHands")
+    end
+    return BridgeFight.bareHands
+end
+
+local function isUnarmed(item)
+    local unarmed = false
+    pcall(function()
+        unarmed = item ~= nil and (item:getFullType() == "Base.BareHands" or WeaponType.getWeaponType(item) == WeaponType.UNARMED)
+    end)
+    return unarmed
+end
+
+
+
+local function shoveDamageSplit()
+    local mn, mx = 0.2, 0.4
+    local bare = bareHands()
+    pcall(function() mn = bare:getMinDamage() end)
+    pcall(function() mx = bare:getMaxDamage() end)
+    local roll = mn + (mx - mn) * ZombRandFloat(0, 1)
+    return (roll / 0.5) * SHOVE_FORCE_MULT * pushMultiplier(strengthLevel())
+end
+
+
+local function shoveTargets(body)
+    local out = {}
+    local fx, fy = 0, 1
+    pcall(function() fx, fy = body:getForwardDirectionX(), body:getForwardDirectionY() end)
+    local red = BridgeData.owner()
+    pcall(function()
+        local list = getCell():getZombieList()
+        for i = 0, list:size() - 1 do
+            local z = list:get(i)
+            if z ~= nil and z ~= body and z:isAlive() and z:getHealth() > 0
+                and not instanceof(z, "IsoPlayer") and (red == nil or z ~= red)
+                and not isBody(z) and not remoteZombie(z) and not BridgeData.harmless(z)
+                and not BridgeFight.ownerRisen(z, red) and not isProne(z)
+                and math.abs(z:getZ() - body:getZ()) < 0.8 then
+                local d = dist(body, z)
+                if d <= SHOVE_RANGE then
+                    local dx, dy = z:getX() - body:getX(), z:getY() - body:getY()
+                    local len = math.sqrt(dx * dx + dy * dy)
+                    local dot = (len > 0.001) and ((fx * dx + fy * dy) / len) or 1
+                    if dot >= SHOVE_DOT then
+                        local clear = false
+                        pcall(function() clear = BridgeMove.lineClear(body, z:getX(), z:getY(), z:getZ()) end)
+                        if clear then out[#out + 1] = { z = z, d = d, dot = dot } end
+                    end
+                end
+            end
+        end
+    end)
+    table.sort(out, function(a, b) return a.d < b.d end)
+    while #out > SHOVE_MAX do out[#out] = nil end
+    return out
+end
+
+
+local function shoveCritChance(body, victim)
+    local chance = 35 + 2 * strengthLevel()
+    local behind = false
+    pcall(function() behind = body:isBehind(victim) end)
+    if behind then
+        local unarmedUnaware = false
+        pcall(function()
+            unarmedUnaware = (body:getPrimaryHandItem() == nil) and (victim:getTarget() == nil)
+        end)
+        chance = chance + (unarmedUnaware and SHOVE_BEHIND_UNARMED_BONUS or SHOVE_BEHIND_BONUS)
+    end
+    return chance
+end
+
+
+local function shoveApply(body, victim, dot, d, crit)
+    local fake = getCell():getFakeZombieForHit()
+    local rangeDel = d / 1.1 * 2
+    if rangeDel < 0.3 then rangeDel = 1.0 end
+    pcall(function() victim:setPlayerAttackPosition(victim:testDotSide(body)) end)
+    pcall(function() victim:setHitFromBehind(body:isBehind(victim)) end)
+    pcall(function() victim:setHitFromAngle(dot) end)
+    pcall(function() victim:setAttackedBy(fake) end)
+
+    pcall(function() victim:Hit(bareHands(), fake, shoveDamageSplit(), true, rangeDel * 1.5, false) end)
+    if SHOVE_KNOCKDOWN == 1 and crit then
+        pcall(function() victim:setKnockedDown(true) end)
+    else
+
+        pcall(function() victim:setHitReaction("") end)
+        pcall(function() victim:setStaggerBack(true) end)
+    end
+    pcall(function() BridgeCallout.kill(victim) end)
+end
+
+
+function BridgeFight.shoveResolve(body, primary)
+    local crit, chance = false, 0
+    if SHOVE_KNOCKDOWN == 1 then
+        chance = shoveCritChance(body, primary)
+        crit = ZombRand(100) < chance
+    end
+    BridgeFight.lastShoveCrit = chance
+    BridgeFight.shoveCrit = crit
+    local targets = shoveTargets(body)
+    for i = 1, #targets do
+        local e = targets[i]
+        pcall(function() shoveApply(body, e.z, e.dot, e.d, crit) end)
+    end
+    local str = strengthLevel()
+    local fitN = fitnessLevel()
+    dbg(string.format("SHOVE targets=%d str=%d forceMult=%.2f crit=%.0f%% kd=%s fit=L%d(spd+%.0f%% drain x%.2f rec x%.2f)",
+        #targets, str, pushMultiplier(str), chance, tostring(crit),
+        fitN, fitnessSpeedAdd(fitN) * 100, fitnessDrainMult(fitN), fitnessRecoverMult(fitN)))
+    BridgeFight.shoveStreak = (BridgeFight.shoveStreak or 0) + 1
+    BridgeFight.shoveReadyAt = Bridge.time + SHOVE_COOLDOWN
+    BridgeFight.info = string.format("shove %d%s", #targets, crit and " KD" or "")
+    tire(bareHands(), 0, 0, false, body)
+    vlog(string.format("shove: %d target(s) crit=%s (%.0f%%) streak=%d", #targets, tostring(crit), chance, BridgeFight.shoveStreak or 0))
+end
+
+
+local function wantShove(body, t, item)
+    if SHOVE_ON ~= 1 then return false end
+    if t == nil or isProne(t) then return false end
+    if Bridge.time < (BridgeFight.shoveReadyAt or 0) then return false end
+    if (BridgeFight.shoveStreak or 0) >= SHOVE_STREAK_MAX then return false end
+    local d = dist(body, t)
+    if d > SHOVE_RANGE then return false end
+    if SHOVE_UNARMED == 1 and isUnarmed(item) then return true end
+    if SHOVE_DEFENSIVE == 1 then
+        local crowd = crowdAround(body)
+        if crowd >= SHOVE_MIN_CROWD or d <= SHOVE_PANIC_RANGE then return true end
+    end
+    return false
+end
+
+
+local function startShove(body, t)
+    pcall(function() body:faceLocationF(t:getX(), t:getY()) end)
+    pcall(function()
+        local st = body:getActionStateName()
+        if st ~= "bumped" and st ~= "idle" then body:changeState(ZombieIdleState.instance()) end
+    end)
+    pcall(function() body:setVariable(HIT_VAR, false) end)
+    pcall(function() body:setVariable("BumpAnimFinished", false) end)
+    pcall(function() body:playSound("AttackShove") end)
+    pcall(function() BridgeSound.voice(body, "MeleeShove", 40) end)
+    body:setBumpType("Shove")
+    if Bridge.mp then pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "look", { a = "Shove" }) end) end
+    BridgeFight.anim = "Shove"
+    BridgeFight.kind = "shove"
+    BridgeFight.state = "swing"
+    BridgeFight.swingStart = Bridge.time
+    BridgeFight.swingLen, BridgeFight.attackAt = swingFrames(bareHands())
+    BridgeFight.hit = false
+    BridgeFight.info = "shove " .. tostring(BridgeFight.swingLen) .. "f"
+    BridgeFight.lastSwingAt = Bridge.time
+    vlog(string.format("shove start len=%d", BridgeFight.swingLen))
+    return true
+end
+
+
+local ASSIST_GRACE = 4 * 60
+
+function BridgeFight.assistWindow(body, red)
+    local attacking = false
+    pcall(function() attacking = red:isAttacking() == true end)
+
+    local hit, hp = nil, nil
+    pcall(function()
+        local h = red:getLastHitCharacter()
+        if h ~= nil and instanceof(h, "IsoZombie") and h:isAlive() and h:getHealth() > 0 then
+            hit, hp = h, h:getHealth()
+        end
+    end)
+    local freshHit = hit ~= nil and hit ~= BridgeFight.lastHitChar
+    local hurt = hit ~= nil and hit == BridgeFight.lastHitChar
+        and BridgeFight.lastHitHealth ~= nil and hp < BridgeFight.lastHitHealth
+    if hit ~= nil then
+        BridgeFight.lastHitChar = hit
+        BridgeFight.lastHitHealth = hp
+    end
+
+    if not (attacking or freshHit or hurt) then return end
+    BridgeFight.playerFightUntil = Bridge.time + ASSIST_GRACE
+    if hit ~= nil then BridgeFight.playerTarget = hit end
+end
+
+
+
+
+local function tryVault(body, t)
+    if BridgeMove == nil or BridgeMove.askClimb == nil then return end
+    if BridgeMove.pendingClimb ~= nil then return end
+    pcall(function()
+        if Bridge.time < (BridgeMove.noCrossUntil or 0) then return end
+        if math.abs(body:getZ() - t:getZ()) >= 0.5 then return end
+        local cur = body:getCurrentSquare()
+        if cur == nil then return end
+        local dx, dy = t:getX() - body:getX(), t:getY() - body:getY()
+        if math.abs(dx) < 0.05 and math.abs(dy) < 0.05 then return end
+        local sx, sy = 0, 0
+        if math.abs(dx) >= math.abs(dy) then sx = (dx >= 0) and 1 or -1
+        else sy = (dy >= 0) and 1 or -1 end
+        local ahead = getCell():getGridSquare(cur:getX() + sx, cur:getY() + sy, cur:getZ())
+        if ahead == nil then return end
+        local kind = nil
+        pcall(function() kind = BridgeMove.edgeBetween(body, cur, ahead) end)
+        if kind ~= "fence" then return end
+        local safe = true
+        pcall(function() safe = BridgeMove.vaultSafe(body, cur, ahead) == true end)
+        if not safe then return end
+        pcall(function() body:faceLocationF(t:getX(), t:getY()) end)
+        pcall(function() BridgeMove.askClimb(body, "fence", nil) end)
+    end)
+end
+
 function BridgeFight.update(body)
     if not BridgeFight.enabled then rest(false) return false end
     local red = BridgeData.owner()
     if red == nil then return false end
+
+    if BridgeData.combatOf(Bridge.store) == "backup" then
+        pcall(BridgeFight.assistWindow, body, red)
+    end
 
     if BridgeAim ~= nil then
         BridgeAim.refresh(red)
@@ -863,6 +1281,13 @@ function BridgeFight.update(body)
     end
     local mode = BridgeFight.mode()
     watchCrawlers(body, red)
+
+    if mode.passive then
+        BridgeFight.target = nil
+        BridgeFight.state = "idle"
+        rest(false)
+        return false
+    end
 
 
 
@@ -902,6 +1327,11 @@ function BridgeFight.update(body)
                 local st = "?"
                 pcall(function() st = tostring(body:getActionStateName()) .. "/" .. tostring(body:getBumpType()) end)
                 vlog("swing without animation (" .. st .. "), swinging again")
+                if BridgeFight.kind == "shove" then
+
+                    BridgeFight.shoveStreak = (BridgeFight.shoveStreak or 0) + 1
+                    BridgeFight.shoveReadyAt = Bridge.time + SHOVE_COOLDOWN
+                end
                 BridgeFight.state = "idle"
                 return true
             end
@@ -910,7 +1340,9 @@ function BridgeFight.update(body)
             BridgeFight.hit = true
             pcall(function() body:setVariable(HIT_VAR, false) end)
             vlog(string.format("hit moment: %s at %.2f s of the swing", mark and "animation mark" or "time (no mark)", age / 60))
-            if validTarget(t, body, red, mode) then
+            if BridgeFight.kind == "shove" then
+                pcall(function() BridgeFight.shoveResolve(body, t) end)
+            elseif validTarget(t, body, red, mode) then
                 local w = weapon(body)
                 local ok, res = pcall(function() return hitTarget(body, w, t) end)
                 BridgeFight.info = ok and ("swing " .. tostring(res)) or ("hit error: " .. tostring(res))
@@ -920,6 +1352,31 @@ function BridgeFight.update(body)
                     vlog("swing " .. BridgeFight.info .. " target state=" .. st .. " crawling=" .. tostring(crawl))
                 else
                     pcall(function() BridgeFight.multiHit(body, w, t) end)
+
+                    pcall(function()
+                        local cat = BridgeSkills.categoryFor(w)
+                        if cat ~= nil then
+                            BridgeSkills.add(cat, math.min((BridgeFight.lastRawDmg or 0) * 0.9, 3), "swing")
+                        end
+                    end)
+
+
+
+
+                    pcall(function()
+                        if BridgeSkills ~= nil and BridgeSkills.rollMaintenance ~= nil then
+                            local mxp = BridgeSkills.rollMaintenance(w)
+                            if mxp > 0 then BridgeSkills.add("Maintenance", mxp, "hit") end
+                        end
+                    end)
+
+
+                    pcall(function()
+                        local endur, warn = 1.0, 0.5
+                        pcall(function() endur = body:getStats():get(CharacterStat.ENDURANCE) end)
+                        pcall(function() warn = body:getStats():getEnduranceWarning() end)
+                        if endur > warn then BridgeSkills.add("Fitness", 1, "swing") end
+                    end)
                 end
             else
                 vlog("swing lost target before the hit")
@@ -947,7 +1404,7 @@ function BridgeFight.update(body)
         local okP, z = pcall(function() return pickTarget(body, red, mode) end)
         local cur = BridgeFight.target
         if okP and z ~= nil and z ~= cur
-            and BridgeFight.threat(z, body, red, mode) + 0.5 < BridgeFight.threat(cur, body, red, mode) then
+            and BridgeFight.threat(z, body, red, mode) + 1.0 < BridgeFight.threat(cur, body, red, mode) then
             vlog(string.format("target switched: threat %.1f -> %.1f (dred %.1f -> %.1f)", BridgeFight.threat(cur, body, red, mode),
                 BridgeFight.threat(z, body, red, mode), dist(cur, red), dist(z, red)))
             BridgeFight.target = z
@@ -1057,12 +1514,18 @@ function BridgeFight.update(body)
         pcall(function() BridgeMove.endFollowBump(body, "") end)
         pcall(function() BridgeMove.setCollide(body, true) end)
 
-        pcall(function() BridgeMove.goToward(body, t:getX(), t:getY(), t:getZ()) end)
+        tryVault(body, t)
+
+        pcall(function() BridgeMove.goToward(body, t:getX(), t:getY(), t:getZ(), true) end)
         return true
     end
 
 
     BridgeMove.stopPath(body)
+
+    if wantShove(body, t, item) then
+        return startShove(body, t)
+    end
 
 
     pcall(function()
@@ -1108,6 +1571,7 @@ function BridgeFight.update(body)
 
     if Bridge.mp then pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "look", { a = anim }) end) end
     BridgeFight.anim = anim
+    BridgeFight.kind = "hit"
     BridgeFight.state = "swing"
     BridgeFight.swingStart = Bridge.time
     BridgeFight.swingLen, BridgeFight.attackAt = swingFrames(item)

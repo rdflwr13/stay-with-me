@@ -17,6 +17,7 @@ BridgeData.KEY = "NotAlone"
 BridgeData.OLD_KEY = "BridgeRin"
 BridgeData.LOCAL = "local"
 BridgeData.DEFAULT_NAME = "Rin"
+BridgeData.DEFAULT_MALE_NAME = "Ren"
 BridgeData.NAME_MAX = 20
 BridgeData.MODES = { follow = true, wait = true, rest = true }
 
@@ -92,7 +93,25 @@ end
 
 BridgeData.FOREIGN_MODDATA = BridgeData.FOREIGN_MODDATA or { "ProjectALifeOwned", "ProjectALifeActor" }
 
+
+
+
+
+BridgeData.SURVIVOR_MODDATA = "PS_NPC_ID"
+
+function BridgeData.survivorBody(z)
+    local yes = false
+    pcall(function()
+        if z == nil or z.hasModData == nil or not z:hasModData() then return end
+        local data = z:getModData()
+        if data == nil then return end
+        if data[BridgeData.SURVIVOR_MODDATA] ~= nil then yes = true end
+    end)
+    return yes
+end
+
 local function markedForeign(z)
+    if BridgeData.survivorBody(z) then return true end
     local yes = false
     pcall(function()
         local data = z:getModData()
@@ -238,7 +257,12 @@ function BridgeData.cleanName(text)
 end
 
 function BridgeData.nameOf(rec)
-    if rec ~= nil and rec.name ~= nil and rec.name ~= "" then return rec.name end
+    if type(rec) ~= "table" then return BridgeData.DEFAULT_NAME end
+    if BridgeData.isMale(rec) then
+        if rec.maleName ~= nil and rec.maleName ~= "" then return rec.maleName end
+        return BridgeData.DEFAULT_MALE_NAME
+    end
+    if rec.name ~= nil and rec.name ~= "" then return rec.name end
     return BridgeData.DEFAULT_NAME
 end
 
@@ -287,7 +311,7 @@ function BridgeData.farOf(rec)
 end
 
 
-BridgeData.COMBAT_MODES = { bodyguard = true, escort = true, aggressive = true }
+BridgeData.COMBAT_MODES = { bodyguard = true, escort = true, aggressive = true, backup = true, stayback = true }
 BridgeData.DEFAULT_COMBAT = "bodyguard"
 
 
@@ -295,6 +319,8 @@ BridgeData.COMBAT = {
     bodyguard = { rank = "player", engageSelf = 2.5, engageRed = 3.0, targetMax = 6.0, approach = 4.5, leash = 4.0 },
     escort = { rank = "self", engageSelf = 3.0, engageRed = 5.5, targetMax = 9.0, approach = 7.0, leash = 7.0 },
     aggressive = { rank = "self", engageSelf = 4.5, engageRed = 11.0, targetMax = 13.0, approach = 12.0, leash = 12.0 },
+    backup = { rank = "player", engageSelf = 2.5, engageRed = 3.0, targetMax = 6.0, approach = 4.5, leash = 4.0, assist = true },
+    stayback = { rank = "self", engageSelf = 0, engageRed = 0, targetMax = 0, approach = 0, leash = 99, passive = true },
 }
 
 function BridgeData.combatOf(rec)
@@ -318,14 +344,116 @@ end
 
 
 
-BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true }
-BridgeData.DEFAULT_HAIR = "Grungey02"
+
+
+BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, xpPopups = false,
+    romance = true, fatigueBar = false, torch = "auto" }
 BridgeData.HAIR_MAX = 40
 
 function BridgeData.optionOf(rec, key)
     if BridgeData.OPTIONS[key] == nil then return false end
     if rec ~= nil and rec[key] ~= nil then return rec[key] == true end
-    return BridgeData.OPTIONS[key]
+    if key == "romance" then return not BridgeData.sameSex(rec) end
+    return BridgeData.OPTIONS[key] == true
+end
+
+
+
+BridgeData.TORCH_MODES = { off = true, auto = true }
+BridgeData.DEFAULT_TORCH = "off"
+
+function BridgeData.cleanTorchMode(value)
+    if type(value) == "string" then value = string.lower(value) end
+    if BridgeData.TORCH_MODES[value] then return value end
+    return nil
+end
+
+function BridgeData.torchMode(rec)
+    if rec ~= nil then
+        local mode = BridgeData.cleanTorchMode(rec.torch)
+        if mode ~= nil then return mode end
+    end
+    local def = BridgeData.cleanTorchMode(BridgeData.OPTIONS.torch)
+    return def or BridgeData.DEFAULT_TORCH
+end
+
+
+function BridgeData.sameSex(rec)
+    local fem = nil
+    pcall(function() fem = BridgeData.owner():isFemale() end)
+    if fem == nil then return false end
+    return fem == BridgeData.isFemale(rec)
+end
+
+
+
+
+
+
+
+BridgeData.GENDERS = { female = true, male = true }
+BridgeData.DEFAULT_GENDER = "female"
+
+function BridgeData.cleanGender(value)
+    if value == "male" then return "male" end
+    return "female"
+end
+
+function BridgeData.genderOf(rec)
+    if type(rec) == "table" and rec.gender == "male" then return "male" end
+    return "female"
+end
+
+function BridgeData.isFemale(rec)
+    return BridgeData.genderOf(rec) == "female"
+end
+
+function BridgeData.isMale(rec)
+    return BridgeData.genderOf(rec) == "male"
+end
+
+function BridgeData.voicePrefix(rec)
+    return BridgeData.isMale(rec) and "VoiceMale" or "VoiceFemale"
+end
+
+
+
+
+BridgeData.GENDERED_KEYS = {
+    Need_Axe = true, Need_CleanImplement = true, Need_Cleaner = true, Need_CleanSupplies = true,
+    Talk_Thanks = true, Talk_Comfort = true, Rel_Crush = true, InvAssign = true, LookDefault = true,
+    CombatAggressive = true, CombatAggressiveTip = true, CombatGuardTip = true,
+    OptAutoHeal = true, OptAutoHealTip = true, OptHitMatters = true, OptGifts = true,
+    OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRomanceTip = true,
+    OptFatigueBar = true, OptFatigueBarTip = true,
+    OptTorchTip = true,
+}
+
+function BridgeData.text(key, a, b)
+    local full = key
+    if BridgeData.GENDERED_KEYS[key] and type(Bridge) == "table" and BridgeData.isMale(Bridge.store) then
+        local alt = nil
+        pcall(function() alt = getTextOrNull("IGUI_NotAlone_" .. key .. "Male") end)
+        if type(alt) == "string" and alt ~= "" and alt ~= ("IGUI_NotAlone_" .. key .. "Male") then full = key .. "Male" end
+    end
+    local out = key
+    pcall(function()
+        if b ~= nil then out = getText("IGUI_NotAlone_" .. full, a, b)
+        elseif a ~= nil then out = getText("IGUI_NotAlone_" .. full, a)
+        else out = getText("IGUI_NotAlone_" .. full) end
+    end)
+    return out
+end
+
+
+
+function BridgeData.appearanceOf(rec)
+    if type(rec) ~= "table" then return {} end
+    if rec.gender == "male" then
+        if type(rec.male) ~= "table" then rec.male = {} end
+        return rec.male
+    end
+    return rec
 end
 
 
@@ -335,27 +463,48 @@ function BridgeData.cleanHair(text)
     return text
 end
 
+BridgeData.DEFAULT_HAIR = "Grungey02"
+BridgeData.DEFAULT_MALE_HAIR = "Bald"
+
 function BridgeData.hairOf(rec)
-    local hair = rec ~= nil and BridgeData.cleanHair(rec.hair) or nil
-    return hair or BridgeData.DEFAULT_HAIR
+    local app = BridgeData.appearanceOf(rec)
+    local hair = app ~= nil and BridgeData.cleanHair(app.hair) or nil
+    if hair ~= nil then return hair end
+    return BridgeData.isMale(rec) and BridgeData.DEFAULT_MALE_HAIR or BridgeData.DEFAULT_HAIR
 end
 
 BridgeData.DEFAULT_SKIN = "FemaleBody01"
 BridgeData.SKINS = { "FemaleBody01", "FemaleBody02", "FemaleBody03", "FemaleBody04", "FemaleBody05" }
+BridgeData.DEFAULT_MALE_SKIN = "MaleBody01"
+BridgeData.MALE_SKINS = { "MaleBody01", "MaleBody02", "MaleBody03", "MaleBody04", "MaleBody05" }
 BridgeData.DEFAULT_HAIR_COLOR = { r = 0.55, g = 0.12, b = 0.12 }
+BridgeData.DEFAULT_MALE_HAIR_COLOR = { r = 0.16, g = 0.09, b = 0.05 }
 
 
-function BridgeData.cleanSkin(text)
+function BridgeData.cleanSkinFor(text, gender)
     if type(text) ~= "string" then return nil end
-    for i = 1, #BridgeData.SKINS do
-        if BridgeData.SKINS[i] == text then return text end
+    local list = (gender == "male") and BridgeData.MALE_SKINS or BridgeData.SKINS
+    for i = 1, #list do
+        if list[i] == text then return text end
     end
     return nil
 end
 
+
+function BridgeData.cleanSkin(text)
+    return BridgeData.cleanSkinFor(text, "female") or BridgeData.cleanSkinFor(text, "male")
+end
+
 function BridgeData.skinOf(rec)
-    local skin = rec ~= nil and BridgeData.cleanSkin(rec.skin) or nil
-    return skin or BridgeData.DEFAULT_SKIN
+    local gender = BridgeData.genderOf(rec)
+    local app = BridgeData.appearanceOf(rec)
+    local skin = app ~= nil and BridgeData.cleanSkinFor(app.skin, gender) or nil
+    if skin ~= nil then return skin end
+    return gender == "male" and BridgeData.DEFAULT_MALE_SKIN or BridgeData.DEFAULT_SKIN
+end
+
+function BridgeData.skinsFor(gender)
+    return (gender == "male") and BridgeData.MALE_SKINS or BridgeData.SKINS
 end
 
 function BridgeData.cleanHairColor(t)
@@ -372,8 +521,10 @@ function BridgeData.cleanHairColor(t)
 end
 
 function BridgeData.hairColorOf(rec)
-    local color = rec ~= nil and BridgeData.cleanHairColor(rec.hairColor) or nil
-    return color or BridgeData.DEFAULT_HAIR_COLOR
+    local app = BridgeData.appearanceOf(rec)
+    local color = app ~= nil and BridgeData.cleanHairColor(app.hairColor) or nil
+    if color ~= nil then return color end
+    return BridgeData.isMale(rec) and BridgeData.DEFAULT_MALE_HAIR_COLOR or BridgeData.DEFAULT_HAIR_COLOR
 end
 
 
@@ -395,53 +546,68 @@ function BridgeData.skinIndex(rec)
 end
 
 
-function BridgeData.spnccFaces()
-    if BridgeData._faces ~= nil then return BridgeData._faces or nil end
+function BridgeData.spnccFaces(gender)
+    BridgeData._faces = BridgeData._faces or {}
+    local key = (gender == "male") and "male" or (gender == "female") and "female" or "all"
+    if BridgeData._faces[key] ~= nil then return BridgeData._faces[key] or nil end
     local d = spnccData()
-    if d == nil or type(d.FemaleFaces) ~= "table" then
-        BridgeData._faces = false
-        return nil
-    end
     local out = {}
-    for _, v in pairs(d.FemaleFaces) do
-        if type(v) == "table" and type(v.name) == "string" and v.name ~= "" then out[#out + 1] = v end
+    local function add(src)
+        if type(src) ~= "table" then return end
+        for _, v in pairs(src) do
+            if type(v) == "table" and type(v.name) == "string" and v.name ~= "" then out[#out + 1] = v end
+        end
+    end
+    if d ~= nil then
+        if gender == "male" then add(d.MaleFaces)
+        elseif gender == "female" then add(d.FemaleFaces)
+        else add(d.MaleFaces) add(d.FemaleFaces) end
     end
     if #out == 0 then
-        BridgeData._faces = false
+        BridgeData._faces[key] = false
         return nil
     end
     table.sort(out, function(a, b) return a.name < b.name end)
-    BridgeData._faces = out
+    BridgeData._faces[key] = out
     return out
 end
 
 
-function BridgeData.spnccDetails()
-    if BridgeData._details ~= nil then return BridgeData._details or nil end
+function BridgeData.spnccDetails(gender)
+    BridgeData._details = BridgeData._details or {}
+    local key = (gender == "male") and "male" or (gender == "female") and "female" or "all"
+    if BridgeData._details[key] ~= nil then return BridgeData._details[key] or nil end
     local d = spnccData()
     if d == nil or type(d.BodyDetails) ~= "table" then
-        BridgeData._details = false
+        BridgeData._details[key] = false
         return nil
     end
     local out = {}
     for _, v in pairs(d.BodyDetails) do
-        if type(v) == "table" and type(v.name) == "string" and v.name ~= "" and v.female ~= false then
-            out[#out + 1] = v
+        if type(v) == "table" and type(v.name) == "string" and v.name ~= "" then
+            local female = (v.female ~= false)
+            local male = (v.male ~= false)
+            local ok
+            if gender == "male" then ok = male
+            elseif gender == "female" then ok = female
+            else ok = (male or female) end
+            if ok then out[#out + 1] = v end
         end
     end
     if #out == 0 then
-        BridgeData._details = false
+        BridgeData._details[key] = false
         return nil
     end
     table.sort(out, function(a, b) return (a.sort or "b") .. a.name < (b.sort or "b") .. b.name end)
-    BridgeData._details = out
+    BridgeData._details[key] = out
     return out
 end
 
 
-function BridgeData.spnccMuscle()
+function BridgeData.spnccMuscle(gender)
     local d = spnccData()
     if d == nil or type(d.Muscle) ~= "table" then return nil end
+    if gender == "male" then return d.Muscle[1] end
     return d.Muscle[2]
 end
 
@@ -453,8 +619,8 @@ function BridgeData.spnccMuscleTypes()
 end
 
 
-function BridgeData.spnccOn()
-    return BridgeData.spnccFaces() ~= nil or BridgeData.spnccDetails() ~= nil
+function BridgeData.spnccOn(gender)
+    return BridgeData.spnccFaces(gender) ~= nil or BridgeData.spnccDetails(gender) ~= nil
 end
 
 
@@ -538,7 +704,8 @@ end
 
 
 function BridgeData.makeupOf(rec)
-    return BridgeData.cleanMakeup(rec ~= nil and rec.makeup or nil) or {}
+    local app = BridgeData.appearanceOf(rec)
+    return BridgeData.cleanMakeup(app ~= nil and app.makeup or nil) or {}
 end
 
 
@@ -555,19 +722,25 @@ end
 
 
 function BridgeData.faceEntry(rec)
-    local name = rec ~= nil and rec.face or nil
+    local gender = BridgeData.genderOf(rec)
+    local app = BridgeData.appearanceOf(rec)
+    local name = app ~= nil and app.face or nil
     if type(name) ~= "string" or name == "" then return nil end
-    for _, e in ipairs(BridgeData.spnccFaces() or {}) do
-        if e.name == name then return e end
+    local function findIn(list)
+        for _, e in ipairs(list or {}) do
+            if e.name == name then return e end
+        end
+        return nil
     end
-    return nil
+    return findIn(BridgeData.spnccFaces(gender)) or findIn(BridgeData.spnccFaces(nil))
 end
 
 
 function BridgeData.detailEntries(rec)
     local out = {}
-    local wanted = asList(rec ~= nil and rec.details or nil) or {}
-    for _, e in ipairs(BridgeData.spnccDetails() or {}) do
+    local app = BridgeData.appearanceOf(rec)
+    local wanted = asList(app ~= nil and app.details or nil) or {}
+    for _, e in ipairs(BridgeData.spnccDetails(BridgeData.genderOf(rec)) or {}) do
         for _, n in ipairs(wanted) do
             if n == e.name then out[#out + 1] = e break end
         end
@@ -576,10 +749,10 @@ function BridgeData.detailEntries(rec)
 end
 
 
-function BridgeData.cleanFace(name)
+function BridgeData.cleanFace(name, gender)
     if name == nil or name == "" then return nil end
     if type(name) ~= "string" then return nil end
-    local faces = BridgeData.spnccFaces()
+    local faces = BridgeData.spnccFaces(gender)
     if faces == nil then
         if tokenOk(name) then return name end
         return nil
@@ -587,14 +760,19 @@ function BridgeData.cleanFace(name)
     for _, e in ipairs(faces) do
         if e.name == name then return name end
     end
+    if gender ~= nil then
+        for _, e in ipairs(BridgeData.spnccFaces(nil) or {}) do
+            if e.name == name then return name end
+        end
+    end
     return nil
 end
 
 
-function BridgeData.cleanDetails(list)
+function BridgeData.cleanDetails(list, gender)
     list = asList(list)
     if list == nil then return nil end
-    local catalog = BridgeData.spnccDetails()
+    local catalog = BridgeData.spnccDetails(gender)
     local seen, out = {}, {}
     if catalog == nil then
         for _, n in ipairs(list) do
@@ -618,13 +796,152 @@ end
 
 
 function BridgeData.muscleOf(rec)
-    local n = rec ~= nil and tonumber(rec.muscle) or 0
+    local app = BridgeData.appearanceOf(rec)
+    local n = app ~= nil and tonumber(app.muscle) or 0
     if n == nil or n ~= n or n < 0 then n = 0 end
     if n > BridgeData.MUSCLE_MAX then n = BridgeData.MUSCLE_MAX end
     return math.floor(n)
 end
 
 
+BridgeData.DEFAULT_BEARD = ""
+BridgeData.DEFAULT_MALE_BEARD = "Full"
+
+function BridgeData.cleanBeard(name)
+    if name == nil or name == "" then return "" end
+    if type(name) ~= "string" then return nil end
+    if not tokenOk(name) then return nil end
+    return name
+end
+
+function BridgeData.beardOf(rec)
+    if BridgeData.isFemale(rec) then return "" end
+    local app = BridgeData.appearanceOf(rec)
+
+    if app == nil or app.beard == nil then return BridgeData.DEFAULT_MALE_BEARD end
+    local b = BridgeData.cleanBeard(app.beard)
+    if b ~= nil then return b end
+    return BridgeData.DEFAULT_MALE_BEARD
+end
+
+
+
+function BridgeData.beardColorOf(rec)
+    local app = BridgeData.appearanceOf(rec)
+    local c = app ~= nil and BridgeData.cleanHairColor(app.beardColor) or nil
+    if c ~= nil then return c end
+    return BridgeData.hairColorOf(rec)
+end
+
+
+
+
+
+
+
+BridgeData.STARTER = {
+    female = {
+
+        { t = "Base.Tshirt_WhiteTINT", tint = { 0.13, 0.10, 0.11 } },
+        { t = "Base.Trousers_Denim", tc = 1 },
+        { t = "Base.Shoes_CowboyBoots_Black" },
+
+        { t = "Base.Belt2" },
+        { t = "Base.Jacket_SheepSkin_Navy", alt = "Base.Jacket_PaddedDOWN", altTint = { 0.10, 0.13, 0.25 }, first = true },
+    },
+    male = {
+        { t = "Base.Shirt_Denim", bt = 1 },
+        { t = "Base.Trousers_Denim", tc = 1 },
+        { t = "Base.Shoes_WorkBoots", bt = 0 },
+        { t = "Base.Glasses_Normal", tc = 0 },
+        { t = "Base.Belt2" },
+    },
+}
+BridgeData.STARTER_WEAPON = { female = "Base.WoodAxe", male = "Base.PipeWrench" }
+
+
+
+function BridgeData.neverSpawned(rec)
+    if type(rec) ~= "table" then return false end
+    for _, k in ipairs({ "gender", "outfitGiven", "items", "saved", "bodyId", "oldBodyId", "male", "name", "maleName",
+        "skin", "hair", "hairColor", "face", "details", "muscle", "makeup", "beltGiven", "armsSet" }) do
+        if rec[k] ~= nil then return false end
+    end
+
+    if type(rec.rel) == "table" then
+        for _, v in pairs(rec.rel) do
+            if type(v) == "number" and v ~= 0 then return false end
+        end
+    end
+    return true
+end
+
+local function sameColor(a, b)
+    return type(a) == "table" and type(b) == "table" and math.abs((a.r or 0) - (b.r or 0)) < 0.01
+        and math.abs((a.g or 0) - (b.g or 0)) < 0.01 and math.abs((a.b or 0) - (b.b or 0)) < 0.01
+end
+
+
+function BridgeData.lookUntouched(rec)
+    if type(rec) ~= "table" then return false end
+    local male = BridgeData.isMale(rec)
+    local app = BridgeData.appearanceOf(rec)
+    if BridgeData.skinOf(rec) ~= (male and BridgeData.DEFAULT_MALE_SKIN or BridgeData.DEFAULT_SKIN) then return false end
+    if BridgeData.hairOf(rec) ~= (male and BridgeData.DEFAULT_MALE_HAIR or BridgeData.DEFAULT_HAIR) then return false end
+    if not sameColor(BridgeData.hairColorOf(rec), male and BridgeData.DEFAULT_MALE_HAIR_COLOR or BridgeData.DEFAULT_HAIR_COLOR) then return false end
+
+    if app.hair ~= nil and BridgeData.cleanHair(app.hair) == nil then return false end
+    if male and app.beard ~= nil and BridgeData.cleanBeard(app.beard) == nil then return false end
+    if app.face ~= nil and app.face ~= "" then return false end
+    if type(app.details) == "table" and #app.details > 0 then return false end
+    if BridgeData.muscleOf(rec) ~= 0 then return false end
+    if #BridgeData.makeupOf(rec) > 0 then return false end
+    if male then
+        if BridgeData.beardOf(rec) ~= BridgeData.DEFAULT_MALE_BEARD then return false end
+        if not sameColor(BridgeData.beardColorOf(rec), BridgeData.hairColorOf(rec)) then return false end
+    end
+    return true
+end
+
+
+
+
+function BridgeData.itemsUntouched(rec, gender)
+    if type(rec) ~= "table" then return false end
+
+    if rec.saved ~= 1 or rec.items == nil then return rec.items == nil and rec.outfitGiven == nil end
+    if type(BridgeItems) ~= "table" or type(BridgeItems.decode) ~= "function" then return false end
+    local g = (gender == "male" or gender == "female") and gender or BridgeData.genderOf(rec)
+    local have = {}
+    for _, r in ipairs(BridgeItems.decode(rec.items)) do
+        if r.p ~= nil then return false end
+        have[r.t] = (have[r.t] or 0) + 1
+    end
+    local function take(t)
+        if t ~= nil and (have[t] or 0) > 0 then have[t] = have[t] - 1 return true end
+        return false
+    end
+    for _, e in ipairs(BridgeData.STARTER[g]) do
+        if not e.first and not take(e.t) then return false end
+    end
+
+    local extra = 0
+    for _, e in ipairs(BridgeData.STARTER[g]) do
+        if e.first and (take(e.t) or take(e.alt)) then extra = extra + 1 end
+    end
+    if take(BridgeData.STARTER_WEAPON[g]) then extra = extra + 1 end
+    for _, n in pairs(have) do if n > 0 then return false end end
+    local full = 1
+    for _, e in ipairs(BridgeData.STARTER[g]) do if e.first then full = full + 1 end end
+    return extra == 0 or extra == full
+end
+
+
+
+
+function BridgeData.untouched(rec)
+    return BridgeData.itemsUntouched(rec) and BridgeData.lookUntouched(rec)
+end
 
 
 function BridgeData.wants(rec)
@@ -723,3 +1040,71 @@ function BridgeData.relTier(rel)
 end
 
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeData] loaded") end
+
+
+
+
+BridgeData.SKILL_KEYS = { "Strength", "Axe", "Blunt", "SmallBlunt", "LongBlade", "SmallBlade", "Spear", "Maintenance", "Fitness" }
+
+
+
+
+function BridgeData.skillCap(k)
+    local cap = nil
+    pcall(function() cap = PerkFactory.getPerk(Perks[k]):getTotalXpForLevel(10) end)
+    return tonumber(cap)
+end
+
+function BridgeData.cleanSkills(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    for i = 1, #BridgeData.SKILL_KEYS do
+        local k = BridgeData.SKILL_KEYS[i]
+        local v = tonumber(t[k])
+        if v == nil or v ~= v or v < 0 then v = 0 end
+        local cap = BridgeData.skillCap(k)
+        if cap ~= nil and v > cap then v = cap end
+        out[k] = v
+    end
+    return out
+end
+
+
+function BridgeData.skillsOf(rec)
+    if rec == nil then return nil end
+    if type(rec.skills) ~= "table" then rec.skills = {} end
+    local s = rec.skills
+    for i = 1, #BridgeData.SKILL_KEYS do
+        local k = BridgeData.SKILL_KEYS[i]
+        local v = tonumber(s[k])
+        if v == nil or v ~= v or v < 0 then s[k] = 0 end
+    end
+    return s
+end
+
+
+
+
+BridgeData.STRENGTH_CARRY = { 15, 16, 17, 18, 20, 21, 23, 24, 25, 27, 29 }
+
+function BridgeData.carryForStrengthLevel(level)
+    level = math.max(0, math.min(10, math.floor(tonumber(level) or 0)))
+    return BridgeData.STRENGTH_CARRY[level + 1]
+end
+
+
+
+function BridgeData.levelFromXp(perkKey, xp)
+    local p = nil
+    pcall(function() p = PerkFactory.getPerk(Perks[perkKey]) end)
+    if p == nil then return 0 end
+    xp = tonumber(xp) or 0
+    local lvl = 0
+    for n = 1, 10 do
+        local total = nil
+        pcall(function() total = p:getTotalXpForLevel(n) end)
+        if total == nil or xp < total then break end
+        lvl = n
+    end
+    return lvl
+end

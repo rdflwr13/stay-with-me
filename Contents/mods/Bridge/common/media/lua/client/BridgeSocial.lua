@@ -68,6 +68,21 @@ end
 
 
 
+
+function BridgeSocial.lineKey(pool, i)
+    local key = "IGUI_NotAlone_Soc_" .. pool .. "_" .. i
+    local male = false
+    pcall(function() male = BridgeData.isMale(Bridge.store) end)
+    if not male then return key end
+    local m = "IGUI_NotAlone_SocM_" .. pool .. "_" .. i
+    local t = nil
+    pcall(function() t = getTextOrNull(m, "", "") end)
+    if t ~= nil and t ~= "" and t ~= m then return m end
+    return key
+end
+
+
+
 BridgeSocial.recent = {}
 function BridgeSocial.pick(pool, n)
     local recent = BridgeSocial.recent[pool] or {}
@@ -86,12 +101,24 @@ function BridgeSocial.pick(pool, n)
     return i
 end
 
+
+
+function BridgeSocial.sameAsLast(text)
+    local last = Bridge ~= nil and Bridge.lastSpokeText or nil
+    if text == nil or last == nil then return false end
+    local function norm(s) return (string.lower(tostring(s)):gsub("[%.!%?]+$", "")) end
+    return norm(text) == norm(last)
+end
+
 function BridgeSocial.line(pool)
     local n = lineCount(pool)
     if n == 0 then return nil end
-    local i = BridgeSocial.pick(pool, n)
     local text = nil
-    pcall(function() text = getText("IGUI_NotAlone_Soc_" .. pool .. "_" .. i, BridgeData.owner():getDisplayName()) end)
+    for _ = 1, 4 do
+        local i = BridgeSocial.pick(pool, n)
+        pcall(function() text = getText(BridgeSocial.lineKey(pool, i), BridgeData.owner():getDisplayName()) end)
+        if n < 2 or not BridgeSocial.sameAsLast(text) then break end
+    end
     return text
 end
 
@@ -102,7 +129,7 @@ local function say(pool)
 end
 
 
-local function gesture(anim)
+local function gesture(anim, raw, force)
     if anim == nil or not Bridge.drivable() then return end
     local body = Bridge.body
     if BridgeMove.onPath() or Bridge.pose ~= nil then return end
@@ -114,13 +141,20 @@ local function gesture(anim)
 
     pcall(function() if #BridgeInventory.gestures > 0 or BridgeWeapon.busy() then busy = true end end)
 
-    pcall(function() if BridgeCar ~= nil and BridgeCar.holdsBody() then busy = true end end)
+    pcall(function() if not force and BridgeCar ~= nil and BridgeCar.holdsBody() then busy = true end end)
     if busy then return end
     pcall(function()
         local red = BridgeData.owner()
         body:faceLocationF(red:getX(), red:getY())
-        body:setBumpType("Emote" .. anim)
+        body:setBumpType(raw and anim or ("Emote" .. anim))
     end)
+end
+
+
+
+
+function BridgeSocial.emote(anim, raw, force)
+    gesture(anim, raw, force)
 end
 
 
@@ -168,6 +202,7 @@ local function gain(r, df, dr)
         if room <= 0 then df = 0 elseif df > room then df = room end
         r.gainF = r.gainF + df
     end
+    if dr > 0 and not BridgeSocial.romanceOn() then dr = 0 end
     if dr > 0 then
         local room = CAP_R - r.gainR
         if room <= 0 then dr = 0 elseif dr > room then dr = room end
@@ -198,8 +233,14 @@ end
 
 
 
+function BridgeSocial.romanceOn()
+    local on = true
+    pcall(function() on = BridgeData.optionOf(Bridge.store, "romance") end)
+    return on
+end
+
 function BridgeSocial.romanceOpen(r)
-    return r ~= nil and r.f >= 30 and r.days >= 2
+    return r ~= nil and r.f >= 30 and r.days >= 2 and BridgeSocial.romanceOn()
 end
 
 
@@ -215,6 +256,85 @@ BridgeSocial.DRESS = {
     jewel = { f = 3, r = 1, pool = "DressJewel" },
     cloth = { f = 1, r = 0, pool = "DressCloth" },
 }
+
+
+
+
+
+
+BridgeSocial.MALE_DRESS = {
+    DressWatch = { f = 3, r = 1, types = { "WristWatch_" } },
+    DressTags = { f = 3, r = 1, types = { "Necklace_DogTag" } },
+    DressShades = { f = 1, r = 0, types = { "Glasses_Sun", "Glasses_Aviators" } },
+    DressJewel = { f = 1, r = 0 },
+}
+BridgeSocial.MALE_RECEIVE = {
+    { pool = "ReceiveSmokes", f = 2, r = 0, types = { "CigarettePack", "CigaretteCarton", "CigaretteSingle",
+        "CigaretteRolled", "Cigar", "Cigarillo", "SmokingPipe", "TobaccoLoose", "TobaccoChewing", "TobaccoDried" },
+        skip = { "CigarBox", "CigaretteRollingPapers" } },
+    { pool = "ReceiveTool", f = 2, r = 0, types = { "Hammer", "Screwdriver", "Wrench", "PipeWrench", "Pliers", "Saw",
+        "Multitool", "Toolbox", "Lighter", "Lighter_Battery" }, exact = { Hammer = true, Saw = true, Lighter = true } },
+    { pool = "ReceiveGame", f = 2, r = 1, types = { "CardDeck", "Dice", "PokerChips", "ChessBlack", "ChessWhite",
+        "Harmonica", "GuitarAcoustic", "GuitarElectric", "Baseball", "Football" },
+        exact = { Football = true, Baseball = true } },
+    { pool = "ReceiveRead", f = 1, r = 0, types = { "ComicBook", "Magazine", "Book" },
+        skip = { "MagazineCrossword", "MagazineWordsearch", "Magazine_Childs", "Magazine_Teens", "Book_Childs" } },
+}
+BridgeSocial.MALE_BOOZE = { f = 1, r = 0 }
+
+local function isMale()
+    local m = false
+    pcall(function() m = BridgeData.isMale(Bridge.store) end)
+    return m
+end
+BridgeSocial.isMale = isMale
+
+local function typeHas(t, list, exact)
+    for _, pre in ipairs(list or {}) do
+        if exact ~= nil and exact[pre] then
+            if t == pre then return true end
+        elseif string.sub(t, 1, #pre) == pre then
+            return true
+        end
+    end
+    return false
+end
+
+
+function BridgeSocial.maleDressPool(item)
+    local t = ""
+    pcall(function() t = tostring(item:getType()) end)
+    for _, pool in ipairs({ "DressWatch", "DressTags", "DressShades" }) do
+        if typeHas(t, BridgeSocial.MALE_DRESS[pool].types) then return pool end
+    end
+    return nil
+end
+
+
+function BridgeSocial.maleReceive(item)
+    local t = ""
+    pcall(function() t = tostring(item:getType()) end)
+    for _, g in ipairs(BridgeSocial.MALE_RECEIVE) do
+        if typeHas(t, g.types, g.exact) and not typeHas(t, g.skip) then return g end
+    end
+    return nil
+end
+
+
+BridgeSocial.DRESS_ENABLED = 1
+
+
+BridgeSocial.DRESS_ON = {
+    JEWEL  = 1,
+    CLOTH  = 1,
+    HAT    = 1,
+    JACKET = 1,
+    SHOES  = 1,
+    BAG    = 1,
+    SUIT   = 1,
+    RUINED = 1,
+}
+
 local DRESS_CAP_F = 4
 local DRESS_CAP_R = 1
 local JEWEL_PLACES = { "RIGHT_MIDDLE_FINGER", "LEFT_MIDDLE_FINGER", "LEFT_RING_FINGER", "RIGHT_RING_FINGER",
@@ -247,8 +367,433 @@ local function presentable(item)
 end
 
 
+
+
+function BridgeSocial.dressPool(item)
+    if not presentable(item) then
+        local broken = false
+        pcall(function()
+            broken = item:isBroken() or (item.getHolesNumber ~= nil and item:getHolesNumber() > 0)
+        end)
+        return broken and "DressBroken" or "DressDirty"
+    end
+    if isMale() then
+        local mp = BridgeSocial.maleDressPool(item)
+        if mp ~= nil then return mp end
+    end
+    if isJewel(item) then return "DressJewel" end
+    local loc = nil
+    pcall(function() loc = item:getBodyLocation() end)
+    if loc ~= nil and ItemBodyLocation ~= nil then
+        if loc == ItemBodyLocation.HAT or loc == ItemBodyLocation.FULL_HAT then return "DressHat" end
+        if loc == ItemBodyLocation.JACKET or loc == ItemBodyLocation.JACKET_HAT
+            or loc == ItemBodyLocation.SWEATER_HAT then return "DressJacket" end
+        if loc == ItemBodyLocation.SHOES or loc == ItemBodyLocation.SOCKS then return "DressShoes" end
+        if loc == ItemBodyLocation.BACK or loc == ItemBodyLocation.BAG then return "DressBag" end
+        if loc == ItemBodyLocation.FULL then return "DressSuit" end
+    end
+    local bag = false
+    pcall(function() bag = item:IsInventoryContainer() end)
+    if bag then return "DressBag" end
+    return "DressCloth"
+end
+
+
+
+local DRESS_CAT = {
+    DressJewel = "JEWEL", DressCloth = "CLOTH", DressHat = "HAT", DressJacket = "JACKET",
+    DressShoes = "SHOES", DressBag = "BAG", DressSuit = "SUIT",
+    DressDirty = "RUINED", DressBroken = "RUINED",
+    DressWatch = "JEWEL", DressTags = "JEWEL", DressShades = "CLOTH",
+}
+
+function BridgeSocial.dressOn(pool)
+    if BridgeSocial.DRESS_ENABLED == 0 then return false end
+    local cat = DRESS_CAT[pool]
+    if cat ~= nil and BridgeSocial.DRESS_ON[cat] ~= 1 then return false end
+    return true
+end
+
+
+
+
+function BridgeSocial.dressSay(pool)
+    if pool == nil then return false end
+    if not BridgeSocial.dressOn(pool) then return false end
+    local fight = false
+    pcall(function() fight = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state == "swing") end)
+    if fight then return false end
+    local said = false
+
+
+    pcall(function() said = BridgeMoments.say(pool, 5 * 60, "soft", "Dress") == true end)
+    return said
+end
+
+
 function BridgeSocial.markGiven(item)
     pcall(function() item:getModData().bridgeGiven = true end)
+end
+
+
+
+
+
+function BridgeSocial.wornMemory()
+    local st = Bridge.store
+    if st == nil then return nil end
+    if type(st.worn) ~= "table" then st.worn = {} end
+    return st.worn
+end
+
+
+function BridgeSocial.wornBefore(item)
+    local mem = BridgeSocial.wornMemory()
+    if mem == nil or item == nil then return false end
+    local t = nil
+    pcall(function() t = tostring(item:getType()) end)
+    return t ~= nil and mem[t] == true
+end
+
+
+function BridgeSocial.markWorn(item)
+    local mem = BridgeSocial.wornMemory()
+    if mem == nil or item == nil then return end
+    pcall(function() mem[tostring(item:getType())] = true end)
+end
+
+
+
+function BridgeSocial.forget(item)
+    if item == nil then return end
+    pcall(function()
+        local md = item:getModData()
+        md.bridgeGiven = nil
+        md.bridgeReceived = nil
+        md.bridgeRecvPool = nil
+    end)
+end
+
+
+
+BridgeSocial.RECEIVE_ENABLED = 1
+
+
+
+local function mcall(obj, name)
+    if obj == nil then return nil end
+    local fn = nil
+    pcall(function() fn = obj[name] end)
+    if fn == nil then return nil end
+    local ok, v = pcall(fn, obj)
+    if ok then return v end
+    return nil
+end
+
+
+local function itemTypeName(item)
+    return tostring(mcall(item, "getType") or "")
+end
+
+
+local function nameHas(item, ...)
+    local n = itemTypeName(item)
+    for _, s in ipairs({ ... }) do
+        if n:find(s, 1, true) ~= nil then return true end
+    end
+    return false
+end
+
+
+
+
+local STAIN_TYPES = { Broom = true, Broom_Twig = true, Mop = true, Sponge = true,
+                      BathTowel = true, DishCloth = true, GrillBrush = true, ToiletBrush = true }
+local function itemCleanStain(item)
+    local ok = false
+    pcall(function()
+        ok = item ~= nil and ItemTag ~= nil and ItemTag.CLEAN_STAINS ~= nil
+            and item:hasTag(ItemTag.CLEAN_STAINS) == true
+    end)
+    if ok then return true end
+    return STAIN_TYPES[itemTypeName(item)] == true
+end
+
+
+
+local function fluidHas(item, fluid)
+    local ok = false
+    pcall(function()
+        if item == nil or fluid == nil then return end
+        local c = item:getFluidContainer()
+        if c == nil then return end
+        ok = c:contains(fluid) == true
+    end)
+    return ok
+end
+
+
+
+
+
+
+local function fluidName(item)
+    local s = nil
+    pcall(function()
+        if item == nil then return end
+        local c = item:getFluidContainer()
+        if c == nil or c:isEmpty() == true then return end
+        local p = c:getPrimaryFluid()
+        if p ~= nil then s = p:getFluidTypeString() end
+    end)
+    return s
+end
+
+local FUEL_FLUIDS = { Petrol = true, Gasoline = true }
+local CLEAN_FLUIDS = { Bleach = true, CleaningLiquid = true }
+
+
+
+
+function BridgeSocial.recvMemory()
+    local st = Bridge.store
+    if st == nil then return nil end
+    if type(st.recv) ~= "table" then st.recv = {} end
+    return st.recv
+end
+
+
+function BridgeSocial.recvBefore(item)
+    local mem = BridgeSocial.recvMemory()
+    if mem == nil or item == nil then return false end
+    local t = nil
+    pcall(function() t = tostring(item:getType()) end)
+    return t ~= nil and mem[t] == true
+end
+
+
+function BridgeSocial.markRecv(item)
+    local mem = BridgeSocial.recvMemory()
+    if mem == nil or item == nil then return end
+    pcall(function() mem[tostring(item:getType())] = true end)
+end
+
+
+BridgeSocial.overSaid = false
+
+
+
+function BridgeSocial.dropped(item)
+    if BridgeSocial.RECEIVE_ENABLED == 0 then return false end
+    local said = false
+    pcall(function() said = BridgeMoments.say("CarryDrop", 5 * 60, "soft", "CarryDrop") == true end)
+    return said
+end
+
+
+
+local function itemRotten(item)
+    local r = mcall(item, "isRotten")
+    if r ~= nil then return r == true end
+    local food = mcall(item, "getFood")
+    if food ~= nil then
+        local fr = mcall(food, "isRotten")
+        if fr ~= nil then return fr == true end
+        local age = mcall(food, "getAge")
+        local off = mcall(food, "getOffAge")
+        if type(age) == "number" and type(off) == "number" and age > off then return true end
+    end
+    return false
+end
+
+
+
+
+
+function BridgeSocial.receivePool(item)
+    if item == nil then return "ReceiveItem" end
+
+    if isMale() then
+        local g = BridgeSocial.maleReceive(item)
+        if g ~= nil then return g.pool end
+    end
+
+
+
+    if BridgeTorchShared ~= nil and BridgeTorchShared.isFlashlight ~= nil
+        and BridgeTorchShared.isFlashlight(item) then
+        local c = 1
+        pcall(function() c = BridgeTorchShared.charge(item) end)
+        if type(c) == "number" and c <= 0.0001 then return "ReceiveTorchEmpty" end
+        return "ReceiveTorch"
+    end
+
+
+
+    if itemCleanStain(item) then
+        local weapon = false
+        pcall(function() weapon = BridgeWeapon ~= nil and BridgeWeapon.isMelee ~= nil and BridgeWeapon.isMelee(item) end)
+        return weapon and "ReceiveCleanWeapon" or "ReceiveCleaning"
+    end
+
+
+
+    local fname = fluidName(item)
+    if (Fluid ~= nil and fluidHas(item, Fluid.Petrol)) or FUEL_FLUIDS[fname] then return "ReceiveFuel" end
+    if (Fluid ~= nil and (fluidHas(item, Fluid.Bleach) or fluidHas(item, Fluid.CleaningLiquid)))
+        or CLEAN_FLUIDS[fname] then
+        return "ReceiveCleaner"
+    end
+
+    local gun = false
+    pcall(function() gun = BridgeInventory ~= nil and BridgeInventory.isGun ~= nil and BridgeInventory.isGun(item) end)
+    if gun then return "ReceiveGun" end
+
+    local weapon = false
+    pcall(function() weapon = BridgeWeapon ~= nil and BridgeWeapon.isMelee ~= nil and BridgeWeapon.isMelee(item) end)
+    if weapon then return "ReceiveWeapon" end
+
+    local food = mcall(item, "IsFood") == true
+    if food and itemRotten(item) then return "ReceiveRotten" end
+
+    local cat = mcall(item, "getCategory")
+
+    if cat == "Drink" then
+        if nameHas(item, "Beer", "Whiskey", "Whisky", "Wine", "Vodka", "Rum", "Bourbon", "Tequila", "Gin") then
+            return "ReceiveBooze"
+        end
+        return "ReceiveWater"
+    end
+    if mcall(item, "isWaterSource") == true then
+        if mcall(item, "isTaintedWater") == true then return "ReceiveTainted" end
+        return "ReceiveWater"
+    end
+
+    if food then
+        if mcall(item, "isAlcoholic") == true then return "ReceiveBooze" end
+        if nameHas(item, "Canned", "Jar", "Pickled") then return "ReceiveCanned" end
+        if nameHas(item, "Candy", "Chocolate", "Crisps", "Granola", "Gum", "Cookie", "Coffee", "Cigarette", "Snack") then
+            return "ReceiveTreat"
+        end
+        if mcall(item, "isCooked") == false
+            and nameHas(item, "Meat", "Fish", "Chicken", "Beef", "Pork", "Venison", "Rabbit") then
+            return "ReceiveRaw"
+        end
+        return "ReceiveFood"
+    end
+
+    if cat == "Ammo" then return "ReceiveAmmo" end
+    if cat == "Medical" then return "ReceiveMeds" end
+
+    if mcall(item, "IsClothing") == true then return "ReceiveCloth" end
+
+    local w = mcall(item, "getActualWeight")
+    if type(w) == "number" and w > 5 then return "ReceiveHeavy" end
+
+    if cat == "Junk" or cat == "Money" then return "ReceiveJunk" end
+
+    return "ReceiveItem"
+end
+
+
+
+function BridgeSocial.received(item)
+    if item == nil then return false end
+
+
+    local pool = BridgeSocial.receivePool(item)
+
+
+
+    local got, lastPool = false, nil
+    pcall(function()
+        got = item:getModData().bridgeReceived == true
+        lastPool = item:getModData().bridgeRecvPool
+    end)
+    if got and lastPool == pool then return false end
+    pcall(function()
+        item:getModData().bridgeReceived = true
+        item:getModData().bridgeRecvPool = pool
+    end)
+
+    if isMale() then pcall(BridgeSocial.maleGift, item, pool) end
+
+
+    if pool ~= "ReceiveRotten" and pool ~= "ReceiveGun" and pool ~= "ReceiveWeapon"
+        and pool ~= "ReceiveCleanWeapon"
+        and pool ~= "ReceiveFuel" and pool ~= "ReceiveCleaner"
+        and BridgeSocial.recvBefore(item) then
+        pool = "ReceiveAgain"
+    end
+    BridgeSocial.markRecv(item)
+    local over = false
+    pcall(function() over = BridgeInventory ~= nil and BridgeInventory.carryOver ~= nil and BridgeInventory.carryOver(Bridge.body) end)
+    if over and not BridgeSocial.overSaid then
+        BridgeSocial.overSaid = true
+        pool = "CarryFull"
+    elseif not over then
+        BridgeSocial.overSaid = false
+    end
+    BridgeSocial.receiveSay(pool)
+
+    if pool == "ReceiveGun" then
+        BridgeSocial.gunNervous()
+    elseif pool == "ReceiveRotten" then
+        gesture("NoThankYou")
+    elseif pool == "ReceiveTreat" then
+        gesture("Yes")
+    end
+    BridgeSocial.info = "received " .. pool
+    log(BridgeSocial.info)
+    return true
+end
+
+
+
+function BridgeSocial.maleGift(item, pool)
+    local g = nil
+    for _, e in ipairs(BridgeSocial.MALE_RECEIVE) do if e.pool == pool then g = e end end
+    if pool == "ReceiveBooze" then g = BridgeSocial.MALE_BOOZE end
+    if g == nil then return end
+    local r = rel()
+    if r == nil then return end
+    local given = false
+    pcall(function() given = item:getModData().bridgeGiven == true end)
+    if given then return end
+    BridgeSocial.markGiven(item)
+    rollDay(r)
+    local df = math.max(0, math.min(g.f, DRESS_CAP_F - (r.dressF or 0)))
+    local dr = 0
+    if g.r > 0 and BridgeSocial.romanceOpen(r) then dr = math.max(0, math.min(g.r, DRESS_CAP_R - (r.dressR or 0))) end
+    if df > 0 or dr > 0 then
+        r.dressF = (r.dressF or 0) + df
+        r.dressR = (r.dressR or 0) + dr
+        r.f = clamp(r.f + df, -100, 100)
+        r.r = clamp(r.r + dr, 0, 100)
+        BridgeSocial.save(true)
+    end
+    log(string.format("male gift %s +%d/+%d f=%d r=%d", pool, df, dr, r.f, r.r))
+end
+
+
+function BridgeSocial.gunNervous()
+    gesture("PullAtCollar", true)
+end
+
+
+
+function BridgeSocial.receiveSay(pool)
+    if pool == nil then return false end
+    if BridgeSocial.RECEIVE_ENABLED == 0 then return false end
+    local fight = false
+    pcall(function() fight = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state == "swing") end)
+    if fight then return false end
+    local said = false
+
+
+
+    pcall(function() said = BridgeMoments.say(pool, 5 * 60, "soft", pool) == true end)
+    return said
 end
 
 
@@ -258,33 +803,40 @@ function BridgeSocial.dressed(item)
     local given = false
     pcall(function() given = item:getModData().bridgeGiven == true end)
     if given then return "already given" end
-
     BridgeSocial.markGiven(item)
-    if not presentable(item) then return "not presentable" end
+
     rollDay(r)
+
+
+
+    local pool = BridgeSocial.dressPool(item)
+    if pool ~= "DressDirty" and pool ~= "DressBroken" and BridgeSocial.wornBefore(item) then
+        pool = "DressAgain"
+    end
+    BridgeSocial.dressSay(pool)
+
+    if not presentable(item) then
+        BridgeSocial.info = "dressed: ruined (" .. tostring(pool) .. ")"
+        log(BridgeSocial.info)
+        return BridgeSocial.info
+    end
+    BridgeSocial.markWorn(item)
+
     local kind = isJewel(item) and BridgeSocial.DRESS.jewel or BridgeSocial.DRESS.cloth
+    if isMale() then
+        kind = BridgeSocial.MALE_DRESS[pool] or (isJewel(item) and BridgeSocial.MALE_DRESS.DressJewel) or BridgeSocial.DRESS.cloth
+    end
     local df = math.max(0, math.min(kind.f, DRESS_CAP_F - (r.dressF or 0)))
     local dr = 0
     if kind.r > 0 and BridgeSocial.romanceOpen(r) then dr = math.max(0, math.min(kind.r, DRESS_CAP_R - (r.dressR or 0))) end
-    if df == 0 and dr == 0 then
-        log("dressed: daily cap")
-        return "daily cap"
+    if df > 0 or dr > 0 then
+        r.dressF = (r.dressF or 0) + df
+        r.dressR = (r.dressR or 0) + dr
+        r.f = clamp(r.f + df, -100, 100)
+        r.r = clamp(r.r + dr, 0, 100)
+        BridgeSocial.save(true)
     end
-    r.dressF = (r.dressF or 0) + df
-    r.dressR = (r.dressR or 0) + dr
-    r.f = clamp(r.f + df, -100, 100)
-    r.r = clamp(r.r + dr, 0, 100)
-    BridgeSocial.save(true)
-
-    local fight = false
-    pcall(function() fight = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state == "swing") end)
-    local now = 0
-    pcall(function() now = getTimestampMs() end)
-    if not fight and now - (BridgeSocial.dressSaidAt or -100000) > 3000 then
-        BridgeSocial.dressSaidAt = now
-        say(kind.pool)
-    end
-    BridgeSocial.info = string.format("dressed %s +%d/+%d f=%d r=%d", kind.pool, df, dr, r.f, r.r)
+    BridgeSocial.info = string.format("dressed %s +%d/+%d f=%d r=%d", pool, df, dr, r.f, r.r)
     log(BridgeSocial.info)
     return BridgeSocial.info
 end
@@ -340,7 +892,7 @@ BridgeSocial.ACTIONS = {
       chance = function(r) return 0.5 + r.f / 200 end, good = { 3, 0 }, bad = { -1, 0 }, anim = { "Yes", "No" } },
     { id = "Flirt", gate = function(r) return BridgeSocial.romanceOpen(r) end, romantic = true,
       chance = function(r) return 0.2 + (r.f - 30) / 150 + r.r / 150 end, good = { 1, 3 }, bad = { -1, -2 }, anim = { "WaveHi", "No" } },
-    { id = "Hug", gate = function(r) return r.f >= 45 and r.r >= 15 and r.days >= 4 end, romantic = true,
+    { id = "Hug", gate = function(r) return r.f >= 45 and r.r >= 15 and r.days >= 4 and BridgeSocial.romanceOn() end, romantic = true,
       chance = function(r) return 0.3 + r.r / 120 end, good = { 2, 3 }, bad = { -2, -3 }, anim = { "ComeHere", "No" } },
 }
 
@@ -375,24 +927,20 @@ function BridgeSocial.talk(id)
     end
 
 
-
     local since = Bridge.time - (BridgeSocial.last[id] or -999999)
     if since < (REPEAT_SEC[id] or 60) * 60 then
 
 
-
-        local fast = since < 10 * 60
-        if fast and (Bridge.time - (BridgeSocial.naggedAt or -999999)) >= 10 * 3600 then
-            BridgeSocial.naggedAt = Bridge.time
+        BridgeSocial.nagged[id] = (tonumber(BridgeSocial.nagged[id]) or 0) + 1
+        if BridgeSocial.nagged[id] <= 2 then
             say("Repeat")
             gesture("Undecided")
             log(id .. " repeat: nagged")
             return "repeat"
         end
-        say(id .. "_Good")
-        gesture(actionById(id).anim[1])
-        log(id .. " repeat: answered without gain")
-        return "repeat without gain"
+        gesture("Shrug")
+        log(id .. " repeat: shrug")
+        return "repeat: shrug"
     end
     BridgeSocial.last[id] = Bridge.time
     BridgeSocial.nagged[id] = nil
@@ -513,7 +1061,7 @@ local function remarkPool(r, red)
     local hour = 12
     pcall(function() hour = getGameTime():getHour() end)
     if (hour >= 22 or hour < 5) and ZombRand(3) == 0 then return "RemarkNight" end
-    if r.r >= 50 and ZombRand(2) == 0 then return "RemarkLove" end
+    if BridgeSocial.romanceOn() and r.r >= 50 and ZombRand(2) == 0 then return "RemarkLove" end
     return "Remark" .. BridgeData.relTier(r)
 end
 
@@ -585,8 +1133,14 @@ function BridgeSocial.label()
     local text = ""
     pcall(function()
         text = getText("IGUI_NotAlone_Rel_" .. BridgeData.relTier(r))
-        if r.r >= 50 then text = getText("IGUI_NotAlone_Rel_Love")
-        elseif r.r >= 25 then text = text .. ", " .. getText("IGUI_NotAlone_Rel_Crush") end
+        local romance = BridgeSocial.romanceOn()
+        if romance and r.r >= 50 then text = getText("IGUI_NotAlone_Rel_Love")
+        elseif romance and r.r >= 25 then
+            local crush = nil
+            if BridgeData ~= nil and type(BridgeData.text) == "function" then crush = BridgeData.text("Rel_Crush") end
+            if crush == nil then pcall(function() crush = getText("IGUI_NotAlone_Rel_Crush") end) end
+            text = text .. ", " .. tostring(crush)
+        end
     end)
     return text
 end

@@ -115,8 +115,9 @@ function BridgeQueue.wants(action)
     if not mine then return false end
 
 
+
     local floorMp = false
-    pcall(function() floorMp = isClient() and BridgeInventory.toFloor(action) end)
+    pcall(function() floorMp = isClient() and BridgeInventory.toFloor(action) and not action.bridgeDrop end)
     if floorMp then return false end
     local anim = nil
     pcall(function() anim = BridgeInventory.herAnimFor(action) end)

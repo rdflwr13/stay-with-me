@@ -14,8 +14,10 @@ require "ISUI/ISCollapsableWindow"
 require "ISUI/ISTabPanel"
 require "ISUI/ISPanel"
 require "ISUI/ISButton"
+require "ISUI/ISComboBox"
 require "ISUI/ISTickBox"
 require "ISUI/ISUI3DModel"
+require "ISUI/ISToolTip"
 
 BridgeWindow = BridgeWindow or {}
 
@@ -52,6 +54,7 @@ local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[Bri
 local function warn(text) print("[BridgeWindow] " .. tostring(text)) end
 
 local function tr(key, a)
+    if BridgeData ~= nil and type(BridgeData.text) == "function" then return BridgeData.text(key, a) end
     local text = key
     pcall(function()
         if a ~= nil then text = getText("IGUI_NotAlone_" .. key, a) else text = getText("IGUI_NotAlone_" .. key) end
@@ -75,11 +78,15 @@ end
 
 function BridgeWindow.lookKey(st)
     local items = (st ~= nil and st.items) or ""
+    local app = BridgeData.appearanceOf(st)
     local hc = BridgeData.hairColorOf(st)
-    return BridgeData.skinOf(st) .. "|" .. BridgeData.hairOf(st) .. "|"
+    local bc = BridgeData.beardColorOf(st)
+    return BridgeData.genderOf(st) .. "|" .. BridgeData.skinOf(st) .. "|" .. BridgeData.hairOf(st) .. "|"
         .. tostring(hc.r) .. "," .. tostring(hc.g) .. "," .. tostring(hc.b) .. "|"
-        .. tostring(st ~= nil and st.face or "") .. "|" .. table.concat(BridgeData.cleanDetails(st ~= nil and st.details or nil) or {}, ",") .. "|"
+        .. tostring(app ~= nil and app.face or "") .. "|" .. table.concat(BridgeData.cleanDetails(app ~= nil and app.details or nil, BridgeData.genderOf(st)) or {}, ",") .. "|"
         .. tostring(BridgeData.muscleOf(st)) .. "|" .. table.concat(BridgeData.makeupOf(st), ",") .. "|"
+        .. tostring(BridgeData.beardOf(st)) .. "|"
+        .. tostring(bc.r) .. "," .. tostring(bc.g) .. "," .. tostring(bc.b) .. "|"
         .. BridgeItems.lookKey(BridgeItems.decode(items))
 end
 
@@ -87,7 +94,7 @@ end
 
 function BridgeWindow.makeDesc(st)
     local desc = SurvivorFactory.CreateSurvivor()
-    desc:setFemale(true)
+    desc:setFemale(BridgeData.isFemale(st))
     pcall(function() desc:getWornItems():clear() end)
     local hv = desc:getHumanVisual()
     pcall(function() hv:clear() end)
@@ -95,7 +102,10 @@ function BridgeWindow.makeDesc(st)
     pcall(function() hv:setHairModel(BridgeData.hairOf(st)) end)
     local hc = BridgeData.hairColorOf(st)
     pcall(function() hv:setHairColor(ImmutableColor.new(hc.r, hc.g, hc.b)) end)
-    pcall(function() hv:setBeardModel("") end)
+    pcall(function() hv:setBeardModel(BridgeData.beardOf(st)) end)
+    local bc = BridgeData.beardColorOf(st)
+    pcall(function() hv:setBeardColor(ImmutableColor.new(bc.r, bc.g, bc.b)) end)
+    pcall(function() hv:setNaturalBeardColor(ImmutableColor.new(bc.r, bc.g, bc.b)) end)
     for _, rec in ipairs(BridgeWindow.wornRecords(st ~= nil and st.items or "")) do
         pcall(function()
             local item = instanceItem(rec.t)
@@ -132,7 +142,7 @@ function BridgeWindow.addCustomDesc(desc, st)
             desc:setWornItem(item:getBodyLocation(), item)
         end)
     end
-    if BridgeData.spnccOn() then
+    if BridgeData.spnccOn(BridgeData.genderOf(st)) then
         local face = BridgeData.faceEntry(st)
         if face ~= nil then add(face.id, BridgeData.spnccTexture(face, idx)) end
         for _, d in ipairs(BridgeData.detailEntries(st)) do
@@ -140,7 +150,7 @@ function BridgeWindow.addCustomDesc(desc, st)
         end
         local m = BridgeData.muscleOf(st)
         if m > 0 then
-            local mid = BridgeData.spnccMuscle()
+            local mid = BridgeData.spnccMuscle(BridgeData.genderOf(st))
             if mid ~= nil then add(mid, idx + (m == 2 and 5 or 0)) end
         end
     end
@@ -289,10 +299,17 @@ function BridgeWindowInfo:onCall()
 end
 
 
-function BridgeWindow.hairStyles()
+function BridgeWindow.hairStyles(gender)
+    if gender == nil then gender = BridgeData.genderOf(Bridge.store) end
     local out = {}
     pcall(function()
-        local all = getHairStylesInstance():getAllFemaleStyles()
+        local inst = getHairStylesInstance()
+        local all = nil
+        if gender == "male" and type(inst.getAllMaleStyles) == "function" then
+            all = inst:getAllMaleStyles()
+        else
+            all = inst:getAllFemaleStyles()
+        end
         for i = 0, all:size() - 1 do
             local style = all:get(i)
             local id = style:getName()
@@ -310,6 +327,26 @@ function BridgeWindow.hairStyles()
         if count[e.label] > 1 then e.label = e.label .. " (" .. e.id .. ")" end
     end
     table.sort(out, function(a, b) return a.label < b.label end)
+    return out
+end
+
+function BridgeWindow.beardStyles()
+    local out = {}
+    pcall(function()
+        if type(getAllBeardStyles) ~= "function" then return end
+        local all = getAllBeardStyles()
+        if all == nil then return end
+        for i = 0, all:size() - 1 do
+            local id = all:get(i)
+            local label
+            if id == nil or id == "" then
+                label = getText("IGUI_Beard_None")
+            else
+                label = getText("IGUI_Beard_" .. tostring(id))
+            end
+            out[#out + 1] = { id = id or "", label = label }
+        end
+    end)
     return out
 end
 
@@ -336,7 +373,10 @@ BridgeWindow.TICKS = {
     { key = "redKit", label = "OptRedKit", tip = "OptRedKitTip" },
     { key = "hitMatters", label = "OptHitMatters", tip = "OptHitMattersTip" },
     { key = "gifts", label = "OptGifts", tip = "OptGiftsTip" },
+    { key = "romance", label = "OptRomance", tip = "OptRomanceTip" },
     { key = "mood", label = "OptMood", tip = "OptMoodTip" },
+    { key = "xpPopups", label = "OptXpPopups", tip = "OptXpPopupsTip" },
+    { key = "fatigueBar", label = "OptFatigueBar", tip = "OptFatigueBarTip" },
 }
 
 function BridgeWindowSettings:createChildren()
@@ -362,6 +402,14 @@ function BridgeWindowSettings:createChildren()
     self.renameBtn:instantiate()
     self.renameBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.renameBtn)
+
+    self.genderLabelY = y + FONT_S + PAD / 2 + BTN_H + PAD
+    local gy = self.genderLabelY + FONT_S + 4
+    self.genderCombo = ISComboBox:new(PAD, gy, self.width - PAD * 2, BTN_H, self, BridgeWindowSettings.onGender)
+    self.genderCombo:initialise()
+    self.genderCombo:addOptionWithData(tr("GenderFemale"), "female")
+    self.genderCombo:addOptionWithData(tr("GenderMale"), "male")
+    self:addChild(self.genderCombo)
 end
 
 function BridgeWindowSettings:prerender()
@@ -372,15 +420,38 @@ function BridgeWindowSettings:prerender()
         local want = BridgeData.optionOf(Bridge.store, entry.key)
         if self.ticks[i]:isSelected(1) ~= want then self.ticks[i]:setSelected(1, want) end
     end
+    if self.genderCombo ~= nil then
+        local g = BridgeData.genderOf(Bridge.store)
+        if self.genderCombo:getSelectedData() ~= g then self.genderCombo:selectData(g) end
+    end
+
+    local g = BridgeData.genderOf(Bridge.store)
+    if self.lastGender ~= g then
+        self.lastGender = g
+        for i, entry in ipairs(BridgeWindow.TICKS) do
+            local tick = self.ticks[i]
+            local text = tr(entry.label)
+            if type(tick.options) == "table" then tick.options[1] = text end
+            if type(tick.optionsIndex) == "table" then tick.optionsIndex[1] = text end
+            tick.tooltip = tr(entry.tip)
+        end
+    end
 end
 
 function BridgeWindowSettings:render()
     if Bridge == nil or Bridge.store == nil then return end
     self:drawText(tr("WindowName") .. " " .. name(), PAD, self.nameY, 1, 1, 1, 1, UIFont.Small)
+    self:drawText(tr("Gender"), PAD, self.genderLabelY, 1, 1, 1, 1, UIFont.Small)
 end
 
 function BridgeWindowSettings:onTick(index, selected, key)
     Bridge.setOption(key, selected == true)
+end
+
+function BridgeWindowSettings:onGender(combo)
+    if combo == nil then return end
+    local g = combo:getSelectedData()
+    if g ~= nil and Bridge ~= nil and type(Bridge.setGender) == "function" then Bridge.setGender(g) end
 end
 
 function BridgeWindowSettings:onRename()
@@ -388,6 +459,234 @@ function BridgeWindowSettings:onRename()
 end
 
 function BridgeWindowSettings:new(x, y, width, height)
+    local o = ISPanel:new(x, y, width, height)
+    setmetatable(o, self)
+    self.__index = self
+    o:noBackground()
+    return o
+end
+
+
+
+
+
+
+BridgeWindow.STATSMENU_ENABLE = 1
+
+
+BridgeWindow.SKILLS = {
+    { category = "IGUI_perks_Combat", rows = {
+        { perk = "Axe" },
+        { perk = "Blunt" },
+        { perk = "SmallBlunt" },
+        { perk = "LongBlade" },
+        { perk = "SmallBlade" },
+        { perk = "Spear" },
+        { perk = "Maintenance" },
+    }},
+    { category = "IGUI_perks_PhysicalCategory", rows = {
+        { perk = "Strength" },
+        { perk = "Fitness" },
+    }},
+}
+
+local SKILL_GAP = 2
+
+local function skillUnit() return math.max(6, math.floor((FONT_S + 6) / 2)) end
+local function skillRowH() return math.max(skillUnit() + 6, FONT_S + 6) end
+
+local function gameText(key, fallback)
+    local text = nil
+    pcall(function() text = getTextOrNull(key) end)
+    if text == nil or text == "" then return fallback or key end
+    return text
+end
+
+function BridgeWindow.skillLabel(perk)
+    return gameText("IGUI_perks_" .. perk, perk)
+end
+
+
+
+local function skillLevel(perk)
+    if BridgeSkills ~= nil and BridgeSkills.level ~= nil then return BridgeSkills.level(perk) end
+    return 0
+end
+
+local function skillProgress(perk)
+    if BridgeSkills ~= nil and BridgeSkills.progress ~= nil then return BridgeSkills.progress(perk) end
+    return 0
+end
+
+
+local function skillXp(perk)
+    if BridgeSkills ~= nil and BridgeSkills.get ~= nil then return BridgeSkills.get(perk) end
+    return 0
+end
+
+local function skillTotalForNext(perk)
+    if BridgeSkills == nil or BridgeSkills.perkOf == nil or BridgeSkills.level == nil then return 0 end
+    local p = BridgeSkills.perkOf(perk)
+    if p == nil then return 0 end
+    local lvl = BridgeSkills.level(perk)
+    if lvl >= 10 then return 0 end
+    local total = 0
+    pcall(function() total = p:getTotalXpForLevel(lvl + 1) end)
+    return total or 0
+end
+
+
+local GLOW_TICKS = 180
+local function skillGlow(perk)
+    if BridgeSkills == nil or BridgeSkills.lastLevelUp == nil then return 0 end
+    local lu = BridgeSkills.lastLevelUp
+    if lu.perk ~= perk then return 0 end
+    local age = (Bridge.time or 0) - (lu.tick or 0)
+    if age < 0 or age >= GLOW_TICKS then return 0 end
+    return 1 - (age / GLOW_TICKS)
+end
+
+function BridgeWindow.skillsHeight()
+    local h = PAD
+    for _, group in ipairs(BridgeWindow.SKILLS) do
+        h = h + FONT_M + 2 + PAD + #group.rows * skillRowH() + PAD
+    end
+    return h
+end
+
+function BridgeWindow.skillsWidth()
+    local labelW = 0
+    for _, group in ipairs(BridgeWindow.SKILLS) do
+        for _, row in ipairs(group.rows) do
+            labelW = math.max(labelW, textW(UIFont.Small, BridgeWindow.skillLabel(row.perk)))
+        end
+    end
+    return PAD * 3 + labelW + (10 * skillUnit() + 9 * SKILL_GAP)
+end
+
+
+BridgeWindowSkills = ISPanel:derive("BridgeWindowSkills")
+
+function BridgeWindowSkills:createChildren()
+    ISPanel.createChildren(self)
+    self.unit = skillUnit()
+    self.rowH = skillRowH()
+    self.labelW = 0
+    for _, group in ipairs(BridgeWindow.SKILLS) do
+        for _, row in ipairs(group.rows) do
+            self.labelW = math.max(self.labelW, textW(UIFont.Small, BridgeWindow.skillLabel(row.perk)))
+        end
+    end
+    self.barX = PAD + self.labelW + PAD
+    self.barW = 10 * self.unit + 9 * SKILL_GAP
+end
+
+function BridgeWindowSkills:drawBar(x, y, level, xp)
+    for i = 1, 10 do
+        local ux = x + (i - 1) * (self.unit + SKILL_GAP)
+        if i <= level then
+            self:drawRect(ux, y, self.unit, self.unit, 1, 1, 0.89, 0.38)
+            self:drawRectBorder(ux, y, self.unit, self.unit, 1, 1, 0.89, 0.38)
+        elseif i == level + 1 then
+            self:drawRectBorder(ux, y, self.unit, self.unit, 1, 0.4, 0.4, 0.4)
+            local w = math.floor(self.unit * math.max(0, math.min(1, xp or 0)))
+
+            if w > 0 then self:drawRect(ux, y, w, self.unit, 0.35, 1, 0.89, 0.38) end
+        else
+            self:drawRectBorder(ux, y, self.unit, self.unit, 1, 0.2, 0.2, 0.2)
+        end
+    end
+end
+
+function BridgeWindowSkills:render()
+    self.unit = skillUnit()
+    self.rowH = skillRowH()
+    local x, y = PAD, PAD
+    self.hitRows = {}
+    for _, group in ipairs(BridgeWindow.SKILLS) do
+        self:drawText(gameText(group.category, group.category), x, y, 1, 1, 1, 1, UIFont.Medium)
+        y = y + FONT_M + 2
+        self:drawRect(x, y, self.width - PAD * 2, 1, 1, 0.4, 0.4, 0.4)
+        y = y + PAD
+        for _, row in ipairs(group.rows) do
+            local glow = skillGlow(row.perk)
+            if glow > 0 then
+                self:drawRect(x - 2, y, self.width - PAD * 2 + 4, self.rowH, glow * 0.45, 1, 0.89, 0.38)
+            end
+            local ty = y + (self.rowH - FONT_S) / 2
+            self:drawText(BridgeWindow.skillLabel(row.perk), x, ty, 1, 1, 1, 1, UIFont.Small)
+            self:drawBar(self.barX, y + (self.rowH - self.unit) / 2, skillLevel(row.perk), skillProgress(row.perk))
+            self.hitRows[#self.hitRows + 1] = { row = row, y = y, h = self.rowH }
+            y = y + self.rowH
+        end
+        y = y + PAD
+    end
+end
+
+function BridgeWindowSkills:removeTooltip()
+    if self.tooltip ~= nil then
+        self.tooltip:setVisible(false)
+        self.tooltip:removeFromUIManager()
+        self.tooltip = nil
+    end
+end
+
+function BridgeWindowSkills:showTooltip(row, lvl)
+    local label = BridgeWindow.skillLabel(row.perk)
+    local cur = skillLevel(row.perk)
+    local msg = label .. " " .. gameText("IGUI_XP_level", "level") .. " " .. (lvl + 1)
+    if lvl < cur then
+        msg = msg .. " <LINE> " .. gameText("IGUI_XP_UnLocked", "Unlocked")
+    elseif lvl == cur then
+        local need = skillTotalForNext(row.perk)
+        if need > 0 then
+            msg = msg .. " <LINE> " .. string.format("%.0f / %.0f XP  (%.0f%%)",
+                skillXp(row.perk), need, skillProgress(row.perk) * 100)
+        else
+            msg = msg .. " <LINE> " .. string.format("%.0f XP", skillXp(row.perk))
+        end
+    else
+        msg = msg .. " <LINE> " .. gameText("IGUI_XP_Locked", "Locked")
+    end
+    local desc = gameText("IGUI_perks_" .. label .. "_Description", "")
+    if desc ~= "" then msg = msg .. " <LINE><LINE> " .. desc end
+    if self.tooltip == nil then
+        self.tooltip = ISToolTip:new()
+        self.tooltip:initialise()
+        self.tooltip:addToUIManager()
+        self.tooltip:setOwner(self)
+    end
+    self.tooltip.description = msg
+end
+
+function BridgeWindowSkills:onMouseMove(dx, dy)
+    local mx, my = self:getMouseX(), self:getMouseY()
+    for _, e in ipairs(self.hitRows or {}) do
+        if my >= e.y and my < e.y + e.h and mx >= self.barX and mx < self.barX + self.barW then
+            local idx = math.floor((mx - self.barX) / (self.unit + SKILL_GAP))
+            if idx >= 0 and idx <= 9 then
+                self:showTooltip(e.row, idx)
+                if self.tooltip ~= nil then
+                    self.tooltip:setDesiredPosition(self:getAbsoluteX() + self.barX,
+                        self:getAbsoluteY() + e.y + e.h + 4)
+                end
+                return
+            end
+        end
+    end
+    self:removeTooltip()
+end
+
+function BridgeWindowSkills:onMouseMoveOutside(dx, dy)
+    self:removeTooltip()
+end
+
+function BridgeWindowSkills:setVisible(visible)
+    if not visible then self:removeTooltip() end
+    ISPanel.setVisible(self, visible)
+end
+
+function BridgeWindowSkills:new(x, y, width, height)
     local o = ISPanel:new(x, y, width, height)
     setmetatable(o, self)
     self.__index = self
@@ -412,6 +711,12 @@ function BridgeWindowMain:createChildren()
     self.info = BridgeWindowInfo:new(0, 8, self.width, inner)
     self.info:initialise()
     self.panel:addView(tr("WindowInfo"), self.info)
+    self.skills = nil
+    if BridgeWindow.STATSMENU_ENABLE == 1 then
+        self.skills = BridgeWindowSkills:new(0, 8, self.width, inner)
+        self.skills:initialise()
+        self.panel:addView(tr("WindowSkills"), self.skills)
+    end
     self.settings = BridgeWindowSettings:new(0, 8, self.width, inner)
     self.settings:initialise()
     self.panel:addView(tr("WindowSettings"), self.settings)
@@ -424,6 +729,7 @@ function BridgeWindowMain:prerender()
 end
 
 function BridgeWindowMain:close()
+    if self.skills ~= nil then self.skills:removeTooltip() end
     ISCollapsableWindow.close(self)
     self:removeFromUIManager()
     BridgeWindow.instance = nil
@@ -467,8 +773,13 @@ function BridgeWindow.neededSize()
     local tickH = math.max(BTN_H, FONT_S) + gap
     local infoH = math.max(PAD * 2 + 2 + AVATAR_H + AVATAR_BORDER * 2,
         PAD + FONT_M + 2 + PAD + FONT_S + 4 + BridgeWindow.REL_BAR_H + PAD + BTN_H + PAD * 2 + BTN_H + PAD)
-    local setH = PAD + #BridgeWindow.TICKS * (tickH + PAD) + PAD + FONT_S + PAD / 2 + BTN_H + PAD
-    return math.max(BridgeWindow.WIDTH, math.ceil(w)), math.ceil(math.max(infoH, setH))
+    local setH = PAD + #BridgeWindow.TICKS * (tickH + PAD) + PAD + FONT_S + PAD / 2 + BTN_H + PAD + FONT_S + 4 + BTN_H + PAD
+    local contentH = math.max(infoH, setH)
+    if BridgeWindow.STATSMENU_ENABLE == 1 then
+        w = math.max(w, BridgeWindow.skillsWidth())
+        contentH = math.max(contentH, BridgeWindow.skillsHeight())
+    end
+    return math.max(BridgeWindow.WIDTH, math.ceil(w)), math.ceil(contentH)
 end
 
 

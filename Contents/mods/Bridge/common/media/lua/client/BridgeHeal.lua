@@ -70,10 +70,19 @@ end
 
 local function tr(key, a, b)
     local text = key
+
+    local full = "IGUI_NotAlone_" .. key
     pcall(function()
-        if b ~= nil then text = getText("IGUI_NotAlone_" .. key, a, b)
-        elseif a ~= nil then text = getText("IGUI_NotAlone_" .. key, a)
-        else text = getText("IGUI_NotAlone_" .. key) end
+        if BridgeData.isMale(Bridge.store) and string.sub(key, 1, 4) == "Say_" then
+            local m = "IGUI_NotAlone_SayM_" .. string.sub(key, 5)
+            local t = getTextOrNull(m, "", "")
+            if t ~= nil and t ~= "" and t ~= m then full = m end
+        end
+    end)
+    pcall(function()
+        if b ~= nil then text = getText(full, a, b)
+        elseif a ~= nil then text = getText(full, a)
+        else text = getText(full) end
     end)
     return text
 end

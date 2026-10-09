@@ -6,7 +6,7 @@ BridgeLooks.NAME_MAX = 40
 BridgeLooks.MAX_LOOKS = 100
 
 local READ_CAP = 500
-local KEYS = { "skin", "hair", "color", "face", "details", "muscle", "makeup" }
+local KEYS = { "skin", "hair", "color", "face", "details", "muscle", "makeup", "beard", "beardcolor" }
 local ESCAPE = {
     ["%"] = "%25", [";"] = "%3B", ["="] = "%3D", ["|"] = "%7C",
     ["\n"] = "%0A", ["\r"] = "%0D", ["\t"] = "%09",
@@ -78,7 +78,8 @@ local function textOr(key, fallback)
     return t
 end
 
-function BridgeLooks.defaultName()
+function BridgeLooks.defaultName(gender)
+    if gender == "male" then return textOr("LookDefaultMale", "As I found him") end
     return textOr("LookDefault", "As I found her")
 end
 
@@ -157,8 +158,9 @@ local function faceToken(raw)
 end
 
 local function faceOfRec(rec)
+    local app = BridgeData.appearanceOf(rec)
     local raw = ""
-    if type(rec) == "table" and type(rec.face) == "string" then raw = rec.face end
+    if type(app) == "table" and type(app.face) == "string" then raw = app.face end
     return faceToken(raw)
 end
 
@@ -170,9 +172,10 @@ local function detailsToken(raw)
 end
 
 local function detailsOfRec(rec)
-    if type(rec) ~= "table" or rec.details == nil then return detailsToken("") end
-    if type(rec.details) == "string" then return detailsToken(rec.details) end
-    if type(rec.details) == "table" then return detailsToken(table.concat(rec.details, ",")) end
+    local app = BridgeData.appearanceOf(rec)
+    if type(app) ~= "table" or app.details == nil then return detailsToken("") end
+    if type(app.details) == "string" then return detailsToken(app.details) end
+    if type(app.details) == "table" then return detailsToken(table.concat(app.details, ",")) end
     return {}
 end
 
@@ -184,9 +187,10 @@ local function makeupToken(raw)
 end
 
 local function makeupOfRec(rec)
-    if type(rec) ~= "table" or rec.makeup == nil then return makeupToken("") end
-    if type(rec.makeup) == "string" then return makeupToken(rec.makeup) end
-    if type(rec.makeup) == "table" then return makeupToken(table.concat(rec.makeup, ",")) end
+    local app = BridgeData.appearanceOf(rec)
+    if type(app) ~= "table" or app.makeup == nil then return makeupToken("") end
+    if type(app.makeup) == "string" then return makeupToken(app.makeup) end
+    if type(app.makeup) == "table" then return makeupToken(table.concat(app.makeup, ",")) end
     return {}
 end
 
@@ -264,22 +268,29 @@ local function readLines()
     return lines
 end
 
-local function builtin()
-    local color = BridgeData.DEFAULT_HAIR_COLOR
+local function builtin(gender)
+    local male = (gender == "male")
+    local color = male and BridgeData.DEFAULT_MALE_HAIR_COLOR or BridgeData.DEFAULT_HAIR_COLOR
     local look = {
-        name = BridgeLooks.defaultName(),
+        name = BridgeLooks.defaultName(gender),
         builtin = true,
-        has = { skin = true, hair = true, color = true, face = true, details = true, muscle = true, makeup = true },
+        has = { skin = true, hair = true, color = true, face = true, details = true, muscle = true, makeup = true, beard = true },
         raw = {
-            skin = BridgeData.DEFAULT_SKIN,
-            hair = BridgeData.DEFAULT_HAIR,
+            skin = male and BridgeData.DEFAULT_MALE_SKIN or BridgeData.DEFAULT_SKIN,
+            hair = male and BridgeData.DEFAULT_MALE_HAIR or BridgeData.DEFAULT_HAIR,
             color = dec4(color.r) .. "," .. dec4(color.g) .. "," .. dec4(color.b),
             face = "",
             details = "",
             muscle = "0",
             makeup = "",
+            beard = male and BridgeData.DEFAULT_MALE_BEARD or "",
         },
     }
+
+    if male then
+        look.has.beardcolor = true
+        look.raw.beardcolor = look.raw.color
+    end
     return look
 end
 
@@ -287,7 +298,7 @@ local function readLooks()
     if BridgeLooks._cache ~= nil then return BridgeLooks._cache end
     local lines = readLines()
     if lines == nil then
-        BridgeLooks._cache = { builtin() }
+        BridgeLooks._cache = { builtin("female"), builtin("male") }
         BridgeLooks._virtual = true
         BridgeLooks._readonly = false
         return BridgeLooks._cache
@@ -320,36 +331,47 @@ local function readLooks()
             end
         end
     end
-    local sawBuiltin = false
+
+
+
+    local seenGender = {}
     for i = 1, #list do
         if list[i].builtin == true then
-            if sawBuiltin then list[i].builtin = false else sawBuiltin = true end
+            local g = BridgeLooks.genderOf(list[i])
+            if seenGender[g] then list[i].builtin = false else seenGender[g] = true end
         end
     end
     BridgeLooks._readonly = foreign or truncated
     BridgeLooks._virtual = #list == 0
 
-    local default = BridgeLooks.defaultName()
-    local at = nil
-    for i = 1, #list do
-        if list[i].builtin == true then at = i break end
-    end
-    if at == nil then
+    local function takeBuiltin(gender)
+        local want = BridgeLooks.defaultName(gender)
+        local at = nil
         for i = 1, #list do
-            if list[i].name == default then list[i].builtin = true at = i break end
+            if list[i].builtin == true and BridgeLooks.genderOf(list[i]) == gender then at = i break end
         end
-    end
-    if at == nil then
-        table.insert(list, 1, builtin())
-    else
-        local b = table.remove(list, at)
+        if at == nil then
+            for i = 1, #list do
+                if list[i].name == want then at = i break end
+            end
+        end
+        local b = nil
+        if at ~= nil then b = table.remove(list, at) else b = builtin(gender) end
+
+
+        local fresh = builtin(gender)
+        b.has, b.raw = fresh.has, fresh.raw
+        b.builtin = true
         local taken = false
         for i = 1, #list do
-            if list[i].name == default then taken = true break end
+            if list[i].name == want then taken = true break end
         end
-        if not taken then b.name = default end
-        table.insert(list, 1, b)
+        if not taken then b.name = want end
+        return b
     end
+
+    table.insert(list, 1, takeBuiltin("female"))
+    table.insert(list, 2, takeBuiltin("male"))
     BridgeLooks._cache = list
     return list
 end
@@ -412,12 +434,15 @@ local function rawFrom(fields)
         details = table.concat(details, ","),
         muscle = tostring(fields.muscle),
         makeup = table.concat(makeup, ","),
+        beard = fields.beard or "",
+        beardcolor = fields.beardcolor and (dec4(fields.beardcolor.r) .. "," .. dec4(fields.beardcolor.g) .. "," .. dec4(fields.beardcolor.b)) or "",
     }
 end
 
 function BridgeLooks.capture(c)
     if type(c) ~= "table" then c = {} end
     local color = BridgeData.cleanHairColor(c.hairColor) or BridgeData.hairColorOf(c)
+    local beardColor = BridgeData.cleanHairColor(c.beardColor) or BridgeData.beardColorOf(c) or BridgeData.hairColorOf(c)
     local details = copyList(BridgeData.cleanDetails(c.details) or {})
     local makeup = copyList(BridgeData.cleanMakeup(c.makeup) or {})
     local fields = {
@@ -428,9 +453,11 @@ function BridgeLooks.capture(c)
         details = details,
         muscle = BridgeData.muscleOf(c),
         makeup = makeup,
+        beard = BridgeData.cleanBeard(c.beard) or "",
+        beardcolor = { r = beardColor.r, g = beardColor.g, b = beardColor.b },
     }
     return {
-        has = { skin = true, hair = true, color = true, face = true, details = true, muscle = true, makeup = true },
+        has = { skin = true, hair = true, color = true, face = true, details = true, muscle = true, makeup = true, beard = true, beardcolor = true },
         raw = rawFrom(fields),
     }
 end
@@ -454,7 +481,10 @@ function BridgeLooks.save(name, c)
         end
     end
     if not replaced then
-        if #list >= BridgeLooks.MAX_LOOKS then return nil end
+
+        local own = 0
+        for i = 1, #list do if list[i].builtin ~= true then own = own + 1 end end
+        if own + 1 >= BridgeLooks.MAX_LOOKS then return nil end
         snap.builtin = false
         list[#list + 1] = snap
     end
@@ -537,6 +567,18 @@ function BridgeLooks.same(look, rec)
     elseif #makeupOfRec(rec) > 0 then
         return false
     end
+    if look.has.beard then
+        any = true
+        local beard = BridgeData.cleanBeard(raw.beard) or ""
+        if BridgeData.beardOf(rec) ~= beard then return false end
+    elseif BridgeData.beardOf(rec) ~= "" then
+        return false
+    end
+    if look.has.beardcolor then
+        any = true
+        local col = colorFrom(raw.beardcolor)
+        if col == nil or not colorClose(BridgeData.beardColorOf(rec), col) then return false end
+    end
     return any
 end
 
@@ -547,6 +589,16 @@ function BridgeLooks.matchName(rec)
         if BridgeLooks.same(list[i], rec) then return list[i].name end
     end
     return nil
+end
+
+
+
+
+function BridgeLooks.genderOf(look)
+    local raw = rawOf(look)
+    local skin = type(raw.skin) == "string" and raw.skin or ""
+    if string.sub(skin, 1, 4) == "Male" then return "male" end
+    return "female"
 end
 
 
@@ -577,11 +629,12 @@ end
 
 
 function BridgeLooks.current(rec)
+    local want = BridgeData.genderOf(rec)
     local look = BridgeLooks.find(BridgeLooks.remembered())
-    if look ~= nil then return look.name end
+    if look ~= nil and BridgeLooks.genderOf(look) == want then return look.name end
     local name = BridgeLooks.matchName(rec)
     if name ~= nil then return name end
-    return readLooks()[1].name
+    return BridgeLooks.defaultName(want)
 end
 
 function BridgeLooks.shown(rec)
@@ -591,6 +644,8 @@ end
 function BridgeLooks.applyTo(look, c)
     if type(look) ~= "table" or type(c) ~= "table" or type(look.has) ~= "table" then return false end
     local raw = rawOf(look)
+    local st = type(Bridge) == "table" and Bridge.store or nil
+    local gender = BridgeData.genderOf(st)
     if look.has.skin then
         local skin = BridgeData.cleanSkin(raw.skin)
         if skin ~= nil then c.skin = skin end
@@ -603,7 +658,7 @@ function BridgeLooks.applyTo(look, c)
         local col = colorFrom(raw.color)
         if col ~= nil then c.hairColor = { r = col.r, g = col.g, b = col.b } end
     end
-    if look.has.face and BridgeData.spnccFaces() ~= nil then
+    if look.has.face and BridgeData.spnccFaces(gender) ~= nil then
         local face = raw.face or ""
         if face == "" then c.face = nil
         else
@@ -611,13 +666,13 @@ function BridgeLooks.applyTo(look, c)
             if cleaned ~= nil then c.face = cleaned end
         end
     end
-    if look.has.details and BridgeData.spnccDetails() ~= nil then
+    if look.has.details and BridgeData.spnccDetails(gender) ~= nil then
         local text = raw.details or ""
         local items = splitComma(text)
-        local cleaned = BridgeData.cleanDetails(items) or {}
+        local cleaned = BridgeData.cleanDetails(items, gender) or {}
         if text == "" or #cleaned > 0 or #items == 0 then c.details = copyList(cleaned) end
     end
-    if look.has.muscle and BridgeData.spnccMuscle() ~= nil then
+    if look.has.muscle and BridgeData.spnccMuscle(gender) ~= nil then
         local n = tonumber(raw.muscle)
         if n ~= nil and n == n then c.muscle = BridgeData.muscleOf({ muscle = n }) end
     end
@@ -626,6 +681,14 @@ function BridgeLooks.applyTo(look, c)
         local items = splitComma(text)
         local cleaned = BridgeData.cleanMakeup(items) or {}
         if text == "" or #cleaned > 0 or #items == 0 then c.makeup = copyList(cleaned) end
+    end
+    if look.has.beard and BridgeData.isMale(st) then
+        local beard = BridgeData.cleanBeard(raw.beard)
+        if beard ~= nil then c.beard = beard end
+    end
+    if look.has.beardcolor and BridgeData.isMale(st) then
+        local col = colorFrom(raw.beardcolor)
+        if col ~= nil then c.beardColor = { r = col.r, g = col.g, b = col.b } end
     end
     return true
 end

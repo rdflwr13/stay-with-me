@@ -186,6 +186,11 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
     local fight = false
     pcall(function() fight = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state == "swing") end)
     if fight then return "fight" end
+
+
+    local job = false
+    pcall(function() job = BridgeTask ~= nil and BridgeTask.active == true end)
+    if job then return "job" end
     local p = player()
     if p == nil then return "no player" end
     local far = true
