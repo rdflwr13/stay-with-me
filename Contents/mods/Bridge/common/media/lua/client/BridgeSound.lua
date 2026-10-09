@@ -23,7 +23,7 @@ local function warn(text) print("[BridgeSound] " .. tostring(text)) end
 
 function BridgeSound.voice(body, name, gap)
     if body == nil then return "no body" end
-    local sound = "VoiceFemale" .. tostring(name)
+    local sound = BridgeData.voicePrefix(Bridge.store) .. tostring(name)
     local lastTick = BridgeSound.last[sound] or -99999
     if Bridge.time - lastTick < (gap or 30) then return "too soon" end
     BridgeSound.last[sound] = Bridge.time

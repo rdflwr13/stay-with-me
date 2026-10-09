@@ -7,7 +7,12 @@
 
 
 
+require "ISUI/ISWorldObjectContextMenu"
+
 BridgeSleep = BridgeSleep or {}
+BridgeSleep.trueVanilla = nil
+BridgeSleep.ours = {}
+
 
 
 
@@ -19,6 +24,12 @@ BridgeSleep.SEEN = 7
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeSleep] " .. tostring(text)) end end
 local function warn(text) print("[BridgeSleep] " .. tostring(text)) end
+
+function BridgeSleep.tentSleepWrapper()
+    local tents = rawget(_G, "TentSleepImmersion")
+    if tents == nil then return nil end
+    return tents._sleepWalkWrapper
+end
 
 
 function BridgeSleep.blocks(playerObj, z)
@@ -113,7 +124,13 @@ function BridgeSleep.tickPending()
     if not clear and waited < BridgeSleep.WAIT_MAX then return end
     BridgeSleep.pending = nil
     log(clear and "counters clear: going to sleep the game's way" or "counters still set after 1 s: the game decides")
-    local ok, err = pcall(p.original, p.player, p.bed)
+
+
+    local call = ISWorldObjectContextMenu ~= nil and ISWorldObjectContextMenu.onSleepWalkToComplete or nil
+    if type(call) ~= "function" then call = p.original end
+    BridgeSleep.replaying = true
+    local ok, err = pcall(call, p.player, p.bed)
+    BridgeSleep.replaying = false
     if not ok then warn("sleep call failed: " .. tostring(err)) end
 end
 
@@ -126,19 +143,54 @@ end
 
 
 
+
+
+
+
+local function makeSleepWrapper(original)
+    local w
+    local active = false
+    w = function(player, bed)
+        if active then
+            local base = BridgeSleep.trueVanilla
+            if base ~= nil and not BridgeSleep.ours[base] then return base(player, bed) end
+            return nil
+        end
+        if BridgeSleep.replaying then return original(player, bed) end
+        active = true
+        local ok, result = pcall(function()
+            local okOnly, only = pcall(function() return BridgeSleep.onlyCompanions(getSpecificPlayer(player)) end)
+            if okOnly and only then
+                return BridgeSleep.sleepAfterPark(player, bed, original)
+            end
+            return original(player, bed)
+        end)
+        active = false
+        if not ok then warn("sleep call failed: " .. tostring(result)) end
+        return result
+    end
+    BridgeSleep.ours[w] = true
+    BridgeSleep.wrapper = w
+    return w
+end
+
 function BridgeSleep.wrap(when)
     if ISWorldObjectContextMenu == nil or ISWorldObjectContextMenu.onSleepWalkToComplete == nil then return end
     local current = ISWorldObjectContextMenu.onSleepWalkToComplete
-    if current == BridgeSleep.wrapper then return end
-    local original = current
-    BridgeSleep.wrapper = function(player, bed)
-        local ok, only = pcall(function() return BridgeSleep.onlyCompanions(getSpecificPlayer(player)) end)
-        if ok and only then
-            return BridgeSleep.sleepAfterPark(player, bed, original)
-        end
-        return original(player, bed)
+    if BridgeSleep.ours[current] then return end
+    local tents = rawget(_G, "TentSleepImmersion")
+    local tentWrapper = tents ~= nil and tents._sleepWalkWrapper or nil
+    if tentWrapper ~= nil and current == tentWrapper then
+        if BridgeSleep.ours[tents._vanillaSleepWalkToComplete] then return end
+        local prior = tents._vanillaSleepWalkToComplete
+        if prior == nil or prior == tentWrapper then return end
+        if BridgeSleep.trueVanilla == nil then BridgeSleep.trueVanilla = prior end
+        tents._vanillaSleepWalkToComplete = makeSleepWrapper(prior)
+        log("joined the ImmersiveTents sleep chain as its delegate (" .. tostring(when) .. ")")
+        return
     end
-    ISWorldObjectContextMenu.onSleepWalkToComplete = BridgeSleep.wrapper
+    if BridgeSleep.trueVanilla == nil then BridgeSleep.trueVanilla = current end
+    ISWorldObjectContextMenu.onSleepWalkToComplete = makeSleepWrapper(current)
     ISWorldObjectContextMenu.bridgeSleepWrapped = true
     if when ~= "load" then log("sleep check was replaced after us (" .. tostring(when) .. "), wrapped again") end
 end

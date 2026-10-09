@@ -91,7 +91,8 @@ BridgeAppearance.Catalog = BridgeAppearance.Catalog or {}
 
 function BridgeAppearance.Catalog.bodyEntries()
     local out = {}
-    for i, id in ipairs(BridgeData.SKINS) do
+    local skins = BridgeData.skinsFor(BridgeData.genderOf(Bridge.store))
+    for i, id in ipairs(skins) do
         out[#out + 1] = { id = id, label = tr("SkinTone", i) }
     end
     return out
@@ -99,7 +100,8 @@ end
 
 function BridgeAppearance.Catalog.hairEntries()
     local out = {}
-    local styles = (BridgeWindow ~= nil and BridgeWindow.hairStyles ~= nil) and BridgeWindow.hairStyles() or {}
+    local styles = (BridgeWindow ~= nil and BridgeWindow.hairStyles ~= nil)
+        and BridgeWindow.hairStyles(BridgeData.genderOf(Bridge.store)) or {}
     for _, s in ipairs(styles) do
         out[#out + 1] = { name = s.id, label = s.label }
     end
@@ -108,7 +110,7 @@ end
 
 function BridgeAppearance.Catalog.faceEntries()
     local out = { { name = "", label = tr("AppearanceDefaultFace") } }
-    for _, e in ipairs(BridgeData.spnccFaces() or {}) do
+    for _, e in ipairs(BridgeData.spnccFaces(BridgeData.genderOf(Bridge.store)) or {}) do
         local label = gameText("IGUI_Face_" .. tostring(e.display or e.name), tostring(e.display or e.name))
         out[#out + 1] = { name = e.name, label = label }
     end
@@ -117,7 +119,7 @@ end
 
 function BridgeAppearance.Catalog.detailEntries()
     local out = {}
-    for _, e in ipairs(BridgeData.spnccDetails() or {}) do
+    for _, e in ipairs(BridgeData.spnccDetails(BridgeData.genderOf(Bridge.store)) or {}) do
         local label = gameText("IGUI_Detail_" .. tostring(e.display or e.name), tostring(e.display or e.name))
         out[#out + 1] = { name = e.name, label = label }
     end
@@ -152,13 +154,29 @@ end
 
 
 
-BridgeAppearance.candidate = { skin = nil, hair = nil, hairColor = nil, face = nil, details = {}, muscle = 0, makeup = {} }
+BridgeAppearance.candidate = { skin = nil, hair = nil, hairColor = nil, face = nil, details = {}, muscle = 0, makeup = {}, beard = "", beardColor = nil }
 
 function BridgeAppearance.makePreviewDesc()
     local st = Bridge.store or {}
     local c = BridgeAppearance.candidate
-    local tmp = { skin = c.skin, hair = c.hair, hairColor = c.hairColor, items = st.items,
-                  face = c.face, details = c.details, muscle = c.muscle, makeup = c.makeup }
+    local gender = BridgeData.genderOf(st)
+
+
+    local tmp = { gender = gender, items = st.items }
+    local target = tmp
+    if gender == "male" then
+        tmp.male = {}
+        target = tmp.male
+    end
+    target.skin = c.skin
+    target.hair = c.hair
+    target.hairColor = c.hairColor
+    target.face = c.face
+    target.details = c.details
+    target.muscle = c.muscle
+    target.makeup = c.makeup
+    target.beard = c.beard
+    target.beardColor = c.beardColor
     return BridgeWindow.makeDesc(tmp)
 end
 
@@ -173,6 +191,11 @@ function BridgeAppearance.refreshViews()
     local w = BridgeAppearance.instance
     if w == nil then return end
     pcall(function() w:refresh() end)
+end
+
+function BridgeAppearance.close()
+    local w = BridgeAppearance.instance
+    if w ~= nil then pcall(function() w:close() end) end
 end
 
 function BridgeAppearance.setSkin(id)
@@ -218,7 +241,7 @@ end
 
 function BridgeAppearance.toggleDetail(name)
     local valid = false
-    for _, e in ipairs(BridgeData.spnccDetails() or {}) do
+    for _, e in ipairs(BridgeData.spnccDetails(BridgeData.genderOf(Bridge.store)) or {}) do
         if e.name == name then valid = true break end
     end
     if not valid then return end
@@ -255,8 +278,31 @@ function BridgeAppearance.setMakeup(category, itemType)
     BridgeAppearance.refreshViews()
 end
 
-function BridgeAppearance.openColorPicker(button)
-    local cur = BridgeAppearance.candidate.hairColor or BridgeData.DEFAULT_HAIR_COLOR
+function BridgeAppearance.setBeard(name)
+    local beard = BridgeData.cleanBeard(name)
+    if beard == nil then return end
+    BridgeAppearance.candidate.beard = beard
+    BridgeAppearance.refreshPreview()
+    BridgeAppearance.refreshViews()
+end
+
+function BridgeAppearance.setBeardColor(c)
+    local color = BridgeData.cleanHairColor(c)
+    if color == nil then return end
+    BridgeAppearance.candidate.beardColor = { r = color.r, g = color.g, b = color.b }
+    BridgeAppearance.refreshPreview()
+    BridgeAppearance.refreshViews()
+end
+
+function BridgeAppearance.openColorPicker(button, mode)
+    mode = mode or "hair"
+    BridgeAppearance.pickerMode = mode
+    local cur
+    if mode == "beard" then
+        cur = BridgeAppearance.candidate.beardColor or BridgeData.beardColorOf(Bridge.store)
+    else
+        cur = BridgeAppearance.candidate.hairColor or BridgeData.DEFAULT_HAIR_COLOR
+    end
     local picker = nil
     local ok, err = pcall(function()
         picker = ISColorPickerHSB:new(0, 0, ColorInfo.new(cur.r, cur.g, cur.b, 1))
@@ -280,8 +326,14 @@ end
 
 function BridgeAppearance.onCustomColor(target, color, mouseUp)
     if color ~= nil then
-        BridgeAppearance.setColor({ r = color.r, g = color.g, b = color.b })
+        local c = { r = color.r, g = color.g, b = color.b }
+        if BridgeAppearance.pickerMode == "beard" then
+            BridgeAppearance.setBeardColor(c)
+        else
+            BridgeAppearance.setColor(c)
+        end
     end
+    BridgeAppearance.pickerMode = nil
     local picker = BridgeAppearance.picker
     BridgeAppearance.picker = nil
     if picker ~= nil then pcall(function() picker:removeSelf() end) end
@@ -295,14 +347,15 @@ function BridgeAppearanceBody:createChildren()
     ISPanel.createChildren(self)
     self.skinCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceBody.onSkin)
     self.skinCombo:initialise()
-    for i, id in ipairs(BridgeData.SKINS) do
+    local skins = BridgeData.skinsFor(BridgeData.genderOf(Bridge.store))
+    for i, id in ipairs(skins) do
         self.skinCombo:addOptionWithData(tr("SkinTone", i), id)
     end
     self:addChild(self.skinCombo)
 
     self.muscleLabelY = nil
     self.muscleCombo = nil
-    if BridgeData.spnccMuscle() ~= nil then
+    if BridgeData.spnccMuscle(BridgeData.genderOf(Bridge.store)) ~= nil then
         self.muscleCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceBody.onMuscle)
         self.muscleCombo:initialise()
         self.muscleCombo:addOptionWithData(tr("Muscle_0"), 0)
@@ -331,7 +384,13 @@ function BridgeAppearanceBody:layout()
         self.muscleCombo:setY(y)
         self.muscleCombo:setWidth(cw)
         self.muscleCombo:setHeight(BTN_H)
+        y = y + BTN_H + PAD
     end
+end
+
+function BridgeAppearanceBody:minHeight()
+    local rows = self.muscleCombo ~= nil and 2 or 1
+    return PAD + rows * (FONT_S + 4 + BTN_H + PAD)
 end
 
 function BridgeAppearanceBody:render()
@@ -403,10 +462,16 @@ local function addPager(view, onPrev, onNext)
 end
 
 
+local function gridNeed(extraH)
+    return PAD + FONT_S + PAD + (BTN_H + 6) + BTN_H + (extraH or 0) + PAD
+end
+
 local function gridLayout(view, extraH)
+    local first = ((view.page or 1) - 1) * (view.per or 1) + 1
     local rows = fitRows(view.height, extraH)
     view.rows = rows
     view.per = view.cols * rows
+    view.page = math.floor((first - 1) / view.per) + 1
     local rowH = BTN_H + 6
     local bw = math.floor((view.width - PAD * (view.cols + 1)) / view.cols)
     if bw < 20 then bw = 20 end
@@ -493,6 +558,8 @@ function BridgeAppearanceFace:layout()
     self:refresh()
 end
 
+function BridgeAppearanceFace:minHeight() return gridNeed(0) end
+
 function BridgeAppearanceFace:render()
     self:drawText(tr("AppearanceFace"), PAD, PAD, 1, 1, 1, 1, UIFont.Small)
     self:drawText(self.pageText, self.nextBtn:getRight() + PAD, self.pageY + 3, 0.8, 0.8, 0.8, 1, UIFont.Small)
@@ -540,6 +607,8 @@ function BridgeAppearanceDetails:createChildren()
     self:addChild(self.clearBtn)
     self:layout()
 end
+
+function BridgeAppearanceDetails:minHeight() return gridNeed(PAD + BTN_H) end
 
 function BridgeAppearanceDetails:layout()
     gridLayout(self, PAD + BTN_H)
@@ -617,8 +686,12 @@ function BridgeAppearanceHair:createChildren()
     self:layout()
 end
 
+local SWATCH = 24
+
+function BridgeAppearanceHair:minHeight() return gridNeed(PAD + FONT_S + PAD + SWATCH + PAD + BTN_H) end
+
 function BridgeAppearanceHair:layout()
-    local sw = 24
+    local sw = SWATCH
     gridLayout(self, PAD + FONT_S + PAD + sw + PAD + BTN_H)
     self.colorY = self.pageY + BTN_H + PAD + FONT_S + PAD
     local sx = PAD
@@ -680,6 +753,106 @@ end
 
 
 
+BridgeAppearanceBeard = ISPanel:derive("BridgeAppearanceBeard")
+
+function BridgeAppearanceBeard:createChildren()
+    ISPanel.createChildren(self)
+    self.entries = (BridgeWindow ~= nil and type(BridgeWindow.beardStyles) == "function") and BridgeWindow.beardStyles() or {}
+    self.cols = 2
+    self.rows = 1
+    self.per = self.cols
+    self.page = 1
+    self.pageText = "1 / 1"
+    self.btns = {}
+    for i = 1, self.cols * MAX_ROWS do
+        self.btns[i] = gridButton(self, i, BridgeAppearanceBeard.onStyle)
+    end
+    addPager(self, BridgeAppearanceBeard.onPrev, BridgeAppearanceBeard.onNext)
+
+    self.swatches = {}
+    local presets = BridgeAppearance.Catalog.hairColorPresets()
+    for _, c in ipairs(presets) do
+        local b = ISButton:new(PAD, 0, 24, 24, "", self, BridgeAppearanceBeard.onColor)
+        b:initialise()
+        b:instantiate()
+        b.backgroundColor = { r = c.r, g = c.g, b = c.b, a = 1 }
+        b.colorValue = c
+        mark(b, false)
+        self:addChild(b)
+        self.swatches[#self.swatches + 1] = b
+    end
+    self.customBtn = ISButton:new(PAD, 0, 10, BTN_H, tr("AppearanceCustomColor"), self, BridgeAppearanceBeard.onCustom)
+    self.customBtn:initialise()
+    self.customBtn:instantiate()
+    self:addChild(self.customBtn)
+    self:layout()
+end
+
+function BridgeAppearanceBeard:minHeight() return gridNeed(PAD + FONT_S + PAD + SWATCH + PAD + BTN_H) end
+
+function BridgeAppearanceBeard:layout()
+    local sw = SWATCH
+    gridLayout(self, PAD + FONT_S + PAD + sw + PAD + BTN_H)
+    self.colorY = self.pageY + BTN_H + PAD + FONT_S + PAD
+    local sx = PAD
+    for _, b in ipairs(self.swatches) do
+        if sx + sw > self.width - PAD then
+            b:setVisible(false)
+        else
+            b:setVisible(true)
+            b:setX(sx)
+            b:setY(self.colorY)
+            b:setWidth(sw)
+            b:setHeight(sw)
+            sx = sx + sw + 4
+        end
+    end
+    self.customBtn:setX(PAD)
+    self.customBtn:setY(self.colorY + sw + PAD)
+    self.customBtn:setWidth(self.width - PAD * 2)
+    self.customBtn:setHeight(BTN_H)
+    self:refresh()
+end
+
+function BridgeAppearanceBeard:render()
+    self:drawText(tr("AppearanceBeard"), PAD, PAD, 1, 1, 1, 1, UIFont.Small)
+    self:drawText(self.pageText, self.nextBtn:getRight() + PAD, self.pageY + 3, 0.8, 0.8, 0.8, 1, UIFont.Small)
+    self:drawText(tr("AppearanceColor"), PAD, self.pageY + BTN_H + PAD, 1, 1, 1, 1, UIFont.Small)
+end
+
+function BridgeAppearanceBeard:onStyle(button)
+    if button.entryName ~= nil then BridgeAppearance.setBeard(button.entryName) end
+end
+
+function BridgeAppearanceBeard:onColor(button)
+    if button.colorValue ~= nil then BridgeAppearance.setBeardColor(button.colorValue) end
+end
+
+function BridgeAppearanceBeard:onCustom(button)
+    BridgeAppearance.openColorPicker(button, "beard")
+end
+
+function BridgeAppearanceBeard:onPrev() self.page = self.page - 1 self:refresh() end
+function BridgeAppearanceBeard:onNext() self.page = self.page + 1 self:refresh() end
+
+function BridgeAppearanceBeard:refresh()
+    pagerRefresh(self, nil, function(name) return BridgeAppearance.candidate.beard == name end)
+    local cur = BridgeAppearance.candidate.beardColor or BridgeData.beardColorOf(Bridge.store)
+    for _, b in ipairs(self.swatches) do
+        mark(b, sameColor(b.colorValue, cur))
+    end
+end
+
+function BridgeAppearanceBeard:new(x, y, width, height)
+    local o = ISPanel:new(x, y, width, height)
+    setmetatable(o, self)
+    self.__index = self
+    o:noBackground()
+    return o
+end
+
+
+
 BridgeAppearanceMakeup = ISPanel:derive("BridgeAppearanceMakeup")
 
 function BridgeAppearanceMakeup:createChildren()
@@ -723,6 +896,10 @@ function BridgeAppearanceMakeup:layout()
     end
 end
 
+function BridgeAppearanceMakeup:minHeight()
+    return PAD + FONT_S + PAD + #self.comboOrder * (FONT_S + 4 + BTN_H + PAD)
+end
+
 function BridgeAppearanceMakeup:render()
     self:drawText(tr("AppearanceMakeup"), PAD, PAD, 1, 1, 1, 1, UIFont.Small)
     local defs = rawget(_G, "MakeUpDefinitions")
@@ -764,7 +941,7 @@ BridgeAppearance.Window = ISCollapsableWindow:derive("BridgeAppearanceWindow")
 BridgeAppearance.ZOOM_MIN = 0
 BridgeAppearance.ZOOM_MAX = 20
 BridgeAppearance.ZOOM_STEP = 4
-BridgeAppearance.ZOOM = { body = 0, face = 18, hair = 16, details = 18, makeup = 20 }
+BridgeAppearance.ZOOM = { body = 0, face = 18, hair = 16, beard = 18, details = 18, makeup = 20 }
 
 local function zoomY(zoom)
     local z = zoom
@@ -777,6 +954,29 @@ end
 
 function BridgeAppearance.Window:createChildren()
     ISCollapsableWindow.createChildren(self)
+
+    for _, rw in ipairs({ self.resizeWidget or false, self.resizeWidget2 or false }) do
+        if rw then
+            local up, upOutside = rw.onMouseUp, rw.onMouseUpOutside
+            rw.onMouseUp = function(widget, x, y)
+                local r = up ~= nil and up(widget, x, y) or nil
+                self:saveGeometry()
+                return r
+            end
+            rw.onMouseUpOutside = function(widget, x, y)
+                local r = upOutside ~= nil and upOutside(widget, x, y) or nil
+                self:saveGeometry()
+                return r
+            end
+
+            rw.resizeFunction = function(target, nw, nh)
+                local sw = getCore():getScreenWidth()
+                if target:getX() + nw > sw then nw = math.max(target.minimumWidth or 0, sw - target:getX()) end
+                target:setWidth(nw)
+                target:setHeight(nh)
+            end
+        end
+    end
 
     self.preview = ISUI3DModel:new(PAD, PAD, PREVIEW_W, PREVIEW_H)
     self.preview:initialise()
@@ -799,7 +999,7 @@ function BridgeAppearance.Window:createChildren()
     self.panel:addView(tr("AppearanceBody"), self.bodyView)
 
     self.faceView = nil
-    if BridgeData.spnccFaces() ~= nil then
+    if BridgeData.spnccFaces(BridgeData.genderOf(Bridge.store)) ~= nil then
         self.faceView = BridgeAppearanceFace:new(0, 0, 10, 10)
         self.faceView.tabKey = "face"
         self.faceView:initialise()
@@ -811,8 +1011,16 @@ function BridgeAppearance.Window:createChildren()
     self.hairView:initialise()
     self.panel:addView(tr("AppearanceHair"), self.hairView)
 
+    self.beardView = nil
+    if BridgeData.isMale(Bridge.store) then
+        self.beardView = BridgeAppearanceBeard:new(0, 0, 10, 10)
+        self.beardView.tabKey = "beard"
+        self.beardView:initialise()
+        self.panel:addView(tr("AppearanceBeard"), self.beardView)
+    end
+
     self.detailView = nil
-    if BridgeData.spnccDetails() ~= nil then
+    if BridgeData.spnccDetails(BridgeData.genderOf(Bridge.store)) ~= nil then
         self.detailView = BridgeAppearanceDetails:new(0, 0, 10, 10)
         self.detailView.tabKey = "details"
         self.detailView:initialise()
@@ -868,7 +1076,38 @@ function BridgeAppearance.Window:createChildren()
     self.deleteBtn:setEnable(false)
     self:addChild(self.deleteBtn)
 
+    local mw, mh = self:minSize()
+    self.minimumWidth, self.minimumHeight = mw, mh
+    if self.width < mw then self:setWidth(mw) end
+    if self.height < mh then self:setHeight(mh) end
     self:layout()
+end
+
+local PREVIEW_MIN_H = 120
+
+function BridgeAppearance.Window:footerWidths()
+    local applyW = textW(UIFont.Small, self.applyText) + PAD * 3
+    local closeW = textW(UIFont.Small, self.closeText) + PAD * 3
+    local saveW = math.max(50, textW(UIFont.Small, self.saveText) + PAD * 2)
+    local delW = math.max(50, textW(UIFont.Small, self.delText) + PAD * 2)
+    return applyW, closeW, saveW, delW
+end
+
+function BridgeAppearance.Window:minSize()
+    local th = self:titleBarHeight()
+    local rh = self:resizeWidgetHeight()
+    local footerH = BTN_H + PAD * 2
+    local need = 40
+    for _, v in ipairs({ self.bodyView or false, self.faceView or false, self.hairView or false,
+        self.beardView or false, self.detailView or false, self.makeupView or false }) do
+        if v and type(v.minHeight) == "function" then need = math.max(need, v:minHeight()) end
+    end
+    local byTabs = th + PAD + self.panel.tabHeight + need + PAD + rh + footerH
+    local byPreview = th + PAD + PREVIEW_MIN_H + PAD + BTN_H + PAD + rh + footerH
+    local applyW, closeW, saveW, delW = self:footerWidths()
+    local byFooter = PAD + 80 + PAD + saveW + PAD + delW + PAD + applyW + PAD + closeW + PAD
+    return math.max(BridgeAppearance.MIN_WIDTH, byFooter),
+        math.max(BridgeAppearance.MIN_HEIGHT, byTabs, byPreview)
 end
 
 
@@ -878,15 +1117,7 @@ function BridgeAppearance.Window:layout()
     local rh = self:resizeWidgetHeight()
     local footerH = BTN_H + PAD * 2
 
-    if self.resizeWidget ~= nil then
-        self.resizeWidget:setX(self.width - rh)
-        self.resizeWidget:setY(self.height - rh)
-    end
-    if self.resizeWidget2 ~= nil then
-        self.resizeWidget2:setX(0)
-        self.resizeWidget2:setY(self.height - rh)
-        self.resizeWidget2:setWidth(self.width - rh)
-    end
+
 
     local tabX = PAD + PREVIEW_W + PAD
     local tabW = self.width - tabX - PAD
@@ -895,8 +1126,8 @@ function BridgeAppearance.Window:layout()
     local tabH = self.height - tabY - rh - footerH - PAD
     if tabH < 40 then tabH = 40 end
 
-    local previewH = PREVIEW_H
-    if previewH > tabH then previewH = math.max(40, tabH) end
+    local previewH = math.min(PREVIEW_H, tabH, self.height - rh - footerH - th - PAD * 2 - BTN_H)
+    if previewH < 40 then previewH = 40 end
     self.previewH = previewH
     self.preview:setX(PAD)
     self.preview:setY(th + PAD)
@@ -910,10 +1141,12 @@ function BridgeAppearance.Window:layout()
 
     local innerH = tabH - self.panel.tabHeight
     if innerH < 40 then innerH = 40 end
-    local views = { self.bodyView, self.faceView, self.hairView, self.detailView, self.makeupView }
+
+    local views = { self.bodyView or false, self.faceView or false, self.hairView or false, self.beardView or false,
+        self.detailView or false, self.makeupView or false }
     for i = 1, #views do
         local v = views[i]
-        if v ~= nil then
+        if v then
             v:setWidth(tabW)
             v:setHeight(innerH)
             if type(v.layout) == "function" then v:layout() end
@@ -931,11 +1164,8 @@ function BridgeAppearance.Window:layout()
     self.zoomInBtn:setHeight(BTN_H)
 
     local by = self.height - rh - footerH + PAD
-    local applyW = textW(UIFont.Small, self.applyText) + PAD * 3
-    local closeW = textW(UIFont.Small, self.closeText) + PAD * 3
+    local applyW, closeW, saveW, delW = self:footerWidths()
     local gap = PAD
-    local saveW = math.max(50, textW(UIFont.Small, self.saveText) + PAD * 2)
-    local delW = math.max(50, textW(UIFont.Small, self.delText) + PAD * 2)
 
     self.closeBtn:setX(self.width - PAD - closeW)
     self.closeBtn:setY(by)
@@ -1024,6 +1254,7 @@ function BridgeAppearance.Window:refresh()
     if self.bodyView ~= nil then self.bodyView:refresh() end
     if self.faceView ~= nil then self.faceView:refresh() end
     if self.hairView ~= nil then self.hairView:refresh() end
+    if self.beardView ~= nil then self.beardView:refresh() end
     if self.detailView ~= nil then self.detailView:refresh() end
     if self.makeupView ~= nil then self.makeupView:refresh() end
 end
@@ -1033,6 +1264,7 @@ function BridgeAppearance.Window:tabName(which)
     if which == "face" then return tr("AppearanceFace") end
     if which == "details" then return tr("AppearanceDetails") end
     if which == "makeup" then return tr("AppearanceMakeup") end
+    if which == "beard" then return tr("AppearanceBeard") end
     return tr("AppearanceHair")
 end
 
@@ -1069,10 +1301,14 @@ function BridgeAppearance.Window:refreshLooks()
     combo.options = {}
     combo.selected = 0
     local list = BridgeLooks.all()
+    local wantGender = BridgeData.genderOf(Bridge.store)
     if type(list) == "table" then
         for i = 1, #list do
             local look = list[i]
-            if type(look) == "table" and type(look.name) == "string" then combo:addOption(look.name) end
+            if type(look) == "table" and type(look.name) == "string"
+                and BridgeLooks.genderOf(look) == wantGender then
+                combo:addOption(look.name)
+            end
         end
     end
     combo.selected = 0
@@ -1107,7 +1343,8 @@ end
 
 function BridgeAppearance.Window:syncLook()
     if BridgeLooks == nil or self.lookCombo == nil then return end
-    self:selectLook(BridgeLooks.current(BridgeAppearance.candidate))
+    local rec = Bridge.store or BridgeAppearance.candidate
+    self:selectLook(BridgeLooks.current(rec))
     self:refreshLookButtons()
 end
 
@@ -1118,6 +1355,7 @@ function BridgeAppearance.Window:onLook(combo)
     if type(name) ~= "string" or BridgeAppearance.candidate == nil then return end
     local look = BridgeLooks.find(name)
     if look == nil then return end
+    if BridgeLooks.genderOf(look) ~= BridgeData.genderOf(Bridge.store) then return end
     BridgeLooks.applyTo(look, BridgeAppearance.candidate)
     BridgeAppearance.refreshPreview()
     BridgeAppearance.refreshViews()
@@ -1200,17 +1438,23 @@ function BridgeAppearance.Window:onApply()
     if c.hairColor ~= nil then
         pcall(function() Bridge.setHairColor(c.hairColor.r, c.hairColor.g, c.hairColor.b) end)
     end
-    if BridgeData.spnccFaces() ~= nil then
+    if BridgeData.spnccFaces(BridgeData.genderOf(Bridge.store)) ~= nil then
         pcall(function() Bridge.setFace(c.face) end)
     end
-    if BridgeData.spnccMuscle() ~= nil then
+    if BridgeData.spnccMuscle(BridgeData.genderOf(Bridge.store)) ~= nil then
         pcall(function() Bridge.setMuscle(c.muscle) end)
     end
-    if BridgeData.spnccDetails() ~= nil then
+    if BridgeData.spnccDetails(BridgeData.genderOf(Bridge.store)) ~= nil then
         pcall(function() Bridge.setDetails(c.details) end)
     end
     if BridgeData.makeupList() ~= nil then
         pcall(function() Bridge.setMakeup(c.makeup) end)
+    end
+    if BridgeData.isMale(Bridge.store) then
+        pcall(function() Bridge.setBeard(c.beard) end)
+        if c.beardColor ~= nil then
+            pcall(function() Bridge.setBeardColor(c.beardColor.r, c.beardColor.g, c.beardColor.b) end)
+        end
     end
     if BridgeLooks ~= nil then BridgeLooks.remember(self:selectedLook()) end
 end
@@ -1272,7 +1516,10 @@ end
 function BridgeAppearance.Window:saveGeometry()
     local data = playerModData()
     if data == nil then return end
-    data[GEO_KEY] = { x = self:getX(), y = self:getY(), w = self:getWidth(), h = self:getHeight() }
+    local x, y, w, h = self:getX(), self:getY(), self:getWidth(), self:getHeight()
+    local g = data[GEO_KEY]
+    if type(g) == "table" and g.x == x and g.y == y and g.w == w and g.h == h then return end
+    data[GEO_KEY] = { x = x, y = y, w = w, h = h }
 end
 
 local function loadGeometry()
@@ -1291,13 +1538,17 @@ function BridgeAppearance.open(tab)
     end
     refreshFonts()
     local c = BridgeAppearance.candidate
+    local app = BridgeData.appearanceOf(Bridge.store)
+    local gender = BridgeData.genderOf(Bridge.store)
     c.skin = BridgeData.skinOf(Bridge.store)
     c.hair = BridgeData.hairOf(Bridge.store)
     c.hairColor = copyColor(BridgeData.hairColorOf(Bridge.store))
-    c.face = BridgeData.cleanFace(Bridge.store.face)
-    c.details = BridgeData.cleanDetails(Bridge.store.details) or {}
+    c.face = BridgeData.cleanFace(app ~= nil and app.face or nil, gender)
+    c.details = BridgeData.cleanDetails(app ~= nil and app.details or nil, gender) or {}
     c.muscle = BridgeData.muscleOf(Bridge.store)
     c.makeup = BridgeData.makeupOf(Bridge.store)
+    c.beard = BridgeData.beardOf(Bridge.store)
+    c.beardColor = BridgeData.beardColorOf(Bridge.store)
 
     local sw, sh = 800, 600
     pcall(function() sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight() end)
@@ -1323,6 +1574,8 @@ function BridgeAppearance.open(tab)
     local w = BridgeAppearance.Window:new(xx, yy, ww, wh)
     w:initialise()
     w:addToUIManager()
+    w:setX(math.max(0, math.min(w:getX(), sw - w:getWidth())))
+    w:setY(math.max(0, math.min(w:getY(), sh - w:getHeight())))
     w:setVisible(true)
     BridgeAppearance.instance = w
     w:refresh()

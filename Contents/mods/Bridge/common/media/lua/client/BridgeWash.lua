@@ -202,8 +202,18 @@ BridgeWash.besideWater = besideWater
 local function spotNear(body, sink)
     local sq = sink:getSquare()
     if sq == nil then return nil end
+
+
+
+    local who = body
+    if BridgeMove ~= nil and BridgeMove.keepFar ~= nil and BridgeMove.keepFar() then
+        pcall(function()
+            local red = BridgeData.owner()
+            if red ~= nil then who = red end
+        end)
+    end
     local found = nil
-    pcall(function() found = AdjacentFreeTileFinder.Find(sq, body) end)
+    pcall(function() found = AdjacentFreeTileFinder.Find(sq, who) end)
     if found ~= nil and besideWater(sq, found) then
         return { x = found:getX() + 0.5, y = found:getY() + 0.5, z = found:getZ(), square = found }
     end

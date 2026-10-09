@@ -450,6 +450,8 @@ local function humanize(body)
     pcall(function() Bridge.touched[body] = body:getPersistentOutfitID() end)
     pcall(function() body:getModData().notAloneBody = true end)
 
+    pcall(function() body:getModData().arcadiaRVAuthorizedDiscoveryZombie = true end)
+
 
 
 
@@ -474,7 +476,7 @@ local function humanize(body)
     body:setVariable("ZombieHitReaction", "Chainsaw")
     body:setVariable("NoLungeTarget", true)
     pcall(function() body:getEmitter():stopAll() end)
-    pcall(function() body:getDescriptor():setVoicePrefix("VoiceFemale") end)
+    pcall(function() body:getDescriptor():setVoicePrefix(BridgeData.voicePrefix(Bridge.store)) end)
     body:setTurnAlertedValues(-5, 5)
     pcall(function() body:setSceneCulled(false) end)
 
@@ -490,7 +492,15 @@ local function humanize(body)
     pcall(function() body:setInvulnerable(true) end)
     pcall(function() body:setGodMod(true, true) end)
     pcall(function() body:setHealth(healthBuffer()) end)
-    pcall(function() body:getInventory():setCapacity(15) end)
+
+
+    pcall(function()
+        if BridgeSkills ~= nil then
+            BridgeSkills.applyCarry(body)
+        else
+            body:getInventory():setCapacity(15)
+        end
+    end)
     pcall(function() body:getInventory():setExplored(true) end)
 end
 
@@ -587,6 +597,7 @@ function Bridge.releaseForeign(z)
             z:getModData().ST_Ignore = nil
             z:getModData().RandomZedsExcluded = nil
             z:getModData().notAloneBody = nil
+            z:getModData().arcadiaRVAuthorizedDiscoveryZombie = nil
         end
     end)
     pcall(function() BridgeWeapon.release(z) end)
@@ -717,6 +728,7 @@ function Bridge.saveOutfit(encoded)
     if ok then
         Bridge.itemsSeen = encoded
         Bridge.itemsSavedTick = Bridge.time
+        Bridge.itemsSpentAt = nil
         pcall(function() Bridge.itemsSign = BridgeItems.signature(BridgeItems.decode(encoded)) end)
         pcall(function() Bridge.noteWorn(encoded) end)
         if not Bridge.mp and BridgeBackup ~= nil then pcall(BridgeBackup.noteItems, Bridge.body, encoded) end
@@ -882,6 +894,9 @@ end
 
 
 local function wearSaved(body)
+
+
+    if Bridge.dressFresh then return nil end
     local md = outfitStore()
 
     if md ~= nil and BridgeBackup ~= nil then pcall(BridgeBackup.dedupe, md) end
@@ -1000,18 +1015,13 @@ local function dressBody(body)
 
 
     local st = outfitStore()
-    local first = st == nil or not st.outfitGiven
-
-
-    local outfit = {
-        { t = "Base.Tshirt_WhiteTINT", tint = { 0.13, 0.10, 0.11 } },
-        { t = "Base.Trousers_Denim", tc = 1 },
-        { t = "Base.Shoes_CowboyBoots_Black" },
-
-        { t = "Base.Belt2" },
-    }
-    if first then
-        outfit[#outfit + 1] = { t = "Base.Jacket_SheepSkin_Navy", alt = "Base.Jacket_PaddedDOWN", altTint = { 0.10, 0.13, 0.25 } }
+    local gender = BridgeData.genderOf(st)
+    local first = st == nil or not st.outfitGiven or Bridge.dressFresh == true
+    if Bridge.dressFresh == true and st ~= nil then st.items, st.saved = nil, nil end
+    Bridge.dressFresh = nil
+    local outfit = {}
+    for _, e in ipairs(BridgeData.STARTER[gender]) do
+        if first or not e.first then outfit[#outfit + 1] = e end
     end
     local worn = 0
     for i = 1, #outfit do
@@ -1026,6 +1036,9 @@ local function dressBody(body)
             if outfit[i].tc ~= nil then
                 pcall(function() item:getVisual():setTextureChoice(outfit[i].tc) end)
             end
+            if outfit[i].bt ~= nil then
+                pcall(function() item:getVisual():setBaseTexture(outfit[i].bt) end)
+            end
             if tint ~= nil then
                 pcall(function() item:getVisual():setTint(ImmutableColor.new(tint[1], tint[2], tint[3], 1)) end)
             end
@@ -1037,18 +1050,22 @@ local function dressBody(body)
     end
     if first then
         pcall(function()
-            local axe = inv:AddItem("Base.WoodAxe")
-            if axe ~= nil then
+            local weapon = inv:AddItem(BridgeData.STARTER_WEAPON[gender])
+            if weapon ~= nil and gender == "male" then
+
+                body:setPrimaryHandItem(weapon)
+                BridgeWeapon.assignedId = weapon:getID()
+            elseif weapon ~= nil then
 
 
 
 
-                pcall(function() axe:setCondition(START_AXE.condition) end)
-                pcall(function() if axe.setHeadCondition ~= nil then axe:setHeadCondition(START_AXE.head) end end)
-                pcall(function() if axe.setSharpness ~= nil then axe:setSharpness(START_AXE.sharpness) end end)
-                body:setPrimaryHandItem(axe)
-                body:setSecondaryHandItem(axe)
-                BridgeWeapon.assignedId = axe:getID()
+                pcall(function() weapon:setCondition(START_AXE.condition) end)
+                pcall(function() if weapon.setHeadCondition ~= nil then weapon:setHeadCondition(START_AXE.head) end end)
+                pcall(function() if weapon.setSharpness ~= nil then weapon:setSharpness(START_AXE.sharpness) end end)
+                body:setPrimaryHandItem(weapon)
+                body:setSecondaryHandItem(weapon)
+                BridgeWeapon.assignedId = weapon:getID()
             end
         end)
         if st ~= nil then st.outfitGiven = true end
@@ -1146,7 +1163,7 @@ function Bridge.isCompanion(z)
         if not Bridge.mp then return end
         local pid = z:getPersistentOutfitID()
         if Bridge.bodyIndex[pid] ~= nil or (Bridge.store ~= nil and Bridge.store.bodyId == pid) then yes = true return end
-        if BridgeRemnant ~= nil and BridgeRemnant.hasMark(pid) and z:isFemale() and z:getOutfitName() == "Naked" then yes = true end
+        if BridgeRemnant ~= nil and BridgeRemnant.hasMark(pid) and z:isFemale() == BridgeData.isFemale(Bridge.store) and z:getOutfitName() == "Naked" then yes = true end
     end)
     return yes
 end
@@ -1249,8 +1266,23 @@ function Bridge.bodiesSeen()
     for z, info in pairs(Bridge.seen) do
         local live = false
         pcall(function()
-            live = (Bridge.time - info.tick) <= 60 and not z:isDead()
-                and info.rec ~= nil and info.rec.bodyId ~= nil and z:getPersistentOutfitID() == info.rec.bodyId
+
+
+
+
+
+
+
+
+            local rec = info.rec
+            local marked = false
+            if rec == nil or rec.onlineId == nil then
+                marked = true
+            elseif z:getOnlineID() == rec.onlineId or z:getVariableBoolean(BODY_VAR) == true then
+                marked = true
+            end
+            live = marked and (Bridge.time - info.tick) <= 60 and not z:isDead()
+                and rec ~= nil and rec.bodyId ~= nil and z:getPersistentOutfitID() == rec.bodyId
         end)
         if live then out[z] = info else Bridge.seen[z] = nil end
     end
@@ -1407,6 +1439,7 @@ function Bridge.spawnZombie(px, py, pz)
 
     if Bridge.redDead(red) then return "owner dead" end
     if Bridge.alive() then return "already alive" end
+    pcall(Bridge.pickStartGender)
 
     local x = math.floor(px or red:getX())
     local y = math.floor(py or red:getY())
@@ -1428,7 +1461,8 @@ function Bridge.spawnZombie(px, py, pz)
     local failed = nil
     local ok, err = pcall(function()
 
-        local list = addZombiesInOutfit(x, y, z, 1, "Naked", 100, false, false, false, false, false, false, 1)
+        local chance = BridgeData.isFemale(Bridge.store) and 100 or 0
+        local list = addZombiesInOutfit(x, y, z, 1, "Naked", chance, false, false, false, false, false, false, 1)
         if list == nil or list:size() == 0 then failed = "addZombiesInOutfit returned nothing" return end
         local body = list:get(0)
 
@@ -1769,6 +1803,7 @@ end
 function Bridge.setMode(mode)
     if mode == "waitcar" then mode = "wait" end
     if not BridgeData.MODES[mode] then return "unknown mode " .. tostring(mode) end
+    if BridgeTask ~= nil and BridgeTask.active then BridgeTask.cancel("mode") end
 
     Bridge.newLifePending = nil
     Bridge.mode = mode
@@ -1865,10 +1900,19 @@ end
 
 function Bridge.speak(key, a, b)
     local text = key
+
+    local full = "IGUI_NotAlone_Say_" .. key
     pcall(function()
-        if b ~= nil then text = getText("IGUI_NotAlone_Say_" .. key, a, b)
-        elseif a ~= nil then text = getText("IGUI_NotAlone_Say_" .. key, a)
-        else text = getText("IGUI_NotAlone_Say_" .. key) end
+        if BridgeData.isMale(Bridge.store) then
+            local m = "IGUI_NotAlone_SayM_" .. key
+            local t = getTextOrNull(m, "", "")
+            if t ~= nil and t ~= "" and t ~= m then full = m end
+        end
+    end)
+    pcall(function()
+        if b ~= nil then text = getText(full, a, b)
+        elseif a ~= nil then text = getText(full, a)
+        else text = getText(full) end
     end)
     return Bridge.speakText(text)
 end
@@ -1911,6 +1955,9 @@ end
 
 function Bridge.speakText(text)
 
+    Bridge.lastSpokeAt = Bridge.time
+    Bridge.lastSpokeText = tostring(text)
+
 
     pcall(function() log("line hex:" .. BridgeChat.toHex(tostring(text))) end)
 
@@ -1933,7 +1980,13 @@ end
 
 function Bridge.setName(text)
     local name = BridgeData.cleanName(text)
-    if Bridge.store ~= nil then Bridge.store.name = name end
+    if Bridge.store ~= nil then
+        if BridgeData.isMale(Bridge.store) then
+            Bridge.store.maleName = name
+        else
+            Bridge.store.name = name
+        end
+    end
     if Bridge.mp then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { name = name or "" }) end)
     end
@@ -1955,10 +2008,25 @@ function Bridge.setOption(key, value)
 end
 
 
+
+
+function Bridge.setTorchMode(mode)
+    mode = BridgeData.cleanTorchMode(mode)
+    if mode == nil then return "unknown torch mode " .. tostring(mode) end
+    if Bridge.store ~= nil then Bridge.store.torch = mode end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { torch = mode }) end)
+    end
+    log("torch=" .. mode)
+    return "torch=" .. mode
+end
+
+
+
 function Bridge.setHair(style)
     local hair = BridgeData.cleanHair(style)
     if hair == nil then return "bad hair: " .. tostring(style) end
-    if Bridge.store ~= nil then Bridge.store.hair = hair end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).hair = hair end
     if Bridge.mp then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { hair = hair }) end)
     end
@@ -1973,10 +2041,48 @@ function Bridge.setHair(style)
     return "hair=" .. hair
 end
 
+function Bridge.setBeard(name)
+    local beard = BridgeData.cleanBeard(name)
+    if beard == nil then return "bad beard: " .. tostring(name) end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).beard = beard end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { beard = beard }) end)
+    end
+    if Bridge.alive() and Bridge.kind == "zombie" then
+        pcall(function()
+            BridgeInventory.skin(Bridge.body, Bridge.store)
+            Bridge.body:resetModelNextFrame()
+            Bridge.body:resetModel()
+        end)
+    end
+    log("beard=" .. tostring(beard))
+    return "beard=" .. tostring(beard)
+end
+
+function Bridge.setBeardColor(r, g, b)
+    local color = BridgeData.cleanHairColor({ r = r, g = g, b = b })
+    if color == nil then return "bad beard color" end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).beardColor = color end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state",
+            { beardColor = { r = color.r, g = color.g, b = color.b } }) end)
+    end
+    if Bridge.alive() and Bridge.kind == "zombie" then
+        pcall(function()
+            BridgeInventory.skin(Bridge.body, Bridge.store)
+            Bridge.body:resetModelNextFrame()
+            Bridge.body:resetModel()
+        end)
+    end
+    log(string.format("beardColor=%.2f,%.2f,%.2f", color.r, color.g, color.b))
+    return "beardColor"
+end
+
 function Bridge.setSkin(name)
-    local skin = BridgeData.cleanSkin(name)
+    local gender = BridgeData.genderOf(Bridge.store)
+    local skin = BridgeData.cleanSkinFor(name, gender)
     if skin == nil then return "bad skin: " .. tostring(name) end
-    if Bridge.store ~= nil then Bridge.store.skin = skin end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).skin = skin end
     if Bridge.mp then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { skin = skin }) end)
     end
@@ -1995,7 +2101,7 @@ end
 function Bridge.setHairColor(r, g, b)
     local color = BridgeData.cleanHairColor({ r = r, g = g, b = b })
     if color == nil then return "bad hair color" end
-    if Bridge.store ~= nil then Bridge.store.hairColor = color end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).hairColor = color end
     if Bridge.mp then
         pcall(function()
             sendClientCommand(BridgeData.owner(), "Bridge", "state",
@@ -2015,12 +2121,12 @@ end
 
 
 function Bridge.setFace(name)
-    local face = BridgeData.cleanFace(name)
+    local face = BridgeData.cleanFace(name, BridgeData.genderOf(Bridge.store))
     if BridgeInventory ~= nil and BridgeInventory.dbg ~= nil then
         BridgeInventory.dbg("setFace " .. tostring(name) .. " -> " .. tostring(face) ..
             " alive=" .. tostring(Bridge.alive()) .. " kind=" .. tostring(Bridge.kind))
     end
-    if Bridge.store ~= nil then Bridge.store.face = face end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).face = face end
     if Bridge.mp then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { face = face or "" }) end)
     end
@@ -2037,9 +2143,9 @@ end
 
 
 function Bridge.setDetails(list)
-    local details = BridgeData.cleanDetails(list)
+    local details = BridgeData.cleanDetails(list, BridgeData.genderOf(Bridge.store))
     if details == nil then return "bad details" end
-    if Bridge.store ~= nil then Bridge.store.details = details end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).details = details end
     if Bridge.mp then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { details = details }) end)
     end
@@ -2064,7 +2170,7 @@ function Bridge.setMuscle(level)
     if BridgeInventory ~= nil and BridgeInventory.dbg ~= nil then
         BridgeInventory.dbg("setMuscle " .. tostring(m) .. " alive=" .. tostring(Bridge.alive()) .. " kind=" .. tostring(Bridge.kind))
     end
-    if Bridge.store ~= nil then Bridge.store.muscle = m end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).muscle = m end
     if Bridge.mp then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { muscle = m }) end)
     end
@@ -2086,7 +2192,7 @@ function Bridge.setMakeup(list)
     if BridgeInventory ~= nil and BridgeInventory.dbg ~= nil then
         BridgeInventory.dbg("setMakeup n=" .. tostring(#makeup) .. " alive=" .. tostring(Bridge.alive()) .. " kind=" .. tostring(Bridge.kind))
     end
-    if Bridge.store ~= nil then Bridge.store.makeup = makeup end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).makeup = makeup end
     if Bridge.mp then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { makeup = makeup }) end)
     end
@@ -2141,6 +2247,77 @@ function Bridge.goodbye()
     Bridge.speak("Goodbye")
     Bridge.leaveAt = Bridge.time + 120
     return "leaving"
+end
+
+
+
+
+
+
+Bridge.genderRespawnAt = nil
+
+function Bridge.setGender(gender)
+    gender = BridgeData.cleanGender(gender)
+    local st = Bridge.store
+    if st == nil then return "no store" end
+    if BridgeData.genderOf(st) == gender then return "gender=" .. gender end
+
+    local wasAlive = Bridge.alive()
+
+    if wasAlive then pcall(function() Bridge.saveOutfit() end) end
+
+    local fresh = false
+    pcall(function() fresh = BridgeData.untouched(st) end)
+
+    st.gender = gender
+
+
+    if BridgeAppearance ~= nil and type(BridgeAppearance.close) == "function" then
+        pcall(BridgeAppearance.close)
+    end
+
+
+    BridgeData.appearanceOf(st)
+
+
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { gender = gender, resetOutfit = fresh or nil }) end)
+    end
+    Bridge.dressFresh = fresh or nil
+
+    if wasAlive then
+        setWant(true)
+        Bridge.setMode("follow")
+
+        Bridge.parked = false
+        pcall(function() Bridge.despawn() end)
+        Bridge.genderRespawnAt = Bridge.time + 30
+    end
+    if fresh then
+
+        st.items, st.saved, st.outfitGiven = nil, nil, nil
+    end
+    log("gender=" .. gender .. " alive=" .. tostring(wasAlive) .. " fresh=" .. tostring(fresh))
+    return "gender=" .. gender
+end
+
+
+
+function Bridge.pickStartGender()
+    local st = Bridge.store
+    if st == nil or not Bridge.gotData or not BridgeData.neverSpawned(st) then return false end
+    local owner = BridgeData.owner()
+    if owner == nil then return false end
+    local fem = nil
+    pcall(function() fem = owner:isFemale() end)
+    if fem == nil then return false end
+    local g = fem and "male" or "female"
+    st.gender = g
+    if Bridge.mp then
+        pcall(function() sendClientCommand(owner, "Bridge", "state", { gender = g }) end)
+    end
+    log("start gender: " .. g)
+    return true
 end
 
 
@@ -2430,9 +2607,14 @@ function Bridge.corpseSweep()
                         local skin = nil
                         pcall(function() skin = c:getHumanVisual():getSkinTexture() end)
 
+
                         local marked = false
                         pcall(function() marked = c:hasModData() and c:getModData().notAloneBody == true end)
-                        hers = c:isZombie() and c:isFemale() and (tostring(skin or "") == BridgeData.skinOf(Bridge.store) or marked)
+
+                        local female, mySkin = w.female, w.skin
+                        if female == nil then female = BridgeData.isFemale(Bridge.store) end
+                        if mySkin == nil then mySkin = BridgeData.skinOf(Bridge.store) end
+                        hers = c:isZombie() and c:isFemale() == female and (tostring(skin or "") == mySkin or marked)
                             and tostring(c:getOutfitName()) == "Naked"
                     end)
                     if hers then
@@ -2475,7 +2657,7 @@ function Bridge.onZombieDead(zombie)
 
     pcall(function() if zombie:isSittingOnFurniture() then zombie:setSittingOnFurniture(false) end end)
     if zombie == Bridge.body then BridgeMove.seatFlag = false end
-    pcall(function() zombie:getEmitter():playSound("VoiceFemaleDeathAlone") end)
+    pcall(function() zombie:getEmitter():playSound(BridgeData.voicePrefix(Bridge.store) .. "DeathAlone") end)
     if Bridge.mp then
         pcall(function() zombie:setPrimaryHandItem(nil) end)
         pcall(function() zombie:setSecondaryHandItem(nil) end)
@@ -2509,7 +2691,8 @@ function Bridge.onZombieDead(zombie)
         pcall(function() zombie:getInventory():clear() end)
         pcall(function()
             Bridge.corpseWatch = { x = math.floor(zombie:getX()), y = math.floor(zombie:getY()), z = math.floor(zombie:getZ()),
-                                   untilT = Bridge.time + 300 }
+                                   untilT = Bridge.time + 300, female = BridgeData.isFemale(Bridge.store),
+                                   skin = BridgeData.skinOf(Bridge.store) }
         end)
     end
     Bridge.seen[zombie] = nil
@@ -2879,9 +3062,13 @@ local function updateZombieBody(body)
 
 
 
-            elseif (Bridge.time - (Bridge.itemsSavedTick or 0)) > (Bridge.mp and 3600 or 300) then
+
+
+            elseif (Bridge.time - (Bridge.itemsSavedTick or 0)) > (Bridge.mp and 3600 or 300)
+                    or (Bridge.itemsSpentAt ~= nil and Bridge.time - Bridge.itemsSpentAt > 600) then
                 local full = BridgeInventory.encode(list)
-                if full ~= Bridge.itemsSeen then Bridge.saveOutfit(full) end
+
+                if full ~= Bridge.itemsSeen then Bridge.saveOutfit(full) else Bridge.itemsSpentAt = nil end
             end
         end
     end
@@ -3024,7 +3211,7 @@ local function updateZombieBody(body)
     local ownerDead = Bridge.mourning ~= nil or Bridge.redDead(BridgeData.owner())
     if not ownerDead then
         handProbe(body, "before weapon")
-        pcall(function() BridgeWeapon.update(body) end)
+        if BridgeTask == nil or not BridgeTask.active then pcall(function() BridgeWeapon.update(body) end) end
         handProbe(body, "weapon")
 
         local okSoc, errSoc = pcall(function() BridgeSocial.update(body) end)
@@ -3035,6 +3222,13 @@ local function updateZombieBody(body)
 
         local okCall, errCall = pcall(function() BridgeCallout.update(body) end)
         if not okCall and BridgeCallout ~= nil then BridgeCallout.info = "error: " .. tostring(errCall) end
+
+        local okAmb, errAmb = pcall(function() BridgeAmbient.update(body) end)
+        if not okAmb and BridgeAmbient ~= nil then BridgeAmbient.info = "error: " .. tostring(errAmb) end
+
+        local okTorch, errTorch = true, nil
+        if BridgeTorch ~= nil then okTorch, errTorch = pcall(function() BridgeTorch.update(body) end) end
+        if not okTorch and BridgeTorch ~= nil then BridgeTorch.info = "error: " .. tostring(errTorch) end
     end
 
 
@@ -3163,6 +3357,10 @@ local function updateZombieBody(body)
                 return
             end
         elseif carBusy then
+
+
+            if BridgeTask ~= nil and BridgeTask.active and Bridge.mode == "follow" then pcall(BridgeTask.cancel, "car")
+            elseif BridgeTask ~= nil and BridgeTask.active and BridgeTask.hold ~= nil then pcall(BridgeTask.hold) end
             Bridge.pose = nil
             pcall(function() BridgeMove.seatGuard(body) end)
             return
@@ -3182,6 +3380,7 @@ local function updateZombieBody(body)
             near = dx * dx + dy * dy < 20 * 20 and math.abs(body:getZ() - red:getZ()) < 2
         end)
         if near then
+            if BridgeTask ~= nil and BridgeTask.active then pcall(BridgeTask.cancel, "sleep") end
             Bridge.sleepPark(body, "player asleep")
             return
         end
@@ -3206,6 +3405,15 @@ local function updateZombieBody(body)
     if okHeal and healing then
         Bridge.pose = nil
         return
+    end
+
+    if not ownerDead and BridgeTask ~= nil and BridgeTask.active then
+        local okTask, taskBusy = pcall(function() return BridgeTask.update(body) end)
+        if not okTask then BridgeTask.info = "error: " .. tostring(taskBusy) end
+        if okTask and taskBusy then
+            Bridge.pose = nil
+            return
+        end
     end
 
     handProbe(body, "before fight")
@@ -3394,6 +3602,7 @@ local function applyLook(z, visuals, rec, who)
         local md = z:getModData()
         if md.ST_Ignore ~= true then md.ST_Ignore = true end
         if md.notAloneBody ~= true then md.notAloneBody = true end
+        if md.arcadiaRVAuthorizedDiscoveryZombie ~= true then md.arcadiaRVAuthorizedDiscoveryZombie = true end
         if md.RandomZedsExcluded ~= true then md.RandomZedsExcluded = true end
     end)
     pcall(function() Bridge.touched[z] = z:getPersistentOutfitID() end)
@@ -3453,7 +3662,8 @@ local function applyLook(z, visuals, rec, who)
 
     pcall(function()
         local d = z:getDescriptor()
-        if d ~= nil and d:getVoicePrefix() ~= "VoiceFemale" then d:setVoicePrefix("VoiceFemale") end
+        local vp = BridgeData.voicePrefix(rec)
+        if d ~= nil and d:getVoicePrefix() ~= vp then d:setVoicePrefix(vp) end
     end)
     pcall(function() muteZombieVoice(z) end)
 
@@ -3553,8 +3763,9 @@ local function applyLook(z, visuals, rec, who)
         l.hairColorKey = hckey
         l.applied = nil
     end
-    local faceKey = tostring(rec ~= nil and rec.face or "") .. "|" ..
-        table.concat(BridgeData.cleanDetails(rec ~= nil and rec.details or nil) or {}, ",") .. "|" .. tostring(BridgeData.muscleOf(rec)) ..
+    local faceApp = BridgeData.appearanceOf(rec)
+    local faceKey = tostring(faceApp ~= nil and faceApp.face or "") .. "|" ..
+        table.concat(BridgeData.cleanDetails(faceApp ~= nil and faceApp.details or nil, BridgeData.genderOf(rec)) or {}, ",") .. "|" .. tostring(BridgeData.muscleOf(rec)) ..
         "|" .. table.concat(BridgeData.makeupOf(rec), ",")
     if faceKey ~= l.faceKey then
         l.faceKey = faceKey
@@ -3701,7 +3912,7 @@ end
 function Bridge.strayCheck(z, pid, oid)
     local sign = false
     if BridgeRemnant ~= nil and BridgeRemnant.hasMark(pid) then
-        pcall(function() sign = z:isFemale() and z:getOutfitName() == "Naked" and not z:isDead() end)
+        pcall(function() sign = z:isFemale() == BridgeData.isFemale(Bridge.store) and z:getOutfitName() == "Naked" and not z:isDead() end)
     end
     if not sign then
         Bridge.unstray(z)
@@ -3980,7 +4191,7 @@ end
 
 local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follow = true, go = true, wait = true,
     rest = true, stop = true, mode = true, sit = true, stand = true, sleep = true, anim = true, walk = true,
-    keep = true, far = true, combat = true, ["goto"] = true, trace = true, sq = true, doors = true, status = true,
+    keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     lose = true, despawn = true }
 
@@ -4155,6 +4366,30 @@ function Bridge.run(line)
         if not BridgeFight.enabled then BridgeFight.reset(Bridge.body) end
         return "fight=" .. tostring(BridgeFight.enabled)
     end
+    if cmd == "stamina" then
+        if BridgeFight == nil then return "no fight module" end
+        local cur = BridgeFight.fatigue or 0
+        local function clampf(v) return math.max(0, math.min(1, v)) end
+        local a = parts[3]
+        if a == nil then
+            return string.format("stamina=%.0f%% (fatigue=%.2f)", (1 - cur) * 100, cur)
+        end
+        local n = tonumber(parts[4]) or 10
+        if a == "set" then
+            local pct = tonumber(parts[4])
+            if pct == nil then return "stamina set needs a percent 0-100" end
+            BridgeFight.fatigue = clampf(1 - pct / 100)
+        elseif a == "reduce" or a == "lower" or a == "down" or a == "-" then
+            BridgeFight.fatigue = clampf(cur + n / 100)
+        elseif a == "increase" or a == "raise" or a == "add" or a == "restore" or a == "up" or a == "+" then
+            BridgeFight.fatigue = clampf(cur - n / 100)
+        else
+            local delta = tonumber(a)
+            if delta == nil then return "stamina: set <pct> | reduce <n> | increase <n> | <+/-n>" end
+            BridgeFight.fatigue = clampf(cur - delta / 100)
+        end
+        return string.format("stamina=%.0f%% (fatigue=%.2f)", (1 - BridgeFight.fatigue) * 100, BridgeFight.fatigue)
+    end
     if cmd == "update" then
         Bridge.manualUpdate = (parts[3] == "on")
         return "manualUpdate=" .. tostring(Bridge.manualUpdate)
@@ -4177,6 +4412,32 @@ function Bridge.run(line)
         BridgeMove.forcedWalk = parts[3]
         BridgeMove.walkType = parts[3]
         return "walkType=" .. BridgeMove.walkType
+    end
+    if cmd == "chop" then
+        if BridgeTask == nil then return "no task module" end
+        if not Bridge.alive() then return "no body" end
+        local red = BridgeData.owner()
+        if red == nil then return "no player" end
+        local sq = nil
+        pcall(function()
+            local rx, ry, rz = math.floor(red:getX()), math.floor(red:getY()), math.floor(red:getZ())
+            local best, bestD = nil, 100000
+            for dx = -12, 12 do
+                for dy = -12, 12 do
+                    local s = getCell():getGridSquare(rx + dx, ry + dy, rz)
+                    if s ~= nil then
+                        local t = s:getTree()
+                        if t ~= nil and t:getObjectIndex() >= 0 then
+                            local d = dx * dx + dy * dy
+                            if d < bestD then best, bestD = s, d end
+                        end
+                    end
+                end
+            end
+            sq = best
+        end)
+        if sq == nil then return "no tree within 12" end
+        return BridgeTask.start("chopTree", { { x = sq:getX(), y = sq:getY(), z = sq:getZ() } })
     end
     if cmd == "say" then return Bridge.say(decode(tail(line, 2))) end
     if cmd == "voice" then return Bridge.voice(parts[3] or "ShoutHey") end
@@ -4974,8 +5235,13 @@ function Bridge.writeState()
             add("obstacle", BridgeMove.obstacle)
             pcall(function() add("doors", BridgeMove.doorInfo()) end)
             add("fight", tostring(BridgeFight.enabled) .. " " .. BridgeFight.state .. " " .. BridgeFight.info)
+            add("task", tostring(BridgeTask ~= nil and BridgeTask.active) .. " " .. tostring(BridgeTask ~= nil and BridgeTask.kind)
+                .. " " .. tostring(BridgeTask ~= nil and BridgeTask.phase) .. " " .. tostring(BridgeTask ~= nil and BridgeTask.info or "none"))
             add("fight_target", BridgeFight.targetInfo)
             add("fight_fatigue", string.format("%.2f miss=%.0f crowd=%d", BridgeFight.fatigue or 0, BridgeFight.lastMiss or 0, BridgeFight.crowd or 0))
+            add("fight_combat", tostring(BridgeData.combatOf(Bridge.store)) .. " passive=" .. tostring(BridgeFight.mode().passive == true)
+                .. " assist_left=" .. tostring(math.max(0, (BridgeFight.playerFightUntil or 0) - (Bridge.time or 0))))
+            pcall(function() add("fight_red_attack", "attacking=" .. tostring(red:isAttacking() == true) .. " lastHit=" .. tostring(red:getLastHitCharacter() ~= nil)) end)
             pcall(function() add("fight_near", BridgeFight.nearestInfo(Bridge.body)) end)
 
             pcall(function() add("heal_wait", tostring(BridgeHeal.waitWhy)) end)
@@ -5526,6 +5792,12 @@ local function carTick()
     if not ok and Bridge.every(600) then warn("car tick failed: " .. tostring(err)) end
 end
 
+local function driveTick()
+    if BridgeDrive == nil then return end
+    local ok, err = pcall(BridgeDrive.tick)
+    if not ok and Bridge.every(600) then warn("drive tick failed: " .. tostring(err)) end
+end
+
 
 
 
@@ -5559,6 +5831,7 @@ function Bridge.onTick()
     pcall(Bridge.driveStep)
     pcall(Bridge.pullOnTeleport)
     carTick()
+    driveTick()
 
 
 
@@ -5690,6 +5963,34 @@ function Bridge.onTick()
 
 
 
+
+    if Bridge.startGenderDone ~= true and Bridge.store ~= nil and Bridge.gotData then
+        pcall(Bridge.pickStartGender)
+        if not BridgeData.neverSpawned(Bridge.store) then Bridge.startGenderDone = true end
+    end
+    if Bridge.genderRespawnAt ~= nil and Bridge.time >= Bridge.genderRespawnAt then
+        if Bridge.alive() then
+            Bridge.genderRespawnAt = nil
+        elseif Bridge.store == nil or not BridgeData.wants(Bridge.store) then
+            Bridge.genderRespawnAt = nil
+        else
+            local red = BridgeData.owner()
+            local inCar = false
+            pcall(function() inCar = red ~= nil and red:getVehicle() ~= nil end)
+            if inCar or Bridge.released ~= nil or Bridge.spawnAsked ~= nil then
+                Bridge.genderRespawnAt = Bridge.time + 60
+            else
+                Bridge.genderRespawnAt = nil
+                local res = Bridge.spawnZombie()
+                Bridge.result = "gender respawn: " .. tostring(res)
+                log("gender respawn: " .. tostring(res))
+            end
+        end
+    end
+
+
+
+
     if Bridge.sleepParked ~= nil and Bridge.every(30) and not (BridgeSleep ~= nil and BridgeSleep.pending ~= nil) then
         local red = BridgeData.owner()
         local awake = false
@@ -5792,7 +6093,7 @@ function Bridge.onSave()
     Bridge.stash = { items = BridgeInventory.snapshot(Bridge.body), mode = Bridge.mode,
                      x = Bridge.body:getX(), y = Bridge.body:getY(), z = Bridge.body:getZ(),
                      follow = Bridge.follow, pose = Bridge.pose, fight = BridgeFight.enabled,
-                     guardOnly = BridgeFight.guardOnly, target = Bridge.target }
+                     guardOnly = BridgeFight.guardOnly, target = Bridge.target, gender = BridgeData.genderOf(Bridge.store) }
     Bridge.stashAt = Bridge.time
     Bridge.despawn()
     Bridge.result = "body hidden for save"
@@ -5811,7 +6112,10 @@ function Bridge.onPostSave()
 
     local res = Bridge.spawnZombie(stash.x, stash.y, stash.z)
     if Bridge.alive() then
-        pcall(function() BridgeInventory.restore(Bridge.body, stash.items) end)
+
+        if stash.gender == BridgeData.genderOf(Bridge.store) then
+            pcall(function() BridgeInventory.restore(Bridge.body, stash.items) end)
+        end
 
         Bridge.applyStoredMode()
         if stash.follow == false then Bridge.follow = false end
@@ -6038,6 +6342,8 @@ function Bridge.onServerCommand(module, command, args)
         Bridge.result = "took: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
     elseif command == "look" then
         pcall(function() Bridge.lookSwing(args) end)
+    elseif command == "torch" then
+        if BridgeTorch ~= nil then pcall(function() BridgeTorch.onServerState(args) end) end
     elseif command == "carSeat" then
         pcall(function() BridgeCar.onSeat(args) end)
     elseif command == "gifted" then

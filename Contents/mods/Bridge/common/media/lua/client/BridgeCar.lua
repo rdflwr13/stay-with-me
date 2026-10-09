@@ -192,10 +192,17 @@ function BridgeCar.frame(car)
     return { cx = cx, cy = cy, fx = fx / fl, fy = fy / fl, hw = w / 2, hl = l / 2 }
 end
 
+
+
+
+local CAR_CLEAR = 0.3
+
 local function segmentHitsCar(car, x1, y1, x2, y2)
     local C = BridgeCar.frame(car)
     if C == nil then return false end
     local cx, cy, fx, fy, hw, hl = C.cx, C.cy, C.fx, C.fy, C.hw, C.hl
+    hw, hl = math.max(0.05, hw - CAR_CLEAR), math.max(0.05, hl - CAR_CLEAR)
+
 
     local function toCar(x, y)
         local rx, ry = x - cx, y - cy
@@ -317,6 +324,7 @@ function BridgeCar.detourPoint(body, car, tx, ty, z)
     pcall(function() bx, by = body:getX(), body:getY() end)
     if C == nil or bx == nil then return nil end
     if not segmentHitsCar(car, bx, by, tx, ty) then return nil end
+    local zz = math.floor((z or 0) + 0.01)
     local best, bd = nil, math.huge
     for _, sa in ipairs({ 1, -1 }) do
         for _, ss in ipairs({ 1, -1 }) do
@@ -324,8 +332,13 @@ function BridgeCar.detourPoint(body, car, tx, ty, z)
             local px = C.cx + C.fx * a - C.fy * sd
             local py = C.cy + C.fy * a + C.fx * sd
             local d = distTo(body, px, py) + math.sqrt((tx - px) ^ 2 + (ty - py) ^ 2)
-            if d < bd and not segmentHitsCar(car, bx, by, px, py) and not segmentHitsCar(car, px, py, tx, ty)
-                and lineClear(bx, by, px, py, math.floor((z or 0) + 0.01)) then
+
+
+
+
+            if d < bd and distTo(body, px, py) > 0.5
+                and not segmentHitsCar(car, bx, by, px, py)
+                and lineClear(bx, by, px, py, zz) then
                 best, bd = { x = px, y = py }, d
             end
         end
@@ -1454,6 +1467,12 @@ local function exitSpawn(red)
 
     local res = "?"
     pcall(function() res = Bridge.spawnZombie(e.x, e.y, e.z) end)
+    if not Bridge.alive() then
+
+
+        log("body did not spawn at the door (" .. tostring(res) .. "), another spot")
+        pcall(function() res = Bridge.spawnZombie() end)
+    end
     Bridge.parked = false
     log("body asked at the door: " .. tostring(res))
 end
@@ -1500,6 +1519,7 @@ local function exitFrame(body, red)
             BridgeCar.reserve(false)
             BridgeCar.state = "standing"
             setPhase("standing")
+            pcall(function() if BridgeDrive ~= nil and BridgeDrive.onExit ~= nil then BridgeDrive.onExit() end end)
             log(sformat("got out at the door: %s, %.0f game ticks after him", tostring(why), (BridgeCar.gt or 0) - (e.redOutGt or 0)))
         end
         return true

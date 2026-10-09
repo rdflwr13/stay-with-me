@@ -53,6 +53,7 @@ BridgeCallout.SAY = {
     EvTaunt      = 1,
     EvAimClear   = 1,
     EvAimOnMe    = 1,
+    EvTorchLow   = 1,
 }
 
 
@@ -77,6 +78,7 @@ BridgeCallout.EVENTS = {
     EvTaunt      = { slot = "Taunt",      cooldown = 150 },
     EvAimClear   = { slot = "AimClear",   cooldown = 15 },
     EvAimOnMe    = { slot = "AimOnMe",    cooldown = 15 },
+    EvTorchLow   = { slot = "TorchLow",   cooldown = 300 },
 }
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeCallout] " .. tostring(text)) end end

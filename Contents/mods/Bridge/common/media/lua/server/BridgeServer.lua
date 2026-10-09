@@ -27,7 +27,7 @@
 if not isServer() then return end
 
 BridgeServer = BridgeServer or {}
-BridgeServer.version = 36
+BridgeServer.version = 38
 BridgeServer.bodies = {}
 BridgeServer.missing = {}
 BridgeServer.offline = {}
@@ -243,6 +243,9 @@ local function markHuman(body)
     pcall(function() body:getModData().notAloneBody = true end)
 
 
+    pcall(function() body:getModData().arcadiaRVAuthorizedDiscoveryZombie = true end)
+
+
     pcall(function() body:getModData().ST_Ignore = true end)
 
     pcall(function() body:getModData().RandomZedsExcluded = true end)
@@ -253,9 +256,24 @@ local function unmarkHuman(body)
     pcall(function() body:clearVariable("SurvivorNPC") end)
     pcall(function() body:clearVariable("NotAloneBody") end)
     pcall(function() body:getModData().notAloneBody = nil end)
+    pcall(function() body:getModData().arcadiaRVAuthorizedDiscoveryZombie = nil end)
     pcall(function() body:getModData().ST_Ignore = nil end)
     pcall(function() body:getModData().RandomZedsExcluded = nil end)
     pcall(function() body:getModData().tzCooldown = nil end)
+end
+
+
+
+local function applyCarry(body, rec)
+    if body == nil or rec == nil then return end
+    local s = BridgeData.skillsOf(rec)
+    local cap = BridgeData.carryForStrengthLevel(BridgeData.levelFromXp("Strength", s and s.Strength))
+    if cap == nil then return end
+
+    local setw = nil
+    pcall(function() setw = body.setMaxWeight end)
+    if setw ~= nil then pcall(function() body:setMaxWeight(cap) end) end
+    pcall(function() body:getInventory():setCapacity(cap) end)
 end
 
 
@@ -322,6 +340,7 @@ local function currentBody(who, rec)
                 if pid ~= nil and not outfitIdTaken(b, pid) then
                     pcall(function() b:setPersistentOutfitID(pid, b:isPersistentOutfitInit()) end)
                     companionFlags(b)
+                    applyCarry(b, rec)
                     rec.bodyId = b:getPersistentOutfitID()
                     rec.onlineId = nil
                     pcall(function() rec.onlineId = b:getOnlineID() end)
@@ -345,6 +364,7 @@ local function currentBody(who, rec)
 
         if b ~= nil and b ~= old then
             companionFlags(b)
+            applyCarry(b, rec)
             log("body of " .. tostring(who) .. " found again, companion flags restored")
         end
     end
@@ -404,11 +424,14 @@ end
 BridgeServer.Commands = {}
 
 
-local function createBody(x, y, z)
+
+
+local function createBody(x, y, z, female)
     local body, failed = nil, nil
+    local chance = (female == false) and 0 or 100
     for attempt = 1, 8 do
         BridgeServer.creating = true
-        local okSpawn, list = pcall(addZombiesInOutfit, x, y, z, 1, "Naked", 100, false, false, false, false, false, false, 1)
+        local okSpawn, list = pcall(addZombiesInOutfit, x, y, z, 1, "Naked", chance, false, false, false, false, false, false, 1)
         BridgeServer.creating = false
         if not okSpawn then return nil, "addZombiesInOutfit failed: " .. tostring(list) end
         if list == nil or list:size() == 0 then return nil, "addZombiesInOutfit returned nothing" end
@@ -480,10 +503,11 @@ BridgeServer.Commands.spawn = function(player, args)
     end
     local failed = nil
     local ok, err = pcall(function()
-        local body, why = createBody(x, y, z)
+        local body, why = createBody(x, y, z, BridgeData.isFemale(rec))
         if body == nil then failed = why return end
         pcall(function() body:setTarget(player) end)
         companionFlags(body)
+        applyCarry(body, rec)
         rec.bodyId = body:getPersistentOutfitID()
         issue(rec.bodyId, who)
         BridgeServer.touched[body] = rec.bodyId
@@ -961,6 +985,7 @@ end
 BridgeServer.Commands.state = function(player, args)
     local rec = record(player:getUsername())
     local changed = false
+    local genderBefore = BridgeData.genderOf(rec)
     if args.mode ~= nil and BridgeData.MODES[args.mode] and rec.mode ~= args.mode then
         rec.mode = args.mode
         changed = true
@@ -976,96 +1001,140 @@ BridgeServer.Commands.state = function(player, args)
         rec.want = args.want == true
         changed = true
     end
+    if args.gender ~= nil then
+        local g = BridgeData.cleanGender(args.gender)
+        if BridgeData.genderOf(rec) ~= g then
+            rec.gender = g
+            changed = true
+        end
+    end
     if args.name ~= nil then
-        rec.name = BridgeData.cleanName(args.name)
+        local nm = BridgeData.cleanName(args.name)
+        if BridgeData.isMale(rec) then rec.maleName = nm else rec.name = nm end
         changed = true
     end
 
-    for key in pairs(BridgeData.OPTIONS) do
-        if args[key] ~= nil and rec[key] ~= (args[key] == true) then
+
+    for key, def in pairs(BridgeData.OPTIONS) do
+        if type(def) == "boolean" and args[key] ~= nil and rec[key] ~= (args[key] == true) then
             rec[key] = args[key] == true
             changed = true
         end
     end
 
+
+
+    if args.torch ~= nil then
+        local mode = BridgeData.cleanTorchMode(args.torch)
+        if mode ~= nil and rec.torch ~= mode then
+            rec.torch = mode
+            changed = true
+        end
+    end
+
     if args.hair ~= nil or args.skin ~= nil or args.hairColor ~= nil or args.face ~= nil or args.details ~= nil
-        or args.muscle ~= nil or args.makeup ~= nil then
+        or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil or args.beardColor ~= nil then
         pcall(function() BridgeServer.lookAt[player:getUsername()] = getTimestampMs() end)
     end
-    if args.hair ~= nil then
-        local hair = BridgeData.cleanHair(args.hair)
-        if hair ~= nil and rec.hair ~= hair then
-            rec.hair = hair
-            changed = true
-        end
-    end
-    if args.skin ~= nil then
-        local skin = BridgeData.cleanSkin(args.skin)
-        if skin ~= nil and rec.skin ~= skin then
-            rec.skin = skin
-            changed = true
-        end
-    end
-    if args.hairColor ~= nil then
-        local color = BridgeData.cleanHairColor(args.hairColor)
-        if color ~= nil then
-            local old = rec.hairColor
-            local same = type(old) == "table"
-                and math.abs((old.r or 0) - color.r) < 0.01
-                and math.abs((old.g or 0) - color.g) < 0.01
-                and math.abs((old.b or 0) - color.b) < 0.01
-            if not same then
-                rec.hairColor = color
+    if args.hair ~= nil or args.skin ~= nil or args.hairColor ~= nil or args.face ~= nil
+        or args.details ~= nil or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil or args.beardColor ~= nil then
+        local app = BridgeData.appearanceOf(rec)
+        if args.hair ~= nil then
+            local hair = BridgeData.cleanHair(args.hair)
+            if hair ~= nil and app.hair ~= hair then
+                app.hair = hair
                 changed = true
             end
         end
-    end
-    if args.face ~= nil then
-        local face = BridgeData.cleanFace(args.face)
-        if (rec.face or nil) ~= face then
-            rec.face = face
-            changed = true
+        if args.skin ~= nil then
+            local skin = BridgeData.cleanSkin(args.skin)
+            if skin ~= nil and app.skin ~= skin then
+                app.skin = skin
+                changed = true
+            end
         end
-    end
-    if args.details ~= nil then
-        local details = BridgeData.cleanDetails(args.details)
-        if details ~= nil then
-            local old = rec.details or {}
-            local same = (#old == #details)
-            if same then
-                for i = 1, #old do
-                    if old[i] ~= details[i] then same = false break end
+        if args.hairColor ~= nil then
+            local color = BridgeData.cleanHairColor(args.hairColor)
+            if color ~= nil then
+                local old = app.hairColor
+                local same = type(old) == "table"
+                    and math.abs((old.r or 0) - color.r) < 0.01
+                    and math.abs((old.g or 0) - color.g) < 0.01
+                    and math.abs((old.b or 0) - color.b) < 0.01
+                if not same then
+                    app.hairColor = color
+                    changed = true
                 end
             end
-            if not same then
-                rec.details = details
+        end
+        if args.face ~= nil then
+            local face = BridgeData.cleanFace(args.face, BridgeData.genderOf(rec))
+            if (app.face or nil) ~= face then
+                app.face = face
                 changed = true
             end
         end
-    end
-    if args.muscle ~= nil then
-        local m = tonumber(args.muscle)
-        if m ~= nil and m == m and m >= 0 and m <= BridgeData.MUSCLE_MAX then
-            m = math.floor(m)
-            if m ~= BridgeData.muscleOf(rec) then
-                rec.muscle = m
-                changed = true
-            end
-        end
-    end
-    if args.makeup ~= nil then
-        local makeup = BridgeData.cleanMakeup(args.makeup)
-        if makeup ~= nil then
-            local old = rec.makeup or {}
-            local same = (#old == #makeup)
-            if same then
-                for i = 1, #old do
-                    if old[i] ~= makeup[i] then same = false break end
+        if args.details ~= nil then
+            local details = BridgeData.cleanDetails(args.details, BridgeData.genderOf(rec))
+            if details ~= nil then
+                local old = app.details or {}
+                local same = (#old == #details)
+                if same then
+                    for i = 1, #old do
+                        if old[i] ~= details[i] then same = false break end
+                    end
+                end
+                if not same then
+                    app.details = details
+                    changed = true
                 end
             end
-            if not same then
-                rec.makeup = makeup
+        end
+        if args.muscle ~= nil then
+            local m = tonumber(args.muscle)
+            if m ~= nil and m == m and m >= 0 and m <= BridgeData.MUSCLE_MAX then
+                m = math.floor(m)
+                if m ~= BridgeData.muscleOf(rec) then
+                    app.muscle = m
+                    changed = true
+                end
+            end
+        end
+        if args.makeup ~= nil then
+            local makeup = BridgeData.cleanMakeup(args.makeup)
+            if makeup ~= nil then
+                local old = app.makeup or {}
+                local same = (#old == #makeup)
+                if same then
+                    for i = 1, #old do
+                        if old[i] ~= makeup[i] then same = false break end
+                    end
+                end
+                if not same then
+                    app.makeup = makeup
+                    changed = true
+                end
+            end
+        end
+        if args.beard ~= nil then
+            local beard = BridgeData.cleanBeard(args.beard)
+            if beard ~= nil and app.beard ~= beard then
+                app.beard = beard
                 changed = true
+            end
+        end
+        if args.beardColor ~= nil then
+            local color = BridgeData.cleanHairColor(args.beardColor)
+            if color ~= nil then
+                local old = app.beardColor
+                local same = type(old) == "table"
+                    and math.abs((old.r or 0) - color.r) < 0.01
+                    and math.abs((old.g or 0) - color.g) < 0.01
+                    and math.abs((old.b or 0) - color.b) < 0.01
+                if not same then
+                    app.beardColor = color
+                    changed = true
+                end
             end
         end
     end
@@ -1105,6 +1174,13 @@ BridgeServer.Commands.state = function(player, args)
         changed = true
     end
 
+
+    if args.resetOutfit == true and args.gender ~= nil and BridgeData.genderOf(rec) ~= genderBefore
+        and BridgeData.itemsUntouched(rec, genderBefore) then
+        rec.items, rec.saved, rec.outfitGiven = nil, nil, nil
+        changed = true
+    end
+
     for _, flag in ipairs({ "beltGiven", "armsSet" }) do
         if args[flag] and not rec[flag] then
             rec[flag] = true
@@ -1120,6 +1196,26 @@ BridgeServer.Commands.state = function(player, args)
             rec.rel = rel
 
 
+        end
+    end
+    if args.skills ~= nil then
+        local skills = BridgeData.cleanSkills(args.skills)
+        if skills ~= nil then
+            local old = BridgeData.skillsOf(rec)
+            local same = true
+            for i = 1, #BridgeData.SKILL_KEYS do
+                local k = BridgeData.SKILL_KEYS[i]
+                if math.abs((old[k] or 0) - (skills[k] or 0)) > 0.0001 then same = false break end
+            end
+
+
+            if not same then
+                rec.skills = skills
+                local who = player:getUsername()
+                local b = BridgeServer.bodies[who]
+                if b == nil then b = currentBody(who, rec) end
+                if b ~= nil then applyCarry(b, rec) end
+            end
         end
     end
     if changed then transmit() end
@@ -1496,6 +1592,214 @@ end
 
 
 
+local function companionAt(player, args, reach)
+    local who = player:getUsername()
+    local rec = record(who)
+    if rec.bodyId == nil then return nil, nil end
+    local x, y, z = tonumber(args.x), tonumber(args.y), tonumber(args.z)
+    if x == nil or y == nil or z == nil then return nil, nil end
+    if dist(player, x + 0.5, y + 0.5) > 60 then return nil, nil end
+    local body = currentBody(who, rec)
+    if body == nil then return nil, nil end
+    if dist(body, x + 0.5, y + 0.5) > (reach or 6) then return nil, nil end
+    if math.abs(body:getZ() - z) >= 1 then return nil, nil end
+    local sq = getCell():getGridSquare(math.floor(x), math.floor(y), math.floor(z))
+    if sq == nil then return nil, nil end
+    return body, sq
+end
+
+
+
+
+
+local function companionAtRelaxed(player, args, reach)
+    local body, sq = companionAt(player, args, reach)
+    if body ~= nil and sq ~= nil then return body, sq end
+    local who = player:getUsername()
+    local rec = record(who)
+    local x, y, z = tonumber(args.x), tonumber(args.y), tonumber(args.z)
+    if rec.bodyId == nil or x == nil or y == nil or z == nil
+            or dist(player, x + 0.5, y + 0.5) > 60 then
+        return nil, nil
+    end
+    body = BridgeServer.bodies[who] or currentBody(who, rec)
+    sq = getCell():getGridSquare(math.floor(x), math.floor(y), math.floor(z))
+    if body == nil or sq == nil then return nil, nil end
+
+
+
+    if math.abs(body:getZ() - z) >= 1 then return nil, nil end
+    return body, sq
+end
+
+BridgeServer.Commands.chopHit = function(player, args)
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then return end
+    local tree = nil
+    pcall(function()
+        local t = sq:getTree()
+        if t ~= nil and t:getObjectIndex() >= 0 then tree = t end
+    end)
+    if tree == nil then
+        log("chopHit: no tree at " .. tostring(args.x) .. "," .. tostring(args.y) .. "," .. tostring(args.z))
+        return
+    end
+
+
+
+
+
+    local function usableAxe(item)
+        local ok = false
+        pcall(function()
+            ok = item ~= nil and instanceof(item, "HandWeapon") and not item:isBroken()
+                and ItemTag ~= nil and ItemTag.CHOP_TREE ~= nil and item:hasTag(ItemTag.CHOP_TREE)
+        end)
+        return ok
+    end
+    local axe = nil
+
+    local made, prevPrimary, prevSecondary = nil, nil, nil
+    pcall(function() if usableAxe(body:getPrimaryHandItem()) then axe = body:getPrimaryHandItem() end end)
+    if axe == nil then
+        pcall(function()
+            local items = body:getInventory():getAllEvalRecurse(usableAxe)
+            if items ~= nil and items:size() > 0 then axe = items:get(0) end
+        end)
+    end
+    if axe == nil then
+        pcall(function() prevPrimary, prevSecondary = body:getPrimaryHandItem(), body:getSecondaryHandItem() end)
+
+
+        local types = {}
+        if type(args.axe) == "string" and #args.axe <= 64 then types[#types + 1] = args.axe end
+        types[#types + 1] = "Base.Axe"
+        for i = 1, #types do
+            local item = nil
+            pcall(function() item = InventoryItemFactory.CreateItem(types[i]) end)
+            if item == nil then pcall(function() item = instanceItem(types[i]) end) end
+            if item ~= nil and usableAxe(item) then
+                pcall(function()
+                    local inv = body:getInventory()
+                    if inv ~= nil then item = inv:AddItem(item) or item end
+                end)
+                axe, made = item, item
+                break
+            end
+        end
+    end
+    if axe == nil then
+        log("chopHit: no chop axe available (client reported " .. tostring(args.axe) .. ")")
+        return
+    end
+    pcall(function()
+        if body:getPrimaryHandItem() ~= axe then
+            body:setPrimaryHandItem(axe)
+            if axe:isTwoHandWeapon() or axe:isRequiresEquippedBothHands() then
+                body:setSecondaryHandItem(axe)
+            end
+            body:resetEquippedHandsModels()
+        end
+    end)
+
+
+
+    local hitOk, hitErr = pcall(function() tree:WeaponHit(body, axe) end)
+    if not hitOk then log("chopHit: WeaponHit failed: " .. tostring(hitErr)) end
+    if made ~= nil then
+        pcall(function()
+            body:setPrimaryHandItem(prevPrimary)
+            body:setSecondaryHandItem(prevSecondary)
+            body:resetEquippedHandsModels()
+        end)
+        pcall(function()
+            local c = made:getContainer()
+            if c ~= nil then c:Remove(made) end
+        end)
+    end
+    pcall(function()
+        if tree:getObjectIndex() < 0 then
+            if sq ~= nil then sq:transmitRemoveItemFromSquare(tree) end
+        else
+            tree:transmitUpdatedSpriteToClients()
+        end
+    end)
+end
+
+BridgeServer.Commands.cleanSquare = function(player, args)
+    local _body, sq = companionAtRelaxed(player, args, 6)
+    if sq == nil then
+        log("cleanSquare: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+    local kind = args.kind
+    if kind ~= "blood" and kind ~= "grime" and kind ~= "ashes"
+            and kind ~= "glass" and kind ~= "window" and kind ~= "graffiti"
+            and kind ~= "vine" then
+        log("cleanSquare: bad kind " .. tostring(kind))
+        return
+    end
+    if BridgeClean == nil then
+        log("cleanSquare: BridgeClean not loaded")
+        return
+    end
+
+
+    local ok, err = pcall(function() BridgeClean.applyClean(sq, kind, nil) end)
+    if not ok then log("cleanSquare: applyClean failed: " .. tostring(err)) end
+end
+
+
+
+
+
+
+function BridgeServer.resolveRef(sq, ref, player)
+    local c = nil
+    pcall(function()
+        if sq == nil or type(ref) ~= "table" then return end
+        if ref.kind == "veh" then
+            local v = nil
+            pcall(function() v = getVehicleById(ref.v) end)
+            if v ~= nil then
+                local part = nil
+                pcall(function() part = v:getPartById(ref.p) end)
+                if part ~= nil then
+                    local okAccess = true
+                    if player ~= nil then
+                        pcall(function() okAccess = v:canAccessContainer(part:getIndex(), player) ~= false end)
+                    end
+                    if okAccess then pcall(function() c = part:getItemContainer() end) end
+                end
+            end
+        elseif ref.kind == "body" then
+            local mv = sq:getStaticMovingObjects()
+            if mv ~= nil then
+                for k = 0, mv:size() - 1 do
+                    local cand = mv:get(k)
+                    local ci = -1
+                    pcall(function() ci = cand:getStaticMovingObjectIndex() end)
+                    if ci == ref.i or k == ref.i then
+                        c = cand:getContainer()
+                        break
+                    end
+                end
+            end
+        else
+            local o = sq:getObjects():get(ref.o)
+            if o ~= nil then
+                if ref.c == nil or ref.c == -1 then c = o:getContainer() else c = o:getContainerByIndex(ref.c) end
+            end
+        end
+    end)
+    return c
+end
+
+
+
+
+
 BridgeServer.Commands.give = function(player, args)
     local function fail(why)
         sendServerCommand(player, "Bridge", "giveFailed", { id = args.id, token = args.token, why = why })
@@ -1503,13 +1807,36 @@ BridgeServer.Commands.give = function(player, args)
     local rec = record(player:getUsername())
     if rec.bodyId == nil then return fail("no body") end
     local item = nil
-    pcall(function() item = player:getInventory():getItemWithIDRecursiv(args.id) end)
-    if item == nil then return fail("not in inventory") end
-    local equipped = false
-    pcall(function()
-        equipped = player:isEquipped(item) or player:getPrimaryHandItem() == item or player:getSecondaryHandItem() == item
-    end)
-    if equipped then return fail("equipped") end
+    local container = nil
+    if type(args.srcRef) == "table" then
+
+
+        local wantId = tonumber(args.id)
+        pcall(function()
+            local ref = args.srcRef
+            local _, sq = companionAtRelaxed(player, ref, 6)
+            if sq == nil then return end
+            local c = BridgeServer.resolveRef(sq, ref, player)
+            if c == nil then return end
+            if SafeHouse ~= nil and SafeHouse.isSafeHouse ~= nil and c:getSourceGrid() ~= nil
+                and SafeHouse.isSafeHouse(c:getSourceGrid(), player:getUsername(), true) then return end
+            local list = c:getItems()
+            for i = 0, list:size() - 1 do
+                local it = list:get(i)
+                if it ~= nil and (wantId == nil or it:getID() == wantId) then item, container = it, c break end
+            end
+        end)
+        if item == nil then return fail("not at source") end
+    else
+        pcall(function() item = player:getInventory():getItemWithIDRecursiv(args.id) end)
+        if item == nil then return fail("not in inventory") end
+        local equipped = false
+        pcall(function()
+            equipped = player:isEquipped(item) or player:getPrimaryHandItem() == item or player:getSecondaryHandItem() == item
+        end)
+        if equipped then return fail("equipped") end
+        container = item:getContainer()
+    end
     local r = BridgeItems.record(item, true)
 
     local list = BridgeItems.decode(rec.items or "")
@@ -1518,8 +1845,7 @@ BridgeServer.Commands.give = function(player, args)
     if #BridgeItems.decode(items) ~= #list then return fail("snapshot full") end
     local ok, err = pcall(function()
         pcall(function() player:removeAttachedItem(item) end)
-        local container = item:getContainer()
-        container:Remove(item)
+        if container ~= nil then container:Remove(item) end
         sendRemoveItemFromContainer(container, item)
     end)
     if not ok then return fail("remove failed: " .. tostring(err)) end
@@ -1540,9 +1866,10 @@ BridgeServer.Commands.take = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
     local r = args and args.rec
-    local function answer(ok, id, why)
+    local function answer(ok, id, why, direct)
         if args.token ~= nil then
-            sendServerCommand(player, "Bridge", "took", { token = args.token, ok = ok, id = id, why = why, iseq = rec.iseq })
+            sendServerCommand(player, "Bridge", "took", { token = args.token, ok = ok, id = id, why = why, iseq = rec.iseq,
+                direct = direct == true })
         end
     end
     if type(r) ~= "table" or type(r.t) ~= "string" then return answer(false, nil, "no record") end
@@ -1551,10 +1878,34 @@ BridgeServer.Commands.take = function(player, args)
     local flags = { w = args.w == true, h = tonumber(args.h), top = args.top == true }
     local idx = matchRecord(list, r, args.returnId == nil and flags or nil)
     if idx == nil then return answer(false, nil, "not in body snapshot") end
+
+
+    local floor = nil
+    if type(args.drop) == "table" then
+        local _, sq = companionAtRelaxed(player, args.drop, 6)
+        if sq == nil then return answer(false, nil, "no floor square") end
+        floor = sq
+    end
+
+
+
+
+
+
+    local destC = nil
+    if type(args.destRef) == "table" and floor == nil then
+        pcall(function()
+            local ref = args.destRef
+            local _, sq = companionAtRelaxed(player, ref, 6)
+            if sq == nil then return end
+            destC = BridgeServer.resolveRef(sq, ref, player)
+        end)
+    end
+    local usedDirect = false
     local item = nil
     local ok, err = pcall(function()
         local inv = player:getInventory()
-        if args.dest ~= nil then
+        if args.dest ~= nil and floor == nil then
             pcall(function()
                 local bag = player:getInventory():getItemWithIDRecursiv(args.dest)
                 if bag ~= nil and bag:IsInventoryContainer() then inv = bag:getInventory() end
@@ -1562,6 +1913,31 @@ BridgeServer.Commands.take = function(player, args)
         end
         item = BridgeItems.make(inv, r)
         if item == nil then return end
+        if floor ~= nil then
+
+
+            inv:Remove(item)
+            local x, y = ZombRandFloat(0.1, 0.9), ZombRandFloat(0.1, 0.9)
+            local z = 0
+            pcall(function() z = floor:getApparentZ(x, y) - floor:getZ() end)
+            floor:AddWorldInventoryItem(item, x, y, z)
+            return
+        end
+        if destC ~= nil then
+            local fits = false
+            pcall(function()
+                fits = destC:hasRoomFor(player, item) ~= false and destC:isItemAllowed(item) ~= false
+            end)
+            if fits then
+                inv:Remove(item)
+                destC:AddItem(item)
+                sendAddItemToContainer(destC, item)
+                pcall(function() sendItemStats(item) end)
+                usedDirect = true
+                return
+            end
+            destC = nil
+        end
         sendAddItemToContainer(inv, item)
         pcall(function() sendItemStats(item) end)
     end)
@@ -1577,8 +1953,8 @@ BridgeServer.Commands.take = function(player, args)
     flatten(r, nil, gone)
     journalNote("T", who, rec, item:getID(), gone)
     transmit()
-    answer(true, item:getID(), nil)
-    log("take " .. tostring(r.t) .. " to " .. tostring(who))
+    answer(true, item:getID(), nil, usedDirect)
+    log("take " .. tostring(r.t) .. (floor ~= nil and " to floor by " or (usedDirect and " straight into the container by " or " to ")) .. tostring(who))
 end
 
 local function onClientCommand(module, command, player, args)
@@ -2064,6 +2440,7 @@ local function guestTick()
     rec.testGuest = true
     rec.guestOf = want
     companionFlags(body)
+    applyCarry(body, rec)
     rec.bodyId = body:getPersistentOutfitID()
     issue(rec.bodyId, GUEST)
     BridgeServer.touched[body] = rec.bodyId

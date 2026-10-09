@@ -17,6 +17,9 @@ BridgeMoments.info = "none"
 
 local GAP = 14400
 local MINUTE = 3600
+local SECOND = 60
+
+BridgeMoments.MIN_GAP = 4 * SECOND
 
 
 local HEALTH_STEPS = { 50, 30, 15 }
@@ -31,7 +34,9 @@ local function warn(text) print("[BridgeMoments] " .. tostring(text)) end
 function BridgeMoments.group()
     local r = BridgeData.relOf(Bridge.store)
     if r == nil then return "Far" end
-    if r.r >= 40 or r.f >= 75 then return "Close" end
+    local romance = true
+    pcall(function() romance = BridgeSocial.romanceOn() end)
+    if (romance and r.r >= 40) or r.f >= 75 then return "Close" end
     if r.f >= 20 then return "Near" end
     return "Far"
 end
@@ -60,15 +65,21 @@ function BridgeMoments.line(event, a, b)
     if count(pool) == 0 then pool = event .. "_Near" end
     local n = count(pool)
     if n == 0 then return nil end
-    local index = 1 + ZombRand(n)
-    pcall(function() index = BridgeSocial.pick(pool, n) end)
-    local key = "IGUI_NotAlone_Soc_" .. pool .. "_" .. index
     local text = nil
-    pcall(function()
-        if b ~= nil then text = getText(key, a, b)
-        elseif a ~= nil then text = getText(key, a)
-        else text = getText(key) end
-    end)
+    for _ = 1, 4 do
+        local index = 1 + ZombRand(n)
+        pcall(function() index = BridgeSocial.pick(pool, n) end)
+        local key = "IGUI_NotAlone_Soc_" .. pool .. "_" .. index
+        pcall(function() key = BridgeSocial.lineKey(pool, index) end)
+        pcall(function()
+            if b ~= nil then text = getText(key, a, b)
+            elseif a ~= nil then text = getText(key, a)
+            else text = getText(key) end
+        end)
+        local again = false
+        pcall(function() again = BridgeSocial.sameAsLast(text) end)
+        if n < 2 or not again then break end
+    end
     return text
 end
 
@@ -76,6 +87,11 @@ end
 
 function BridgeMoments.ready(slot, urgent)
     if Bridge.time < (BridgeMoments.cool[slot] or 0) then return false end
+
+
+    if urgent == true then return true end
+
+    if Bridge.time - (Bridge.lastSpokeAt or -99999) < BridgeMoments.MIN_GAP then return false end
     if urgent then return true end
     if Bridge.time - BridgeMoments.lastLine < GAP then return false end
 

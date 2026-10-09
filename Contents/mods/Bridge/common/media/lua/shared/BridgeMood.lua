@@ -91,7 +91,12 @@ function BridgeMood.tier(rel)
     if rel == nil then return nil end
     local f, r = tonumber(rel.f) or 0, tonumber(rel.r) or 0
     if f < 0 then return nil end
-    if r >= 40 or f >= 75 then return "Close" end
+
+    local romance = true
+    pcall(function()
+        if Bridge ~= nil and Bridge.store ~= nil then romance = BridgeData.optionOf(Bridge.store, "romance") end
+    end)
+    if (romance and r >= 40) or f >= 75 then return "Close" end
     if f >= 20 then return "Near" end
     return "Far"
 end

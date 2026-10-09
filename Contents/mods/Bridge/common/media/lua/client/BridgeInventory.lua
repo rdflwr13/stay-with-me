@@ -10,6 +10,20 @@ BridgeInventory.keepOpen = 8.0
 BridgeInventory.shown = false
 BridgeInventory.capacity = 15
 
+
+
+
+function BridgeInventory.herCapacity()
+    local cap = BridgeInventory.capacity
+    pcall(function()
+        if BridgeSkills ~= nil and BridgeData ~= nil then
+            cap = BridgeData.carryForStrengthLevel(BridgeSkills.level("Strength"))
+        end
+    end)
+    if type(cap) ~= "number" or cap <= 0 then cap = BridgeInventory.capacity end
+    return cap
+end
+
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeInventory] " .. tostring(text)) end end
 local function warn(text) print("[BridgeInventory] " .. tostring(text)) end
 
@@ -35,6 +49,7 @@ end
 
 local function label(key)
     local name = companionName()
+    if BridgeData ~= nil and type(BridgeData.text) == "function" then return BridgeData.text(key, name) end
     local text = name
     pcall(function() text = getText("IGUI_NotAlone_" .. key, name) end)
     return text
@@ -149,11 +164,13 @@ end
 function BridgeInventory.custom(b, rec)
     if b == nil then BridgeInventory.dbg("custom: b nil") return end
     local isLocal = (Bridge ~= nil and b == Bridge.body)
+    local app = BridgeData.appearanceOf(rec)
+    local gender = BridgeData.genderOf(rec)
     if BridgeInventory.DEBUG == 1 then
         BridgeInventory.dbg(string.format("custom enter local=%s spnccOn=%s faces=%s makeup=%s face=%s details=%s muscle=%s makeupN=%s",
-            tostring(isLocal), tostring(BridgeData.spnccOn()), tostring(BridgeData.spnccFaces() ~= nil),
-            tostring(BridgeData.makeupList() ~= nil), tostring(rec ~= nil and rec.face or ""),
-            tostring(rec ~= nil and #(rec.details or {}) or 0), tostring(BridgeData.muscleOf(rec)),
+            tostring(isLocal), tostring(BridgeData.spnccOn(gender)), tostring(BridgeData.spnccFaces(gender) ~= nil),
+            tostring(BridgeData.makeupList() ~= nil), tostring(app ~= nil and app.face or ""),
+            tostring(app ~= nil and #(app.details or {}) or 0), tostring(BridgeData.muscleOf(rec)),
             tostring(#BridgeData.makeupOf(rec))))
     end
     if not isLocal then
@@ -161,8 +178,8 @@ function BridgeInventory.custom(b, rec)
         return
     end
     local makeup = BridgeData.makeupOf(rec)
-    local details = BridgeData.cleanDetails(rec ~= nil and rec.details or nil) or {}
-    local key = tostring(BridgeData.skinIndex(rec)) .. "|" .. tostring(rec ~= nil and rec.face or "") ..
+    local details = BridgeData.cleanDetails(app ~= nil and app.details or nil, gender) or {}
+    local key = tostring(BridgeData.skinIndex(rec)) .. "|" .. tostring(app ~= nil and app.face or "") ..
         "|" .. table.concat(details, ",") .. "|" .. tostring(BridgeData.muscleOf(rec)) ..
         "|" .. table.concat(makeup, ",")
     if BridgeInventory.customKeys[b] == key then
@@ -184,7 +201,7 @@ function BridgeInventory.custom(b, rec)
         end
     end)
 
-    if BridgeData.spnccOn() then
+    if BridgeData.spnccOn(gender) then
         local idx = BridgeData.skinIndex(rec)
         local function put(id, texture)
             if type(id) ~= "string" or id == "" then return end
@@ -207,7 +224,7 @@ function BridgeInventory.custom(b, rec)
         end
         local m = BridgeData.muscleOf(rec)
         if m > 0 then
-            local mid = BridgeData.spnccMuscle()
+            local mid = BridgeData.spnccMuscle(gender)
             if mid ~= nil then put(mid, idx + (m == 2 and 5 or 0)) end
         end
     end
@@ -239,7 +256,7 @@ function BridgeInventory.addCustomVisuals(b, rec)
             visuals:add(iv)
         end)
     end
-    if BridgeData.spnccOn() then
+    if BridgeData.spnccOn(BridgeData.genderOf(rec)) then
         local idx = BridgeData.skinIndex(rec)
         local face = BridgeData.faceEntry(rec)
         if face ~= nil then add(face.id, BridgeData.spnccTexture(face, idx)) end
@@ -248,7 +265,7 @@ function BridgeInventory.addCustomVisuals(b, rec)
         end
         local m = BridgeData.muscleOf(rec)
         if m > 0 then
-            local mid = BridgeData.spnccMuscle()
+            local mid = BridgeData.spnccMuscle(BridgeData.genderOf(rec))
             if mid ~= nil then add(mid, idx + (m == 2 and 5 or 0)) end
         end
     end
@@ -260,12 +277,13 @@ end
 
 
 function BridgeInventory.skin(b, rec)
-    b:setFemaleEtc(true)
+    local female = BridgeData.isFemale(rec)
+    pcall(function() b:setFemaleEtc(female) end)
+    pcall(function() b:setFemale(female) end)
     local hv = b:getHumanVisual()
     if hv == nil then return false end
     hv:removeDirt()
     hv:removeBlood()
-
 
 
 
@@ -288,12 +306,16 @@ function BridgeInventory.skin(b, rec)
     hv:setHairModel(BridgeData.hairOf(rec))
     local hc = BridgeData.hairColorOf(rec)
     hv:setHairColor(ImmutableColor.new(hc.r, hc.g, hc.b))
+    pcall(function() hv:setBeardModel(BridgeData.beardOf(rec)) end)
+    local bc = BridgeData.beardColorOf(rec)
+    pcall(function() hv:setBeardColor(ImmutableColor.new(bc.r, bc.g, bc.b)) end)
+    pcall(function() hv:setNaturalBeardColor(ImmutableColor.new(bc.r, bc.g, bc.b)) end)
     pcall(function() BridgeInventory.custom(b, rec) end)
 
 
 
     local muscle = BridgeData.muscleOf(rec)
-    local item = BridgeData.spnccMuscle()
+    local item = BridgeData.spnccMuscle(BridgeData.genderOf(rec))
     if type(muscle) == "number" and muscle > 0 and type(item) == "string" and item ~= "" then
         pcall(function()
             local tex = BridgeData.skinIndex(rec) + (muscle == 2 and 5 or 0)
@@ -651,7 +673,9 @@ local function startBlocker(b, stuck)
         if Bridge.pose ~= nil then why = "pose" return end
         if not stuck and BridgeMove ~= nil and (BridgeMove.pathing or BridgeMove.moving or BridgeMove.steering) then why = "moving" return end
 
-        if BridgeWeapon ~= nil and BridgeWeapon.redWalking ~= nil and BridgeWeapon.redWalking() then why = "player walking" return end
+
+        if BridgeWeapon ~= nil and BridgeWeapon.redWalking ~= nil and BridgeWeapon.redWalking()
+            and not BridgeInventory.transferPending(b) then why = "player walking" return end
         if BridgeHeal ~= nil and (BridgeHeal.active or BridgeHeal.current ~= nil) then why = "healing" return end
         if BridgeWash ~= nil and BridgeWash.state ~= "idle" then why = "washing" return end
         if BridgeWeapon ~= nil and BridgeWeapon.busy ~= nil and BridgeWeapon.busy() then why = "weapon move" return end
@@ -895,8 +919,19 @@ end
 
 local function isWorld(c, red)
     if c == nil or BridgeInventory.inBody(c) then return false end
+
+
+
+
     local his = false
-    pcall(function() his = red ~= nil and c:getOutermostContainer() == red:getInventory() end)
+    if red ~= nil then
+        pcall(function()
+            if type(c.getOutermostContainer) == "function" and type(red.getInventory) == "function" then
+                local outer = c:getOutermostContainer()
+                his = outer ~= nil and outer == red:getInventory()
+            end
+        end)
+    end
     return not his
 end
 
@@ -959,7 +994,7 @@ local function lootSpot(act, b)
         if c:getType() == "floor" then
 
 
-            if isClient() then spot = { red:getX(), red:getY() } end
+            if isClient() and not act.bridgeDrop then spot = { red:getX(), red:getY() } end
             return
         end
         local p = c:getParent()
@@ -1322,7 +1357,13 @@ function BridgeInventory.addButton(page)
             inv:setExplored(true)
             local icon = getTexture("media/ui/Icon_InventoryBasic.png")
             local button = page:addContainerButton(inv, icon, companionName(), companionName())
-            button.capacity = BridgeInventory.capacity
+
+
+
+            local bcap = nil
+            pcall(function() bcap = inv:getEffectiveCapacity(red) end)
+            if type(bcap) ~= "number" or bcap <= 0 then bcap = BridgeInventory.herCapacity() end
+            button.capacity = bcap
         end
         for _, bag in ipairs(BridgeInventory.wornBags(b)) do
             local bagInv = bag:getInventory()
@@ -1454,8 +1495,6 @@ function BridgeInventory.wrapProximity()
     log("Proximity Inventory wrapped: her containers stay out of it")
 end
 
-
-
 local function betterContainersActive()
     local on = false
     pcall(function()
@@ -1465,6 +1504,7 @@ local function betterContainersActive()
     return on
 end
 
+
 function BridgeInventory.wrapBetterContainers()
     if not betterContainersActive() then return end
     local ok, BC = pcall(require, "BetterContainers/Proximity")
@@ -1473,12 +1513,16 @@ function BridgeInventory.wrapBetterContainers()
         return
     end
     if BC.bridgeWrapped then return end
+
+
     local getAggregateSource = BC.getAggregateSource
     BC.getAggregateSource = function(invSelf, inventory, playerObj)
         if BridgeInventory.isHers(inventory) then return nil end
         return getAggregateSource(invSelf, inventory, playerObj)
     end
     BC.bridgeWrapped = true
+
+
     local okNested, Nested = pcall(require, "BetterContainers/Nested")
     if okNested and type(Nested) == "table" and type(Nested.addIgnoredInventoryPredicate) == "function" then
         Nested.addIgnoredInventoryPredicate("Bridge.StayWithMe", function(_, inventory)
@@ -1491,6 +1535,22 @@ end
 Events.OnGameStart.Add(function()
     pcall(BridgeInventory.wrapProximity)
     pcall(BridgeInventory.wrapBetterContainers)
+    local data = RPGInventoryModules and RPGInventoryModules.Data
+    if type(data) == "table" and type(data.containers) == "function" then
+        local containers = data.containers
+        data.containers = function(player, lootPage, nearby)
+            local roots = containers(player, lootPage, nearby)
+            if nearby and type(roots) == "table" then
+                for i = 1, #roots do
+                    local node = roots[i]
+                    if node and node.container and BridgeInventory.isHers(node.container) then
+                        node.proximity = true
+                    end
+                end
+            end
+            return roots
+        end
+    end
 end)
 
 
@@ -1522,6 +1582,17 @@ function BridgeInventory.mainLoad(b)
     pcall(function() total = b:getInventory():getCapacityWeight() end)
     if type(total) ~= "number" then total = 0 end
     return math.max(0, total)
+end
+
+
+function BridgeInventory.carryOver(b)
+    if b == nil then return false end
+    local load, cap = 0, nil
+    pcall(function() load = b:getInventory():getCapacityWeight() end)
+    pcall(function() cap = b:getInventory():getEffectiveCapacity(b) end)
+    if type(load) ~= "number" then load = 0 end
+    if type(cap) ~= "number" or cap <= 0 then return false end
+    return load > cap
 end
 
 
@@ -1589,9 +1660,9 @@ end
 
 
 function BridgeInventory.wearFits(b, item, variant, chr)
-    local cap = BridgeInventory.capacity
+    local cap = BridgeInventory.herCapacity()
     pcall(function() cap = b:getInventory():getEffectiveCapacity(chr or getSpecificPlayer(0)) end)
-    if type(cap) ~= "number" then cap = BridgeInventory.capacity end
+    if type(cap) ~= "number" then cap = BridgeInventory.herCapacity() end
     local after = BridgeInventory.loadAfterWear(b, item, variant)
     pcall(function() after = ItemContainer.floatingPointCorrection(after) end)
     if after <= cap then return true end
@@ -1638,7 +1709,23 @@ end
 
 function BridgeInventory.roomVerdict(container, a, b2)
     local b = body()
-    if b == nil or container == nil or container ~= b:getInventory() then return nil end
+    if b == nil or container == nil then return nil end
+
+
+    local isMain = container == b:getInventory()
+    local isCarried = false
+    if not isMain then
+        pcall(function() isCarried = BridgeInventory.isHers(container) end)
+        if not isCarried then
+            pcall(function()
+                local ph, sh = b:getPrimaryHandItem(), b:getSecondaryHandItem()
+                if ph ~= nil and ph:IsInventoryContainer() and ph:getInventory() == container then isCarried = true end
+                if sh ~= nil and sh:IsInventoryContainer() and sh:getInventory() == container then isCarried = true end
+            end)
+        end
+    end
+    if not isMain and not isCarried then return nil end
+
     local chr, item, w = nil, nil, nil
     if instanceof(a, "InventoryItem") then
         item = a
@@ -1653,21 +1740,48 @@ function BridgeInventory.roomVerdict(container, a, b2)
         local heavy = false
         pcall(function() heavy = chr ~= nil and chr:getVehicle() ~= nil and item:hasTag(ItemTag.HEAVY_ITEM) end)
         if heavy then return false end
-        local pending = BridgeInventory.pendingWear(item)
-        if pending ~= nil then return BridgeInventory.wearFits(b, item, pending.v, chr) end
+        if isMain then
+            local pending = BridgeInventory.pendingWear(item)
+            if pending ~= nil then return BridgeInventory.wearFits(b, item, pending.v, chr) end
+        end
         w = item:getUnequippedWeight()
     end
-    local cap = BridgeInventory.capacity
+
+
+    if not isMain then
+        local maxItem = 0
+        pcall(function()
+            local ci = container:getContainingItem()
+            if ci ~= nil then maxItem = ci:getMaxItemSize() end
+        end)
+        if type(maxItem) == "number" and maxItem > 0 and w > maxItem then return false end
+    end
+
+    local cap = BridgeInventory.herCapacity()
     pcall(function() cap = container:getEffectiveCapacity(chr or getSpecificPlayer(0)) end)
-    if type(cap) ~= "number" then cap = BridgeInventory.capacity end
-    local load = BridgeInventory.mainLoad(b)
+    if type(cap) ~= "number" or cap <= 0 then
+        cap = isMain and BridgeInventory.herCapacity() or nil
+    end
+    if type(cap) ~= "number" or cap <= 0 then return nil end
+
+
+
+
+
+    local load = nil
+    if isMain then
+        load = BridgeInventory.mainLoad(b)
+    else
+        load = 0
+        pcall(function() load = container:getContentsWeight() end)
+        if type(load) ~= "number" then load = 0 end
+    end
     pcall(function() load = ItemContainer.floatingPointCorrection(load) end)
     local fits = load + w <= cap
     if not fits and item ~= nil then
 
         pcall(function()
-            logOnce(string.format("no room for %s: her main %.2f + %.2f > %d (worn bags %.2f)", item:getFullType(), load, w, cap,
-                BridgeInventory.wornBagWeight(b)))
+            logOnce(string.format("no room for %s: %s %.2f + %.2f > %d", item:getFullType(), isMain and "her main" or "her bag", load, w, cap))
         end)
     end
     return fits
@@ -1856,6 +1970,7 @@ function BridgeInventory.wrapGear()
             pcall(function() marks = BridgeInventory.paneMarks(self) end)
             if marks == nil then return renderdetails(self, ...) end
 
+            if self.equippedCollapsed then self.equippedCollapsed = false end
             if self.bridgeMarkKey ~= marks.key then pcall(function() self:refreshContainer() end) end
             BridgeInventory.marking = marks
             local ok, err = pcall(renderdetails, self, ...)
@@ -1915,9 +2030,9 @@ function BridgeInventory.dropIfNoRoom(b, item)
 
 
 
-    local cap = BridgeInventory.capacity
+    local cap = BridgeInventory.herCapacity()
     pcall(function() cap = inv:getEffectiveCapacity(b) end)
-    if type(cap) ~= "number" then cap = BridgeInventory.capacity end
+    if type(cap) ~= "number" then cap = BridgeInventory.herCapacity() end
     local load = BridgeInventory.mainLoad(b)
     pcall(function() load = ItemContainer.floatingPointCorrection(load) end)
     if load <= cap then return false end
@@ -1937,6 +2052,7 @@ function BridgeInventory.dropIfNoRoom(b, item)
     end
     pcall(function() note("dropped " .. item:getType() .. ": no room") end)
     pcall(function() log("no room for " .. item:getType() .. " after the change: dropped at her feet, as for the player") end)
+    pcall(function() if BridgeSocial ~= nil and BridgeSocial.dropped ~= nil then BridgeSocial.dropped(item) end end)
     return true
 end
 
@@ -2163,7 +2279,37 @@ function BridgeInventory.gifted(b, item)
     if item == nil or BridgeSocial == nil or BridgeSocial.dressed == nil then return end
     local worn = false
     pcall(function() worn = b:isEquippedClothing(item) end)
+    if Bridge ~= nil and Bridge.verbose then
+        local given = false
+        pcall(function() given = item:getModData().bridgeGiven == true end)
+        log(string.format("gifted %s worn=%s given=%s", tostring(item:getType()), tostring(worn), tostring(given)))
+    end
     if worn then pcall(BridgeSocial.dressed, item) end
+end
+
+
+
+
+
+function BridgeInventory.handed(item)
+    if item == nil or BridgeSocial == nil or BridgeSocial.received == nil then return end
+    local b = body()
+    if b == nil then return end
+    local id = nil
+    pcall(function() id = item:getID() end)
+    if id ~= nil and (BridgeInventory.toWear[id] ~= nil or BridgeInventory.pending[id] ~= nil) then return end
+    local worn = false
+    pcall(function() worn = b:isEquippedClothing(item) end)
+    if worn then return end
+    pcall(BridgeSocial.received, item)
+end
+
+
+
+function BridgeInventory.forgetItem(item)
+    if item == nil then return end
+    if BridgeSocial ~= nil and BridgeSocial.forget ~= nil then pcall(BridgeSocial.forget, item) end
+    pcall(function() note("forgot " .. tostring(item:getType())) end)
 end
 
 function BridgeInventory.wearOnHer(player, item, variant)
@@ -2354,7 +2500,12 @@ end
 
 function BridgeInventory.hands(b, item)
     if BridgeInventory.isGun(item) then
-        pcall(function() Bridge.speak("NoGuns") end)
+        local reacted = false
+        pcall(function() reacted = item:getModData().bridgeReceived == true end)
+        if not reacted then
+            pcall(function() Bridge.speak("NoGuns") end)
+            if BridgeSocial ~= nil and BridgeSocial.gunNervous ~= nil then pcall(BridgeSocial.gunNervous) end
+        end
         return false
     end
     if not BridgeWeapon.isMelee(item) then return false end
@@ -2367,6 +2518,7 @@ function BridgeInventory.hands(b, item)
     if ok == nil then ok = false end
     redress(b)
     refreshPanels()
+    if ok then pcall(function() BridgeInventory.handed(item) end) end
     return ok
 end
 
@@ -2701,6 +2853,9 @@ function BridgeInventory.onFill(playerNum, context, items)
     local inv = b:getInventory()
     local list = actualItems(items)
     if #list == 0 then return end
+    if Bridge ~= nil and Bridge.verbose and #list == 1 then
+        context:addOption("Bridge: forget this item (debug)", list[1], BridgeInventory.forgetItem)
+    end
     local inMain = true
     for _, it in ipairs(list) do
         if it:getContainer() ~= inv then inMain = false end
@@ -3205,13 +3360,68 @@ function BridgeInventory.took(args)
 
         log("late answer to take: " .. tostring(args.ok) .. ", item " .. (args.ok and "removed from her" or "stays with her"))
     elseif args.token ~= nil and args.token >= 0 then
-        BridgeInventory.answers[args.token] = { ok = args.ok == true, id = args.id, why = args.why }
+        BridgeInventory.answers[args.token] = { ok = args.ok == true, id = args.id, why = args.why, direct = args.direct == true }
     end
     if not args.ok then log("take failed: " .. tostring(args.why)) end
 end
 
 
 
+
+
+
+
+
+
+
+function BridgeInventory.destRef(c)
+    local ref = nil
+    pcall(function()
+        if c == nil then return end
+        local vp = nil
+        pcall(function() vp = c:getVehiclePart() end)
+        if vp ~= nil then
+            local veh, pid = nil, nil
+            pcall(function() veh = vp:getVehicle() end)
+            pcall(function() pid = vp:getId() end)
+            if veh ~= nil and pid ~= nil then
+                ref = { kind = "veh", v = veh:getId(), p = tostring(pid),
+                        x = math.floor(veh:getX()), y = math.floor(veh:getY()), z = math.floor(veh:getZ()) }
+                return
+            end
+        end
+        local p = c:getParent()
+        if p == nil then return end
+        local sq = nil
+        pcall(function() sq = p:getSquare() end)
+        if sq == nil then pcall(function() sq = c:getSourceGrid() end) end
+        if sq == nil then return end
+        local idx = -1
+        pcall(function() idx = p:getStaticMovingObjectIndex() end)
+        if type(idx) == "number" and idx >= 0 then
+            ref = { kind = "body", x = sq:getX(), y = sq:getY(), z = sq:getZ(), i = idx }
+            return
+        end
+        local objs = sq:getObjects()
+        for i = 0, objs:size() - 1 do
+            if objs:get(i) == p then
+                local n = 0
+                pcall(function() n = p:getContainerCount() end)
+                for j = 0, n - 1 do
+                    if p:getContainerByIndex(j) == c then
+                        ref = { kind = "obj", x = sq:getX(), y = sq:getY(), z = sq:getZ(), o = i, c = j }
+                        return
+                    end
+                end
+                if p:getContainer() == c then
+                    ref = { kind = "obj", x = sq:getX(), y = sq:getY(), z = sq:getZ(), o = i, c = -1 }
+                end
+                return
+            end
+        end
+    end)
+    return ref
+end
 
 function BridgeInventory.swapInQueue(character, old, new, current)
     local function swap(t, depth)
@@ -3289,6 +3499,7 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
         end
         if self.bridgeDir == "give" then
             if BridgeInventory.pending[self.item:getID()] ~= nil then return false end
+            if self.bridgeSrc ~= nil then return room() end
             return self.srcContainer:getOutermostContainer() == inv and room()
         elseif self.bridgeDir == "take" then
 
@@ -3301,13 +3512,13 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
                 BridgeInventory.taking[self.item] = nil
                 BridgeInventory.takes[token] = nil
             end
+            if self.bridgeDrop then return true end
             return self.destContainer:getOutermostContainer() == inv
         end
         return room()
     end
 
     function BridgeTransferAction:waitToStart()
-        if BridgeInventory.holdWhileWalking(self) then return true end
         if self.relayId == nil then return false end
         self:findRelay()
         if self.srcContainer ~= nil and self.srcContainer:contains(self.item) then return false end
@@ -3333,7 +3544,7 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
         if self.bridgeDir == "give" then
             local id = self.item:getID()
             BridgeInventory.pending[id] = { item = self.item, dest = self.destContainer }
-            sendClientCommand(self.character, "Bridge", "give", { id = id, token = self.token })
+            sendClientCommand(self.character, "Bridge", "give", { id = id, token = self.token, srcRef = self.bridgeSrc })
         else
             BridgeInventory.takes[self.token] = { item = self.item }
             BridgeInventory.taking[self.item] = self.token
@@ -3356,8 +3567,19 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
                 if b:getSecondaryHandItem() == self.item then hands = hands + 2 end
                 if hands > 0 then h = hands end
             end)
+            local drop = nil
+            if self.bridgeDrop then
+                pcall(function()
+                    local sq = BridgeInventory.herFloorSquare(self, self.item)
+                    if sq == nil then
+                        local b = body()
+                        if b ~= nil then sq = b:getCurrentSquare() end
+                    end
+                    if sq ~= nil then drop = { x = sq:getX(), y = sq:getY(), z = sq:getZ() } end
+                end)
+            end
             sendClientCommand(self.character, "Bridge", "take",
-                { rec = BridgeItems.record(self.item, true), token = self.token, dest = destId, w = w, h = h, top = top })
+                { rec = BridgeItems.record(self.item, true), token = self.token, dest = destId, w = w, h = h, top = top, drop = drop, destRef = self.bridgeDirect })
         end
         self.sent = true
         pcall(function() self.action:setWaitForFinished(true) end)
@@ -3391,7 +3613,11 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
             pcall(function() self.action:forceStop() end)
             return
         end
-        if self.bridgeDir == "take" and self.newItem == nil then
+
+
+
+        if self.bridgeDir == "take" and self.newItem == nil and not self.bridgeDrop
+            and a.direct ~= true then
 
             pcall(function() self.newItem = self.character:getInventory():getItemWithIDRecursiv(a.id) end)
             if self.newItem == nil and (Bridge.time - self.sentTick) < WAIT_TICKS then return end
@@ -3460,6 +3686,12 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
             self.onCompleteArgs = args
             pcall(self.onCompleteFunc, args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8])
         end
+        pcall(function()
+            if self.bridgeDir == "give" and item ~= nil and BridgeInventory.inBody(self.destContainer)
+                and not BridgeInventory.inBody(self.srcContainer) then
+                BridgeInventory.handed(item)
+            end
+        end)
         ISBaseTimedAction.perform(self)
     end
 
@@ -3484,7 +3716,14 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
         end
         local room = true
         pcall(function() room = inv:hasRoomFor(character, item) ~= false end)
-        if dir == "give" and not carried(srcContainer) and room then
+        if dir == "give" and not carried(srcContainer) then
+
+
+
+            local srcRef = BridgeInventory.destRef(srcContainer)
+            if srcRef ~= nil then
+                o.bridgeSrc = srcRef
+            elseif room then
 
 
 
@@ -3500,6 +3739,7 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
             first.bridgeRelay = relay
             BridgeInventory.markHers(first)
             return first
+            end
         end
         setmetatable(o, BridgeTransferAction)
         o.bridgeDir = dir
@@ -3536,14 +3776,85 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
             end
         end
         if dir == "take" and not carried(destContainer) then
-            o.finalDest = destContainer
-            o.destContainer = inv
+            if BridgeInventory.toFloor(o) then
+
+
+                o.bridgeDrop = true
+                BridgeInventory.markHers(o)
+            else
+                o.finalDest = destContainer
+                o.destContainer = inv
+
+
+
+                o.bridgeDirect = BridgeInventory.destRef(destContainer)
+            end
         end
         return o
     end
     ISInventoryTransferAction.bridgeWrapped = true
     log("transfer wrapped for multiplayer")
 end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+BridgeInventory.wrapGiveRoom = function()
+    if ISInventoryTransferAction == nil or ISInventoryTransferAction.bridgeGiveRoomWrapped then return end
+    local inner = ISInventoryTransferAction.isValid
+    if inner == nil then return end
+    ISInventoryTransferAction.bridgeGiveRoomWrapped = true
+    ISInventoryTransferAction.isValid = function(self, ...)
+        local ok = inner(self, ...)
+        if ok then return ok end
+        local good = false
+        pcall(function()
+            if self ~= nil and self.item ~= nil and self.srcContainer ~= nil and self.destContainer ~= nil
+                and self.srcContainer ~= self.destContainer
+                and BridgeInventory.isHers(self.destContainer)
+                and not BridgeInventory.goneAction(self)
+                and self.srcContainer:contains(self.item) then
+                good = BridgeInventory.roomVerdict(self.destContainer, self.character, self.item) == true
+            end
+        end)
+        if good then return true end
+        return ok
+    end
+end
+if Events ~= nil and Events.OnGameStart ~= nil and not BridgeInventory.giveRoomHooked then
+    BridgeInventory.giveRoomHooked = true
+    Events.OnGameStart.Add(function() pcall(BridgeInventory.wrapGiveRoom) end)
+end
+
 
 
 
@@ -3578,7 +3889,7 @@ BridgeInventory.toFloor = toFloor
 
 function BridgeInventory.markHers(act)
     pcall(function()
-        if type(act) == "table" and act.item ~= nil and not (isClient() and toFloor(act))
+        if type(act) == "table" and act.item ~= nil and not (isClient() and toFloor(act) and not act.bridgeDrop)
             and BridgeInventory.herAnimFor(act) ~= nil then
             act.stopOnWalk = false
             act.bridgeStays = true
@@ -3627,32 +3938,6 @@ end
 
 
 
-
-function BridgeInventory.holdWhileWalking(act)
-    local hold = false
-    pcall(function()
-        if not act.bridgeStays or BridgeInventory.herAnimFor(act) == nil then return end
-        for _, g in ipairs(BridgeInventory.gestures) do
-            if g.action == act then return end
-        end
-        local b = body()
-        if b == nil or Bridge.hiddenSince ~= nil or not playerNear(b, GESTURE_LEAVE) then return end
-        if BridgeWeapon == nil or BridgeWeapon.redWalking == nil or not BridgeWeapon.redWalking() then return end
-        act.bridgeHeldSince = act.bridgeHeldSince or Bridge.time
-        hold = Bridge.time - act.bridgeHeldSince < GESTURE_WAIT_MAX
-    end)
-    if hold and not act.bridgeHeldLogged then
-        act.bridgeHeldLogged = true
-        pcall(function() log("her transfer waits: player walking") end)
-    end
-    return hold
-end
-
-
-
-
-
-
 function BridgeInventory.keepFloorItem(act)
     pcall(function()
         local src = act.srcContainer
@@ -3664,13 +3949,6 @@ function BridgeInventory.keepFloorItem(act)
 end
 
 if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeStaysWrapped then
-    local waitToStart = ISInventoryTransferAction.waitToStart
-    if waitToStart ~= nil then
-        ISInventoryTransferAction.waitToStart = function(self, ...)
-            if BridgeInventory.holdWhileWalking(self) then return true end
-            return waitToStart(self, ...)
-        end
-    end
     local isValid = ISInventoryTransferAction.isValid
     if isValid ~= nil then
         ISInventoryTransferAction.isValid = function(self, ...)
@@ -3790,7 +4068,7 @@ if ISInventoryTransferAction ~= nil and ISInventoryTransferAction.startActionAni
             local anim = BridgeInventory.herAnimFor(self)
             hers = anim ~= nil and BridgeInventory.lootFor(self, anim)
         end)
-        if not hers and self.bridgeOwn then
+        if not hers and self.bridgeOwn and self.onCompleteFunc == nil then
 
             self.bridgeHers = false
             pcall(function() self:forceStop() end)
@@ -3907,6 +4185,36 @@ local function reselect(act)
     if loot == nil then return end
     pcall(function() loot:selectButtonForContainer(act.bridgeSelect) end)
 end
+
+
+
+
+if ISTransferAction ~= nil and ISTransferAction.transferItem ~= nil and not ISTransferAction.bridgeLanternWrapped then
+    ISTransferAction.bridgeLanternWrapped = true
+    local transferItem = ISTransferAction.transferItem
+    ISTransferAction.transferItem = function(self, character, item, srcContainer, destContainer, ...)
+
+        if BridgeInventory.lanternSet then
+            BridgeInventory.lanternSet = nil
+            rawset(ISTransferAction, "item", nil)
+        end
+        local lit = false
+        pcall(function()
+            lit = self == ISTransferAction and item ~= nil and item:getType() == "Lantern_HurricaneLit"
+                and (BridgeInventory.inBody(srcContainer) or BridgeInventory.inBody(destContainer))
+        end)
+        if not lit then return transferItem(self, character, item, srcContainer, destContainer, ...) end
+        local prev = rawget(ISTransferAction, "item")
+        rawset(ISTransferAction, "item", item)
+        BridgeInventory.lanternSet = true
+        local res = transferItem(self, character, item, srcContainer, destContainer, ...)
+        rawset(ISTransferAction, "item", prev)
+        BridgeInventory.lanternSet = nil
+        log("lit lantern put out on transfer: " .. tostring(res ~= nil and res:getType() or nil))
+        return res
+    end
+end
+
 if ISInventoryTransferAction ~= nil and ISInventoryTransferAction.perform ~= nil
     and not ISInventoryTransferAction.bridgeSelectWrapped then
     local perform = ISInventoryTransferAction.perform
@@ -3919,6 +4227,13 @@ if ISInventoryTransferAction ~= nil and ISInventoryTransferAction.perform ~= nil
         end)
         local r = perform(self, ...)
         reselect(self)
+
+        pcall(function()
+            if self.item ~= nil and BridgeInventory.inBody(self.destContainer)
+                and not BridgeInventory.inBody(self.srcContainer) then
+                BridgeInventory.handed(self.item)
+            end
+        end)
 
 
 

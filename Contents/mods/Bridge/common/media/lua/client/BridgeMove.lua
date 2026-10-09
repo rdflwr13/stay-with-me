@@ -3287,11 +3287,18 @@ function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
                 local key = nx .. "," .. ny
                 if not seen[key] then
                     local nb = cell:getGridSquare(nx, ny, bz)
-                    if nb ~= nil and not cur:isBlockedTo(nb) and nb:isFree(false)
-                        and not stepNeedsClimb(cur, nb) and not cur:isDoorTo(nb) and not underCar(nb) then
-                        if nx == tx and ny == ty then ok = true return end
-                        seen[key] = true
-                        queue[#queue + 1] = nb
+                    if nb ~= nil then
+
+
+
+                        local hop = false
+                        pcall(function() hop = BridgeMove.edgeBetween(body, cur, nb) == "fence" end)
+                        local step = hop or (not cur:isBlockedTo(nb) and not stepNeedsClimb(cur, nb))
+                        if step and not cur:isDoorTo(nb) and not underCar(nb) and nb:isFree(false) then
+                            if nx == tx and ny == ty then ok = true return end
+                            seen[key] = true
+                            queue[#queue + 1] = nb
+                        end
                     end
                 end
             end
@@ -3589,6 +3596,46 @@ function BridgeMove.rememberDoor(body, door, kind, cells, north)
     list[#list + 1] = rec
     if #list > 4 then table.remove(list, 1) end
     log(sformat("door opened: %s at %d,%d, %d parts", kind, cells[1].x, cells[1].y, #cells))
+end
+
+
+
+
+function BridgeMove.rememberDoorNear(body)
+    if body == nil then return end
+    local cur = body:getCurrentSquare()
+    if cur == nil then return end
+    local cell = getCell()
+    local cx, cy, cz = cur:getX(), cur:getY(), cur:getZ()
+    for dx = -1, 1 do
+        for dy = -1, 1 do
+            local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
+            if sq ~= nil then
+                local objects = sq:getObjects()
+                for i = 0, objects:size() - 1 do
+                    local object = objects:get(i)
+                    if isDoor(object) then
+                        local open = false
+                        pcall(function() open = object:IsOpen() end)
+                        if open then
+                            local have = false
+                            for _, r in ipairs(BridgeMove.opened) do
+                                if r.door == object then have = true end
+                            end
+                            if not have then
+                                pcall(function()
+                                    local kind = doorKind(object)
+                                    local cells, north = doorCells(object, kind)
+                                    local anchor = doorAnchor(object, kind)
+                                    BridgeMove.rememberDoor(body, anchor, kind, cells, north)
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
 end
 
 

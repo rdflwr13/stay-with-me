@@ -35,3 +35,42 @@ Fixes
 
 Spanish translation by Layaya003, Italian by Nycotex.
 [ ------ ]
+
+[ v0.4.0 ]
+Hurricane Lantern.
+
+Thanks to Come and See.
+
+Him
+- Choose her or him. He has his own lines.
+
+Work
+- Clean up, cut down trees, and clear vines off walls.
+
+Light
+- A flashlight: off, auto, or on while following.
+
+Fighting
+- Back me up, and Stay behind me.
+- Optional stamina bar over their head, off by default.
+
+In the car
+- Talks about the road, the weather, and you.
+
+Skills
+- A Skills tab: melee weapons, maintenance, strength and fitness.
+
+Compatibility
+- Project A-Life no longer takes their weapon or treats them as a zombie.
+- Project Survivors leaves them alone.
+- Arcadia RV Interior doesn't remove them inside the RV.
+- RPG Inventory still sees their bag nearby.
+- Sleeping works with Immersive Tents.
+
+Settings
+- Romance can be turned off. Off by default when you are the same sex.
+
+Fixes
+- Handing something to a crate, a body or a car trunk no longer parks it in your inventory first.
+- Overhead lines stay on your companion, not on another zombie in the same clothes.
+[ ------ ]
