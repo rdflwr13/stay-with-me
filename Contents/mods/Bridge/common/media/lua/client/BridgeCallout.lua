@@ -15,6 +15,11 @@ BridgeCallout.COMBAT_GRACE = 4
 BridgeCallout.FINISH_HP = 0.5
 BridgeCallout.PLAYER_HIT_DROP = 1.0
 
+BridgeCallout.SWING_COMBAT_QUIET = 60
+BridgeCallout.SWING_ZOMBIE_DIST = 10
+BridgeCallout.SWING_Z_TOL = 0.8
+BridgeCallout.SWING_RANGE_TOL = 0.3
+
 BridgeCallout.FLANK_SIGN = -1
 
 BridgeCallout.lastAny = -99999
@@ -25,6 +30,8 @@ BridgeCallout.pendingKill = nil
 BridgeCallout.lastHealth = nil
 BridgeCallout.finisherTarget = nil
 BridgeCallout.info = "none"
+BridgeCallout.lastCombatAt = -99999
+BridgeCallout.attackPrev = false
 
 BridgeCallout.AMBIENT = { "EvTaunt" }
 
@@ -54,6 +61,7 @@ BridgeCallout.SAY = {
     EvAimClear   = 1,
     EvAimOnMe    = 1,
     EvTorchLow   = 1,
+    EvSwingAtMe  = 1,
 }
 
 
@@ -79,6 +87,7 @@ BridgeCallout.EVENTS = {
     EvAimClear   = { slot = "AimClear",   cooldown = 15 },
     EvAimOnMe    = { slot = "AimOnMe",    cooldown = 15 },
     EvTorchLow   = { slot = "TorchLow",   cooldown = 300 },
+    EvSwingAtMe  = { slot = "SwingAtMe",  cooldown = 30 },
 }
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeCallout] " .. tostring(text)) end end
@@ -111,6 +120,15 @@ local function proneZ(z)
         prone = z:isProne() or z:isCrawling() or asn == "onground" or asn == "sitonground"
     end)
     return prone == true
+end
+
+local function attackSignals(red)
+    local h2h, atk = false, false
+    local probe = nil
+    pcall(function() probe = red.isDoHandToHandAttack end)
+    if probe ~= nil then pcall(function() h2h = red:isDoHandToHandAttack() == true end) end
+    pcall(function() atk = red:isAttacking() == true end)
+    return h2h, atk
 end
 
 local function threatZ(z, body)
@@ -297,6 +315,65 @@ local function scanWorld(body, red)
     return facts
 end
 
+local function noZombiesInSight(red, body, dist)
+    local clear = true
+    pcall(function()
+        local list = getCell():getZombieList()
+        for i = 0, list:size() - 1 do
+            local z = list:get(i)
+            if z ~= nil and z ~= body and not isBodyZ(z) and not BridgeData.harmless(z) then
+                local alive = false
+                pcall(function() alive = z:isAlive() and z:getHealth() > 0 end)
+                if alive then
+                    local dx, dy = z:getX() - red:getX(), z:getY() - red:getY()
+                    if dx * dx + dy * dy < dist * dist and math.abs(z:getZ() - red:getZ()) < 1 then
+                        local seen = false
+                        pcall(function() seen = red:CanSee(z) end)
+                        if seen then clear = false return end
+                    end
+                end
+            end
+        end
+    end)
+    return clear
+end
+
+local function swingingAtHer(red, body, attackingNow, prevAttack)
+    if not (attackingNow and not prevAttack) then return false end
+    local item = nil
+    pcall(function() item = red:getPrimaryHandItem() end)
+    if item == nil then pcall(function() item = red:getSecondaryHandItem() end) end
+    if item == nil or BridgeWeapon == nil or BridgeWeapon.isMelee == nil then return false end
+    if not BridgeWeapon.isMelee(item) then return false end
+    local ok = false
+    pcall(function()
+        if math.abs(body:getZ() - red:getZ()) > BridgeCallout.SWING_Z_TOL then return end
+        local fx, fy = 0, 0
+        pcall(function()
+            local f = red:getForwardDirection()
+            fx, fy = f:getX(), f:getY()
+        end)
+        local fl = math.sqrt(fx * fx + fy * fy)
+        if fl < 0.01 then return end
+        fx, fy = fx / fl, fy / fl
+        local dx, dy = body:getX() - red:getX(), body:getY() - red:getY()
+        local d = math.sqrt(dx * dx + dy * dy)
+        if d <= 0.01 then return end
+        local range, minA = 2.0, 0
+        pcall(function() range = item:getMaxRange() end)
+        pcall(function() minA = item:getMinAngle() end)
+        if type(range) ~= "number" then range = 2.0 end
+        if type(minA) ~= "number" then minA = 0 end
+        if d > range + BridgeCallout.SWING_RANGE_TOL then return end
+        if (fx * dx + fy * dy) / d < minA then return end
+        local seen = false
+        pcall(function() seen = red:CanSee(body) end)
+        if not seen then return end
+        ok = true
+    end)
+    return ok
+end
+
 local function scanFinisher()
     local t = target()
     if t == nil then return false end
@@ -359,6 +436,10 @@ function BridgeCallout.aimClear(onMe)
     return BridgeCallout.sayPriority("EvAimClear")
 end
 
+function BridgeCallout.swingAtMe()
+    return say("EvSwingAtMe")
+end
+
 function BridgeCallout.behind()
     return say("EvBehind")
 end
@@ -389,6 +470,11 @@ function BridgeCallout.update(body)
     local red = BridgeData.owner()
     if red == nil then return end
 
+    local prevAttack = BridgeCallout.attackPrev
+    local h2h, atk = attackSignals(red)
+    local attackingNow = h2h or atk
+    BridgeCallout.attackPrev = attackingNow
+
     if flush() then return end
 
     local fighting = false
@@ -396,6 +482,7 @@ function BridgeCallout.update(body)
     if fighting then
         BridgeCallout.wasFighting = true
         BridgeCallout.fightingAt = Bridge.time
+        BridgeCallout.lastCombatAt = Bridge.time
     end
     if not fighting then BridgeCallout.finisherTarget = nil end
     local engaged = fighting or (Bridge.time - BridgeCallout.fightingAt < BridgeCallout.COMBAT_GRACE * BridgeCallout.SEC)
@@ -446,6 +533,21 @@ function BridgeCallout.update(body)
 
     local guard = false
     pcall(function() if BridgeFight ~= nil then guard = BridgeFight.guardOnly end end)
+    if BridgeCallout.DEBUG == 1 and attackingNow and not prevAttack then
+        print("[BridgeCallout] SWING edge h2h=" .. tostring(h2h) .. " atk=" .. tostring(atk)
+            .. " guard=" .. tostring(guard) .. " engaged=" .. tostring(engaged)
+            .. " task=" .. tostring(BridgeTask ~= nil and BridgeTask.active)
+            .. " quiet=" .. tostring(Bridge.time - BridgeCallout.lastCombatAt)
+            .. " clear=" .. tostring(noZombiesInSight(red, body, BridgeCallout.SWING_ZOMBIE_DIST))
+            .. " atHer=" .. tostring(swingingAtHer(red, body, attackingNow, prevAttack)))
+    end
+    if not engaged
+        and not (BridgeTask ~= nil and BridgeTask.active)
+        and (Bridge.time - BridgeCallout.lastCombatAt) >= BridgeCallout.SWING_COMBAT_QUIET * BridgeCallout.SEC
+        and noZombiesInSight(red, body, BridgeCallout.SWING_ZOMBIE_DIST)
+        and swingingAtHer(red, body, attackingNow, prevAttack) then
+        BridgeCallout.swingAtMe()
+    end
     if not guard and not engaged and facts.spot then say("EvSpot") end
 end
 
