@@ -12,6 +12,7 @@ BridgeWeapon.want = nil
 BridgeWeapon.changeAt = nil
 BridgeWeapon.assignedId = nil
 BridgeWeapon.attached = nil
+BridgeWeapon.verified = nil
 BridgeWeapon.lastFight = -9999
 BridgeWeapon.body = nil
 BridgeWeapon.info = "none"
@@ -135,6 +136,17 @@ function BridgeWeapon.assigned(body)
 
 
 
+    if found == nil then
+        -- A weapon held in her hands may not be listed in the top-level
+        -- inventory, so look there too instead of wrongly clearing the
+        -- assignment the moment she draws it.
+        pcall(function()
+            local p = body:getPrimaryHandItem()
+            if p ~= nil and p:getID() == id then found = p return end
+            local s = body:getSecondaryHandItem()
+            if s ~= nil and s:getID() == id then found = s end
+        end)
+    end
     if found == nil and BridgeWeapon.assignedItem ~= nil then
         local held = false
         pcall(function() held = BridgeInventory.queueHolds(BridgeWeapon.assignedItem) end)
@@ -169,9 +181,17 @@ end
 
 
 function BridgeWeapon.slotIn(worn, item)
-    local slot, set = nil, nil
+    local slot, set, defType = nil, nil, nil
     pcall(function()
         local kind = item:getAttachmentType()
+        if kind == nil or kind == "" then
+            -- Some weapons (often modded, e.g. spears) omit AttachmentType, so
+            -- they have no hotbar slot and were dropped back into her bag.
+            -- Fall back to a back mount so she can still stow it on her back.
+            local two = false
+            pcall(function() two = item:isTwoHandWeapon() or item:isRequiresEquippedBothHands() end)
+            kind = two and "BigWeapon" or "BigBlade"
+        end
         if kind == nil or ISHotbarAttachDefinition == nil then return end
         local defs = {}
         for _, def in ipairs(ISHotbarAttachDefinition) do defs[def.type] = def end
@@ -200,31 +220,63 @@ function BridgeWeapon.slotIn(worn, item)
             if def ~= nil and def.attachments ~= nil and def.attachments[kind] ~= nil then
                 local s = def.attachments[kind]
                 if def.name == "Back" and replacements[kind] ~= nil then s = replacements[kind] end
-                if s ~= "null" then slot, set = s, def.animset return end
+                if s ~= "null" then slot, set, defType = s, def.animset, def.type return end
             end
         end
     end)
 
-    return slot, set
+    return slot, set, defType
 end
 
 local function detach(body)
     local a = BridgeWeapon.attached
     if a == nil then return false end
     pcall(function() body:removeAttachedItem(a.item) end)
+    pcall(function()
+        if a.item.setAttachedToModel ~= nil then a.item:setAttachedToModel(nil) end
+        if a.item.setAttachedSlotType ~= nil then a.item:setAttachedSlotType(nil) end
+        if a.item.setAttachedSlot ~= nil then a.item:setAttachedSlot(-1) end
+    end)
     BridgeWeapon.attached = nil
     return true
 end
 
 
+local function attachedNow(body, slot, item)
+    local present = true
+    pcall(function()
+        if body.getAttachedItem ~= nil then present = body:getAttachedItem(slot) == item end
+    end)
+    return present
+end
+
+
 local function attach(body, item)
-    local slot, set = BridgeWeapon.slotFor(body, item)
+    local slot, set, defType = BridgeWeapon.slotFor(body, item)
     if slot == nil then return detach(body) end
     local a = BridgeWeapon.attached
-    if a ~= nil and a.item == item and a.slot == slot then return false end
+    if a ~= nil and a.item == item and a.slot == slot then
+        -- She still thinks it is on the model. Trust the model when we can
+        -- read it back; re-assert only when the model actually lost it
+        -- (clothing rebuild, another mod, MP resync). If the engine getter
+        -- never reports it back, keep the old behaviour and never thrash.
+        if BridgeWeapon.verified == false or attachedNow(body, slot, item) then return false end
+    end
     detach(body)
-    local ok = pcall(function() body:setAttachedItem(slot, item) end)
-    if ok then BridgeWeapon.attached = { slot = slot, item = item, set = set } end
+    local ok = pcall(function()
+        body:setAttachedItem(slot, item)
+        if item.setAttachedToModel ~= nil then item:setAttachedToModel(slot) end
+        if defType ~= nil and item.setAttachedSlotType ~= nil then item:setAttachedSlotType(defType) end
+    end)
+    if not ok then return false end
+    BridgeWeapon.attached = { slot = slot, item = item, set = set, defType = defType }
+    local checked = attachedNow(body, slot, item)
+    if BridgeWeapon.verified == nil then BridgeWeapon.verified = checked end
+    if not checked and BridgeWeapon.verified ~= false then
+        log("her weapon is not on the model after setAttachedItem: " .. tostring(item:getType())
+            .. " at " .. tostring(slot) .. " (" .. tostring(defType) .. ")")
+    end
+    pcall(function() body:resetModelNextFrame() end)
     return true
 end
 
@@ -288,8 +340,14 @@ function BridgeWeapon.putAway(body)
     local hand = body:getPrimaryHandItem()
     local changed = false
     if hand ~= nil and isWeapon(hand) then
+        local item = hand
         clearHands(body)
-        BridgeWeapon.info = "put away " .. tostring(hand:getType())
+        local slot = BridgeWeapon.slotFor(body, item)
+        if slot ~= nil then
+            BridgeWeapon.assignedId = item:getID()
+            attach(body, item)
+        end
+        BridgeWeapon.info = "put away " .. tostring(item:getType())
         changed = true
     end
     if syncModel(body) then changed = true end
@@ -582,10 +640,16 @@ function BridgeWeapon.dressGuest(b, list)
     local item = nil
     pcall(function() item = instanceItem(assigned.t) end)
     if item == nil then return nil end
-    local slot = BridgeWeapon.slotIn(worn, item)
+    local slot, set, defType = BridgeWeapon.slotIn(worn, item)
     if slot == nil then return nil end
-    local ok = pcall(function() b:setAttachedItem(slot, item) end)
-    return ok and slot or nil
+    local ok = pcall(function()
+        b:setAttachedItem(slot, item)
+        if item.setAttachedToModel ~= nil then item:setAttachedToModel(slot) end
+        if defType ~= nil and item.setAttachedSlotType ~= nil then item:setAttachedSlotType(defType) end
+    end)
+    if not ok then return nil end
+    pcall(function() b:resetModelNextFrame() end)
+    return slot
 end
 
 
@@ -621,6 +685,7 @@ function BridgeWeapon.reset()
     BridgeWeapon.attachFailed = nil
     BridgeWeapon.heldId = nil
     BridgeWeapon.lost = nil
+    BridgeWeapon.verified = nil
     BridgeWeapon.body = nil
 end
 
@@ -855,7 +920,12 @@ local function connectMove(body, m)
         end
     elseif m.kind == "away" then
         clearHands(body)
-        syncModel(body)
+        if BridgeWeapon.slotFor(body, item) ~= nil then
+            BridgeWeapon.assignedId = item:getID()
+            attach(body, item)
+        else
+            syncModel(body)
+        end
         BridgeWeapon.info = "put away " .. tostring(item:getType())
     elseif m.kind == "attach" then
         syncModel(body)
@@ -1004,10 +1074,8 @@ function BridgeWeapon.putAwayMoved(body, stuck)
         return false, why
     end
     local anim = HAND_ANIM
-    if BridgeWeapon.isAssigned(body, hand) then
-        local slot, set = BridgeWeapon.slotFor(body, hand)
-        if slot ~= nil then anim = "WeaponAttach" .. (SLOT_ANIM[set] or "Back") end
-    end
+    local slot, set = BridgeWeapon.slotFor(body, hand)
+    if slot ~= nil then anim = "WeaponAttach" .. (SLOT_ANIM[set] or "Back") end
     BridgeWeapon.startMove(body, "away", hand, anim)
     return true
 end
