@@ -161,6 +161,10 @@ function BridgeMenu.onHeal()
     log("heal from menu: " .. tostring(res))
 end
 
+function BridgeMenu.onEquip(playerNum)
+    if BridgeEquip ~= nil and type(BridgeEquip.toggle) == "function" then BridgeEquip.toggle(playerNum) end
+end
+
 function BridgeMenu.onWash()
     BridgeWash.start("menu")
 end
@@ -260,6 +264,15 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
         elseif BridgeHeal.active then
             heal.notAvailable = true
         end
+
+        local equipOption = context:addOption(tr("WindowEquip"), playerNum, BridgeMenu.onEquip)
+        if BridgeEquip ~= nil and type(BridgeEquip.withinRange) == "function" and not BridgeEquip.withinRange(playerNum) then
+            equipOption.notAvailable = true
+            tip(equipOption, tr("EquipTooFar"))
+        end
+    end
+    if not inRange and BridgeEquip ~= nil and BridgeEquip.DEV then
+        context:addOption(tr("WindowEquip") .. " (dev)", playerNum, BridgeMenu.onEquip)
     end
     if mode == "follow" then
         context:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)

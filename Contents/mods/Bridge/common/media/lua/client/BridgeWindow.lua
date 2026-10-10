@@ -412,6 +412,15 @@ function BridgeWindowSettings:createChildren()
     self.genderCombo:addOptionWithData(tr("GenderFemale"), "female")
     self.genderCombo:addOptionWithData(tr("GenderMale"), "male")
     self:addChild(self.genderCombo)
+
+    self.equipLabelY = gy + BTN_H + PAD
+    local ey = self.equipLabelY + FONT_S + 4
+    self.equipCombo = ISComboBox:new(PAD, ey, self.width - PAD * 2, BTN_H, self, BridgeWindowSettings.onEquipScale)
+    self.equipCombo:initialise()
+    for _, entry in ipairs(BridgeData.EQUIP_SCALES) do
+        self.equipCombo:addOptionWithData(string.format("%gx", entry), entry)
+    end
+    self:addChild(self.equipCombo)
 end
 
 function BridgeWindowSettings:prerender()
@@ -425,6 +434,10 @@ function BridgeWindowSettings:prerender()
     if self.genderCombo ~= nil then
         local g = BridgeData.genderOf(Bridge.store)
         if self.genderCombo:getSelectedData() ~= g then self.genderCombo:selectData(g) end
+    end
+    if self.equipCombo ~= nil then
+        local s = BridgeData.equipScale(Bridge.store)
+        if self.equipCombo:getSelectedData() ~= s then self.equipCombo:selectData(s) end
     end
 
     local g = BridgeData.genderOf(Bridge.store)
@@ -444,6 +457,7 @@ function BridgeWindowSettings:render()
     if Bridge == nil or Bridge.store == nil then return end
     self:drawText(tr("WindowName") .. " " .. name(), PAD, self.nameY, 1, 1, 1, 1, UIFont.Small)
     self:drawText(tr("Gender"), PAD, self.genderLabelY, 1, 1, 1, 1, UIFont.Small)
+    self:drawText(tr("OptEquipScale"), PAD, self.equipLabelY, 1, 1, 1, 1, UIFont.Small)
 end
 
 function BridgeWindowSettings:onTick(index, selected, key)
@@ -454,6 +468,12 @@ function BridgeWindowSettings:onGender(combo)
     if combo == nil then return end
     local g = combo:getSelectedData()
     if g ~= nil and Bridge ~= nil and type(Bridge.setGender) == "function" then Bridge.setGender(g) end
+end
+
+function BridgeWindowSettings:onEquipScale(combo)
+    if combo == nil then return end
+    local s = combo:getSelectedData()
+    if s ~= nil and Bridge ~= nil and type(Bridge.setEquipScale) == "function" then Bridge.setEquipScale(s) end
 end
 
 function BridgeWindowSettings:onRename()
@@ -778,7 +798,7 @@ function BridgeWindow.neededSize()
     local tickH = math.max(BTN_H, FONT_S) + gap
     local infoH = math.max(PAD * 2 + 2 + AVATAR_H + AVATAR_BORDER * 2,
         PAD + FONT_M + 2 + PAD + FONT_S + 4 + BridgeWindow.REL_BAR_H + PAD + FONT_S + PAD + BTN_H + PAD * 2 + BTN_H + PAD)
-    local setH = PAD + #BridgeWindow.TICKS * (tickH + PAD) + PAD + FONT_S + PAD / 2 + BTN_H + PAD + FONT_S + 4 + BTN_H + PAD
+    local setH = PAD + #BridgeWindow.TICKS * (tickH + PAD) + PAD + FONT_S + PAD / 2 + BTN_H + PAD + FONT_S + 4 + BTN_H + PAD + FONT_S + 4 + BTN_H + PAD
     local contentH = math.max(infoH, setH)
     if BridgeWindow.STATSMENU_ENABLE == 1 then
         w = math.max(w, BridgeWindow.skillsWidth())

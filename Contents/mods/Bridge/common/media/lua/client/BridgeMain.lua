@@ -2029,6 +2029,19 @@ function Bridge.setTorchMode(mode)
 end
 
 
+function Bridge.setEquipScale(value)
+    local scale = BridgeData.cleanEquipScale(value)
+    if scale == nil then return "unknown equip scale " .. tostring(value) end
+    if Bridge.store ~= nil then Bridge.store.equipScale = scale end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { equipScale = scale }) end)
+    end
+    if BridgeEquip ~= nil and type(BridgeEquip.applyScale) == "function" then pcall(BridgeEquip.applyScale) end
+    log("equipScale=" .. tostring(scale))
+    return "equipScale=" .. tostring(scale)
+end
+
+
 
 function Bridge.setHair(style)
     local hair = BridgeData.cleanHair(style)

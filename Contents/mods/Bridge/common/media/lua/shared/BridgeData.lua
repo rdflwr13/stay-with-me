@@ -347,7 +347,7 @@ end
 
 
 BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, xpPopups = false,
-    romance = true, fatigueBar = false, torch = "auto" }
+    romance = true, fatigueBar = false, torch = "auto", equipScale = 1 }
 BridgeData.HAIR_MAX = 40
 
 function BridgeData.optionOf(rec, key)
@@ -375,6 +375,30 @@ function BridgeData.torchMode(rec)
     end
     local def = BridgeData.cleanTorchMode(BridgeData.OPTIONS.torch)
     return def or BridgeData.DEFAULT_TORCH
+end
+
+
+-- Equipment window scale: a numeric multiplier kept alongside the string torch
+-- option (optionOf only understands booleans, so this needs its own getter).
+BridgeData.EQUIP_SCALES = { 0.75, 1, 1.25, 1.5, 2 }
+BridgeData.DEFAULT_EQUIP_SCALE = 1
+
+function BridgeData.cleanEquipScale(value)
+    local n = tonumber(value)
+    if n == nil or n ~= n then return nil end
+    for _, v in ipairs(BridgeData.EQUIP_SCALES) do
+        if math.abs(v - n) < 0.001 then return v end
+    end
+    return nil
+end
+
+function BridgeData.equipScale(rec)
+    if rec ~= nil then
+        local v = BridgeData.cleanEquipScale(rec.equipScale)
+        if v ~= nil then return v end
+    end
+    local def = BridgeData.cleanEquipScale(BridgeData.OPTIONS.equipScale)
+    return def or BridgeData.DEFAULT_EQUIP_SCALE
 end
 
 
@@ -427,6 +451,7 @@ BridgeData.GENDERED_KEYS = {
     OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRomanceTip = true,
     OptFatigueBar = true, OptFatigueBarTip = true,
     OptTorchTip = true,
+    OptEquipScale = true, OptEquipScaleTip = true,
 }
 
 function BridgeData.text(key, a, b)

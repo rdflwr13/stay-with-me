@@ -1031,6 +1031,13 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.equipScale ~= nil then
+        local scale = BridgeData.cleanEquipScale(args.equipScale)
+        if scale ~= nil and rec.equipScale ~= scale then
+            rec.equipScale = scale
+            changed = true
+        end
+    end
 
     if args.hair ~= nil or args.skin ~= nil or args.hairColor ~= nil or args.face ~= nil or args.details ~= nil
         or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil or args.beardColor ~= nil then

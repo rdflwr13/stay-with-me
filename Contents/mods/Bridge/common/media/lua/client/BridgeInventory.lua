@@ -2533,6 +2533,13 @@ function BridgeInventory.unwear(b, item)
 
     if ok and worn then pcall(BridgeInventory.dropIfNoRoom, b, item) end
     if ok and worn then BridgeInventory.afterChange(b, item, pre, "unwear") else redress(b) end
+    -- A short "taking it off" line; reuses Say_Unequip (rate limited, so taking
+    -- off several at once still only speaks once).
+    if ok and worn then
+        pcall(function()
+            if BridgeSocial ~= nil and BridgeSocial.speak ~= nil then BridgeSocial.speak("Unequip", "Taking it off.") end
+        end)
+    end
     -- A removed belt/webbing/holster must release anything mounted in its slots.
     if ok and BridgeGear ~= nil then pcall(BridgeGear.sync, b) end
     refreshPanels()
@@ -2618,6 +2625,11 @@ function BridgeInventory.drop(b, item)
     pcall(function() note("unassign " .. item:getType()) end)
     local ok, err = pcall(function() BridgeWeapon.unassign(b, item) end)
     if not ok then warn("unassign failed: " .. tostring(err)) end
+    if ok then
+        pcall(function()
+            if BridgeSocial ~= nil and BridgeSocial.speak ~= nil then BridgeSocial.speak("Unequip", "Taking it off.") end
+        end)
+    end
     redress(b)
     refreshPanels()
 end

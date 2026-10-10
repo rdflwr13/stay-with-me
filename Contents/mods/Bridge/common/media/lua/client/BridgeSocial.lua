@@ -28,6 +28,23 @@ local DAY_HOURS = 3
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeSocial] " .. tostring(text)) end end
 local function warn(text) print("[BridgeSocial] " .. tostring(text)) end
 
+-- Short, rate-limited single-line barks shared by the inventory/gear systems.
+-- Reuses the existing generic IGUI_NotAlone_Say_<key> strings (e.g. Say_Unequip
+-- = "Taking it off."). BridgeGear's gear attach/detach lines route through here
+-- too, so the same key cannot double-fire across systems.
+BridgeSocial.said = BridgeSocial.said or {}
+function BridgeSocial.speak(key, fallback, gap)
+    if key == nil then return end
+    local now = 0
+    pcall(function() now = Bridge.time or 0 end)
+    if now - (BridgeSocial.said[key] or -99999) < (gap or 120) then return end
+    BridgeSocial.said[key] = now
+    local text = nil
+    pcall(function() text = getTextOrNull("IGUI_NotAlone_Say_" .. tostring(key)) end)
+    if text == nil or text == "" then text = fallback end
+    pcall(function() if Bridge ~= nil and Bridge.speakText ~= nil then Bridge.speakText(text) end end)
+end
+
 local function hours()
     local h = 0
     pcall(function() h = getGameTime():getWorldAgeHours() end)

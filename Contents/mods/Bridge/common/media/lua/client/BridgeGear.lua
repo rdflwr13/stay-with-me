@@ -40,6 +40,10 @@ BridgeGear.herName = herName
 -- Speech, kept short and rate limited so swapping tools does not spam.
 BridgeGear.said = BridgeGear.said or {}
 local function sayGear(kind, fallback, gap)
+    if BridgeSocial ~= nil and BridgeSocial.speak ~= nil then
+        BridgeSocial.speak(kind, fallback, gap)
+        return
+    end
     local now = 0
     pcall(function() now = Bridge.time or 0 end)
     if now - (BridgeGear.said[kind] or -99999) < (gap or 120) then return end
@@ -327,8 +331,10 @@ function BridgeGear.attachSlot(b, item, slot, quiet)
         end
     end)
     -- Replace only what was mounted from this same holder, so equipping to the
-    -- vest does not disturb a tool already sitting on the belt.
+    -- vest does not disturb a tool already sitting on the belt. Dropping the same
+    -- item into the slot it is already in is a no-op (no re-equip gesture/line).
     local current = gearInSlot(b, slot.providerId, slot.type)
+    if current == item then return false end
     if current ~= nil and current ~= item then BridgeGear.release(b, current) end
     if not setOnModel(b, item, slot) then return false end
     BridgeGear.attached[item] = { location = slot.location, type = slot.type, index = slot.index,
@@ -406,16 +412,24 @@ end
 function BridgeGear.sync(b)
     if b == nil then return end
     local changed = false
-    local drop, handsOff = nil, nil
+    local drop, handsOff, held = nil, nil, nil
     for item, info in pairs(BridgeGear.attached) do
         if info.body == b then
             -- If the weapon system has taken the item back (she drew it, or it
             -- was assigned), stop tracking it and leave the model alone.
             local weapon = BridgeWeapon ~= nil and (BridgeWeapon.isAssigned(b, item)
                 or (BridgeWeapon.attached ~= nil and BridgeWeapon.attached.item == item))
+            local inHand = false
+            pcall(function() inHand = b:getPrimaryHandItem() == item or b:getSecondaryHandItem() == item end)
             if weapon then
                 handsOff = handsOff or {}
                 handsOff[#handsOff + 1] = item
+            elseif inHand then
+                -- She is holding it (a job drew a slung tool). Keep the sling
+                -- association but take it off the model so it is not shown both
+                -- on the sling and in her hands; re-mounts when she puts it away.
+                held = held or {}
+                held[#held + 1] = item
             elseif not (inHer(b, item) and BridgeGear.slotStill(b, item, info.location)
                     and providerStill(b, info.providerId)) then
                 drop = drop or {}
@@ -435,8 +449,23 @@ function BridgeGear.sync(b)
             changed = true
         end
     end
+    local heldSet = {}
+    if held ~= nil then
+        for _, item in ipairs(held) do
+            heldSet[item] = true
+            local info = BridgeGear.attached[item]
+            if info ~= nil then
+                local current = nil
+                pcall(function() current = b:getAttachedItem(info.location) end)
+                if current == item then
+                    pcall(function() b:setAttachedItem(info.location, nil) end)
+                    changed = true
+                end
+            end
+        end
+    end
     for item, info in pairs(BridgeGear.attached) do
-        if info.body == b then
+        if info.body == b and not heldSet[item] then
             local current = nil
             pcall(function() current = b:getAttachedItem(info.location) end)
             if current ~= item then
