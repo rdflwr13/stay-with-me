@@ -392,6 +392,7 @@ function BridgeMove.stopPath(body)
     BridgeMove.pathing = false
     BridgeMove.goal = nil
     BridgeMove.redAt = nil
+    BridgeMove.forceCross = false
     BridgeMove.wasWalking = false
     setStride(body, false)
 
@@ -4728,7 +4729,7 @@ end
 function BridgeMove.shouldCross(body, kind, from, to)
     local safe, blockedWhy = BridgeMove.vaultSafe(body, from, to)
     if not safe then return false, blockedWhy end
-    if BridgeMove.steering then
+    if BridgeMove.steering and not BridgeMove.forceCross then
         local yes, why = BridgeMove.trailCrosses(body, from, to)
         return yes, why
     end
@@ -4825,10 +4826,47 @@ local function edgeAhead(body)
     return nil
 end
 
+-- First climbable edge on the straight line from the body to (x,y,z), scanned
+-- up to maxTiles. Job movement needs this: the engine pathfinder treats a tall
+-- fence as impassable and routes a long way around it, so a job must steer at
+-- the fence itself for the crossing in crossStep to climb it.
+function BridgeMove.edgeOnLine(body, x, y, z, maxTiles)
+    local out = nil
+    pcall(function()
+        local bz = math.floor(body:getZ())
+        if math.floor(z or bz) ~= bz then return end
+        local cell = getCell()
+        local bx, by = body:getX(), body:getY()
+        local d = dist2d(bx, by, x, y)
+        if d < 0.25 then return end
+        local cap = math.min(d, maxTiles or 6)
+        local steps = math.max(1, math.ceil(cap / 0.4))
+        local prev = cell:getGridSquare(math.floor(bx), math.floor(by), bz)
+        if prev == nil then return end
+        for i = 1, steps do
+            local t = i / steps
+            local sx, sy = math.floor(bx + (x - bx) * t), math.floor(by + (y - by) * t)
+            if sx ~= prev:getX() or sy ~= prev:getY() then
+                local sq = cell:getGridSquare(sx, sy, bz)
+                if sq == nil then return end
+                local kind, object = BridgeMove.edgeBetween(body, prev, sq)
+                if kind ~= nil then
+                    out = { kind = kind, object = object, from = prev, to = sq }
+                    return
+                end
+                prev = sq
+            end
+        end
+    end)
+    if out == nil then return nil end
+    return out.kind, out.object, out.from, out.to
+end
+
 local function crossEnd(body, why)
     local c = BridgeMove.cross
     BridgeMove.cross = nil
     BridgeMove.crossInfo = tostring(why)
+    BridgeMove.forceCross = false
     pcall(function() body:setVariable("bPathfind", false) end)
     if c ~= nil and c.kind == "tall" then
         pcall(function()
@@ -4918,7 +4956,7 @@ function BridgeMove.crossStep(body)
 
 
 
-        if not (BridgeMove.pathing or BridgeMove.steering) then
+        if not (BridgeMove.pathing or BridgeMove.steering or (BridgeTask ~= nil and BridgeTask.active)) then
             BridgeMove.edgeSeen = nil
             return false
         end
@@ -5043,7 +5081,7 @@ function BridgeMove.crossStep(body)
             elseif not sameSquare(body:getCurrentSquare(), c.from) and not shiftCross(body, c, body:getCurrentSquare()) then
                 crossEnd(body, "left the edge") return false
             end
-            if edgeDist(body, c.from, c.to) > 0.45 then
+            if edgeDist(body, c.from, c.to) > (((BridgeTask ~= nil and BridgeTask.active) or BridgeMove.forceCross) and 1.5 or 0.45) then
                 if Bridge.time - c.tick > CROSS_WAIT then crossEnd(body, "tall fence not reached") return false end
                 return false
             end
@@ -5815,6 +5853,45 @@ function BridgeMove.update(body)
     if Bridge.follow then
         pcall(function() pendHere = BridgeInventory ~= nil and BridgeInventory.transferPending(body) end)
     end
+
+    -- Returning to the owner across a tall fence: the engine path treats the
+    -- fence as impassable and detours around it, so steer at the fence directly
+    -- and let crossStep climb to the owner. forceCross drops the player-trail
+    -- requirement, which only makes sense while following the owner's own path.
+    if Bridge.follow and not pendHere and BridgeMove.cross == nil
+            and BridgeMove.pendingClimb == nil and BridgeMove.doorAct == nil then
+        local red = BridgeData.owner()
+        if red ~= nil and math.abs(red:getZ() - body:getZ()) < 0.5
+                and not BridgeMove.lineClear(body, red:getX(), red:getY(), red:getZ()) then
+            local ekind, eobject, efrom, eto = BridgeMove.edgeOnLine(body, red:getX(), red:getY(), red:getZ(), 6)
+            if ekind == "tall" and BridgeMove.beyondEdge(efrom, eto, red:getX(), red:getY(), 0) then
+                BridgeMove.goal = { x = red:getX(), y = red:getY() }
+                BridgeMove.walkType = "Walk"
+                BridgeMove.forceCross = true
+                if BridgeMove.shouldCross(body, ekind, efrom, eto) then
+                    local ex = efrom:getX() + 0.5 + (eto:getX() - efrom:getX()) * 0.5
+                    local ey = efrom:getY() + 0.5 + (eto:getY() - efrom:getY()) * 0.5
+                    BridgeMove.setCollide(body, true)
+                    BridgeMove.followWs = 0.4
+                    BridgeMove.applyAnimVars(body)
+                    BridgeMove.followBump(body, "Walk")
+                    pcall(function() BridgeMove.turnToward(body, ex, ey, 180) end)
+                    pcall(function() body:getPathFindBehavior2():moveToPoint(ex, ey, 0.5) end)
+                    BridgeMove.pathing = true
+                    BridgeMove.climbUntil = Bridge.time + 20
+                    BridgeMove.pathResult = "follow-approach"
+                    trackStep(body)
+                    return
+                end
+                BridgeMove.forceCross = false
+            else
+                BridgeMove.forceCross = false
+            end
+        else
+            BridgeMove.forceCross = false
+        end
+    end
+
     if BridgeMove.steerMode and Bridge.follow and not pendHere and BridgeMove.followTrail(body) then return end
 
     BridgeMove.setCollide(body, true)
@@ -5865,6 +5942,33 @@ function BridgeMove.update(body)
         BridgeMove.speed = pickSpeed(d)
     end
     BridgeMove.applyAnimVars(body)
+
+    -- Job movement: walk straight at a climbable fence that stands on the line
+    -- to the job target (the engine path would detour around it instead), so
+    -- crossStep can climb it exactly as it does while following.
+    if not Bridge.follow and Bridge.target ~= nil and BridgeTask ~= nil and BridgeTask.active
+            and BridgeMove.cross == nil and BridgeMove.pendingClimb == nil and BridgeMove.doorAct == nil then
+        local ekind, eobject, efrom, eto = BridgeMove.edgeOnLine(body, gx, gy, gz, 6)
+        if ekind == "tall" and BridgeMove.beyondEdge(efrom, eto, gx, gy, 0) then
+            BridgeMove.goal = { x = gx, y = gy }
+            BridgeMove.walkType = "Walk"
+            if BridgeMove.shouldCross(body, ekind, efrom, eto) then
+                local ex = efrom:getX() + 0.5 + (eto:getX() - efrom:getX()) * 0.5
+                local ey = efrom:getY() + 0.5 + (eto:getY() - efrom:getY()) * 0.5
+                BridgeMove.setCollide(body, true)
+                BridgeMove.followWs = 0.4
+                BridgeMove.applyAnimVars(body)
+                BridgeMove.followBump(body, "Walk")
+                pcall(function() BridgeMove.turnToward(body, ex, ey, 180) end)
+                pcall(function() body:getPathFindBehavior2():moveToPoint(ex, ey, 0.5) end)
+                BridgeMove.pathing = true
+                BridgeMove.climbUntil = Bridge.time + 20
+                BridgeMove.pathResult = "job-approach"
+                trackStep(body)
+                return
+            end
+        end
+    end
 
     if BridgeMove.pathing then
         local okObs, busy = pcall(function() return BridgeMove.handleObstacle(body) end)
