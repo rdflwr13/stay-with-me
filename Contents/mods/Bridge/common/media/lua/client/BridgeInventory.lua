@@ -1524,6 +1524,85 @@ function BridgeInventory.wrapBetterContainers()
     end
     BC.bridgeWrapped = true
 
+    local function bcAggregate(container)
+        if container == nil then return false end
+        local t = nil
+        pcall(function() t = container:getType() end)
+        return t == BC.invName or t == BC.invName_corpses
+    end
+
+
+    function BridgeInventory.withoutHerButtons(playerNum, fn, ...)
+        local loot = getPlayerLoot and getPlayerLoot(playerNum) or nil
+        local list = loot and loot.backpacks or nil
+        if type(list) ~= "table" then return fn(...) end
+        local kept, hid = {}, false
+        for i = 1, #list do
+            local btn = list[i]
+            if btn ~= nil and BridgeInventory.isHers(btn.inventory) then hid = true else kept[#kept + 1] = btn end
+        end
+        if not hid then return fn(...) end
+        loot.backpacks = kept
+        local ok, a, b, c = pcall(fn, ...)
+        if loot.backpacks == kept then loot.backpacks = list end
+        if not ok then warn("withoutHerButtons failed: " .. tostring(a)) return end
+        return a, b, c
+    end
+
+
+    if ISInventoryPane ~= nil and type(ISInventoryPane.transferItemsByWeight) == "function"
+        and not ISInventoryPane.bridgeSDWrapped then
+        local innerTransfer = ISInventoryPane.transferItemsByWeight
+        ISInventoryPane.transferItemsByWeight = function(self, items, container)
+            if bcAggregate(container) then
+                return BridgeInventory.withoutHerButtons(self.player or 0, innerTransfer, self, items, container)
+            end
+            return innerTransfer(self, items, container)
+        end
+        ISInventoryPane.bridgeSDWrapped = true
+    end
+
+
+    if ISInventoryPane ~= nil and type(ISInventoryPane.canPutIn) == "function"
+        and not ISInventoryPane.bridgeSDCanPut then
+        local innerPanePut = ISInventoryPane.canPutIn
+        ISInventoryPane.canPutIn = function(self, ...)
+            if bcAggregate(self.inventory) then
+                return BridgeInventory.withoutHerButtons(self.player or 0, innerPanePut, self, ...)
+            end
+            return innerPanePut(self, ...)
+        end
+        ISInventoryPane.bridgeSDCanPut = true
+    end
+
+
+    if ISInventoryPage ~= nil and type(ISInventoryPage.canPutIn) == "function"
+        and not ISInventoryPage.bridgeSDCanPut then
+        local innerPagePut = ISInventoryPage.canPutIn
+        ISInventoryPage.canPutIn = function(self, ...)
+            local target = self.mouseOverButton and self.mouseOverButton.inventory or nil
+            if bcAggregate(target) then
+                return BridgeInventory.withoutHerButtons(self.player or 0, innerPagePut, self, ...)
+            end
+            return innerPagePut(self, ...)
+        end
+        ISInventoryPage.bridgeSDCanPut = true
+    end
+
+
+    if ISInventoryPaneDraggedItems ~= nil and type(ISInventoryPaneDraggedItems.update) == "function"
+        and not ISInventoryPaneDraggedItems.bridgeSDWrapped then
+        local innerDragUpdate = ISInventoryPaneDraggedItems.update
+        ISInventoryPaneDraggedItems.update = function(self, ...)
+            if bcAggregate(self.mouseOverContainer) then
+                local pn = (self.inventoryPane and self.inventoryPane.player) or self.playerNum or 0
+                return BridgeInventory.withoutHerButtons(pn, innerDragUpdate, self, ...)
+            end
+            return innerDragUpdate(self, ...)
+        end
+        ISInventoryPaneDraggedItems.bridgeSDWrapped = true
+    end
+
 
     local okNested, Nested = pcall(require, "BetterContainers/Nested")
     if okNested and type(Nested) == "table" and type(Nested.addIgnoredInventoryPredicate) == "function" then
@@ -1543,12 +1622,15 @@ Events.OnGameStart.Add(function()
         data.containers = function(player, lootPage, nearby)
             local roots = containers(player, lootPage, nearby)
             if nearby and type(roots) == "table" then
-                for i = 1, #roots do
-                    local node = roots[i]
-                    if node and node.container and BridgeInventory.isHers(node.container) then
-                        node.proximity = true
+                local function mark(node)
+                    if node == nil then return end
+                    if node.container and BridgeInventory.isHers(node.container) then node.proximity = true end
+                    local kids = node.children
+                    if type(kids) == "table" then
+                        for j = 1, #kids do mark(kids[j]) end
                     end
                 end
+                for i = 1, #roots do mark(roots[i]) end
             end
             return roots
         end
