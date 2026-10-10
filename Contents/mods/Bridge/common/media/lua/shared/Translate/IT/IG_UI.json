@@ -72,6 +72,8 @@
     "IGUI_NotAlone_Say_CantReachWater": "Non riesco a raggiungere l'acqua da qui.",
     "IGUI_NotAlone_Say_WashLater": "Più tardi. Ci sono zombi.",
     "IGUI_NotAlone_Say_Renamed": "%1? Mi piace.",
+    "IGUI_NotAlone_Say_Equip": "Fatto.",
+    "IGUI_NotAlone_Say_Unequip": "Lo tolgo.",
     "IGUI_NotAlone_Say_Heal_NoWounds": "Ti ho controllato. Nessuna ferita.",
     "IGUI_NotAlone_Say_Heal_Nothing": "Hai una ferita, ma non ho nulla per curarti: %1",
     "IGUI_NotAlone_Say_Heal_Bite": "Un morso: %1. Lo benderò, ma non esiste una cura.",

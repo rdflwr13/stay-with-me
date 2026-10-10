@@ -103,6 +103,8 @@
     "IGUI_NotAlone_Say_CantReachWater": "I can't get to the water from here.",
     "IGUI_NotAlone_Say_WashLater": "Later. Zombies.",
     "IGUI_NotAlone_Say_Renamed": "%1? I like it.",
+    "IGUI_NotAlone_Say_Equip": "Got it.",
+    "IGUI_NotAlone_Say_Unequip": "Taking it off.",
     "IGUI_NotAlone_Say_Heal_NoWounds": "Checked you over. No wounds.",
     "IGUI_NotAlone_Say_Heal_Nothing": "You're hurt, but I've nothing to treat it with: %1",
     "IGUI_NotAlone_Say_Heal_Bite": "A bite: %1. I'll bandage it, but there's no cure for that.",

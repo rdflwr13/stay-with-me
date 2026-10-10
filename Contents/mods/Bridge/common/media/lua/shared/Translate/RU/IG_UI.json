@@ -118,6 +118,8 @@
     "IGUI_NotAlone_Say_CantReachWater": "Не могу пройти к воде.",
     "IGUI_NotAlone_Say_WashLater": "Потом. Тут зомби.",
     "IGUI_NotAlone_Say_Renamed": "%1? Мне нравится.",
+    "IGUI_NotAlone_Say_Equip": "Готово.",
+    "IGUI_NotAlone_Say_Unequip": "Снимаю.",
     "IGUI_NotAlone_Say_Heal_NoWounds": "Осмотрела. Ран нет.",
     "IGUI_NotAlone_SayM_Heal_NoWounds": "Осмотрел. Ран нет.",
     "IGUI_NotAlone_Say_Heal_Nothing": "Раны есть, а лечить нечем: %1",

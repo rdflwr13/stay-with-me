@@ -298,7 +298,8 @@ function BridgeInventory.skin(b, rec)
         local at = b:getAttachedItems()
         for i = at:size() - 1, 0, -1 do
             local it = at:getItemByIndex(i)
-            if it ~= nil and it ~= keep then b:removeAttachedItem(it) end
+            local gear = it ~= nil and BridgeGear ~= nil and BridgeGear.isGear(b, it)
+            if it ~= nil and it ~= keep and not gear then b:removeAttachedItem(it) end
         end
     end)
     local skin = BridgeData.skinOf(rec)
@@ -374,6 +375,7 @@ function BridgeInventory.applyWorn(b)
         end
     end)
     BridgeInventory.shownIds = shown
+    if BridgeGear ~= nil then pcall(BridgeGear.sync, b) end
 end
 
 BridgeInventory.shownIds = {}
@@ -1815,6 +1817,10 @@ function BridgeInventory.paneMarks(pane)
             elseif BridgeWeapon.isAssigned(b, it) then
                 hot[it] = true
                 keys[#keys + 1] = "h" .. tostring(it:getID())
+            elseif BridgeGear ~= nil and BridgeGear.isGear(b, it) then
+                -- Mounted on her gear: same worn marker the player sees.
+                eq[it] = true
+                keys[#keys + 1] = "g" .. tostring(it:getID())
             end
         end
     end
@@ -2445,6 +2451,8 @@ function BridgeInventory.unwear(b, item)
 
     if ok and worn then pcall(BridgeInventory.dropIfNoRoom, b, item) end
     if ok and worn then BridgeInventory.afterChange(b, item, pre, "unwear") else redress(b) end
+    -- A removed belt/webbing/holster must release anything mounted in its slots.
+    if ok and BridgeGear ~= nil then pcall(BridgeGear.sync, b) end
     refreshPanels()
 end
 
@@ -2512,6 +2520,7 @@ function BridgeInventory.hands(b, item)
     pcall(function() note("assign " .. item:getType()) end)
     local ok, err = pcall(function()
         if b:isEquippedClothing(item) then b:removeWornItem(item) end
+        if BridgeGear ~= nil and BridgeGear.isGear(b, item) then BridgeGear.detach(b, item) end
         return BridgeWeapon.assign(b, item)
     end)
     if not ok then warn("assign failed: " .. tostring(err)) ok = false end
@@ -2862,6 +2871,7 @@ function BridgeInventory.onFill(playerNum, context, items)
     end
     local player = getSpecificPlayer(playerNum or 0)
 
+    if BridgeGear ~= nil then pcall(BridgeGear.menu, context, b, player, list) end
 
 
     if inMain or BridgeInventory.shown then
@@ -3048,6 +3058,15 @@ function BridgeInventory.snapshot(b)
                         else
                             rec.p = parent
                         end
+                        if BridgeGear ~= nil then
+                            local loc = BridgeGear.locationOf(b, item)
+                            if loc ~= nil then
+                                rec.ga = loc
+                                local info = BridgeGear.attached[item]
+                                if info ~= nil and info.type ~= nil and info.type ~= "" then rec.gt = info.type end
+                                if info ~= nil and info.providerType ~= nil and info.providerType ~= "" then rec.gp = info.providerType end
+                            end
+                        end
                         out[#out + 1] = rec
                         local index = #out
                         local isBag = false
@@ -3079,6 +3098,7 @@ function BridgeInventory.restore(b, list)
 
     BridgeWeapon.assignedId = nil
     local made = {}
+    local pendingAttach = {}
     for i, rec in ipairs(list) do
         pcall(function()
             local container = inv
@@ -3089,6 +3109,9 @@ function BridgeInventory.restore(b, list)
             local item = BridgeItems.make(container, rec)
             made[i] = item
             if item == nil then return end
+            if rec.ga ~= nil then
+                pendingAttach[#pendingAttach + 1] = { item = item, loc = rec.ga, type = rec.gt, ptype = rec.gp }
+            end
             if container == inv and rec.as and BridgeWeapon.isMelee(item) then
                 BridgeWeapon.assignedId = item:getID()
             end
@@ -3125,6 +3148,18 @@ function BridgeInventory.restore(b, list)
     end
     redress(b)
     pcall(function() BridgeInventory.custom(b, Bridge.store) end)
+    if BridgeGear ~= nil then
+        for _, p in ipairs(pendingAttach) do
+            pcall(function()
+                if BridgeGear.slotStill(b, p.item, p.loc) then
+                    BridgeGear.attachTo(b, p.item, p.loc, p.type, p.ptype)
+                else
+                    BridgeGear.attach(b, p.item, true)
+                end
+            end)
+        end
+        pcall(function() b:resetModelNextFrame() end)
+    end
     return worn, hands, bag
 end
 

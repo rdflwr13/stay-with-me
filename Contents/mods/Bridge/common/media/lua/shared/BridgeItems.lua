@@ -520,10 +520,10 @@ local NUM = { h = true, p = true, c = true, u = true, a = true, r = true, g = tr
               mi = true, pg = true }
 local BOOL = { w = true, ck = true, bu = true, f = true, cl = true, ch = true, fe = true, as = true, cn = true }
 
-local TEXT = { n = true, lk = true }
+local TEXT = { n = true, lk = true, ga = true, gt = true, gp = true }
 local PACKED = { md = true, cp = true }
 local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "r", "g", "b", "tc", "bt", "hue", "dec", "ho", "pa", "bl", "di", "k", "f", "ck", "bu",
-                "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "mi", "n", "cn", "pg", "lk", "md", "cp" }
+                "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp" }
 local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", fa = "%.3f", sh = "%.3f" }
 BridgeItems.MAX_LENGTH = 30000
 

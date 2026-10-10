@@ -30,6 +30,8 @@
     "IGUI_NotAlone_Say_CantReachWater": "Ich komme nicht an das Wasser heran.",
     "IGUI_NotAlone_Say_WashLater": "Später. Zombies.",
     "IGUI_NotAlone_Say_Renamed": "%1? Gefällt mir.",
+    "IGUI_NotAlone_Say_Equip": "Hab's.",
+    "IGUI_NotAlone_Say_Unequip": "Ich nehme es ab.",
     "IGUI_NotAlone_Say_Heal_NoWounds": "Hab dich untersucht. Keine Wunden.",
     "IGUI_NotAlone_Say_Heal_Nothing": "Du bist verletzt, aber ich habe nichts, womit ich dich behandeln kann: %1",
     "IGUI_NotAlone_Say_Heal_Bite": "Ein Biss: %1. Ich werds bandagieren, aber da gibt es keine Heilung für.",
