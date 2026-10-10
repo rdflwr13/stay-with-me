@@ -2557,7 +2557,7 @@ function Bridge.onHitZombie(zombie, attacker, bodyPart, weapon)
         if hp ~= nil then Bridge.hitRestore = { z = zombie, hp = hp, tick = Bridge.tick } end
         pcall(function()
             local w = attacker:getPrimaryHandItem()
-            local ranged = w ~= nil and w:isRanged()
+            local ranged = w ~= nil and instanceof(w, "HandWeapon") and w:isRanged() == true
             log("hit: ranged=" .. tostring(ranged) .. " shootable=" .. tostring(zombie:isShootable()))
         end)
 

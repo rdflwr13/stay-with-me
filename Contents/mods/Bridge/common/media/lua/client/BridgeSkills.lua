@@ -105,8 +105,8 @@ end
 function BridgeSkills.rollMaintenance(item)
     if item == nil then return 0 end
 
-    local ranged = false
-    pcall(function() ranged = item:isRanged() end)
+    if not instanceof(item, "HandWeapon") then return 0 end
+    local ranged = false; pcall(function() ranged = item:isRanged() == true end)
     if ranged then return 0 end
 
     local full = nil
