@@ -176,11 +176,8 @@ function BridgeChat.create()
         return
     end
     if ISChat.instance ~= nil then
-        log("native chat present, not creating")
-        return
-    end
-    if not BridgeChat.bridgeOn() then
-        log("single player without the bridge: no chat window")
+        BridgeChat.ready = true
+        log("native chat present, using it")
         return
     end
     local ok, err = pcall(function()

@@ -1466,12 +1466,15 @@ function Bridge.spawnZombie(px, py, pz)
     end
 
     local failed = nil
+    local created = nil
+    local setupErr = nil
     local ok, err = pcall(function()
 
         local chance = BridgeData.isFemale(Bridge.store) and 100 or 0
         local list = addZombiesInOutfit(x, y, z, 1, "Naked", chance, false, false, false, false, false, false, 1)
         if list == nil or list:size() == 0 then failed = "addZombiesInOutfit returned nothing" return end
         local body = list:get(0)
+        created = body
 
 
         local bodySq = nil
@@ -1485,24 +1488,48 @@ function Bridge.spawnZombie(px, py, pz)
 
 
         if BridgeRemnant ~= nil then pcall(function() BridgeRemnant.mark(body) end) end
-        humanize(body)
 
 
+        Bridge.body = body
+        Bridge.kind = "zombie"
+        pcall(function() body:setVariable(BODY_VAR, true) end)
         Bridge.hideBody(body, true)
         Bridge.hiddenSince = Bridge.tick
         Bridge.hiddenTicks = Bridge.zombieTicks
         Bridge.createdTime = Bridge.time
-        Bridge.body = body
-        Bridge.kind = "zombie"
         Bridge.target = nil
-        BridgeMove.reset(nil)
-        BridgeFight.reset(nil)
 
 
-        if not Bridge.parked and Bridge.sleepParked == nil and Bridge.claimParked == nil then BridgeFight.resetFatigue() end
-        Bridge.applyStoredMode()
+        local okSetup, errSetup = pcall(function()
+            humanize(body)
+            BridgeMove.reset(nil)
+            BridgeFight.reset(nil)
+
+
+            if not Bridge.parked and Bridge.sleepParked == nil and Bridge.claimParked == nil then BridgeFight.resetFatigue() end
+            Bridge.applyStoredMode()
+        end)
+        if not okSetup then
+            setupErr = tostring(errSetup)
+            pcall(function()
+                body:setNoTeeth(true)
+                body:setUseless(true)
+                body:setTarget(nil)
+                body:clearAggroList()
+                body:setInvulnerable(true)
+                body:setGodMod(true, true)
+            end)
+        end
     end)
-    if not ok or failed ~= nil then return "spawn zombie failed: " .. tostring(failed or err) end
+    if not ok or failed ~= nil then
+        if created ~= nil and Bridge.body ~= created then
+            pcall(function() Bridge.unhumanize(created) end)
+            pcall(function() created:removeFromSquare() end)
+            pcall(function() created:removeFromWorld() end)
+        end
+        if setupErr ~= nil then warn("companion setup failed: " .. tostring(setupErr)) end
+        return "spawn zombie failed: " .. tostring(failed or err)
+    end
 
     local okDress, dressRes = pcall(function() return dress(Bridge.body) end)
     if not okDress then dressRes = "dress failed: " .. tostring(dressRes) end
@@ -1974,12 +2001,15 @@ function Bridge.speakText(text)
     if inCar then
         Bridge.carLine(text)
     elseif Bridge.alive() and BridgeData.overheadOk(text) then
-        pcall(function() Bridge.body:addLineChatElement(text, 0.95, 0.55, 0.75) end)
+        local okLine, lineErr = pcall(function() Bridge.body:addLineChatElement(text, 0.95, 0.55, 0.75) end)
+        if not okLine then warn("overhead line failed: " .. tostring(lineErr)) end
         if BridgeName ~= nil then BridgeName.spoke(Bridge.body) end
     end
     if Bridge.mp then
 
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "say", { text = text, chat = false, car = inCar or nil }) end)
+    elseif BridgeChat ~= nil and BridgeChat.sayCompanion ~= nil then
+        pcall(function() BridgeChat.sayCompanion(text) end)
     end
     return text
 end
@@ -2364,6 +2394,7 @@ function Bridge.say(text)
         said = "chat only"
     elseif Bridge.alive() then
         local ok = pcall(function() Bridge.body:addLineChatElement(text, 0.95, 0.55, 0.75) end)
+        if not ok then warn("overhead line failed, falling back to Say") end
         if BridgeName ~= nil then BridgeName.spoke(Bridge.body) end
         if ok then
             said = "line"

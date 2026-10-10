@@ -481,7 +481,7 @@ local function installWrappers()
             baseRefresh()
             if Bridge.store == nil then return end
             BridgeData.skillsOf(Bridge.store)
-            if Bridge.mp then
+            if Bridge.mp and Bridge.gotData then
                 local incoming = Bridge.store.skills
                 if Bridge.localSkills ~= nil and incoming ~= Bridge.localSkills then
                     Bridge.store.skills = Bridge.localSkills
