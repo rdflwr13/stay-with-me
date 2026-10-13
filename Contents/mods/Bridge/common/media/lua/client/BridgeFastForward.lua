@@ -169,9 +169,13 @@ end
 
 function BridgeFastForward.unsafe(b, near, anyFloor)
     near = near or BridgeFastForward.NEAR
-    local asn = "?"
+    local asn, bump = "?", ""
     pcall(function() asn = tostring(b:getActionStateName()) end)
-    if not SAFE[asn] then return "state " .. asn end
+    pcall(function() bump = tostring(b:getBumpType()) end)
+    local seated = string.sub(bump, 1, 8) == "SitChair"
+        or (Bridge ~= nil and Bridge.pose ~= nil and Bridge.pose.seat == true)
+        or (BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "sit")
+    if not SAFE[asn] and not seated then return "state " .. asn end
     if yes(b, "isDead") then return "dead" end
     if yes(b, "isOnFloor") then return "on the floor" end
     if yes(b, "isKnockedDown") then return "knocked down" end
@@ -190,7 +194,7 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
 
     local job = false
     pcall(function() job = BridgeTask ~= nil and BridgeTask.active == true end)
-    if job then return "job" end
+    if job and not seated then return "job" end
     local p = player()
     if p == nil then return "no player" end
     local far = true
@@ -441,9 +445,7 @@ function BridgeFastForward.holdStand(b)
 
 
 
-    local seating = false
-    pcall(function() seating = BridgeMove ~= nil and BridgeMove.seat ~= nil end)
-    if seating and string.sub(bump, 1, 3) == "Sit" then return false end
+    if string.sub(bump, 1, 3) == "Sit" then return false end
 
 
 
