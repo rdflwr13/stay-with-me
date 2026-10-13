@@ -346,8 +346,8 @@ end
 
 
 
-BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, xpPopups = false,
-    romance = true, fatigueBar = false, torch = "auto" }
+BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
+    relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1 }
 BridgeData.HAIR_MAX = 40
 
 function BridgeData.optionOf(rec, key)
@@ -375,6 +375,190 @@ function BridgeData.torchMode(rec)
     end
     local def = BridgeData.cleanTorchMode(BridgeData.OPTIONS.torch)
     return def or BridgeData.DEFAULT_TORCH
+end
+
+
+BridgeData.EQUIP_SCALES = { 0.75, 1, 1.25, 1.5, 2 }
+BridgeData.DEFAULT_EQUIP_SCALE = 1
+
+function BridgeData.cleanEquipScale(value)
+    local n = tonumber(value)
+    if n == nil or n ~= n then return nil end
+    for _, v in ipairs(BridgeData.EQUIP_SCALES) do
+        if math.abs(v - n) < 0.001 then return v end
+    end
+    return nil
+end
+
+function BridgeData.equipScale(rec)
+    if rec ~= nil then
+        local v = BridgeData.cleanEquipScale(rec.equipScale)
+        if v ~= nil then return v end
+    end
+    local def = BridgeData.cleanEquipScale(BridgeData.OPTIONS.equipScale)
+    return def or BridgeData.DEFAULT_EQUIP_SCALE
+end
+
+
+BridgeData.LOOT_CATS = {
+    { id = "ReceiveTool", label = "LootCatTool" },
+    { id = "ReceiveWeapon", label = "LootCatWeapon" },
+    { id = "ReceiveGun", label = "LootCatGun" },
+    { id = "ReceiveAmmo", label = "LootCatAmmo" },
+    { id = "ReceiveMeds", label = "LootCatMeds" },
+    { id = "ReceiveFood", label = "LootCatFood" },
+    { id = "ReceiveRead", label = "LootCatRead" },
+    { id = "ReceiveCloth", label = "LootCatCloth" },
+    { id = "ReceiveMaterial", label = "LootCatMaterial" },
+    { id = "ReceiveElectronics", label = "LootCatElectronics" },
+    { id = "ReceiveContainer", label = "LootCatContainer" },
+    { id = "ReceiveFurniture", label = "LootCatFurniture" },
+    { id = "ReceiveCigs", label = "LootCatCigs" },
+    { id = "ReceiveBooze", label = "LootCatBooze" },
+    { id = "ReceiveFuel", label = "LootCatFuel" },
+    { id = "ReceiveCleaner", label = "LootCatCleaner" },
+    { id = "ReceiveJunk", label = "LootCatJunk" },
+    { id = "ReceiveHeavy", label = "LootCatHeavy" },
+    { id = "ReceiveItem", label = "LootCatItem" },
+}
+BridgeData.LOOT_CAT_SET = {}
+for _, e in ipairs(BridgeData.LOOT_CATS) do BridgeData.LOOT_CAT_SET[e.id] = true end
+
+BridgeData.LOOT_DEFAULTS = { lootCorpses = true, lootVehicles = true, lootMaxWeight = 0 }
+
+function BridgeData.cleanLootCats(value)
+    if type(value) ~= "table" then return nil end
+    local out = {}
+    for k, v in pairs(value) do
+        if BridgeData.LOOT_CAT_SET[k] and v == false then out[k] = false end
+    end
+    return out
+end
+
+function BridgeData.lootCatsOf(rec)
+    if type(rec) ~= "table" then return {} end
+    if type(rec.lootCats) ~= "table" then rec.lootCats = {} end
+    return rec.lootCats
+end
+
+function BridgeData.lootCatOn(rec, pool)
+    if pool == nil or type(rec) ~= "table" or type(rec.lootCats) ~= "table" then return true end
+    return rec.lootCats[pool] ~= false
+end
+
+BridgeData.LOOT_POOL_GROUP = {
+    ReceiveRotten = "ReceiveFood", ReceiveCanned = "ReceiveFood", ReceiveTreat = "ReceiveFood",
+    ReceiveRaw = "ReceiveFood", ReceiveWater = "ReceiveFood", ReceiveTainted = "ReceiveFood",
+    ReceiveCooking = "ReceiveFood", ReceiveBait = "ReceiveFood",
+    ReceiveCleaning = "ReceiveCleaner", ReceiveCleanWeapon = "ReceiveCleaner",
+    ReceiveFireSource = "ReceiveTool", ReceiveTorch = "ReceiveTool", ReceiveTorchEmpty = "ReceiveTool",
+    ReceiveBattery = "ReceiveElectronics",
+    ReceiveWeaponPart = "ReceiveWeapon", ReceiveGun = "ReceiveGun",
+    DressDirty = "ReceiveCloth", DressBroken = "ReceiveCloth", ReceiveUndies = "ReceiveCloth",
+    ReceiveMap = "ReceiveRead",
+    ReceiveSmokes = "ReceiveCigs",
+    ReceiveHousehold = "ReceiveItem",
+}
+
+BridgeData.LOOT_CAT_PREFIX = {
+    food = "ReceiveFood", cooking = "ReceiveFood", cook = "ReceiveFood", drink = "ReceiveFood",
+    beverage = "ReceiveFood", water = "ReceiveFood", perishable = "ReceiveFood",
+    med = "ReceiveMeds", medical = "ReceiveMeds", firstaid = "ReceiveMeds", drug = "ReceiveMeds",
+    wep = "ReceiveWeapon", weapon = "ReceiveWeapon", gun = "ReceiveGun", ammo = "ReceiveAmmo",
+    cloth = "ReceiveCloth", apparel = "ReceiveCloth",
+    read = "ReceiveRead", lit = "ReceiveRead",
+    cont = "ReceiveContainer", container = "ReceiveContainer",
+    tool = "ReceiveTool", craft = "ReceiveMaterial", material = "ReceiveMaterial",
+    elec = "ReceiveElectronics", electronics = "ReceiveElectronics",
+    fuel = "ReceiveFuel", clean = "ReceiveCleaner", furn = "ReceiveFurniture", junk = "ReceiveJunk",
+}
+
+function BridgeData.lootCatPrefix(item)
+    if item == nil then return nil end
+    local disp = nil
+    pcall(function() disp = item:getDisplayCategory() end)
+    if type(disp) ~= "string" or disp == "" then return nil end
+    local head = string.lower(disp)
+    local best, bestLen = nil, 0
+    for key, cat in pairs(BridgeData.LOOT_CAT_PREFIX) do
+        local n = #key
+        if n > bestLen and string.sub(head, 1, n) == key then best, bestLen = cat, n end
+    end
+    return best
+end
+
+function BridgeData.lootPoolAllowed(rec, pool, item)
+    if item ~= nil then
+        local food, water, booze = false, false, false
+        pcall(function() food = item:IsFood() == true end)
+        pcall(function() water = item:isWaterSource() == true end)
+        pcall(function() booze = item:isAlcoholic() == true end)
+        if food or water or booze then
+            return BridgeData.lootCatOn(rec, booze and "ReceiveBooze" or "ReceiveFood")
+        end
+    end
+    local cat = nil
+    if pool ~= nil and pool ~= "ReceiveItem" then
+        cat = BridgeData.LOOT_POOL_GROUP[pool]
+        if cat == nil and BridgeData.LOOT_CAT_SET[pool] then cat = pool end
+    end
+    if cat == nil and item ~= nil then cat = BridgeData.lootCatPrefix(item) end
+    if cat == nil and pool ~= nil and BridgeData.LOOT_CAT_SET[pool] then cat = pool end
+    if cat == nil then return true end
+    return BridgeData.lootCatOn(rec, cat)
+end
+
+function BridgeData.lootOption(rec, key)
+    if type(rec) == "table" and rec[key] ~= nil then return rec[key] == true end
+    return BridgeData.LOOT_DEFAULTS[key] == true
+end
+
+function BridgeData.cleanLootMaxWeight(value)
+    local n = tonumber(value)
+    if n == nil or n ~= n or n < 0 then return 0 end
+    if n > 50 then n = 50 end
+    return n
+end
+
+function BridgeData.lootMaxWeight(rec)
+    if type(rec) == "table" and rec.lootMaxWeight ~= nil then
+        return BridgeData.cleanLootMaxWeight(rec.lootMaxWeight)
+    end
+    return 0
+end
+
+
+BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "fight", "torch", "jobs", "keep", "cancel" }
+BridgeData.MENU_ORDER_SET = {}
+for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do BridgeData.MENU_ORDER_SET[id] = true end
+
+function BridgeData.cleanMenuOrder(value)
+    if type(value) ~= "table" then return nil end
+    local seen, out = {}, {}
+    for _, id in ipairs(value) do
+        if type(id) == "string" and BridgeData.MENU_ORDER_SET[id] and not seen[id] then
+            seen[id] = true
+            out[#out + 1] = id
+            if #out >= #BridgeData.MENU_ORDER_IDS then break end
+        end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
+function BridgeData.menuOrder(rec)
+    local out, seen = {}, {}
+    local clean = nil
+    if rec ~= nil then clean = BridgeData.cleanMenuOrder(rec.menuOrder) end
+    if clean ~= nil then
+        for _, id in ipairs(clean) do
+            if not seen[id] then seen[id] = true out[#out + 1] = id end
+        end
+    end
+    for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do
+        if not seen[id] then seen[id] = true out[#out + 1] = id end
+    end
+    return out
 end
 
 
@@ -424,9 +608,11 @@ BridgeData.GENDERED_KEYS = {
     Talk_Thanks = true, Talk_Comfort = true, Rel_Crush = true, InvAssign = true, LookDefault = true,
     CombatAggressive = true, CombatAggressiveTip = true, CombatGuardTip = true,
     OptAutoHeal = true, OptAutoHealTip = true, OptHitMatters = true, OptGifts = true,
-    OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRomanceTip = true,
+    OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRelPopupsTip = true, OptRomanceTip = true,
     OptFatigueBar = true, OptFatigueBarTip = true,
+    OptSitWithRed = true, OptSitWithRedTip = true,
     OptTorchTip = true,
+    OptEquipScale = true, OptEquipScaleTip = true,
 }
 
 function BridgeData.text(key, a, b)
@@ -998,6 +1184,7 @@ end
 BridgeData.REL_KEYS = { f = { -100, 100 }, r = { 0, 100 }, days = { 0, 100000 }, hours = { 0, 24 },
     day = { 0, 1000000 }, gainF = { -100, 100 }, gainR = { -100, 100 }, giftAt = { 0, 100000000 },
     seen = { 0, 100000000 }, askAt = { 0, 100000000 }, healAt = { 0, 100000000 },
+    valuedAt = { 0, 100000000 },
     dressF = { 0, 100 }, dressR = { 0, 100 } }
 
 
@@ -1027,6 +1214,16 @@ function BridgeData.cleanRel(t)
         end
     end
     return out
+end
+
+
+function BridgeData.cleanCount(n)
+    n = tonumber(n)
+    if n == nil or n ~= n then return 0 end
+    n = math.floor(n)
+    if n < 0 then n = 0 end
+    if n > 1000000000 then n = 1000000000 end
+    return n
 end
 
 

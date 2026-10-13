@@ -42,6 +42,7 @@ BridgeTorch.ambientAt = {}
 BridgeTorch.lvl = {}
 BridgeTorch.lvlAt = {}
 BridgeTorch.probe = {}
+BridgeTorch.sensed = {}
 
 
 
@@ -397,6 +398,12 @@ function BridgeTorch.update(body)
                 if c ~= nil then dDay = tonumber(c:getDayLightStrength()) or 0 end
             end
         end)
+        BridgeTorch.sensed[key] = {
+            lvl = lvl, raw = raw, external = external, why = why,
+            inside = (dOut == false),
+            dark = BridgeTorchShared.isDark(lvl, external, why),
+            at = getTimestampMs(),
+        }
         BridgeTorch.dbg[key] = { lvl = lvl, raw = raw, amb = BridgeTorch.ambient[key], want = want, on = BridgeTorch.sent[key], mode = mode, item = hasItem, charge = charge, bat = hasBat, ext = external, why = why, out = dOut, day = dDay, strk = (BridgeTorch.litStreak[key] or 0) }
 
 
@@ -548,6 +555,13 @@ end
 
 
 
+
+
+function BridgeTorch.darkHere(body)
+    local d = BridgeTorch.sensed[BridgeTorchShared.keyOf(body)]
+    if d == nil or (getTimestampMs() - (d.at or 0)) > 3000 then return nil end
+    return d.dark, d.inside, d.lvl, d.external, d.why
+end
 
 
 BridgeTorch.BEAM_MS = 500
@@ -1002,7 +1016,7 @@ function BridgeTorch.report()
     for _, v in pairs(BridgeTorch.dbg) do d = v break end
     local function fmtN(v) if type(v) == "number" then return string.format("%.2f", v) end return "-" end
 
-    log(string.format(
+    local line = string.format(
         "[TorchDbg] fps=%.0f place/s=%.1f add/s=%.1f rm/s=%.1f lampposts=%d lamps=%d marked=%d lit=%d | lvl=%s raw=%s amb=%s want=%s on=%s mode=%s item=%s charge=%s bat=%s ext=%s why=%s out=%s day=%s strk=%s",
         st.frames * 1000 / ms, st.places * 1000 / ms, st.adds * 1000 / ms, st.removes * 1000 / ms, size, lamps,
         st.marked or 0, st.lit or 0,
@@ -1014,7 +1028,12 @@ function BridgeTorch.report()
         d and (d.charge and string.format("%.3f", d.charge) or "-") or "-",
         d and tostring(d.bat) or "-",
         d and tostring(d.ext) or "-", d and tostring(d.why) or "-",
-        d and tostring(d.out) or "-", d and fmtN(d.day) or "-", d and tostring(d.strk) or "-"))
+        d and tostring(d.out) or "-", d and fmtN(d.day) or "-", d and tostring(d.strk) or "-")
+
+    if line ~= BridgeTorch.lastReport then
+        BridgeTorch.lastReport = line
+        log(line)
+    end
 
     st.frames, st.places, st.releases, st.adds, st.removes, st.at = 0, 0, 0, 0, 0, now
     st.marked, st.lit = 0, 0

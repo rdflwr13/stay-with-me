@@ -474,6 +474,16 @@ end
 
 
 
+function BridgeTorchShared.isDark(lvl, external, why)
+    if lvl == nil then return false end
+    if external == true and why ~= nil
+        and (why == "daylight" or startsWith(why, "foreignLight") or why == "vehicleLight") then
+        return false
+    end
+    return lvl < BridgeTorchShared.CFG.DARK_LO
+end
+
+
 function BridgeTorchShared.wantOn(body, red, lvl, external, why)
     if body == nil then return false end
 
@@ -512,11 +522,7 @@ function BridgeTorchShared.wantOn(body, red, lvl, external, why)
 
 
 
-    if external == true and why ~= nil
-        and (why == "daylight" or startsWith(why, "foreignLight") or why == "vehicleLight") then
-        return false
-    end
-    return lvl < BridgeTorchShared.CFG.DARK_LO
+    return BridgeTorchShared.isDark(lvl, external, why)
 end
 
 

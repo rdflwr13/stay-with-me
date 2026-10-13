@@ -1031,6 +1031,58 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.equipScale ~= nil then
+        local scale = BridgeData.cleanEquipScale(args.equipScale)
+        if scale ~= nil and rec.equipScale ~= scale then
+            rec.equipScale = scale
+            changed = true
+        end
+    end
+    if args.menuOrder ~= nil then
+        local order = BridgeData.cleanMenuOrder(args.menuOrder)
+        if order ~= nil then
+            local old = BridgeData.cleanMenuOrder(rec.menuOrder)
+            local same = old ~= nil and #old == #order
+            if same then
+                for i = 1, #order do
+                    if old[i] ~= order[i] then same = false break end
+                end
+            end
+            if not same then
+                rec.menuOrder = order
+                changed = true
+            end
+        end
+    end
+
+    if args.lootCats ~= nil then
+        local cats = BridgeData.cleanLootCats(args.lootCats)
+        if cats ~= nil then
+            local old = BridgeData.cleanLootCats(rec.lootCats) or {}
+            local same = true
+            for k, v in pairs(old) do if cats[k] ~= v then same = false break end end
+            for k, v in pairs(cats) do if old[k] ~= v then same = false break end end
+            if not same then
+                rec.lootCats = cats
+                changed = true
+            end
+        end
+    end
+    if args.lootCorpses ~= nil and rec.lootCorpses ~= (args.lootCorpses == true) then
+        rec.lootCorpses = args.lootCorpses == true
+        changed = true
+    end
+    if args.lootVehicles ~= nil and rec.lootVehicles ~= (args.lootVehicles == true) then
+        rec.lootVehicles = args.lootVehicles == true
+        changed = true
+    end
+    if args.lootMaxWeight ~= nil then
+        local w = BridgeData.cleanLootMaxWeight(args.lootMaxWeight)
+        if rec.lootMaxWeight ~= w then
+            rec.lootMaxWeight = w
+            changed = true
+        end
+    end
 
     if args.hair ~= nil or args.skin ~= nil or args.hairColor ~= nil or args.face ~= nil or args.details ~= nil
         or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil or args.beardColor ~= nil then
@@ -1216,6 +1268,13 @@ BridgeServer.Commands.state = function(player, args)
                 if b == nil then b = currentBody(who, rec) end
                 if b ~= nil then applyCarry(b, rec) end
             end
+        end
+    end
+    if args.kills ~= nil then
+        local k = BridgeData.cleanCount(args.kills)
+        if k > (rec.kills or 0) then
+            rec.kills = k
+            changed = true
         end
     end
     if changed then transmit() end
@@ -1750,6 +1809,26 @@ BridgeServer.Commands.cleanSquare = function(player, args)
     if not ok then log("cleanSquare: applyClean failed: " .. tostring(err)) end
 end
 
+BridgeServer.Commands.clearPlants = function(player, args)
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("clearPlants: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+    local kind = args.kind
+    if kind ~= "grass" and kind ~= "bush" then
+        log("clearPlants: bad kind " .. tostring(kind))
+        return
+    end
+    if BridgePlants == nil then
+        log("clearPlants: BridgePlants not loaded")
+        return
+    end
+    local ok, err = pcall(function() BridgePlants.applyPlant(sq, kind, body) end)
+    if not ok then log("clearPlants: applyPlant failed: " .. tostring(err)) end
+end
+
 
 
 
@@ -1773,6 +1852,20 @@ function BridgeServer.resolveRef(sq, ref, player)
                     if okAccess then pcall(function() c = part:getItemContainer() end) end
                 end
             end
+        elseif ref.kind == "floor" then
+            local wobs = nil
+            pcall(function() wobs = sq:getWorldObjects() end)
+            if wobs ~= nil then
+                for k = 0, wobs:size() - 1 do
+                    local it = nil
+                    pcall(function() it = wobs:get(k):getItem() end)
+                    if it ~= nil then
+                        pcall(function() c = it:getContainer() end)
+                        if c ~= nil then break end
+                    end
+                end
+            end
+            if c == nil then pcall(function() c = sq:getFloor() end) end
         elseif ref.kind == "body" then
             local mv = sq:getStaticMovingObjects()
             if mv ~= nil then
@@ -1801,17 +1894,16 @@ end
 
 
 BridgeServer.Commands.give = function(player, args)
-    local function fail(why)
-        sendServerCommand(player, "Bridge", "giveFailed", { id = args.id, token = args.token, why = why })
+    local ids = args.ids
+    if type(ids) ~= "table" then ids = (args.id ~= nil) and { args.id } or {} end
+    local function fail(why, id)
+        sendServerCommand(player, "Bridge", "giveFailed", { id = id or args.id, ids = ids, token = args.token, why = why })
     end
     local rec = record(player:getUsername())
     if rec.bodyId == nil then return fail("no body") end
-    local item = nil
-    local container = nil
+    if #ids == 0 then return fail("no item") end
+    local srcC = nil
     if type(args.srcRef) == "table" then
-
-
-        local wantId = tonumber(args.id)
         pcall(function()
             local ref = args.srcRef
             local _, sq = companionAtRelaxed(player, ref, 6)
@@ -1820,44 +1912,65 @@ BridgeServer.Commands.give = function(player, args)
             if c == nil then return end
             if SafeHouse ~= nil and SafeHouse.isSafeHouse ~= nil and c:getSourceGrid() ~= nil
                 and SafeHouse.isSafeHouse(c:getSourceGrid(), player:getUsername(), true) then return end
-            local list = c:getItems()
-            for i = 0, list:size() - 1 do
-                local it = list:get(i)
-                if it ~= nil and (wantId == nil or it:getID() == wantId) then item, container = it, c break end
-            end
+            srcC = c
         end)
-        if item == nil then return fail("not at source") end
-    else
-        pcall(function() item = player:getInventory():getItemWithIDRecursiv(args.id) end)
-        if item == nil then return fail("not in inventory") end
-        local equipped = false
-        pcall(function()
-            equipped = player:isEquipped(item) or player:getPrimaryHandItem() == item or player:getSecondaryHandItem() == item
-        end)
-        if equipped then return fail("equipped") end
-        container = item:getContainer()
+        if srcC == nil then return fail("not at source") end
     end
-    local r = BridgeItems.record(item, true)
-
+    local found = {}
+    for i = 1, #ids do
+        local wantId = ids[i]
+        local item, container = nil, nil
+        if srcC ~= nil then
+            pcall(function()
+                local list = srcC:getItems()
+                for j = 0, list:size() - 1 do
+                    local it = list:get(j)
+                    if it ~= nil and (wantId == nil or it:getID() == wantId) then item, container = it, srcC break end
+                end
+            end)
+            if item == nil then return fail("not at source", wantId) end
+        else
+            pcall(function() item = player:getInventory():getItemWithIDRecursiv(wantId) end)
+            if item == nil then return fail("not in inventory", wantId) end
+            local equipped = false
+            pcall(function()
+                equipped = player:isEquipped(item) or player:getPrimaryHandItem() == item or player:getSecondaryHandItem() == item
+            end)
+            if equipped then return fail("equipped", wantId) end
+            container = item:getContainer()
+        end
+        found[i] = { item = item, container = container }
+    end
     local list = BridgeItems.decode(rec.items or "")
-    flatten(r, nil, list)
+    local recs = {}
+    for i = 1, #found do
+        recs[i] = BridgeItems.record(found[i].item, true)
+        flatten(recs[i], nil, list)
+    end
     local items = BridgeItems.encode(list)
     if #BridgeItems.decode(items) ~= #list then return fail("snapshot full") end
     local ok, err = pcall(function()
-        pcall(function() player:removeAttachedItem(item) end)
-        if container ~= nil then container:Remove(item) end
-        sendRemoveItemFromContainer(container, item)
+        for i = 1, #found do
+            local item, container = found[i].item, found[i].container
+            pcall(function() player:removeAttachedItem(item) end)
+            if container ~= nil then container:Remove(item) end
+            sendRemoveItemFromContainer(container, item)
+        end
     end)
     if not ok then return fail("remove failed: " .. tostring(err)) end
     rec.items = items
     rec.saved = 1
     rec.iseq = (rec.iseq or 0) + 1
-    local added = {}
-    flatten(r, nil, added)
-    journalNote("G", player:getUsername(), rec, args.id, added)
+    local outIds = {}
+    for i = 1, #found do
+        outIds[i] = found[i].item:getID()
+        local added = {}
+        flatten(recs[i], nil, added)
+        journalNote("G", player:getUsername(), rec, found[i].item:getID(), added)
+    end
     transmit()
-    sendServerCommand(player, "Bridge", "gave", { id = args.id, token = args.token, rec = r, iseq = rec.iseq })
-    log("give " .. r.t .. " from " .. tostring(player:getUsername()))
+    sendServerCommand(player, "Bridge", "gave", { ids = outIds, recs = recs, token = args.token, iseq = rec.iseq })
+    log("give " .. tostring(recs[1] and recs[1].t) .. " x" .. tostring(#found) .. " from " .. tostring(player:getUsername()))
 end
 
 
@@ -1865,19 +1978,24 @@ end
 BridgeServer.Commands.take = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
-    local r = args and args.rec
-    local function answer(ok, id, why, direct)
+    local recs = args.recs
+    if type(recs) ~= "table" then recs = (type(args.rec) == "table") and { args.rec } or {} end
+    local function answer(ok, ids, why, direct)
         if args.token ~= nil then
-            sendServerCommand(player, "Bridge", "took", { token = args.token, ok = ok, id = id, why = why, iseq = rec.iseq,
-                direct = direct == true })
+            sendServerCommand(player, "Bridge", "took", { token = args.token, ok = ok, ids = ids, id = (ids and ids[1]) or nil,
+                why = why, iseq = rec.iseq, direct = direct == true })
         end
     end
-    if type(r) ~= "table" or type(r.t) ~= "string" then return answer(false, nil, "no record") end
+    if #recs == 0 or type(recs[1]) ~= "table" or type(recs[1].t) ~= "string" then return answer(false, nil, "no record") end
     if rec.bodyId == nil and args.returnId == nil then return answer(false, nil, "no body") end
     local list = BridgeItems.decode(rec.items or "")
     local flags = { w = args.w == true, h = tonumber(args.h), top = args.top == true }
-    local idx = matchRecord(list, r, args.returnId == nil and flags or nil)
-    if idx == nil then return answer(false, nil, "not in body snapshot") end
+    local out = list
+    for i = 1, #recs do
+        local idx = matchRecord(out, recs[i], args.returnId == nil and flags or nil)
+        if idx == nil then return answer(false, nil, "not in body snapshot") end
+        out = removeSubtree(out, idx)
+    end
 
 
     local floor = nil
@@ -1901,60 +2019,72 @@ BridgeServer.Commands.take = function(player, args)
             destC = BridgeServer.resolveRef(sq, ref, player)
         end)
     end
-    local usedDirect = false
-    local item = nil
+    local inv = player:getInventory()
+    if args.dest ~= nil and floor == nil then
+        pcall(function()
+            local bag = player:getInventory():getItemWithIDRecursiv(args.dest)
+            if bag ~= nil and bag:IsInventoryContainer() then inv = bag:getInventory() end
+        end)
+    end
+    local made = {}
     local ok, err = pcall(function()
-        local inv = player:getInventory()
-        if args.dest ~= nil and floor == nil then
-            pcall(function()
-                local bag = player:getInventory():getItemWithIDRecursiv(args.dest)
-                if bag ~= nil and bag:IsInventoryContainer() then inv = bag:getInventory() end
-            end)
+        for i = 1, #recs do
+            local item = BridgeItems.make(inv, recs[i])
+            if item == nil then error("AddItem returned nil") end
+            made[#made + 1] = item
         end
-        item = BridgeItems.make(inv, r)
-        if item == nil then return end
-        if floor ~= nil then
-
-
+    end)
+    if not ok then
+        pcall(function()
+            for _, item in ipairs(made) do if inv:contains(item) then inv:Remove(item) end end
+        end)
+        log("take failed: " .. tostring(err))
+        return answer(false, nil, tostring(err))
+    end
+    local usedDirect = false
+    if floor ~= nil then
+        for _, item in ipairs(made) do
             inv:Remove(item)
             local x, y = ZombRandFloat(0.1, 0.9), ZombRandFloat(0.1, 0.9)
             local z = 0
             pcall(function() z = floor:getApparentZ(x, y) - floor:getZ() end)
             floor:AddWorldInventoryItem(item, x, y, z)
-            return
         end
+    else
+        local directCount = 0
         if destC ~= nil then
-            local fits = false
-            pcall(function()
-                fits = destC:hasRoomFor(player, item) ~= false and destC:isItemAllowed(item) ~= false
-            end)
-            if fits then
+            for _, item in ipairs(made) do
+                local fits = false
+                pcall(function()
+                    fits = destC:hasRoomFor(player, item) ~= false and destC:isItemAllowed(item) ~= false
+                end)
+                if not fits then break end
                 inv:Remove(item)
                 destC:AddItem(item)
                 sendAddItemToContainer(destC, item)
                 pcall(function() sendItemStats(item) end)
-                usedDirect = true
-                return
+                directCount = directCount + 1
             end
-            destC = nil
         end
-        sendAddItemToContainer(inv, item)
-        pcall(function() sendItemStats(item) end)
-    end)
-    if not ok or item == nil then
-        local why = ok and "AddItem returned nil" or tostring(err)
-        log("take failed: " .. why)
-        return answer(false, nil, why)
+        for i = directCount + 1, #made do
+            sendAddItemToContainer(inv, made[i])
+            pcall(function() sendItemStats(made[i]) end)
+        end
+        usedDirect = (destC ~= nil and directCount == #made and #made > 0)
     end
-    rec.items = BridgeItems.encode(removeSubtree(list, idx))
+    rec.items = BridgeItems.encode(out)
     rec.saved = 1
     rec.iseq = (rec.iseq or 0) + 1
-    local gone = {}
-    flatten(r, nil, gone)
-    journalNote("T", who, rec, item:getID(), gone)
+    local outIds = {}
+    for i = 1, #made do outIds[i] = made[i]:getID() end
+    for i = 1, #made do
+        local gone = {}
+        flatten(recs[i], nil, gone)
+        journalNote("T", who, rec, made[i]:getID(), gone)
+    end
     transmit()
-    answer(true, item:getID(), nil, usedDirect)
-    log("take " .. tostring(r.t) .. (floor ~= nil and " to floor by " or (usedDirect and " straight into the container by " or " to ")) .. tostring(who))
+    answer(true, outIds, nil, usedDirect)
+    log("take " .. tostring(recs[1] and recs[1].t) .. " x" .. tostring(#made) .. (floor ~= nil and " to floor by " or (usedDirect and " straight into the container by " or " to ")) .. tostring(who))
 end
 
 local function onClientCommand(module, command, player, args)

@@ -3,6 +3,9 @@ BridgeTask = BridgeTask or {}
 BridgeTask.ENABLED = 1
 BridgeTask.TREECUTTING_ENABLED = 1
 BridgeTask.CLEANING_ENABLED = 1
+BridgeTask.CLEARING_ENABLED = 1
+BridgeTask.LOOTING_ENABLED = 1
+BridgeTask.SIT_ENABLED = 1
 
 
 
@@ -11,6 +14,7 @@ local MINUTE = 60 * SECOND
 
 BridgeTask.CHOP_RANGE = 1.45
 BridgeTask.STOP_DIST = 0.9
+BridgeTask.SPOT_NUDGE = 0.42
 BridgeTask.STALL_TICKS = 1.5 * SECOND
 BridgeTask.DANGER_RADIUS = 6
 BridgeTask.MIN_SWING = 0.2 * SECOND
@@ -24,6 +28,12 @@ BridgeTask.WALK_TIMEOUT = 20 * SECOND
 
 BridgeTask.WALK_NO_PROGRESS = 5 * SECOND
 BridgeTask.PATH_FAIL_LIMIT = 2
+
+
+BridgeTask.SIT_RANGE = 0.35
+BridgeTask.SIT_TIMEOUT = 20 * SECOND
+BridgeTask.SIT_SETTLE = 0.30
+BridgeTask.SIT_ANIM_MAX = 240
 
 
 BridgeTask.ABORT_AFTER_FAILS = 3
@@ -75,6 +85,15 @@ BridgeTask.VINE_ANIMS = {
     Axe = "NA_RemoveBushAxe", LongBlade = "NA_RemoveBushLongBlade",
     Knife = "NA_RemoveBushKnife", Default = "NA_RemoveBush",
 }
+
+
+BridgeTask.CLEAR_RANGE = 1.45
+BridgeTask.GRASS_TIME = 50
+BridgeTask.BUSH_TIME = 100
+BridgeTask.CLEAR_TIMEOUT = MINUTE
+BridgeTask.CLEAR_SAY_COOLDOWN = 25 * SECOND
+BridgeTask.GRASS_ANIM = "NA_RemoveGrass"
+BridgeTask.GRASS_ENDURANCE = 0.006
 BridgeTask.SCRUB_TIME = 2.5 * SECOND
 BridgeTask.SCRUB_GUARD = 0.5 * SECOND
 BridgeTask.SCRUB_TIMEOUT = MINUTE
@@ -93,6 +112,15 @@ BridgeTask.LOOT_MID = "LootMid"
 BridgeTask.ASH_PREFIX = "floors_burnt"
 BridgeTask.GLASS_PREFIX = "brokenglass"
 BridgeTask.GLASS_ITEM = "Base.BrokenGlass"
+
+
+BridgeTask.LOOT_RANGE = 1.45
+BridgeTask.LOOT_TIMEOUT = 30 * SECOND
+BridgeTask.LOOT_TRANSFER_WAIT = 20 * SECOND
+BridgeTask.LOOT_ITEM_TIME = 0.5 * SECOND
+BridgeTask.LOOT_SAY_COOLDOWN = 25 * SECOND
+BridgeTask.LOOT_SCAN_BUDGET = 200
+BridgeTask.OPENING_GIVE_UP = 6 * SECOND
 
 
 
@@ -118,11 +146,24 @@ BridgeTask.subHands = nil
 BridgeTask.cleanHandsKey = nil
 BridgeTask.cleanStowPending = false
 BridgeTask.cleanDrawPending = false
+BridgeTask.clearNeedCut = nil
 BridgeTask.chopRest = false
 BridgeTask.chopRestSitAt = nil
 BridgeTask.chopResumeAt = nil
 BridgeTask.savedPrimary = nil
 BridgeTask.savedSecondary = nil
+BridgeTask.lootList = nil
+BridgeTask.lootIdx = nil
+BridgeTask.lootPending = nil
+BridgeTask.lootPendingAt = nil
+BridgeTask.lootAct = nil
+BridgeTask.lootSrc = nil
+BridgeTask.lootSettled = false
+BridgeTask.lootNextAt = nil
+BridgeTask.lootFullSaid = false
+BridgeTask.lootTook = 0
+BridgeTask.lootNoRoom = 0
+BridgeTask.lootFull = false
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeTask] " .. tostring(text)) end end
 local function warn(text) print("[BridgeTask] " .. tostring(text)) end
@@ -474,6 +515,13 @@ BridgeTask.removeSquareDirt = function(square)
 end
 BridgeTask.squareCleanKinds = squareCleanKinds
 BridgeTask.squareCleanKind = squareCleanKind
+
+local function plantKind(square)
+    if BridgePlants == nil then return nil end
+    if BridgePlants.squareBush(square) then return "bush" end
+    if BridgePlants.squareGrass(square) then return "grass" end
+    return nil
+end
 
 local function twoHandedImplement(item)
     local two = false
@@ -923,6 +971,59 @@ local function stopCleanSound(body)
 end
 BridgeTask.stopCleanSound = stopCleanSound
 
+local function clearBetween(a, b)
+    if a == nil or b == nil then return true end
+    local yes = true
+    pcall(function()
+        yes = false
+        if a:isWallTo(b) then yes = true return end
+        local win = nil
+        pcall(function() win = a:getWindowTo(b) end)
+        if win ~= nil then
+            local open = false
+            pcall(function() open = win:IsOpen() end)
+            if not open then yes = true end
+        end
+    end)
+    return yes
+end
+
+local function sealedBetween(a, b)
+    if a == nil or b == nil then return true end
+    local dx, dy = b:getX() - a:getX(), b:getY() - a:getY()
+    if math.abs(dx) > 1 or math.abs(dy) > 1 then return true end
+    if math.abs(dx) + math.abs(dy) == 1 then return clearBetween(a, b) end
+    local cell = getCell()
+    local p = cell:getGridSquare(a:getX() + dx, a:getY(), a:getZ())
+    local q = cell:getGridSquare(a:getX(), a:getY() + dy, a:getZ())
+    return (clearBetween(a, p) or clearBetween(p, b)) and (clearBetween(a, q) or clearBetween(q, b))
+end
+
+local function playerOnSquare(sq)
+    if sq == nil then return false end
+    local red = BridgeData ~= nil and BridgeData.owner() or nil
+    if red == nil then return false end
+    local yes = false
+    pcall(function()
+        yes = math.abs(red:getX() - (sq.x + 0.5)) < 0.6
+            and math.abs(red:getY() - (sq.y + 0.5)) < 0.6
+            and math.abs(math.floor(red:getZ()) - math.floor(sq.z or 0)) < 1
+    end)
+    return yes
+end
+
+local function isBadSpot(x, y)
+    local set = BridgeTask.badSpots
+    return set ~= nil and set[x .. "," .. y] == true
+end
+
+local function spotUsable(sq)
+    if sq == nil then return false end
+    local ok = false
+    pcall(function() ok = sq:canStand() == true end)
+    return ok
+end
+
 local function freeAdjacent(body, target)
     local orth, orthD, diag, diagD = nil, nil, nil, nil
     local targetSq = nil
@@ -935,14 +1036,15 @@ local function freeAdjacent(body, target)
                 pcall(function() sq = getCell():getGridSquare(x, y, target.z) end)
                 if sq ~= nil then
                     local free = false
-                    pcall(function() free = sq:isFree(false) end)
+                    pcall(function() free = sq:canStand() end)
 
 
                     local blocked = false
                     if targetSq ~= nil then
                         pcall(function() blocked = sq:isSomethingTo(targetSq) end)
                     end
-                    if free and not blocked then
+                    if free and not blocked and not isBadSpot(x, y)
+                            and not sealedBetween(sq, targetSq) then
                         local d = (body:getX() - (x + 0.5)) ^ 2 + (body:getY() - (y + 0.5)) ^ 2
                         if dx == 0 or dy == 0 then
                             if orthD == nil or d < orthD then orth, orthD = { x = x, y = y, z = target.z }, d end
@@ -1071,6 +1173,8 @@ function BridgeTask.dropTarget(reason)
     BridgeTask.pathFailTick = nil
     BridgeTask.still = 0
     BridgeTask.checkX, BridgeTask.checkY = nil, nil
+    BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
+    BridgeTask.openingSince = nil
     if (BridgeTask.doneCount or 0) == 0 and (BridgeTask.failCount or 0) >= BridgeTask.ABORT_AFTER_FAILS
             and #BridgeTask.queue > 0 then
         BridgeTask.info = "area unreachable, stopping"
@@ -1080,24 +1184,167 @@ function BridgeTask.dropTarget(reason)
     return true
 end
 
+function BridgeTask.enclosureKey(body)
+    if BridgeDoors == nil or BridgeDoors.enclosureKey == nil or body == nil then return nil end
+    local k = nil
+    pcall(function() k = BridgeDoors.enclosureKey(body:getCurrentSquare()) end)
+    return k
+end
 
+function BridgeTask.enclosureKeyOf(sq)
+    if BridgeDoors == nil or BridgeDoors.enclosureKey == nil or sq == nil then return nil end
+    local k = nil
+    pcall(function() k = BridgeDoors.enclosureKey(sq) end)
+    return k
+end
 
+function BridgeTask.reachOk(body, targetSq)
+    if targetSq == nil or BridgeDoors == nil or BridgeDoors.canReach == nil then return true end
+    local bodySq = nil
+    pcall(function() bodySq = body:getCurrentSquare() end)
+    local bk = BridgeTask.enclosureKey(body)
+    local tk = BridgeTask.enclosureKeyOf(targetSq)
+    if tk == nil or tk == -1 then return true end
+    local ok = true
+    pcall(function() ok = BridgeDoors.canReach(bodySq, targetSq) == true end)
+    if not ok then
+        log(string.format("target %d,%d unreachable: no accessible opening", targetSq:getX(), targetSq:getY()))
+    end
+    return ok
+end
 
-function BridgeTask.walkTo(body, target, reach)
+local function spotDump(target)
+    local cell = getCell()
+    local t = nil
+    pcall(function() t = cell:getGridSquare(target.x, target.y, target.z) end)
+    local parts = {}
+    for dx = -1, 1 do
+        for dy = -1, 1 do
+            if dx ~= 0 or dy ~= 0 then
+                local sq = nil
+                pcall(function() sq = cell:getGridSquare(target.x + dx, target.y + dy, target.z) end)
+                if sq ~= nil then
+                    local stand, free, seal = false, false, false
+                    pcall(function() stand = sq:canStand() == true end)
+                    pcall(function() free = sq:isFree(false) == true end)
+                    if t ~= nil then pcall(function() seal = sealedBetween(sq, t) == true end) end
+                    local pl = playerOnSquare({ x = target.x + dx, y = target.y + dy, z = target.z })
+                    parts[#parts + 1] = string.format("%d,%d %s %s %s %s",
+                        target.x + dx, target.y + dy,
+                        stand and "stand" or "NOstand", free and "free" or "NOfree",
+                        seal and "SEALED" or "open", pl and "player" or "-")
+                end
+            end
+        end
+    end
+    return table.concat(parts, " | ")
+end
+
+local function reachSpot(body, targetSq, target)
+    local tkey = target.x .. "," .. target.y .. "," .. tostring(target.z)
+    if BridgeTask.badSpotTarget ~= tkey then
+        BridgeTask.badSpotTarget = tkey
+        BridgeTask.badSpots = {}
+        BridgeTask.stallKey = {}
+    end
+    local spot = nil
+    if targetSq ~= nil and BridgeDoors ~= nil and BridgeDoors.standNear ~= nil then
+        local sq = nil
+        pcall(function() sq = BridgeDoors.standNear(targetSq, body) end)
+        if sq ~= nil and spotUsable(sq) and not isBadSpot(sq:getX(), sq:getY())
+                and not (sq:getX() == target.x and sq:getY() == target.y)
+                and not sealedBetween(sq, targetSq) then
+            pcall(function() spot = { x = sq:getX(), y = sq:getY(), z = sq:getZ() } end)
+        end
+    end
+    if spot == nil then spot = freeAdjacent(body, target) end
+    return spot
+end
+
+function BridgeTask.adjacentClear(body, sq)
+    if body == nil or sq == nil then return true end
+    local ok = true
+    pcall(function()
+        local bs = body:getCurrentSquare()
+        if bs == nil or bs == sq then return end
+        if math.floor(bs:getZ()) ~= math.floor(sq:getZ()) then return end
+        local dx, dy = sq:getX() - bs:getX(), sq:getY() - bs:getY()
+        if math.abs(dx) > 1 or math.abs(dy) > 1 then ok = false return end
+        if sealedBetween(bs, sq) then ok = false end
+    end)
+    return ok
+end
+
+function BridgeTask.walkTo(body, target, reach, reachClear)
+    local bodyZ = math.floor(body:getZ())
+    local targetSq = nil
+    pcall(function() targetSq = getCell():getGridSquare(target.x, target.y, target.z) end)
+    local sameFloor = targetSq == nil or math.floor(targetSq:getZ()) == bodyZ
+
     local d = math.sqrt((body:getX() - (target.x + 0.5)) ^ 2 + (body:getY() - (target.y + 0.5)) ^ 2)
-    if d <= reach then return "arrived", nil end
+    if sameFloor and d <= reach and (not reachClear or BridgeTask.adjacentClear(body, targetSq)) then
+        BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
+        BridgeTask.openingSince = nil
+        return "arrived", nil
+    end
 
-    if BridgeTask.spot == nil then
-        BridgeTask.spot = freeAdjacent(body, target)
+    if BridgeMove ~= nil and BridgeMove.openingBlocked ~= nil then
+        local why = BridgeMove.openingBlocked
+        BridgeMove.openingBlocked = nil
+        BridgeTask.info = "openings exhausted"
+        return "unreachable", why
+    end
+
+    if BridgeMove ~= nil and BridgeMove.openingWay ~= nil then
+        local way = BridgeMove.openingWay
+        if BridgeTask.openingKey ~= way.key then
+            BridgeTask.openingKey = way.key
+            BridgeTask.openingSince = Bridge.time
+        elseif BridgeTask.openingSince ~= nil
+                and Bridge.time - BridgeTask.openingSince > BridgeTask.OPENING_GIVE_UP then
+            BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
+            BridgeTask.openingSince = nil
+            BridgeTask.info = "opening unreachable"
+            return "unreachable", blockedReason(target)
+        end
+    end
+
+    if sameFloor and not BridgeTask.reachOk(body, targetSq) then
+        BridgeTask.info = "no accessible opening"
+        return "unreachable", blockedReason(target)
+    end
+
+    if not sameFloor then
+        if BridgeTask.spot == nil or math.floor(BridgeTask.spot.z or target.z) ~= math.floor(target.z) then
+            BridgeTask.spot = { x = target.x, y = target.y, z = target.z }
+        end
+    elseif BridgeTask.spot == nil then
+        BridgeTask.spot = reachSpot(body, targetSq, target)
         if BridgeTask.spot == nil then
             BridgeTask.info = "no reachable spot"
+            log(string.format("no spot for target %d,%d,%d (body z=%s) bx=%.1f by=%.1f",
+                target.x, target.y, target.z, tostring(bodyZ), body:getX(), body:getY()))
+            log("  neighbours: " .. spotDump(target))
             return "unreachable", nil
         end
+        log(string.format("spot %d,%d,%d for target %d,%d,%d", BridgeTask.spot.x, BridgeTask.spot.y, BridgeTask.spot.z, target.x, target.y, target.z))
     end
 
     local sx, sy = BridgeTask.spot.x + 0.5, BridgeTask.spot.y + 0.5
     local dSpot = math.sqrt((body:getX() - sx) ^ 2 + (body:getY() - sy) ^ 2)
-    if dSpot <= BridgeTask.STOP_DIST then return "arrived", nil end
+    local wx, wy = sx, sy
+    local ndx, ndy = (target.x + 0.5) - sx, (target.y + 0.5) - sy
+    local nlen = math.sqrt(ndx * ndx + ndy * ndy)
+    if nlen > 0.05 then
+        wx = sx + (ndx / nlen) * BridgeTask.SPOT_NUDGE
+        wy = sy + (ndy / nlen) * BridgeTask.SPOT_NUDGE
+    end
+    if sameFloor and dSpot <= BridgeTask.STOP_DIST
+            and (not reachClear or BridgeTask.adjacentClear(body, targetSq)) then
+        BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
+        BridgeTask.openingSince = nil
+        return "arrived", nil
+    end
 
 
 
@@ -1107,8 +1354,10 @@ function BridgeTask.walkTo(body, target, reach)
         BridgeTask.pathFails = 0
     end
 
-
-
+    if BridgeMove ~= nil and BridgeMove.openingWay ~= nil then
+        BridgeTask.progressAt = Bridge.time
+        BridgeTask.pathFails = 0
+    end
 
     local failed = false
     pcall(function()
@@ -1132,6 +1381,12 @@ function BridgeTask.walkTo(body, target, reach)
     local since = BridgeTask.progressAt or BridgeTask.since or Bridge.time
     if (Bridge.time - since) > BridgeTask.WALK_NO_PROGRESS
             or (Bridge.time - (BridgeTask.since or Bridge.time)) > BridgeTask.WALK_TIMEOUT then
+        if sameFloor and playerOnSquare(BridgeTask.spot) then
+            BridgeTask.progressAt = Bridge.time
+            BridgeTask.since = Bridge.time
+            BridgeTask.info = "waiting for player"
+            return "walking", nil
+        end
         BridgeTask.info = "no progress to target"
         return "unreachable", blockedReason(target)
     end
@@ -1143,13 +1398,31 @@ function BridgeTask.walkTo(body, target, reach)
         BridgeTask.still = 0
         BridgeTask.checkX, BridgeTask.checkY = body:getX(), body:getY()
         if not moved then
-            if BridgeMove.cross ~= nil or BridgeMove.doorAct ~= nil then
+            if BridgeMove.cross ~= nil or BridgeMove.doorAct ~= nil
+                    or BridgeMove.window ~= nil or BridgeMove.pendingClimb ~= nil then
 
                 BridgeTask.still = 0
+            elseif sameFloor and playerOnSquare(BridgeTask.spot) then
+                BridgeTask.checkX, BridgeTask.checkY = nil, nil
+                BridgeTask.still = 0
+                BridgeTask.progressAt = Bridge.time
+                BridgeTask.info = "waiting for player"
+                return "walking", nil
             else
                 BridgeTask.checkX, BridgeTask.checkY = nil, nil
+                if BridgeTask.spot ~= nil then
+                    local key = BridgeTask.spot.x .. "," .. BridgeTask.spot.y
+                    BridgeTask.stallKey = BridgeTask.stallKey or {}
+                    BridgeTask.stallKey[key] = (BridgeTask.stallKey[key] or 0) + 1
+                    if BridgeTask.stallKey[key] >= 2 then
+                        BridgeTask.badSpots = BridgeTask.badSpots or {}
+                        BridgeTask.badSpots[key] = true
+                    end
+                end
                 BridgeTask.spot = nil
+                BridgeTask.progressAt = Bridge.time
                 pcall(function() BridgeMove.stopPath(body) end)
+                if BridgeTask.forceIdle ~= nil then BridgeTask.forceIdle(body) end
                 BridgeTask.info = "stalled, re-pathing"
                 return "walking", nil
             end
@@ -1159,15 +1432,48 @@ function BridgeTask.walkTo(body, target, reach)
     BridgeTask.phase = "walk"
 
 
-    Bridge.target = { x = sx, y = sy, z = target.z }
+    Bridge.target = { x = wx, y = wy, z = target.z }
     pcall(function() BridgeMove.update(body) end)
 
     pcall(function() BridgeMove.rememberDoorNear(body) end)
     pcall(function() BridgeMove.closeBehind(body) end)
     BridgeTask.info = string.format("walking d=%.1f spot=%.1f %s", d, dSpot, tostring(BridgeMove.pathResult))
+    if Bridge.tick ~= BridgeTask.walkLogAt and Bridge.tick % 60 == 0 then
+        BridgeTask.walkLogAt = Bridge.tick
+        pcall(function()
+            log(string.format("walk tgt=%d,%d spot=%d,%d aim=%.2f,%.2f d=%.2f dSpot=%.2f clear=%s path=%s stall=%d",
+                target.x, target.y, BridgeTask.spot.x, BridgeTask.spot.y, wx, wy, d, dSpot,
+                tostring(BridgeTask.adjacentClear(body, targetSq)), tostring(BridgeMove.pathResult),
+                BridgeTask.still or 0))
+        end)
+    end
     return "walking", nil
 end
 
+function BridgeTask.requireGlass(sq)
+    if sq == nil or not BridgeTask.active or BridgeTask.kind ~= "cleanUp" then return false end
+    local t = { x = sq:getX(), y = sq:getY(), z = sq:getZ() }
+    local cur = BridgeTask.current
+    if cur ~= nil and cur.x == t.x and cur.y == t.y and cur.z == t.z then return true end
+    for i = 1, #BridgeTask.queue do
+        local q = BridgeTask.queue[i]
+        if q.x == t.x and q.y == t.y and q.z == t.z then
+            BridgeTask.mustTarget = t
+            return true
+        end
+    end
+    if cur ~= nil then
+        table.insert(BridgeTask.queue, 1, cur)
+        BridgeTask.current = nil
+        BridgeTask.cleanApplied = {}
+        BridgeTask.spot = nil
+        pcall(stopCleanSound, Bridge.body)
+    end
+    table.insert(BridgeTask.queue, 1, t)
+    BridgeTask.mustTarget = t
+    log(string.format("glass window %d,%d queued for clean-up", t.x, t.y))
+    return true
+end
 
 function BridgeTask.speakMissing(kind)
     local def = kind ~= nil and BridgeTask.kinds[kind] or nil
@@ -1222,6 +1528,9 @@ function BridgeTask.dangerNear(body)
 end
 
 function BridgeTask.reset()
+    local ckind = BridgeTask.kind
+    local def = ckind ~= nil and BridgeTask.kinds[ckind] or nil
+    if def ~= nil and def.leave ~= nil then pcall(def.leave, Bridge.body) end
     BridgeTask.active = false
     BridgeTask.state = "idle"
     BridgeTask.kind = nil
@@ -1234,6 +1543,7 @@ function BridgeTask.reset()
     BridgeTask.needImplement, BridgeTask.needFluid = nil, nil
     BridgeTask.needPetrol, BridgeTask.needAshTool = nil, nil
     BridgeTask.needCut = nil
+    BridgeTask.clearNeedCut = nil
     BridgeTask.cleanApplied = {}
     BridgeTask.chargeCleanSpend()
     BridgeTask.cleanSoundHandle = nil
@@ -1245,6 +1555,27 @@ function BridgeTask.reset()
     BridgeTask.chopRestSitAt = nil
     BridgeTask.chopResumeAt = nil
     BridgeTask.savedPrimary, BridgeTask.savedSecondary = nil, nil
+    BridgeTask.mustTarget = nil
+    BridgeTask.lootList = nil
+    BridgeTask.lootIdx = nil
+    BridgeTask.lootPending = nil
+    BridgeTask.lootPendingAt = nil
+    BridgeTask.lootAct = nil
+    BridgeTask.lootSrc = nil
+    BridgeTask.lootSettled = false
+    BridgeTask.lootNextAt = nil
+    BridgeTask.lootFullSaid = false
+    BridgeTask.lootTook = 0
+    BridgeTask.lootNoRoom = 0
+    BridgeTask.lootFull = false
+    BridgeTask.sitPlan = nil
+    BridgeTask.sitUp = nil
+    BridgeTask.sitAnimSeen = false
+    BridgeTask.sitPathFails = 0
+    BridgeTask.sitFailTick = nil
+    BridgeTask.sitBestD = nil
+    BridgeTask.sitCloseAt = nil
+    BridgeTask.sitFromX, BridgeTask.sitFromY, BridgeTask.sitSlideAt = nil, nil, nil
     restoreForcedWalk()
     Bridge.target = nil
 end
@@ -1271,6 +1602,44 @@ function BridgeTask.start(kind, targets)
     BridgeTask.kind = kind
     BridgeTask.queue = {}
     for i = 1, #targets do BridgeTask.queue[i] = targets[i] end
+    if BridgeWorkSelect ~= nil and BridgeWorkSelect.sortTargets ~= nil then
+        pcall(BridgeWorkSelect.sortTargets, BridgeTask.queue)
+    end
+    if kind == "lootArea" then
+        local wanted, fits = BridgeTask.lootScan(Bridge.body)
+        if not wanted then
+            Bridge.speak("JobNoLoot")
+            BridgeTask.queue = {}
+            BridgeTask.kind = nil
+            return "unavailable"
+        end
+        if not fits then
+            Bridge.speak("JobLootFull")
+            BridgeTask.queue = {}
+            BridgeTask.kind = nil
+            return "unavailable"
+        end
+    end
+    local clearNeedPlants = false
+    if kind == "clearPlants" then
+        local canAny, needCut = false, false
+        local hasTool = BridgeTask.findCutTool(Bridge.body) ~= nil
+        for i = 1, #BridgeTask.queue do
+            local t = BridgeTask.queue[i]
+            local sq = getCell():getGridSquare(t.x, t.y, t.z)
+            if sq ~= nil and BridgePlants ~= nil then
+                if BridgePlants.squareGrass(sq) then canAny = true end
+                if BridgePlants.squareBush(sq) and not hasTool then needCut = true end
+            end
+        end
+        if not canAny and needCut then
+            Bridge.speak("JobNeedCutTool")
+            BridgeTask.queue = {}
+            BridgeTask.kind = nil
+            return "unavailable"
+        end
+        clearNeedPlants = needCut
+    end
     BridgeTask.prevMode = BridgeData.modeOf(Bridge.store)
     BridgeTask.body = Bridge.body
     rememberHands(Bridge.body)
@@ -1296,12 +1665,20 @@ function BridgeTask.start(kind, targets)
     BridgeTask.spokeUnreachable = false
     BridgeTask.blockedReason = nil
     BridgeTask.lastNoPathAt = nil
+    if BridgeMove ~= nil then
+        BridgeMove.openingBlocked = nil
+        BridgeMove.openingWay = nil
+        BridgeMove.doorFail = nil
+        BridgeMove.doorFailObj = nil
+        BridgeMove.doorFailUntil = 0
+    end
     BridgeTask.deferred = {}
     BridgeTask.needImplement = nil
     BridgeTask.needFluid = nil
     BridgeTask.needPetrol = nil
     BridgeTask.needAshTool = nil
     BridgeTask.needCut = nil
+    BridgeTask.clearNeedCut = nil
     BridgeTask.prevForcedWalk = BridgeMove ~= nil and BridgeMove.forcedWalk or nil
     BridgeTask.forcedWalkSaved = true
     BridgeTask.cleanApplied = {}
@@ -1314,6 +1691,27 @@ function BridgeTask.start(kind, targets)
     BridgeTask.chopRest = false
     BridgeTask.chopRestSitAt = nil
     BridgeTask.chopResumeAt = nil
+    BridgeTask.mustTarget = nil
+    BridgeTask.lootList = nil
+    BridgeTask.lootIdx = nil
+    BridgeTask.lootPending = nil
+    BridgeTask.lootPendingAt = nil
+    BridgeTask.lootAct = nil
+    BridgeTask.lootSrc = nil
+    BridgeTask.lootSettled = false
+    BridgeTask.lootNextAt = nil
+    BridgeTask.lootFullSaid = false
+    BridgeTask.lootTook = 0
+    BridgeTask.lootNoRoom = 0
+    BridgeTask.lootFull = false
+    BridgeTask.sitPlan = nil
+    BridgeTask.sitUp = nil
+    BridgeTask.sitAnimSeen = false
+    BridgeTask.sitPathFails = 0
+    BridgeTask.sitFailTick = nil
+    BridgeTask.sitBestD = nil
+    BridgeTask.sitCloseAt = nil
+    BridgeTask.sitFromX, BridgeTask.sitFromY, BridgeTask.sitSlideAt = nil, nil, nil
     BridgeTask.info = "start " .. tostring(kind)
     Bridge.follow = false
     Bridge.target = nil
@@ -1344,7 +1742,10 @@ function BridgeTask.start(kind, targets)
             startText = BridgeTask.cleanNeedText(needs, canAny and "start" or "need")
         end
     end
-    if startText ~= nil then
+    if kind == "clearPlants" then
+        BridgeTask.clearNeedCut = clearNeedPlants
+        Bridge.speak(clearNeedPlants and "JobStartNeedCutTool" or "JobStart")
+    elseif startText ~= nil then
         Bridge.speakText(startText)
     else
         Bridge.speak("JobStart")
@@ -1371,12 +1772,25 @@ function BridgeTask.cancel(reason)
     BridgeTask.needImplement, BridgeTask.needFluid = nil, nil
     BridgeTask.needPetrol, BridgeTask.needAshTool = nil, nil
     BridgeTask.needCut = nil
+    BridgeTask.clearNeedCut = nil
     BridgeTask.cleanApplied = {}
     BridgeTask.chargeCleanSpend()
     BridgeTask.cleanStowPending = false
     BridgeTask.chopRest = false
     BridgeTask.chopRestSitAt = nil
     BridgeTask.chopResumeAt = nil
+    BridgeTask.lootList = nil
+    BridgeTask.lootIdx = nil
+    BridgeTask.lootPending = nil
+    BridgeTask.lootPendingAt = nil
+    BridgeTask.lootAct = nil
+    BridgeTask.lootSrc = nil
+    BridgeTask.lootSettled = false
+    BridgeTask.lootNextAt = nil
+    BridgeTask.lootFullSaid = false
+    BridgeTask.lootTook = 0
+    BridgeTask.lootNoRoom = 0
+    BridgeTask.lootFull = false
     restoreForcedWalk()
     if body ~= nil then pcall(endCleanHands, body) end
     if body ~= nil then pcall(stopCleanSound, body) end
@@ -1394,6 +1808,8 @@ function BridgeTask.finish()
     if not BridgeTask.active then return "idle" end
     BridgeTask.chargeCleanSpend()
     local body = Bridge.body
+    local clearNeed = BridgeTask.clearNeedCut == true
+    BridgeTask.clearNeedCut = nil
     local def = BridgeTask.kind ~= nil and BridgeTask.kinds[BridgeTask.kind] or nil
     if def ~= nil and def.leave ~= nil then pcall(def.leave, body) end
     local prev = BridgeTask.prevMode or "follow"
@@ -1410,6 +1826,19 @@ function BridgeTask.finish()
     BridgeTask.chopResumeAt = nil
     BridgeTask.info = "done"
     Bridge.target = nil
+    local wasLootFull = BridgeTask.lootFull == true
+    BridgeTask.lootList = nil
+    BridgeTask.lootIdx = nil
+    BridgeTask.lootPending = nil
+    BridgeTask.lootPendingAt = nil
+    BridgeTask.lootAct = nil
+    BridgeTask.lootSrc = nil
+    BridgeTask.lootSettled = false
+    BridgeTask.lootNextAt = nil
+    BridgeTask.lootFullSaid = false
+    BridgeTask.lootTook = 0
+    BridgeTask.lootNoRoom = 0
+    BridgeTask.lootFull = false
     if body ~= nil then pcall(function() BridgeMove.stopPath(body) end) end
     if Bridge.setMode ~= nil then Bridge.setMode(prev) end
     if body ~= nil then pcall(endCleanHands, body) end
@@ -1430,7 +1859,9 @@ function BridgeTask.finish()
     end
 
 
-    if needText ~= nil then
+    if clearNeed then
+        Bridge.speak((BridgeTask.doneCount or 0) > 0 and "JobPartialNeedCutTool" or "JobNeedCutTool")
+    elseif needText ~= nil then
         Bridge.speakText(needText)
     elseif (BridgeTask.failCount or 0) > 0 then
 
@@ -1445,7 +1876,7 @@ function BridgeTask.finish()
             Bridge.speak("JobNoPath")
         end
     else
-        Bridge.speak("JobDone")
+        if wasLootFull then Bridge.speak("JobLootFull") else Bridge.speak("JobDone") end
     end
     log("finished, restored mode=" .. tostring(prev) .. " done=" .. tostring(BridgeTask.doneCount) .. " failed=" .. tostring(BridgeTask.failCount))
     return "done"
@@ -1647,6 +2078,10 @@ function BridgeTask.kinds.chopTree.update(body)
     end
 
     local tree = resolveTree(target)
+    if tree ~= nil then
+        log(string.format("tree target %d,%d enclosure=%s", target.x, target.y,
+            tostring(BridgeTask.enclosureKeyOf(getCell():getGridSquare(target.x, target.y, target.z)))))
+    end
     if tree == nil then
         BridgeTask.clearChop(body)
         BridgeTask.info = "tree down"
@@ -1669,11 +2104,6 @@ function BridgeTask.kinds.chopTree.update(body)
             body:setPrimaryHandItem(axe)
             if axe:isTwoHandWeapon() or axe:isRequiresEquippedBothHands() then body:setSecondaryHandItem(axe) end
         end)
-    end
-
-    if math.abs(body:getZ() - target.z) >= 1 then
-        BridgeTask.info = "other floor"
-        return BridgeTask.dropTarget(nil)
     end
 
     local reach = BridgeTask.CHOP_RANGE
@@ -1868,10 +2298,10 @@ function BridgeTask.kinds.cleanUp.update(body)
     local target = BridgeTask.current
     if target == nil then
         if #BridgeTask.queue == 0 then return BridgeTask.finish() end
-
-
         local bx, by = body:getX(), body:getY()
         local bestI, bestD = nil, nil
+        local bestAnyI, bestAnyD = nil, nil
+        local bodyKey = BridgeTask.enclosureKey(body)
         local i = 1
         while i <= #BridgeTask.queue do
             local t = BridgeTask.queue[i]
@@ -1880,10 +2310,22 @@ function BridgeTask.kinds.cleanUp.update(body)
                 table.remove(BridgeTask.queue, i)
             else
                 local d = (bx - t.x) ^ 2 + (by - t.y) ^ 2
-                if bestD == nil or d < bestD then bestD = d; bestI = i end
+                if bestAnyD == nil or d < bestAnyD then bestAnyD = d; bestAnyI = i end
+                if bodyKey == nil or BridgeTask.enclosureKeyOf(sq) == bodyKey then
+                    if bestD == nil or d < bestD then bestD = d; bestI = i end
+                end
                 i = i + 1
             end
         end
+        local must = BridgeTask.mustTarget
+        if must ~= nil then
+            BridgeTask.mustTarget = nil
+            for j = 1, #BridgeTask.queue do
+                local t = BridgeTask.queue[j]
+                if t.x == must.x and t.y == must.y and t.z == must.z then bestI = j break end
+            end
+        end
+        if bestI == nil then bestI, bestD = bestAnyI, bestAnyD end
         if bestI == nil then
             BridgeTask.info = "nothing reachable"
             return BridgeTask.finish()
@@ -1910,6 +2352,7 @@ function BridgeTask.kinds.cleanUp.update(body)
     end
 
     local square = getCell():getGridSquare(target.x, target.y, target.z)
+    log(string.format("target %d,%d enclosure=%s", target.x, target.y, tostring(BridgeTask.enclosureKeyOf(square))))
 
 
 
@@ -1934,11 +2377,6 @@ function BridgeTask.kinds.cleanUp.update(body)
 
     if tool ~= nil or kind == "glass" or kind == "window" then
         beginCleanHands(body, kind, tool, cleaner)
-    end
-
-    if math.abs(body:getZ() - target.z) >= 1 then
-        BridgeTask.info = "other floor"
-        return BridgeTask.dropTarget(nil)
     end
 
     local reach = BridgeTask.CLEAN_RANGE
@@ -2158,7 +2596,1256 @@ function BridgeTask.kinds.cleanUp.leave(body)
     BridgeTask.deferred = {}
 end
 
+local function dropBushTargets()
+    local i = 1
+    while i <= #BridgeTask.queue do
+        local t = BridgeTask.queue[i]
+        local sq = nil
+        pcall(function() sq = getCell():getGridSquare(t.x, t.y, t.z) end)
+        if plantKind(sq) == "bush" and (BridgePlants == nil or not BridgePlants.squareGrass(sq)) then
+            table.remove(BridgeTask.queue, i)
+        else
+            i = i + 1
+        end
+    end
+end
 
+BridgeTask.kinds.clearPlants = {}
+
+function BridgeTask.kinds.clearPlants.available(body)
+    return BridgeTask.CLEARING_ENABLED == 1
+end
+
+function BridgeTask.kinds.clearPlants.missing(body)
+    if BridgeTask.findCutTool(body) == nil then return "cut" end
+    return nil
+end
+
+function BridgeTask.kinds.clearPlants.update(body)
+    if BridgeTask.CLEARING_ENABLED ~= 1 then return BridgeTask.finish() end
+
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
+
+    local target = BridgeTask.current
+    if target == nil then
+        if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+        local bx, by = body:getX(), body:getY()
+        local bestI, bestD = nil, nil
+        local bestAnyI, bestAnyD = nil, nil
+        local bodyKey = BridgeTask.enclosureKey(body)
+        local i = 1
+        while i <= #BridgeTask.queue do
+            local t = BridgeTask.queue[i]
+            local sq = getCell():getGridSquare(t.x, t.y, t.z)
+            if plantKind(sq) == nil then
+                table.remove(BridgeTask.queue, i)
+            else
+                local d = (bx - t.x) ^ 2 + (by - t.y) ^ 2
+                if bestAnyD == nil or d < bestAnyD then bestAnyD = d; bestAnyI = i end
+                if bodyKey == nil or BridgeTask.enclosureKeyOf(sq) == bodyKey then
+                    if bestD == nil or d < bestD then bestD = d; bestI = i end
+                end
+                i = i + 1
+            end
+        end
+        if bestI == nil then bestI, bestD = bestAnyI, bestAnyD end
+        if bestI == nil then
+            BridgeTask.info = "nothing to clear"
+            return BridgeTask.finish()
+        end
+        target = table.remove(BridgeTask.queue, bestI)
+        BridgeTask.current = target
+        BridgeTask.phase = "walk"
+        BridgeTask.swings = 0
+        BridgeTask.since = Bridge.time
+        BridgeTask.spot = nil
+        BridgeTask.swingStart = nil
+        BridgeTask.still = 0
+        BridgeTask.checkX = nil
+        BridgeTask.animHold = 0
+        BridgeTask.animLogged = false
+        BridgeTask.clearStart = nil
+        BridgeTask.bestD = nil
+        BridgeTask.progressAt = Bridge.time
+        BridgeTask.pathFails = 0
+        BridgeTask.pathFailTick = nil
+    end
+
+    local square = getCell():getGridSquare(target.x, target.y, target.z)
+    local kind = plantKind(square)
+    if kind == nil then
+        BridgeTask.clearChop(body)
+        BridgeTask.info = "clear"
+        BridgeTask.current = nil
+        if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+        return true
+    end
+
+    local tool = nil
+    if kind == "bush" then
+        tool = BridgeTask.findCutTool(body)
+        if tool == nil then
+            BridgeTask.clearNeedCut = true
+            dropBushTargets()
+            Bridge.speak("JobNeedCutTool")
+            BridgeTask.clearChop(body)
+            BridgeTask.current = nil
+            if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+            return true
+        end
+        if body:getPrimaryHandItem() ~= tool then
+            ensureInMain(body, tool)
+            pcall(function()
+                body:setPrimaryHandItem(tool)
+                if tool:isTwoHandWeapon() or tool:isRequiresEquippedBothHands() then body:setSecondaryHandItem(tool) end
+                body:resetModelNextFrame()
+            end)
+        end
+    end
+
+    local reach = BridgeTask.CLEAR_RANGE
+    if BridgeTask.phase == "work" then reach = reach + 1.0 end
+    local walk, why = BridgeTask.walkTo(body, target, reach)
+    if walk == "unreachable" then return BridgeTask.dropTarget(why) end
+    if walk == "walking" then return true end
+
+    if BridgeTask.phase ~= "work" then
+        BridgeTask.phase = "work"
+        BridgeTask.since = Bridge.time
+        BridgeTask.clearStart = Bridge.time
+        BridgeTask.swings = 0
+        BridgeTask.swingStart = nil
+        BridgeTask.swingHit = false
+        pcall(function() BridgeMove.stopPath(body) end)
+        BridgeTask.info = "clearing"
+        log(string.format("arrived at clear %d,%d kind=%s", target.x, target.y, tostring(kind)))
+    end
+
+    if (Bridge.time - (BridgeTask.since or Bridge.time)) > BridgeTask.CLEAR_TIMEOUT then
+        BridgeTask.clearChop(body)
+        BridgeTask.info = "skip stubborn plant"
+        return BridgeTask.dropTarget(nil)
+    end
+
+    pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+
+    local anim = (kind == "bush") and vineCleanAnim(tool) or BridgeTask.GRASS_ANIM
+    if not BridgeTask.animLogged then
+        BridgeTask.animLogged = true
+        log(string.format("clear anim=%s kind=%s", tostring(anim), tostring(kind)))
+    end
+
+    if (Bridge.time - (BridgeTask.lastClearSayCheck or 0)) >= SECOND then
+        BridgeTask.lastClearSayCheck = Bridge.time
+        if (Bridge.time - (BridgeTask.lastClearSay or -99999)) >= BridgeTask.CLEAR_SAY_COOLDOWN
+                and ZombRand(100) < 30 then
+            local said = false
+            pcall(function()
+                said = BridgeMoments ~= nil
+                    and BridgeMoments.say("EvClearing", BridgeTask.CLEAR_SAY_COOLDOWN, true, "Clearing") == true
+            end)
+            if said then BridgeTask.lastClearSay = Bridge.time end
+        end
+    end
+
+    local bump = ""
+    pcall(function() bump = tostring(body:getBumpType()) end)
+    if BridgeTask.swingStart == nil then
+        if (BridgeTask.animHold or 0) > 0 then
+            BridgeTask.animHold = BridgeTask.animHold - 1
+            pcall(function() body:setVariable("BumpAnimFinished", true) end)
+            pcall(function() body:changeState(ZombieIdleState.instance()) end)
+            pcall(function() body:setBumpType("") end)
+            BridgeTask.info = "resettling clear"
+            return true
+        end
+        BridgeTask.swingStart = Bridge.time
+        BridgeTask.swingHit = false
+        pcall(function() body:setVariable("NotAloneHitNow", false) end)
+        pcall(function()
+            body:setVariable("BumpAnimFinished", false)
+            body:setBumpType(anim)
+        end)
+        return true
+    end
+
+    local age = Bridge.time - BridgeTask.swingStart
+
+    if age >= BridgeTask.SCRUB_GUARD then
+        local playing = false
+        pcall(function()
+            playing = body:getActionStateName() == "bumped"
+                and tostring(body:getBumpType()) == anim
+        end)
+        if not playing then
+            pcall(function() body:setVariable("BumpAnimFinished", true) end)
+            pcall(function() body:changeState(ZombieIdleState.instance()) end)
+            pcall(function() body:setBumpType("") end)
+            BridgeTask.animHold = 2
+            BridgeTask.swingStart = nil
+            BridgeTask.info = "clear anim lost, restarting"
+            return true
+        end
+    end
+
+    local workTime = (kind == "bush") and BridgeTask.BUSH_TIME or BridgeTask.GRASS_TIME
+    if (Bridge.time - (BridgeTask.clearStart or Bridge.time)) >= workTime then
+        BridgePlants.applyPlant(square, kind, body)
+        if Bridge ~= nil and Bridge.mp then
+            pcall(function()
+                sendClientCommand(BridgeData.owner(), "Bridge", "clearPlants",
+                    { x = square:getX(), y = square:getY(), z = square:getZ(), kind = kind })
+            end)
+        end
+        if kind == "bush" then
+            pcall(function() square:playSound("ChopTree") end)
+            pcall(function() addSound(body, body:getX(), body:getY(), body:getZ(), 20, 1) end)
+            vineUseEndurance(body, tool)
+        else
+            pcall(function() square:playSound("RemovePlant") end)
+            pcall(function() addSound(body, body:getX(), body:getY(), body:getZ(), 10, 5) end)
+            pcall(function()
+                local skill = body:getPerkLevel(Perks.Farming)
+                local use = (1 - (skill * 0.05)) * BridgeTask.GRASS_ENDURANCE
+                if use > 0 then body:getStats():remove(CharacterStat.ENDURANCE, use) end
+            end)
+        end
+        BridgeTask.swings = (BridgeTask.swings or 0) + 1
+        BridgeTask.info = "clear " .. tostring(kind) .. " " .. tostring(BridgeTask.swings)
+
+        BridgeTask.clearChop(body)
+        BridgeTask.markDone()
+        BridgeTask.current = nil
+        if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+        return true
+    end
+
+    if age >= BridgeTask.SWING_MAX then
+        BridgeTask.swingStart = nil
+    end
+    return true
+end
+
+function BridgeTask.kinds.clearPlants.leave(body)
+    BridgeTask.clearChop(body)
+    restoreForcedWalk()
+    BridgeTask.clearNeedCut = nil
+    BridgeTask.clearStart = nil
+    BridgeTask.deferred = {}
+end
+
+
+function BridgeTask.lootDests(body)
+    local out = {}
+    if body == nil then return out end
+    if BridgeInventory ~= nil and BridgeInventory.wornBags ~= nil then
+        pcall(function()
+            for _, bag in ipairs(BridgeInventory.wornBags(body)) do
+                local inv = nil
+                pcall(function() inv = bag:getInventory() end)
+                if inv ~= nil then out[#out + 1] = inv end
+            end
+        end)
+    end
+    local main = nil
+    pcall(function() main = body:getInventory() end)
+    if main ~= nil then out[#out + 1] = main end
+    return out
+end
+
+function BridgeTask.lootDestFor(body, item, dests)
+    if item == nil or dests == nil then return nil end
+    for i = 1, #dests do
+        local ok = nil
+        pcall(function() ok = BridgeInventory.roomVerdict(dests[i], item) end)
+        if ok == true then return dests[i] end
+    end
+    return nil
+end
+
+function BridgeTask.lootWeight(item)
+    local w = nil
+    pcall(function() w = item:getActualWeight() end)
+    if type(w) ~= "number" or w < 0 then
+        w = nil
+        pcall(function() w = item:getUnequippedWeight() end)
+    end
+    if type(w) ~= "number" or w < 0 then w = 0 end
+    return w
+end
+
+function BridgeTask.lootFilter(item, kind)
+    if item == nil or BridgeData == nil then return false end
+    local rec = Bridge ~= nil and Bridge.store or nil
+    local maxW = BridgeData.lootMaxWeight(rec)
+    local w = BridgeTask.lootWeight(item)
+    if maxW > 0 and w > maxW then
+        if Bridge ~= nil and Bridge.verbose then
+            log(string.format("loot skip heavy %s w=%.2f > %.2f", tostring(item:getType()), w, maxW))
+        end
+        return true
+    end
+    local pool = nil
+    pcall(function() pool = BridgeSocial.receivePool(item) end)
+    local allowed = true
+    pcall(function() allowed = BridgeData.lootPoolAllowed(rec, pool, item) == true end)
+    if not allowed then
+        if Bridge ~= nil and Bridge.verbose then
+            local disp = nil
+            pcall(function() disp = item:getDisplayCategory() end)
+            log(string.format("loot skip cat %s pool=%s disp=%s", tostring(item:getType()), tostring(pool), tostring(disp)))
+        end
+        return true
+    end
+    if Bridge ~= nil and Bridge.verbose then
+        local disp = nil
+        pcall(function() disp = item:getDisplayCategory() end)
+        log(string.format("loot take %s pool=%s disp=%s", tostring(item:getType()), tostring(pool), tostring(disp)))
+    end
+    return false
+end
+
+function BridgeTask.lootItems(body, target)
+    local items = {}
+    if target == nil then return items end
+    local c = target.cont
+    if c == nil then return items end
+    pcall(function()
+        local list = c:getItems()
+        if list == nil then return end
+        for i = 0, list:size() - 1 do
+            local it = list:get(i)
+            if it ~= nil then
+                local skip = false
+                if BridgeTask.lootFilter ~= nil then
+                    pcall(function() skip = BridgeTask.lootFilter(it, target.kind) == true end)
+                end
+                if not skip then items[#items + 1] = { item = it, w = BridgeTask.lootWeight(it) } end
+            end
+        end
+    end)
+    table.sort(items, function(a, b) return a.w < b.w end)
+    return items
+end
+
+function BridgeTask.lootScan(body)
+    if body == nil then return false, false end
+    local dests = BridgeTask.lootDests(body)
+    local budget = BridgeTask.LOOT_SCAN_BUDGET
+    local wanted = false
+    for i = 1, #BridgeTask.queue do
+        local list = BridgeTask.lootItems(body, BridgeTask.queue[i])
+        if #list > 0 then wanted = true end
+        for j = 1, #list do
+            budget = budget - 1
+            if budget < 0 then return true, true end
+            if BridgeTask.lootDestFor(body, list[j].item, dests) ~= nil then return wanted, true end
+        end
+    end
+    return wanted, false
+end
+
+function BridgeTask.lootAnyFits(body)
+    local _, fits = BridgeTask.lootScan(body)
+    return fits
+end
+
+function BridgeTask.lootQueueFits(body)
+    return BridgeTask.lootAnyFits(body)
+end
+
+function BridgeTask.lootAnim(cont)
+    if BridgeInventory ~= nil and BridgeInventory.lootAnimFor ~= nil then
+        local a = nil
+        pcall(function() a = BridgeInventory.lootAnimFor(cont) end)
+        if a ~= nil then return a end
+    end
+    return BridgeTask.LOOT_MID
+end
+
+function BridgeTask.lootTake(body, target, item, dest)
+    local src = nil
+    pcall(function() src = item:getContainer() end)
+    if src == nil and target ~= nil then src = target.cont end
+    if src == nil or dest == nil then return false end
+    local act = nil
+    local chr = BridgeData ~= nil and BridgeData.owner() or nil
+    pcall(function() act = ISInventoryTransferAction:new(chr, item, src, dest) end)
+    if act == nil then return false end
+    pcall(function()
+        if isClient() then
+            local group = BridgeInventory.sameStack(src, item, BridgeInventory.LOOT_STACK_MAX)
+            if act.bridgeRelay ~= nil then
+                act.queueList = { { items = group, time = act.maxTime, type = item:getFullType() } }
+                act.bridgeRelay.group = group
+            else
+                act.group = group
+            end
+        else
+            local full = item:getFullType()
+            local group = { item }
+            local list = src:getItems()
+            for i = 0, list:size() - 1 do
+                local it = list:get(i)
+                if it ~= nil and it ~= item and it:getFullType() == full then group[#group + 1] = it end
+            end
+            if #group > 1 then
+                act.queueList = { { items = group, time = act.maxTime, type = full } }
+            end
+        end
+    end)
+    pcall(function() act.bridgeHerLoot = BridgeTask.lootAnim(src) end)
+    BridgeTask.lootAct = act
+    BridgeTask.lootSrc = src
+    local ok = false
+    pcall(function()
+        if BridgeQueue ~= nil and BridgeQueue.push ~= nil then
+            BridgeQueue.push(act)
+        else
+            ISTimedActionQueue.add(act)
+        end
+        ok = true
+    end)
+    return ok
+end
+
+function BridgeTask.lootAbortAct()
+    local act = BridgeTask.lootAct
+    BridgeTask.lootAct = nil
+    BridgeTask.lootSrc = nil
+    if act == nil then return end
+    pcall(function()
+        if BridgeQueue ~= nil and BridgeQueue.indexOf ~= nil then
+            local i = BridgeQueue.indexOf(act)
+            if i ~= nil then table.remove(BridgeQueue.jobs, i) end
+        end
+        act:forceCancel()
+    end)
+end
+
+function BridgeTask.lootSay(item, kind)
+    if BridgeTask.lootFullSaid then return end
+    if BridgeMoments == nil or BridgeMoments.say == nil then return end
+    local event = nil
+    if kind == "floor" then event = "LootGround"
+    elseif kind == "body" then event = "LootCorpse" end
+    if event == nil and item ~= nil and BridgeSocial ~= nil and BridgeSocial.receivePool ~= nil then
+        local pool = nil
+        pcall(function() pool = BridgeSocial.receivePool(item) end)
+        if type(pool) == "string" and string.sub(pool, 1, 7) == "Receive" then
+            local cand = "Loot" .. string.sub(pool, 8)
+            local exists = nil
+            pcall(function() exists = getTextOrNull("IGUI_NotAlone_Soc_" .. cand .. "_Near_1", "", "") end)
+            if type(exists) == "string" and exists ~= "" and exists ~= ("IGUI_NotAlone_Soc_" .. cand .. "_Near_1") then
+                event = cand
+            end
+        end
+    end
+    if event == nil then
+        if ZombRand(100) >= 30 then return end
+        event = "EvLooting"
+    end
+    pcall(function() BridgeMoments.say(event, BridgeTask.LOOT_SAY_COOLDOWN, true, "Loot") end)
+end
+
+function BridgeTask.lootSayFull()
+    if BridgeTask.lootFullSaid then return end
+    BridgeTask.lootFullSaid = true
+    BridgeTask.lootSaid = true
+    if BridgeMoments == nil or BridgeMoments.say == nil then return end
+    pcall(function() BridgeMoments.say("LootFull", 0, true, "LootFull") end)
+end
+
+BridgeTask.kinds.lootArea = {}
+
+function BridgeTask.forceIdle(body)
+    if body == nil then return end
+    pcall(function()
+        if BridgeMove ~= nil then
+            BridgeMove.stopPath(body)
+            BridgeMove.moving = false
+            BridgeMove.pathing = false
+            BridgeMove.steering = false
+        end
+        body:setVariable("bPathfind", false)
+        pcall(function() body:setMoving(false) end)
+        local asn = tostring(body:getActionStateName())
+        if asn == "walktoward" or asn == "pathfind" then
+            if ZombieIdleState ~= nil and ZombieIdleState.instance ~= nil then
+                body:changeState(ZombieIdleState.instance())
+            end
+        end
+    end)
+end
+
+function BridgeTask.kinds.lootArea.available(body)
+    return BridgeTask.LOOTING_ENABLED == 1
+end
+
+function BridgeTask.kinds.lootArea.missing(body)
+    return nil
+end
+
+function BridgeTask.kinds.lootArea.update(body)
+    if BridgeTask.LOOTING_ENABLED ~= 1 then return BridgeTask.finish() end
+    if BridgeMove ~= nil then
+        BridgeMove.forcedWalk = "Walk"
+        BridgeMove.holdDoors = true
+    end
+    pcall(function()
+        if BridgeMove ~= nil and BridgeMove.doorAct == nil and BridgeMove.window == nil and BridgeMove.cross == nil
+                and tostring(body:getActionStateName()) == "bumped"
+                and tostring(body:getBumpType()) == "Stand" then
+            if BridgeMove.releaseBump ~= nil then BridgeMove.releaseBump(body) end
+        end
+    end)
+
+    local target = BridgeTask.current
+    if target == nil then
+        if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+        local bx, by = body:getX(), body:getY()
+        local bestI, bestD = nil, nil
+        local bestAnyI, bestAnyD = nil, nil
+        local bodyKey = BridgeTask.enclosureKey(body)
+        local i = 1
+        while i <= #BridgeTask.queue do
+            local t = BridgeTask.queue[i]
+            local empty = false
+            pcall(function() empty = t.cont == nil or t.cont:getItems():size() == 0 end)
+            if empty then
+                table.remove(BridgeTask.queue, i)
+            else
+                local d = (bx - t.x) ^ 2 + (by - t.y) ^ 2
+                if bestAnyD == nil or d < bestAnyD then bestAnyD = d; bestAnyI = i end
+                local sq = nil
+                pcall(function() sq = getCell():getGridSquare(t.x, t.y, t.z) end)
+                if bodyKey == nil or BridgeTask.enclosureKeyOf(sq) == bodyKey then
+                    if bestD == nil or d < bestD then bestD = d; bestI = i end
+                end
+                i = i + 1
+            end
+        end
+        if bestI == nil then bestI, bestD = bestAnyI, bestAnyD end
+        if bestI == nil then return BridgeTask.finish() end
+        target = table.remove(BridgeTask.queue, bestI)
+        BridgeTask.current = target
+        BridgeTask.phase = "walk"
+        BridgeTask.since = Bridge.time
+        BridgeTask.spot = nil
+        BridgeTask.still = 0
+        BridgeTask.checkX = nil
+        BridgeTask.animHold = 0
+        BridgeTask.bestD = nil
+        BridgeTask.progressAt = Bridge.time
+        BridgeTask.pathFails = 0
+        BridgeTask.pathFailTick = nil
+        BridgeTask.lootList = nil
+        BridgeTask.lootIdx = nil
+        BridgeTask.lootPending = nil
+        BridgeTask.lootPendingAt = nil
+        BridgeTask.lootTook = 0
+        BridgeTask.lootNoRoom = 0
+        BridgeTask.lootSaid = false
+        BridgeTask.lootSettled = false
+        BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
+    BridgeTask.openingSince = nil
+    end
+
+    local walk, why = BridgeTask.walkTo(body, target, BridgeTask.LOOT_RANGE, true)
+    if walk == "unreachable" then
+        pcall(function()
+            local d = math.sqrt((body:getX() - (target.x + 0.5)) ^ 2 + (body:getY() - (target.y + 0.5)) ^ 2)
+            local clear = BridgeTask.adjacentClear(body, getCell():getGridSquare(target.x, target.y, target.z))
+            log(string.format("loot drop %d,%d,%d why=%s d=%.2f clear=%s bx=%.1f by=%.1f",
+                target.x, target.y, target.z, tostring(why), d, tostring(clear), body:getX(), body:getY()))
+        end)
+        return BridgeTask.dropTarget(why)
+    end
+    if walk == "walking" then return true end
+
+    local climbing = false
+    pcall(function()
+        local asn = tostring(body:getActionStateName())
+        climbing = asn == "climbwindow" or asn == "climbfence"
+            or (BridgeMove ~= nil and (BridgeMove.pendingClimb ~= nil or BridgeMove.cross ~= nil))
+    end)
+    if climbing then
+        BridgeTask.info = "climbing"
+        return true
+    end
+
+    if BridgeTask.phase ~= "loot" then
+        BridgeTask.phase = "loot"
+        BridgeTask.since = Bridge.time
+        BridgeTask.lootSettled = false
+        BridgeTask.info = "looting"
+        pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+    end
+    BridgeTask.forceIdle(body)
+
+    local pend = BridgeTask.lootPending
+    if pend ~= nil then
+        local src = BridgeTask.lootSrc
+        local here = false
+        pcall(function() here = src ~= nil and src:contains(pend) end)
+        if (not here) or (Bridge.time - (BridgeTask.lootPendingAt or Bridge.time)) > BridgeTask.LOOT_TRANSFER_WAIT then
+            BridgeTask.lootPending = nil
+            BridgeTask.lootPendingAt = nil
+            if not here then
+                BridgeTask.lootAct = nil
+                BridgeTask.lootSrc = nil
+                BridgeTask.lootTook = (BridgeTask.lootTook or 0) + 1
+                if not BridgeTask.lootSaid then
+                    BridgeTask.lootSaid = true
+                    pcall(function() BridgeTask.lootSay(pend, target.kind) end)
+                end
+            else
+                BridgeTask.lootAbortAct()
+            end
+        end
+        return true
+    end
+
+    if not BridgeTask.lootSettled then
+        local moving = false
+        pcall(function()
+            local asn = tostring(body:getActionStateName())
+            moving = (asn == "walktoward" or asn == "pathfind")
+                or (BridgeMove ~= nil and BridgeMove.moving == true)
+        end)
+        if moving and (Bridge.time - (BridgeTask.since or Bridge.time)) < 3 * SECOND then
+            BridgeTask.forceIdle(body)
+            BridgeTask.info = "settling"
+            return true
+        end
+        BridgeTask.lootSettled = true
+    end
+
+    if BridgeTask.lootNextAt ~= nil and Bridge.time < BridgeTask.lootNextAt then return true end
+
+    local list = BridgeTask.lootList
+    if list == nil then
+        list = BridgeTask.lootItems(body, target)
+        BridgeTask.lootList = list
+        BridgeTask.lootIdx = 0
+    end
+    local dests = BridgeTask.lootDests(body)
+    while true do
+        BridgeTask.lootIdx = (BridgeTask.lootIdx or 0) + 1
+        local entry = list[BridgeTask.lootIdx]
+        if entry == nil then
+            local full = false
+            if (BridgeTask.lootNoRoom or 0) > 0 and not BridgeTask.lootQueueFits(body) then full = true end
+            BridgeTask.current = nil
+            BridgeTask.lootList = nil
+            BridgeTask.lootIdx = nil
+            pcall(function() BridgeMove.stopPath(body) end)
+            if BridgeMove ~= nil and BridgeMove.releaseBump ~= nil then pcall(BridgeMove.releaseBump, body) end
+            BridgeTask.markDone()
+            if full then
+                BridgeTask.lootFull = true
+                return BridgeTask.finish()
+            end
+            if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+            return true
+        end
+        local item = entry.item
+        local present = false
+        pcall(function() present = target.cont ~= nil and target.cont:contains(item) end)
+        local skip = false
+        pcall(function() skip = BridgeTask.lootFilter(item, target.kind) == true end)
+        if present and not skip then
+            local dest = BridgeTask.lootDestFor(body, item, dests)
+            if dest == nil then
+                BridgeTask.lootNoRoom = (BridgeTask.lootNoRoom or 0) + 1
+                pcall(BridgeTask.lootSayFull)
+            elseif BridgeTask.lootTake(body, target, item, dest) then
+                BridgeTask.lootPending = item
+                BridgeTask.lootPendingAt = Bridge.time
+                BridgeTask.lootNextAt = Bridge.time + BridgeTask.LOOT_ITEM_TIME
+                pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+                return true
+            end
+        end
+    end
+end
+
+function BridgeTask.kinds.lootArea.leave(body)
+    BridgeTask.clearChop(body)
+    if BridgeMove ~= nil and BridgeMove.releaseBump ~= nil then pcall(BridgeMove.releaseBump, body) end
+    pcall(BridgeTask.lootAbortAct)
+    if BridgeMove ~= nil then BridgeMove.holdDoors = false end
+    restoreForcedWalk()
+    BridgeTask.lootList = nil
+    BridgeTask.lootIdx = nil
+    BridgeTask.lootPending = nil
+    BridgeTask.lootPendingAt = nil
+    BridgeTask.deferred = {}
+end
+
+
+
+
+
+local SIT_DIRS = { "N", "S", "W", "E" }
+local SIT_SIDES = { "Front", "Left", "Right" }
+local SIT_MAX_TRANSLATION = 1.0
+local SIT_FACING_OFF = { N = { 0, -1 }, S = { 0, 1 }, W = { -1, 0 }, E = { 1, 0 } }
+
+local function sitDist(ax, ay, bx, by)
+    local dx, dy = ax - bx, ay - by
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+local function sitFaceOf(side, dir)
+    local d = nil
+    pcall(function() d = IsoDirections.fromString(dir) end)
+    if d == nil then return nil end
+    if side == "Left" then return d:RotRight(2) end
+    if side == "Right" then return d:RotLeft(2) end
+    return d
+end
+
+local function sitIsRealBed(obj)
+    local props, sprite = nil, nil
+    pcall(function() props = obj:getProperties() end)
+    pcall(function() sprite = obj:getSprite() end)
+    if props == nil or sprite == nil then return false end
+    local bed = false
+    pcall(function() bed = props:has(IsoFlagType.bed) == true end)
+    if not bed then return false end
+    local name = nil
+    pcall(function() name = sprite:getName() end)
+    if name == nil then return false end
+    if string.find(name, "seating", 1, true) ~= nil
+            or string.find(name, "fixtures_bathroom", 1, true) ~= nil then return false end
+    if string.find(name, "bedding", 1, true) ~= nil then return true end
+    local grid = nil
+    pcall(function() grid = sprite:getSpriteGrid() end)
+    return grid ~= nil
+end
+
+function BridgeTask.seatIsSeat(obj)
+    if obj == nil then return false end
+    local sprite = nil
+    pcall(function() sprite = obj:getSprite() end)
+    if sprite == nil then return false end
+    local name = nil
+    pcall(function() name = sprite:getName() end)
+    if name ~= nil and string.find(name, "fixtures_bathroom", 1, true) == 1 then return false end
+    if sitIsRealBed(obj) then return false end
+    local n = 0
+    pcall(function() n = SeatingManager.getInstance():getTilePositionCount(obj) or 0 end)
+    return n > 0
+end
+
+local function sitSquareFree(sq)
+    if sq == nil then return false end
+    local ok = false
+    pcall(function()
+        if not sq:isFree(false) then return end
+        ok = true
+        if sq:isVehicleIntersecting() or sq:isWaterSquare() then ok = false end
+    end)
+    return ok
+end
+
+local function sitWalkable(walkSq, seatSq)
+    if walkSq == nil or seatSq == nil then return false end
+    local ok = false
+    pcall(function()
+        if not sitSquareFree(walkSq) then return end
+        ok = true
+        if not walkSq:isSolidFloor() or walkSq:HasStairs() then ok = false return end
+        local ddx = math.abs(walkSq:getX() - seatSq:getX())
+        local ddy = math.abs(walkSq:getY() - seatSq:getY())
+        if ddx + ddy == 1 then
+            if seatSq:isWallTo(walkSq) or seatSq:getDoorTo(walkSq) ~= nil or seatSq:getWindowTo(walkSq) ~= nil then
+                ok = false
+            end
+        end
+    end)
+    return ok
+end
+
+local function sitWalkSquareFor(seatSq, sx, sy)
+    local x0, y0, z = seatSq:getX(), seatSq:getY(), seatSq:getZ()
+    local fx, fy = math.floor(sx), math.floor(sy)
+    if fx ~= x0 or fy ~= y0 then return getCell():getGridSquare(fx, fy, z) end
+    local lx, ly = sx - x0 - 0.5, sy - y0 - 0.5
+    if math.abs(lx) >= math.abs(ly) then
+        return getCell():getGridSquare(x0 + (lx >= 0 and 1 or -1), y0, z)
+    end
+    return getCell():getGridSquare(x0, y0 + (ly >= 0 and 1 or -1), z)
+end
+
+function BridgeTask.seatTaken(plan, body)
+    if plan == nil or plan.obj == nil then return false end
+    local taken = false
+    pcall(function() taken = plan.obj:isFurnitureOccupied(body) == true end)
+    if taken then return true end
+    local red = BridgeData.owner()
+    if red ~= nil then
+        pcall(function() if red:isSitOnFurnitureObject(plan.obj) then taken = true end end)
+    end
+    if taken then return true end
+    pcall(function()
+        local sq = plan.obj:getSquare()
+        if sq == nil then return end
+        local movers = sq:getMovingObjects()
+        for i = 0, movers:size() - 1 do
+            local m = movers:get(i)
+            if m ~= nil and m ~= body and instanceof(m, "IsoGameCharacter") and not m:isDead() then
+                taken = true
+                return
+            end
+        end
+    end)
+    return taken
+end
+
+local function sitObjFacing(obj)
+    local name = nil
+    pcall(function()
+        local d = SeatingManager.getInstance():getFacingDirection(obj)
+        if type(d) == "string" then
+            name = d
+        elseif d ~= nil then
+            name = tostring(d:name())
+        end
+    end)
+    if name == nil then
+        pcall(function()
+            local d = obj:getDir()
+            if d ~= nil then name = d:name() end
+        end)
+    end
+    return name
+end
+
+function BridgeTask.seatPlan(body, obj)
+    if body == nil or obj == nil or not BridgeTask.seatIsSeat(obj) then return nil end
+    local seatSq, sprite = nil, nil
+    pcall(function() seatSq = obj:getSquare() end)
+    pcall(function() sprite = obj:getSprite() end)
+    if seatSq == nil or sprite == nil then return nil end
+    local z = seatSq:getZ()
+    local cx, cy = seatSq:getX() + 0.5, seatSq:getY() + 0.5
+    local bx, by = body:getX(), body:getY()
+    local sm = nil
+    pcall(function() sm = SeatingManager.getInstance() end)
+
+    local facing = sitObjFacing(obj)
+
+    local eng = nil
+    if sm ~= nil then
+        local best, bestD = nil, nil
+        for _, dir in ipairs(SIT_DIRS) do
+            for _, side in ipairs(SIT_SIDES) do
+                local pos = nil
+                pcall(function() pos = Vector3f.new() end)
+                if pos ~= nil then
+                    local valid = false
+                    pcall(function()
+                        valid = sm:getAdjacentPosition(body, obj, dir, side, "idle",
+                            "SitOnFurniture" .. side .. "_NA", pos) == true
+                    end)
+                    if valid then
+                        local sx, sy = pos:x(), pos:y()
+                        local wsq = sitWalkSquareFor(seatSq, sx, sy)
+                        if wsq ~= nil and wsq ~= seatSq and sitWalkable(wsq, seatSq) then
+                            local d = sitDist(bx, by, sx, sy)
+                            if bestD == nil or d < bestD then
+                                best = { dir = dir, side = side, standX = sx, standY = sy,
+                                    sx = wsq:getX(), sy = wsq:getY() }
+                                bestD = d
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        eng = best
+    end
+
+    local dir = facing or (eng and eng.dir)
+
+    local function sitSeatBlocks(wx, wy)
+        local x0, y0 = body:getX(), body:getY()
+        local dx, dy = wx - x0, wy - y0
+        local dist = math.sqrt(dx * dx + dy * dy)
+        local steps = math.max(1, math.ceil(dist / 0.25))
+        for i = 1, steps - 1 do
+            local t = i / steps
+            if math.floor(x0 + dx * t) == seatSq:getX()
+                    and math.floor(y0 + dy * t) == seatSq:getY() then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function sitReachable(sqx, sqy)
+        if sitSeatBlocks(sqx + 0.5, sqy + 0.5) then return false end
+        if BridgeMove == nil or BridgeMove.walkReach == nil then return true end
+        local res = true
+        pcall(function() res = BridgeMove.walkReach(body, sqx, sqy, z, 4000) ~= false end)
+        return res
+    end
+
+    local standX, standY, sx, sy = nil, nil, nil, nil
+    if dir ~= nil then
+        local fo = SIT_FACING_OFF[dir]
+        if fo ~= nil then
+            local cand = getCell():getGridSquare(seatSq:getX() - fo[1], seatSq:getY() - fo[2], z)
+            if sitWalkable(cand, seatSq) and sitReachable(cand:getX(), cand:getY()) then
+                standX, standY, sx, sy = cand:getX() + 0.5, cand:getY() + 0.5, cand:getX(), cand:getY()
+            end
+        end
+    end
+    if standX == nil and eng ~= nil and sitReachable(eng.sx, eng.sy) then
+        standX, standY, sx, sy = eng.standX, eng.standY, eng.sx, eng.sy
+    end
+    if standX == nil then
+        local bestD = nil
+        for dx = -1, 1 do
+            for dy = -1, 1 do
+                if not (dx == 0 and dy == 0) then
+                    local cand = getCell():getGridSquare(seatSq:getX() + dx, seatSq:getY() + dy, z)
+                    if sitWalkable(cand, seatSq) and sitReachable(cand:getX(), cand:getY()) then
+                        local d = sitDist(bx, by, cand:getX() + 0.5, cand:getY() + 0.5)
+                        if bestD == nil or d < bestD then
+                            standX, standY, sx, sy = cand:getX() + 0.5, cand:getY() + 0.5, cand:getX(), cand:getY()
+                            bestD = d
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if standX == nil then return nil end
+
+    if dir == nil then
+        if math.abs(cx - standX) >= math.abs(cy - standY) then
+            dir = cx > standX and "E" or "W"
+        else
+            dir = cy > standY and "S" or "N"
+        end
+    end
+
+    local tx, ty = 0, 0
+    if sm ~= nil then
+        pcall(function()
+            local xln = sm:getTranslation(sprite, dir, Vector3f.new())
+            if xln ~= nil then tx, ty = xln:x(), xln:y() end
+        end)
+    end
+    if math.abs(tx) > SIT_MAX_TRANSLATION or math.abs(ty) > SIT_MAX_TRANSLATION then return nil end
+    return { obj = obj, dir = dir, side = "Front", standX = standX, standY = standY,
+        sx = sx, sy = sy, seatX = cx + tx, seatY = cy + ty, z = z,
+        walkX = sx + 0.5, walkY = sy + 0.5,
+        engDir = (eng and eng.dir) or nil }
+end
+
+local function sitApplyDown(body, plan)
+    pcall(function() BridgeMove.stopPath(body) end)
+    if BridgeMove ~= nil then BridgeMove.moving = false end
+    local face = sitFaceOf(plan.side, plan.dir)
+    pcall(function() body:setSitOnFurnitureObject(plan.obj) end)
+    pcall(function()
+        body:setX(plan.standX) body:setY(plan.standY)
+        body:setLastX(plan.standX) body:setLastY(plan.standY)
+    end)
+    BridgeTask.sitFromX, BridgeTask.sitFromY = plan.standX, plan.standY
+    BridgeTask.sitSlideAt = Bridge.time
+    pcall(function() if face ~= nil then body:setSitOnFurnitureDirection(face) end end)
+    pcall(function() body:setSittingOnFurniture(true) end)
+    pcall(function() body:setCollidable(false) end)
+    pcall(function() body:setVariable("SitOnFurnitureDirection", plan.side) end)
+    pcall(function() body:setVariable("SitOnFurnitureStarted", true) end)
+    pcall(function() plan.obj:setSatChair(true) end)
+    pcall(function() if face ~= nil then body:faceDirection(face) end end)
+    pcall(function() body:setVariable("BumpAnimFinished", false) end)
+    pcall(function() body:setBumpType("SitChairDown") end)
+end
+
+local function sitClear(body, plan)
+    if body ~= nil then
+        pcall(function()
+            body:setSittingOnFurniture(false)
+            body:setSitOnFurnitureObject(nil)
+            body:setCollidable(true)
+        end)
+        pcall(function() body:clearVariable("SitOnFurnitureDirection") end)
+        pcall(function() body:clearVariable("SitOnFurnitureStarted") end)
+        pcall(function()
+            if tostring(body:getActionStateName()) == "bumped" then body:setVariable("BumpAnimFinished", true) end
+            local b = tostring(body:getBumpType())
+            if b == "SitChair" or b == "SitChairDown" or b == "SitChairUp" then body:setBumpType("") end
+        end)
+        if plan ~= nil and plan.sx ~= nil and plan.obj ~= nil then
+            pcall(function()
+                local sq = plan.obj:getSquare()
+                if sq ~= nil and body:getCurrentSquare() == sq then
+                    body:setX(plan.sx + 0.5) body:setY(plan.sy + 0.5)
+                    body:setLastX(plan.sx + 0.5) body:setLastY(plan.sy + 0.5)
+                    local wsq = getCell():getGridSquare(plan.sx, plan.sy, math.floor(plan.z))
+                    if wsq ~= nil then body:setCurrent(wsq) end
+                end
+            end)
+        end
+    end
+    if plan ~= nil and plan.obj ~= nil then pcall(function() plan.obj:setSatChair(false) end) end
+    Bridge.pose = nil
+    if BridgeMove ~= nil then pcall(BridgeMove.sendSit, nil) end
+end
+
+function BridgeTask.isSitting(body)
+    body = body or Bridge.body
+    if body == nil then return false end
+    if BridgeTask.active and BridgeTask.kind == "sit" then return true end
+    local bump = ""
+    pcall(function() bump = tostring(body:getBumpType()) end)
+    return bump == "SitChair" or bump == "SitChairDown" or bump == "SitChairUp"
+end
+
+function BridgeTask.sitStandUp()
+    if BridgeTask.active and BridgeTask.kind == "sit" then
+        BridgeTask.sitUp = true
+        return
+    end
+    sitClear(Bridge.body, nil)
+end
+
+BridgeTask.kinds.sit = {}
+
+function BridgeTask.kinds.sit.available(body)
+    return BridgeTask.SIT_ENABLED == 1
+end
+
+function BridgeTask.kinds.sit.missing(body)
+    return nil
+end
+
+function BridgeTask.kinds.sit.update(body)
+    if BridgeTask.SIT_ENABLED ~= 1 then return BridgeTask.finish() end
+
+    local target = BridgeTask.current
+    if target == nil then
+        if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+        target = table.remove(BridgeTask.queue, 1)
+        local obj = target.obj
+        if obj == nil then
+            pcall(function() obj = getCell():getGridSquare(target.x, target.y, target.z) end)
+        end
+        local plan = BridgeTask.seatPlan(body, obj)
+        if plan == nil then
+            BridgeTask.info = "sit: no seat plan"
+            BridgeTask.markUnreachable(nil)
+            return BridgeTask.finish()
+        end
+        if BridgeTask.seatTaken(plan, body) then
+            Bridge.speak("SitOccupied")
+            BridgeTask.info = "sit: seat occupied"
+            return BridgeTask.finish()
+        end
+        BridgeTask.current = target
+        BridgeTask.sitPlan = plan
+        BridgeTask.sitUp = nil
+        BridgeTask.sitAnimSeen = false
+        BridgeTask.sitPathFails = 0
+        BridgeTask.sitFailTick = nil
+        BridgeTask.sitBestD = nil
+        BridgeTask.sitCloseAt = nil
+        BridgeTask.sitFromX, BridgeTask.sitFromY, BridgeTask.sitSlideAt = nil, nil, nil
+        BridgeTask.phase = "walk"
+        BridgeTask.since = Bridge.time
+        BridgeTask.progressAt = Bridge.time
+        BridgeTask.bestD = nil
+        BridgeTask.pathFails = 0
+        BridgeTask.pathFailTick = nil
+        pcall(function()
+            local sq = plan.obj:getSquare()
+            log(string.format("sit: seat %s at %s, stand %.2f,%.2f facing %s (engine %s)",
+                tostring(sq and (sq:getX() .. "," .. sq:getY()) or "?"), tostring(plan.obj),
+                plan.standX, plan.standY, tostring(plan.dir), tostring(plan.engDir)))
+        end)
+    end
+
+    local plan = BridgeTask.sitPlan
+    if plan == nil then return BridgeTask.finish() end
+    local phase = BridgeTask.phase or "walk"
+
+    if phase == "walk" then
+        local wx = plan.walkX or plan.standX
+        local wy = plan.walkY or plan.standY
+        local d = sitDist(body:getX(), body:getY(), wx, wy)
+        local arrive = d <= BridgeTask.SIT_RANGE
+        if not arrive and d <= 0.75 then
+            BridgeTask.sitCloseAt = BridgeTask.sitCloseAt or Bridge.time
+            if (Bridge.time - BridgeTask.sitCloseAt) > 0.5 * SECOND then arrive = true end
+        else
+            BridgeTask.sitCloseAt = nil
+        end
+        if arrive then
+            pcall(function() BridgeMove.stopPath(body) end)
+            if BridgeMove ~= nil then BridgeMove.moving = false end
+            BridgeTask.phase = "down"
+            BridgeTask.since = Bridge.time
+            BridgeTask.sitAnimSeen = false
+            sitApplyDown(body, plan)
+            Bridge.speak("Sit")
+            return true
+        end
+
+        local moved = false
+        pcall(function() moved = BridgeMove.goStraight(body, wx, wy, plan.z) end)
+        if not moved then
+            pcall(function() BridgeMove.goToward(body, wx, wy, plan.z, true) end)
+        end
+        if BridgeMove ~= nil and BridgeMove.pathing then
+            BridgeTask.progressAt = Bridge.time
+        end
+
+        local failed = false
+        pcall(function()
+            failed = BridgeMove ~= nil and not BridgeMove.pathing
+                and BridgeMove.pathResult == tostring(BehaviorResult.Failed)
+        end)
+        if failed then
+            if BridgeTask.sitFailTick ~= Bridge.tick then
+                BridgeTask.sitPathFails = (BridgeTask.sitPathFails or 0) + 1
+            end
+            BridgeTask.sitFailTick = Bridge.tick
+            pcall(function() BridgeMove.pathResult = "none" end)
+            if (BridgeTask.sitPathFails or 0) >= BridgeTask.PATH_FAIL_LIMIT then
+                BridgeTask.info = "sit: no path to seat"
+                BridgeTask.markUnreachable(blockedReason(target))
+                return BridgeTask.finish()
+            end
+        end
+
+        if BridgeTask.sitBestD == nil or d < BridgeTask.sitBestD - 0.3 then
+            BridgeTask.sitBestD = d
+            BridgeTask.progressAt = Bridge.time
+        end
+        if (Bridge.time - (BridgeTask.progressAt or BridgeTask.since)) > BridgeTask.WALK_NO_PROGRESS
+                or (Bridge.time - (BridgeTask.since or Bridge.time)) > BridgeTask.SIT_TIMEOUT then
+            if playerOnSquare({ x = plan.sx, y = plan.sy, z = plan.z }) then
+                BridgeTask.progressAt = Bridge.time
+                BridgeTask.info = "sit: waiting for player"
+                return true
+            end
+            BridgeTask.info = "sit: no progress to seat"
+            BridgeTask.markUnreachable(blockedReason(target))
+            return BridgeTask.finish()
+        end
+
+        BridgeTask.info = "sit: walking to seat"
+        return true
+    end
+
+    if phase == "down" then
+        local dur = 0.9 * SECOND
+        local t = (Bridge.time - (BridgeTask.sitSlideAt or BridgeTask.since or Bridge.time)) / dur
+        if t > 1 then t = 1 end
+        local e = t * t * (3 - 2 * t)
+        local fromX = BridgeTask.sitFromX or plan.standX
+        local fromY = BridgeTask.sitFromY or plan.standY
+        local nx = fromX + (plan.seatX - fromX) * e
+        local ny = fromY + (plan.seatY - fromY) * e
+        pcall(function() body:setX(nx) body:setY(ny) body:setLastX(nx) body:setLastY(ny) end)
+        local face = sitFaceOf(plan.side, plan.dir)
+        pcall(function() if face ~= nil then body:faceDirection(face) end end)
+
+        local bump, fin = "", false
+        pcall(function() bump = tostring(body:getBumpType()) end)
+        pcall(function() fin = body:getVariableBoolean("BumpAnimFinished") == true end)
+        if bump == "SitChairDown" then BridgeTask.sitAnimSeen = true end
+        local clipDone = BridgeTask.sitAnimSeen and (fin or bump ~= "SitChairDown")
+        if (clipDone and t >= 1) or (Bridge.time - (BridgeTask.since or Bridge.time)) > BridgeTask.SIT_ANIM_MAX then
+            pcall(function()
+                body:setX(plan.seatX) body:setY(plan.seatY)
+                body:setLastX(plan.seatX) body:setLastY(plan.seatY)
+            end)
+            pcall(function()
+                local wsq = getCell():getGridSquare(math.floor(plan.seatX), math.floor(plan.seatY), math.floor(plan.z))
+                if wsq ~= nil then body:setCurrent(wsq) end
+            end)
+            BridgeTask.phase = "sit"
+            BridgeTask.since = Bridge.time
+            pcall(function() body:setVariable("BumpAnimFinished", false) end)
+            pcall(function() body:setBumpType("SitChair") end)
+            Bridge.pose = { anim = "SitChair", seat = true }
+            pcall(function() BridgeMove.sendSit("chair") end)
+            log("sit: seated")
+        end
+        BridgeTask.info = "sit: sitting down"
+        return true
+    end
+
+    if phase == "sit" then
+        pcall(function() body:setVariable("SitOnFurnitureStarted", true) end)
+        pcall(function() if tostring(body:getBumpType()) ~= "SitChair" then body:setBumpType("SitChair") end end)
+        Bridge.pose = { anim = "SitChair", seat = true }
+        local face = sitFaceOf(plan.side, plan.dir)
+        pcall(function() if face ~= nil then body:faceDirection(face) end end)
+        local d = sitDist(body:getX(), body:getY(), plan.seatX, plan.seatY)
+        if d > BridgeTask.SIT_SETTLE then
+            pcall(function()
+                body:setX(plan.seatX) body:setY(plan.seatY)
+                body:setLastX(plan.seatX) body:setLastY(plan.seatY)
+            end)
+        end
+        pcall(function()
+            if BridgeFight ~= nil and BridgeFight.rest ~= nil then BridgeFight.rest(false, true) end
+        end)
+        if BridgeTask.sitUp then
+            BridgeTask.sitUp = nil
+            BridgeTask.phase = "up"
+            BridgeTask.since = Bridge.time
+            BridgeTask.sitAnimSeen = false
+            pcall(function() body:setVariable("BumpAnimFinished", false) end)
+            pcall(function() body:setBumpType("SitChairUp") end)
+            Bridge.pose = { anim = "SitChairUp", seat = true }
+            pcall(function() BridgeMove.sendSit(nil) end)
+            Bridge.speak("StandUp")
+            return true
+        end
+        BridgeTask.info = "sitting"
+        return true
+    end
+
+    if phase == "up" then
+        local dur = 0.9 * SECOND
+        local t = (Bridge.time - (BridgeTask.since or Bridge.time)) / dur
+        if t > 1 then t = 1 end
+        local e = t * t * (3 - 2 * t)
+        local nx = plan.seatX + (plan.standX - plan.seatX) * e
+        local ny = plan.seatY + (plan.standY - plan.seatY) * e
+        pcall(function() body:setX(nx) body:setY(ny) body:setLastX(nx) body:setLastY(ny) end)
+        local bump, fin = "", false
+        pcall(function() bump = tostring(body:getBumpType()) end)
+        pcall(function() fin = body:getVariableBoolean("BumpAnimFinished") == true end)
+        if bump == "SitChairUp" then BridgeTask.sitAnimSeen = true end
+        local clipDone = BridgeTask.sitAnimSeen and (fin or bump ~= "SitChairUp")
+        if (clipDone and t >= 1) or (Bridge.time - (BridgeTask.since or Bridge.time)) > BridgeTask.SIT_ANIM_MAX then
+            sitClear(body, plan)
+            return BridgeTask.finish()
+        end
+        BridgeTask.info = "sit: standing up"
+        return true
+    end
+
+    BridgeTask.phase = "walk"
+    return true
+end
+
+function BridgeTask.kinds.sit.leave(body)
+    sitClear(body, BridgeTask.sitPlan)
+    BridgeTask.sitPlan = nil
+    BridgeTask.sitUp = nil
+end
 
 
 function BridgeTask.staleEnd(body)

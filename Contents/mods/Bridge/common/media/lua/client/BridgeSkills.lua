@@ -105,8 +105,8 @@ end
 function BridgeSkills.rollMaintenance(item)
     if item == nil then return 0 end
 
-    local ranged = false
-    pcall(function() ranged = item:isRanged() end)
+    if not instanceof(item, "HandWeapon") then return 0 end
+    local ranged = false; pcall(function() ranged = item:isRanged() == true end)
     if ranged then return 0 end
 
     local full = nil
@@ -237,6 +237,9 @@ local POP_LIFE_MS = 2000
 local POP_RISE = 22
 local POP_BASE = 14
 local POP_COLOR = { 0.4, 0.9, 0.4 }
+local POP_COLOR_FRIEND = { 0.62, 0.52, 0.82 }
+local POP_COLOR_ROMANCE = { 0.86, 0.46, 0.64 }
+local POP_COLOR_LOSS = { 0.80, 0.28, 0.28 }
 
 function BridgeSkills.noteXp(perk, amount)
     amount = tonumber(amount)
@@ -247,14 +250,42 @@ end
 
 
 
+function BridgeSkills.pushPop(text, color)
+    local pops = BridgeSkills.pops
+    pops[#pops + 1] = { text = text, color = color, t0 = getTimestampMs() }
+end
+
+
+
 function BridgeSkills.popXp(perk, amount)
     if Bridge.body == nil then return end
     if not BridgeData.optionOf(Bridge.store, "xpPopups") then return end
-    local pops = BridgeSkills.pops
-    pops[#pops + 1] = { perk = perk, amount = amount, t0 = getTimestampMs() }
+    local text = BridgeData.text("SkillXpPop", BridgeSkills.perkLabel(perk), string.format("%.1f", amount))
+    BridgeSkills.pushPop(text, POP_COLOR)
     if BridgeSkills.DEBUG then
-        log(string.format("pop +%.1f %s (%d active)", amount, tostring(perk), #pops))
+        log(string.format("pop +%.1f %s (%d active)", amount, tostring(perk), #BridgeSkills.pops))
     end
+end
+
+
+
+function BridgeSkills.popRel(stream, amount)
+    if Bridge.body == nil then return end
+    if not BridgeData.optionOf(Bridge.store, "relPopups") then return end
+    amount = tonumber(amount)
+    if amount == nil or amount ~= amount then return end
+    amount = math.floor(amount)
+    if amount == 0 then return end
+    local color
+    if amount < 0 then
+        color = POP_COLOR_LOSS
+    elseif stream == "Romance" then
+        color = POP_COLOR_ROMANCE
+    else
+        color = POP_COLOR_FRIEND
+    end
+    local key = (stream == "Friend") and "RelPopFriend" or "RelPopRomance"
+    BridgeSkills.pushPop(BridgeData.text(key, string.format("%+d", amount)), color)
 end
 
 local function flushXp()
@@ -297,12 +328,13 @@ local function drawPops()
             local x = isoToScreenX(pn, z:getX(), z:getY(), z:getZ())
             local y = isoToScreenY(pn, z:getX(), z:getY(), z:getZ())
                 - lift - tm:getFontHeight(UIFont.Small) - POP_BASE - POP_RISE * frac - (i - 1) * rowH
-            local text = BridgeData.text("SkillXpPop", BridgeSkills.perkLabel(p.perk), string.format("%.1f", p.amount))
+            local text = p.text
+            local color = p.color or POP_COLOR
             tm:DrawStringCentre(UIFont.Small, x - 1, y, text, 0, 0, 0, alpha * 0.8)
             tm:DrawStringCentre(UIFont.Small, x + 1, y, text, 0, 0, 0, alpha * 0.8)
             tm:DrawStringCentre(UIFont.Small, x, y - 1, text, 0, 0, 0, alpha * 0.8)
             tm:DrawStringCentre(UIFont.Small, x, y + 1, text, 0, 0, 0, alpha * 0.8)
-            tm:DrawStringCentre(UIFont.Small, x, y, text, POP_COLOR[1], POP_COLOR[2], POP_COLOR[3], alpha)
+            tm:DrawStringCentre(UIFont.Small, x, y, text, color[1], color[2], color[3], alpha)
             i = i + 1
         end
     end
@@ -481,7 +513,7 @@ local function installWrappers()
             baseRefresh()
             if Bridge.store == nil then return end
             BridgeData.skillsOf(Bridge.store)
-            if Bridge.mp then
+            if Bridge.mp and Bridge.gotData then
                 local incoming = Bridge.store.skills
                 if Bridge.localSkills ~= nil and incoming ~= Bridge.localSkills then
                     Bridge.store.skills = Bridge.localSkills

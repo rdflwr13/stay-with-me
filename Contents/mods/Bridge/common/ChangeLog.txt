@@ -1,5 +1,6 @@
 [ ALERT_CONFIG ]
 link1 = Workshop = https://steamcommunity.com/sharedfiles/filedetails/?id=3800989007,
+
 [ ------ ]
 
 [ v0.3.9.5 ]
@@ -73,4 +74,50 @@ Settings
 Fixes
 - Handing something to a crate, a body or a car trunk no longer parks it in your inventory first.
 - Overhead lines stay on your companion, not on another zombie in the same clothes.
+
+[ ------ ]
+
+[ v0.4.1 ]
+Update by ComeAndSee. Thanks to NeoGeo for help testing.
+
+New Features:
+- Rin can now sit on chairs/benches. Right click on a chair and choose Sit.
+- Rin can now equip attachments.
+- Added a new Equipment UI for Rin. Right click on her and choose Equipment. You can customize the UI size in settings.
+- Rin can now loot containers by right click > Rin: Loot.
+- New jobs: Loot Area & Clear Plants (removes bushes/grass).
+- New tabs in the home menu: Menu Order (lets you re-order the right click menu), Loot Settings, Bug Report.
+- New settings: show relationship change popups (disabled by default) and sit down when you sit (enabled by default).
+- New kill counter system (only increases when Rin kills zombies).
+- Added a new What's New UI.
+- There is now a separate bar for Relationship/Romance in her info tab.
+- Improved Rin's pathfinding while performing jobs.
+- Added more unique dialogue-line reactions to receiving loot.
+- Rin will now store her weapon on her back instead of in her inventory.
+- Rin will react if you swing a melee weapon at her while out of combat.
+- Rin will now sit when you do.
+
+Compatibility:
+- Mutants: Fixed Mutants turning Rin into a zombie in SP.
+- Dinosaur/Wolves Mods: Rin will now target wolves/dinosaurs if those mods are enabled.
+- TwisTonFire - Proximity Inventory: Rin's loot is now hidden from proximity loot.
+- BetterContainers/RPG Inventory/etc.: Smart loot will no longer deposit into her inventory.
+
+Bug Fixes:
+- Rin will now loot in whole stacks instead of individual items in MP/SP.
+- Increased Rin's inventory storage (from 30000 characters to 60000) to prevent item despawning.
+- Added safeguards to prevent items being removed while getting in and out of vehicles.
+- Rin's stats now persist on dedicated MP servers when relogging.
+- Rin's spawning is now atomic: her body is claimed/marked before everything else is rendered.
+- Fixed LUA errors from Maintenance gains caused by meleeing with a non-melee weapon.
+- Fixed flashlight darkness false-positive calls.
+
+Known Issues:
+- Rin may struggle to loot containers in corners.
+- Rin's pathing may be weird at times when sent to perform jobs.
+
+Bug Reports:
+- The new procedure for reporting issues is to open the Bug Reports menu, turn on Detailed Logging, record the issue, click Generate Report, paste that into pastebin.com, open the workshop page, and then paste that pastebin report link plus your console log (on another pastebin) into it.
+- Do not just post "X is broken" on the workshop page. Please provide the reports so we can debug the issues quickly & efficiently.
+
 [ ------ ]

@@ -161,6 +161,10 @@ function BridgeMenu.onHeal()
     log("heal from menu: " .. tostring(res))
 end
 
+function BridgeMenu.onEquip(playerNum)
+    if BridgeEquip ~= nil and type(BridgeEquip.toggle) == "function" then BridgeEquip.toggle(playerNum) end
+end
+
 function BridgeMenu.onWash()
     BridgeWash.start("menu")
 end
@@ -214,6 +218,175 @@ end
 
 
 
+local function actionsMenu(context)
+    local option = context:addOption(tr("Actions"))
+    local sub = ISContextMenu:getNew(context)
+    context:addSubMenu(option, sub)
+    return sub
+end
+
+
+local function buildTalk(context, playerNum, env)
+    if env.inRange then pcall(function() BridgeSocial.fillMenu(context, tr) end) end
+end
+
+local function buildHeal(context, playerNum, env)
+    if not env.inRange then return end
+    local heal = context:addOption(tr("HealMe"), nil, BridgeMenu.onHeal)
+    if not Bridge.drivable() or not Bridge.alive() then
+        heal.notAvailable = true
+    elseif BridgeHeal.active then
+        heal.notAvailable = true
+    end
+end
+
+local function buildEquip(context, playerNum, env)
+    if env.inRange then
+        local equipOption = context:addOption(tr("WindowEquip"), playerNum, BridgeMenu.onEquip)
+        if BridgeEquip ~= nil and type(BridgeEquip.withinRange) == "function" and not BridgeEquip.withinRange(playerNum) then
+            equipOption.notAvailable = true
+            tip(equipOption, tr("EquipTooFar"))
+        end
+    elseif BridgeEquip ~= nil and BridgeEquip.DEV then
+        context:addOption(tr("WindowEquip") .. " (dev)", playerNum, BridgeMenu.onEquip)
+    end
+end
+
+local function buildWait(context, playerNum, env)
+    if env.mode == "follow" then
+        context:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)
+    else
+        context:addOption(tr("ComeWithMe"), nil, BridgeMenu.onFollow)
+    end
+end
+
+local function buildActions(context, playerNum, env)
+    local actions = actionsMenu(context)
+    if env.mode == "rest" then
+        actions:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)
+    elseif env.inRange then
+        actions:addOption(tr("Rest"), nil, BridgeMenu.onRest)
+    end
+    if env.inRange then
+        local wash = actions:addOption(tr("Wash"), nil, BridgeMenu.onWash)
+        if not Bridge.drivable() then
+            wash.notAvailable = true
+        end
+    end
+    actions:addOption(tr("Goodbye"), nil, BridgeMenu.onGoodbye)
+end
+
+local function buildFight(context, playerNum, env)
+    local combatOption = context:addOption(tr("Combat"))
+    local guard = false
+    pcall(function() if BridgeFight ~= nil then guard = BridgeFight.guardOnly end end)
+    if guard then
+        combatOption.isDisabled = true
+        tip(combatOption, tr("CombatGuardTip"))
+    else
+        local combat = ISContextMenu:getNew(context)
+        context:addSubMenu(combatOption, combat)
+        local combatMode = BridgeData.combatOf(env.st)
+        for _, entry in ipairs({ { "bodyguard", "CombatBodyguard" }, { "escort", "CombatEscort" },
+            { "aggressive", "CombatAggressive" }, { "backup", "CombatBackMeUp" }, { "stayback", "CombatStayBack" } }) do
+            local o = combat:addOption(tr(entry[2]), entry[1], BridgeMenu.onCombat)
+            if combatMode == entry[1] then o.isDisabled = true end
+            tip(o, tr(entry[2] .. "Tip"))
+        end
+    end
+end
+
+local function buildTorch(context, playerNum, env)
+    local torchOption = context:addOption(tr("OptTorch"))
+    local torch = ISContextMenu:getNew(context)
+    context:addSubMenu(torchOption, torch)
+    local torchMode = BridgeData.torchMode(env.st)
+    for _, entry in ipairs({ { "off", "OptTorchOff" }, { "auto", "OptTorchAuto" } }) do
+        local o = torch:addOption(tr(entry[2]), entry[1], BridgeMenu.onTorch)
+        if torchMode == entry[1] then o.isDisabled = true end
+    end
+end
+
+local function buildJobs(context, playerNum, env)
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+    local jobsOption = context:addOption(tr("Jobs"))
+    local jobs = ISContextMenu:getNew(context)
+    context:addSubMenu(jobsOption, jobs)
+    if BridgeTask.LOOTING_ENABLED == 1 then
+        local okLoot = false
+        pcall(function() okLoot = BridgeTask.kinds.lootArea.available(Bridge.body) end)
+        local loot = jobs:addOption(tr("JobLootArea"), nil, BridgeMenu.onJobLootArea)
+        if not okLoot then jobTip(loot, "lootArea") end
+        if not okLoot or BridgeTask.active then loot.notAvailable = true end
+    end
+    if BridgeTask.CLEANING_ENABLED == 1 then
+        local okClean = false
+        pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
+        local clean = jobs:addOption(tr("JobCleanUp"), nil, BridgeMenu.onJobCleanUp)
+        if not okClean then jobTip(clean, "cleanUp") end
+        if not okClean or BridgeTask.active then clean.notAvailable = true end
+    end
+    if BridgeTask.CLEARING_ENABLED == 1 then
+        local okClear = false
+        pcall(function() okClear = BridgeTask.kinds.clearPlants.available(Bridge.body) end)
+        local clear = jobs:addOption(tr("JobClearPlants"), nil, BridgeMenu.onJobClearPlants)
+        jobTip(clear, "clearPlants")
+        if not okClear or BridgeTask.active then clear.notAvailable = true end
+    end
+    if BridgeTask.TREECUTTING_ENABLED == 1 then
+        local ok = false
+        pcall(function() ok = BridgeTask.kinds.chopTree.available(Bridge.body) end)
+        local cut = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
+        if not ok then jobTip(cut, "chopTree") end
+        if not ok or BridgeTask.active then cut.notAvailable = true end
+    end
+end
+
+local function buildKeep(context, playerNum, env)
+    if not BridgeData.KEEP_ON then return end
+    local keepOption = context:addOption(tr("Keep"))
+    local keep = ISContextMenu:getNew(context)
+    context:addSubMenu(keepOption, keep)
+    local far = BridgeData.farOf(env.st)
+    local side = BridgeData.keepOf(env.st)
+    local closer = keep:addOption(tr("KeepCloser"), "near", BridgeMenu.onKeepDistance)
+    if not far then closer.isDisabled = true end
+    local farther = keep:addOption(tr("KeepFarther"), "far", BridgeMenu.onKeepDistance)
+    if far then farther.isDisabled = true end
+    if BridgeData.KEEP_SIDES_ON then
+        for _, entry in ipairs({ { "behind", "KeepBehind" }, { "left", "KeepLeft" }, { "right", "KeepRight" } }) do
+            local o = keep:addOption(tr(entry[2]), entry[1], BridgeMenu.onKeepSide)
+            if side == entry[1] then o.isDisabled = true end
+        end
+    end
+end
+
+local function buildCancel(context, playerNum, env)
+    if BridgeTask ~= nil and BridgeTask.isSitting ~= nil and BridgeTask.isSitting() then
+        context:addOption(tr("StandUp"), nil, BridgeMenu.onSitStandUp)
+        return
+    end
+    BridgeMenu.addCancelTask(context)
+end
+
+
+BridgeMenu.ORDERABLE = {
+    { id = "talk", label = "Talk", build = buildTalk },
+    { id = "heal", label = "HealMe", build = buildHeal },
+    { id = "equip", label = "WindowEquip", build = buildEquip },
+    { id = "wait", label = "MenuFollow", build = buildWait },
+    { id = "actions", label = "Actions", build = buildActions },
+    { id = "fight", label = "Combat", build = buildFight },
+    { id = "torch", label = "OptTorch", build = buildTorch },
+    { id = "jobs", label = "Jobs", build = buildJobs },
+    { id = "keep", label = "Keep", build = buildKeep },
+    { id = "cancel", label = "CancelTask", build = buildCancel },
+}
+
+BridgeMenu.ORDERABLE_BY_ID = {}
+for _, entry in ipairs(BridgeMenu.ORDERABLE) do BridgeMenu.ORDERABLE_BY_ID[entry.id] = entry end
+
+
 function BridgeMenu.fill(context, playerNum, fromIcon)
     if Bridge == nil or Bridge.store == nil then return end
     local st = Bridge.store
@@ -222,15 +395,6 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
         local status = context:addOption(BridgeMenu.status(true))
         status.isDisabled = true
     end
-    local function actionsMenu()
-        local option = context:addOption(tr("Actions"))
-        local sub = ISContextMenu:getNew(context)
-        context:addSubMenu(option, sub)
-        return sub
-    end
-
-
-
 
     if BridgeCar ~= nil and BridgeCar.inCarForMenu() then
         if not fromIcon then
@@ -243,119 +407,16 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
         return
     end
     if not present() then
-
-
-
         context:addOption(fromIcon and tr("CallShort") or tr("Call", name()), nil, BridgeMenu.onCall)
         return
     end
     local inRange = BridgeMenu.inTalkRange()
-    if inRange then
-
-        pcall(function() BridgeSocial.fillMenu(context, tr) end)
-
-        local heal = context:addOption(tr("HealMe"), nil, BridgeMenu.onHeal)
-        if not Bridge.drivable() or not Bridge.alive() then
-            heal.notAvailable = true
-        elseif BridgeHeal.active then
-            heal.notAvailable = true
-        end
+    local env = { st = st, mode = mode, inRange = inRange, fromIcon = fromIcon }
+    local order = BridgeData.menuOrder(st)
+    for _, id in ipairs(order) do
+        local entry = BridgeMenu.ORDERABLE_BY_ID[id]
+        if entry ~= nil then entry.build(context, playerNum, env) end
     end
-    if mode == "follow" then
-        context:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)
-    else
-        context:addOption(tr("ComeWithMe"), nil, BridgeMenu.onFollow)
-    end
-    local actions = actionsMenu()
-    if mode == "rest" then
-        actions:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)
-    elseif inRange then
-        actions:addOption(tr("Rest"), nil, BridgeMenu.onRest)
-    end
-
-    if inRange then
-        local wash = actions:addOption(tr("Wash"), nil, BridgeMenu.onWash)
-        if not Bridge.drivable() then
-
-            wash.notAvailable = true
-        end
-    end
-    actions:addOption(tr("Goodbye"), nil, BridgeMenu.onGoodbye)
-
-
-
-    local combatOption = context:addOption(tr("Combat"))
-    local guard = false
-    pcall(function() if BridgeFight ~= nil then guard = BridgeFight.guardOnly end end)
-    if guard then
-        combatOption.isDisabled = true
-        tip(combatOption, tr("CombatGuardTip"))
-    else
-        local combat = ISContextMenu:getNew(context)
-        context:addSubMenu(combatOption, combat)
-        local combatMode = BridgeData.combatOf(st)
-        for _, entry in ipairs({ { "bodyguard", "CombatBodyguard" }, { "escort", "CombatEscort" },
-            { "aggressive", "CombatAggressive" }, { "backup", "CombatBackMeUp" }, { "stayback", "CombatStayBack" } }) do
-            local o = combat:addOption(tr(entry[2]), entry[1], BridgeMenu.onCombat)
-            if combatMode == entry[1] then o.isDisabled = true end
-            tip(o, tr(entry[2] .. "Tip"))
-        end
-    end
-
-
-    do
-        local torchOption = context:addOption(tr("OptTorch"))
-        local torch = ISContextMenu:getNew(context)
-        context:addSubMenu(torchOption, torch)
-        local torchMode = BridgeData.torchMode(st)
-        for _, entry in ipairs({ { "off", "OptTorchOff" }, { "auto", "OptTorchAuto" } }) do
-            local o = torch:addOption(tr(entry[2]), entry[1], BridgeMenu.onTorch)
-            if torchMode == entry[1] then o.isDisabled = true end
-        end
-    end
-
-
-    if BridgeData.KEEP_ON then
-
-        local keepOption = context:addOption(tr("Keep"))
-        local keep = ISContextMenu:getNew(context)
-        context:addSubMenu(keepOption, keep)
-        local far = BridgeData.farOf(st)
-        local side = BridgeData.keepOf(st)
-        local closer = keep:addOption(tr("KeepCloser"), "near", BridgeMenu.onKeepDistance)
-        if not far then closer.isDisabled = true end
-        local farther = keep:addOption(tr("KeepFarther"), "far", BridgeMenu.onKeepDistance)
-        if far then farther.isDisabled = true end
-
-        if BridgeData.KEEP_SIDES_ON then
-            for _, entry in ipairs({ { "behind", "KeepBehind" }, { "left", "KeepLeft" }, { "right", "KeepRight" } }) do
-                local o = keep:addOption(tr(entry[2]), entry[1], BridgeMenu.onKeepSide)
-                if side == entry[1] then o.isDisabled = true end
-            end
-        end
-    end
-
-    if BridgeTask ~= nil and BridgeTask.ENABLED == 1 then
-        local jobsOption = context:addOption(tr("Jobs"))
-        local jobs = ISContextMenu:getNew(context)
-        context:addSubMenu(jobsOption, jobs)
-        if BridgeTask.TREECUTTING_ENABLED == 1 then
-            local ok = false
-            pcall(function() ok = BridgeTask.kinds.chopTree.available(Bridge.body) end)
-            local cut = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
-            if not ok then jobTip(cut, "chopTree") end
-            if not ok or BridgeTask.active then cut.notAvailable = true end
-        end
-        if BridgeTask.CLEANING_ENABLED == 1 then
-            local okClean = false
-            pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
-            local clean = jobs:addOption(tr("JobCleanUp"), nil, BridgeMenu.onJobCleanUp)
-            if not okClean then jobTip(clean, "cleanUp") end
-            if not okClean or BridgeTask.active then clean.notAvailable = true end
-        end
-    end
-
-    BridgeMenu.addCancelTask(context)
 end
 
 
@@ -603,6 +664,19 @@ local function treeUnder(worldobjects)
     return tree
 end
 
+local function seatUnder(worldobjects)
+    for _, o in ipairs(worldobjects or {}) do
+        if o ~= nil then
+            local isSeat = false
+            pcall(function()
+                isSeat = BridgeTask ~= nil and BridgeTask.seatIsSeat ~= nil and BridgeTask.seatIsSeat(o) == true
+            end)
+            if isSeat then return o end
+        end
+    end
+    return nil
+end
+
 function BridgeMenu.onCutTree(target, tree)
     tree = tree or target
     if BridgeTask == nil or tree == nil then return end
@@ -625,17 +699,40 @@ function BridgeMenu.onJobCleanUp()
     BridgeWorkSelect.begin(BridgeData.owner(), "cleanUp")
 end
 
+function BridgeMenu.onJobClearPlants()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "clearPlants")
+end
+
+function BridgeMenu.onJobLootArea()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "lootArea")
+end
+
 
 function BridgeMenu.addCancelTask(context)
     if context == nil then return end
-    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or not BridgeTask.active then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+    local task = BridgeTask.active == true
+    local transfers = BridgeQueue ~= nil and BridgeQueue.jobs ~= nil and #BridgeQueue.jobs > 0
+    if not task and not transfers then return end
+    if task and BridgeTask.kind == "sit" then return end
     context:addOption(tr("CancelTask"), nil, BridgeMenu.onCancelTask)
 end
 
 function BridgeMenu.onCancelTask()
-    if BridgeTask == nil or not BridgeTask.active then return end
-    BridgeTask.cancel("menu")
-    if Bridge ~= nil then Bridge.speak("JobCancel") end
+    local did = false
+    if BridgeTask ~= nil and BridgeTask.active then
+        BridgeTask.cancel("menu")
+        did = true
+    end
+    if BridgeQueue ~= nil and BridgeQueue.jobs ~= nil and #BridgeQueue.jobs > 0 then
+        pcall(function() BridgeQueue.clear("menu") end)
+        did = true
+    end
+    if did and Bridge ~= nil then Bridge.speak("JobCancel") end
 end
 
 function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
@@ -652,12 +749,12 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     local jobsOption = sub:addOption(tr("Jobs"))
     local jobs = ISContextMenu:getNew(sub)
     sub:addSubMenu(jobsOption, jobs)
-    if BridgeTask.TREECUTTING_ENABLED == 1 then
-        local ok = false
-        pcall(function() ok = BridgeTask.kinds.chopTree.available(Bridge.body) end)
-        local area = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
-        if not ok then jobTip(area, "chopTree") end
-        if not ok or BridgeTask.active then area.notAvailable = true end
+    if BridgeTask.LOOTING_ENABLED == 1 then
+        local okLoot = false
+        pcall(function() okLoot = BridgeTask.kinds.lootArea.available(Bridge.body) end)
+        local loot = jobs:addOption(tr("JobLootArea"), nil, BridgeMenu.onJobLootArea)
+        if not okLoot then jobTip(loot, "lootArea") end
+        if not okLoot or BridgeTask.active then loot.notAvailable = true end
     end
     if BridgeTask.CLEANING_ENABLED == 1 then
         local okClean = false
@@ -665,6 +762,20 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
         local clean = jobs:addOption(tr("JobCleanUp"), nil, BridgeMenu.onJobCleanUp)
         if not okClean then jobTip(clean, "cleanUp") end
         if not okClean or BridgeTask.active then clean.notAvailable = true end
+    end
+    if BridgeTask.CLEARING_ENABLED == 1 then
+        local okClear = false
+        pcall(function() okClear = BridgeTask.kinds.clearPlants.available(Bridge.body) end)
+        local clear = jobs:addOption(tr("JobClearPlants"), nil, BridgeMenu.onJobClearPlants)
+        jobTip(clear, "clearPlants")
+        if not okClear or BridgeTask.active then clear.notAvailable = true end
+    end
+    if BridgeTask.TREECUTTING_ENABLED == 1 then
+        local ok = false
+        pcall(function() ok = BridgeTask.kinds.chopTree.available(Bridge.body) end)
+        local area = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
+        if not ok then jobTip(area, "chopTree") end
+        if not ok or BridgeTask.active then area.notAvailable = true end
     end
     BridgeMenu.addCancelTask(sub)
 end
@@ -692,13 +803,109 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
         sub:addSubMenu(jobsOption, jobs)
         local area = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
         if not ok or BridgeTask.active then area.notAvailable = true end
+        if BridgeTask.LOOTING_ENABLED == 1 then
+            local okLoot = false
+            pcall(function() okLoot = BridgeTask.kinds.lootArea.available(Bridge.body) end)
+            local loot = jobs:addOption(tr("JobLootArea"), nil, BridgeMenu.onJobLootArea)
+            if not okLoot then jobTip(loot, "lootArea") end
+            if not okLoot or BridgeTask.active then loot.notAvailable = true end
+        end
     end
     BridgeMenu.addCancelTask(sub)
+end
+
+local function lootTargetsUnder(worldobjects)
+    for _, o in ipairs(worldobjects or {}) do
+        if o ~= nil then
+            local list = nil
+            pcall(function() list = BridgeWorkSelect.lootTargetsForObject(o) end)
+            if list ~= nil and #list > 0 then return list end
+        end
+    end
+    local sq = nil
+    for _, o in ipairs(worldobjects or {}) do
+        pcall(function() sq = o:getSquare() end)
+        if sq ~= nil then break end
+    end
+    if sq == nil then return nil end
+    local list = nil
+    pcall(function()
+        local x, y, z = sq:getX(), sq:getY(), sq:getZ()
+        list = BridgeWorkSelect.lootTargets({ x1 = x, y1 = y, x2 = x, y2 = y, z = z })
+    end)
+    if list ~= nil and #list > 0 then return list end
+    return nil
+end
+
+function BridgeMenu.onLootThis(targets)
+    if BridgeTask == nil or targets == nil or #targets == 0 then return end
+    local res = BridgeTask.start("lootArea", targets)
+    log("loot this from menu: " .. tostring(res))
+end
+
+function BridgeMenu.onLootMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.LOOTING_ENABLED ~= 1 then return end
+    if not present() then return end
+    if BridgeWorkSelect == nil or BridgeWorkSelect.lootTargetFor == nil then return end
+    local label = name() .. ": " .. tr("LootThis")
+    if context:getOptionFromName(label) ~= nil then return end
+    local targets = lootTargetsUnder(worldobjects)
+    if targets == nil then return end
+    local ok = false
+    pcall(function() ok = BridgeTask.kinds.lootArea.available(Bridge.body) end)
+    local opt = context:addOptionOnTop(label, targets, BridgeMenu.onLootThis)
+    if not ok or BridgeTask.active then opt.notAvailable = true end
+end
+
+function BridgeMenu.onSitThis(targets)
+    if BridgeTask == nil or targets == nil or #targets == 0 then return end
+    local res = BridgeTask.start("sit", targets)
+    log("sit from menu: " .. tostring(res))
+end
+
+function BridgeMenu.onSitStandUp()
+    if BridgeTask ~= nil and BridgeTask.sitStandUp ~= nil then BridgeTask.sitStandUp() end
+end
+
+function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.SIT_ENABLED ~= 1 then return end
+    if not present() then return end
+    local seat = seatUnder(worldobjects)
+    if seat == nil then return end
+
+    if BridgeTask.isSitting ~= nil and BridgeTask.isSitting() then
+        local upLabel = name() .. ": " .. tr("StandUp")
+        if context:getOptionFromName(upLabel) == nil then
+            context:addOptionOnTop(upLabel, nil, BridgeMenu.onSitStandUp)
+        end
+        return
+    end
+
+    local label = name() .. ": " .. tr("Sit")
+    if context:getOptionFromName(label) ~= nil then return end
+    local ok = false
+    pcall(function() ok = BridgeTask.kinds.sit.available(Bridge.body) end)
+    local targets = { { obj = seat, x = 0, y = 0, z = 0 } }
+    pcall(function()
+        local sq = seat:getSquare()
+        if sq ~= nil then targets[1].x, targets[1].y, targets[1].z = sq:getX(), sq:getY(), sq:getZ() end
+    end)
+    local opt = context:addOptionOnTop(label, targets, BridgeMenu.onSitThis)
+    if not ok or BridgeTask.active then opt.notAvailable = true end
+    pcall(function()
+        if BridgeTask.seatTaken({ obj = seat }, Bridge.body) then opt.notAvailable = true end
+    end)
 end
 
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWorldMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onTreeMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onJobsMenu)
+Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLootMenu)
+Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onSitMenu)
 
 Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
     if Bridge ~= nil and Bridge.claimMenuFix ~= nil then pcall(Bridge.claimMenuFix, playerNum, context, worldobjects, test) end

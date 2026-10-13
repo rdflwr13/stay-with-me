@@ -19,6 +19,9 @@ BridgeSocial.info = "none"
 
 local CAP_F = 6
 local CAP_R = 3
+local COMBAT_KILL_STEP = 5
+local COMBAT_DAILY_CAP = 3
+local COMBAT_NEAR = 10
 local REPEAT_SEC = { Chat = 30, Thanks = 45, Joke = 90, Compliment = 180, Comfort = 180, Flirt = 300, Hug = 300 }
 
 local BUSY_DIST = 8
@@ -27,6 +30,19 @@ local DAY_HOURS = 3
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeSocial] " .. tostring(text)) end end
 local function warn(text) print("[BridgeSocial] " .. tostring(text)) end
+
+BridgeSocial.said = BridgeSocial.said or {}
+function BridgeSocial.speak(key, fallback, gap)
+    if key == nil then return end
+    local now = 0
+    pcall(function() now = Bridge.time or 0 end)
+    if now - (BridgeSocial.said[key] or -99999) < (gap or 120) then return end
+    BridgeSocial.said[key] = now
+    local text = nil
+    pcall(function() text = getTextOrNull("IGUI_NotAlone_Say_" .. tostring(key)) end)
+    if text == nil or text == "" then text = fallback end
+    pcall(function() if Bridge ~= nil and Bridge.speakText ~= nil then Bridge.speakText(text) end end)
+end
 
 local function hours()
     local h = 0
@@ -46,6 +62,13 @@ local function clamp(v, lo, hi)
     if v < lo then return lo end
     if v > hi then return hi end
     return v
+end
+
+
+local function popRel(df, dr)
+    if BridgeSkills == nil or type(BridgeSkills.popRel) ~= "function" then return end
+    if df ~= nil and df ~= 0 then BridgeSkills.popRel("Friend", df) end
+    if dr ~= nil and dr ~= 0 then BridgeSkills.popRel("Romance", dr) end
 end
 
 
@@ -162,8 +185,8 @@ end
 
 BridgeSocial.sentSign = nil
 local function sign(r)
-    return string.format("%d|%d|%d|%d|%d|%d|%.1f|%.1f|%.1f", r.f, r.r, r.days, r.day, r.gainF, r.gainR,
-        r.giftAt, r.askAt, r.healAt or 0)
+    return string.format("%d|%d|%d|%d|%d|%d|%.1f|%.1f|%.1f|%.1f", r.f, r.r, r.days, r.day, r.gainF, r.gainR,
+        r.giftAt, r.askAt, r.healAt or 0, r.valuedAt or 0)
 end
 function BridgeSocial.save(now)
     if not Bridge.mp then return end
@@ -189,6 +212,8 @@ local function rollDay(r)
     r.hours = 0
     r.gainF = 0
     r.gainR = 0
+    r.combatKills = 0
+    r.combatF = 0
     r.dressF = 0
     r.dressR = 0
     BridgeSocial.save(true)
@@ -210,6 +235,7 @@ local function gain(r, df, dr)
     end
     r.f = clamp(r.f + df, -100, 100)
     r.r = clamp(r.r + dr, 0, 100)
+    popRel(df, dr)
 
     BridgeSocial.save(true)
 end
@@ -224,11 +250,55 @@ function BridgeSocial.deed(kind)
         if now < (r.healAt or 0) then return end
         r.healAt = now + 6
         r.f = clamp(r.f + 2, -100, 100)
+        popRel(2, 0)
     elseif kind == "hit" then
         r.f = clamp(r.f - 8, -100, 100)
         r.r = clamp(r.r - 5, 0, 100)
+        popRel(-8, -5)
     end
     BridgeSocial.save(true)
+end
+
+
+function BridgeSocial.relCommand(sub, a, b)
+    local r = rel()
+    if r == nil then return "no rel" end
+    if sub == nil or sub == "show" or sub == "status" then
+        return string.format("rel f=%d r=%d days=%d hours=%.1f gain=%d/%d combat=%d/%d",
+            r.f, r.r, r.days, r.hours, r.gainF, r.gainR, r.combatKills or 0, r.combatF or 0)
+    end
+    if sub == "reset" then
+        r.f, r.r = 0, 0
+        r.days, r.hours = 0, 0
+        r.gainF, r.gainR = 0, 0
+        r.combatKills, r.combatF = 0, 0
+        BridgeSocial.save(true)
+        return "rel reset f=0 r=0"
+    end
+    if sub == "add" or sub == "remove" then
+        local df = tonumber(a)
+        if df == nil then return "rel " .. sub .. " needs a number: rel " .. sub .. " <friendly> [romance]" end
+        local dr = tonumber(b) or 0
+        if sub == "remove" then df, dr = -df, -dr end
+        local bf, br = r.f, r.r
+        r.f = clamp(r.f + df, -100, 100)
+        r.r = clamp(r.r + dr, 0, 100)
+        popRel(r.f - bf, r.r - br)
+        BridgeSocial.save(true)
+        return string.format("rel f=%d r=%d", r.f, r.r)
+    end
+    if sub == "set" then
+        local f = tonumber(a)
+        if f == nil then return "rel set needs a number: rel set <friendly> [romance]" end
+        local bf, br = r.f, r.r
+        r.f = clamp(f, -100, 100)
+        local rr = tonumber(b)
+        if rr ~= nil then r.r = clamp(rr, 0, 100) end
+        popRel(r.f - bf, r.r - br)
+        BridgeSocial.save(true)
+        return string.format("rel f=%d r=%d", r.f, r.r)
+    end
+    return "rel [show | add <f> [r] | remove <f> [r] | set <f> [r] | reset]"
 end
 
 
@@ -610,6 +680,151 @@ end
 
 
 
+local RECEIVE_CAT = {
+    Ammo = "ReceiveAmmo",
+    FirstAid = "ReceiveMeds", Bandage = "ReceiveMeds", Wound = "ReceiveMeds", Medical = "ReceiveMeds",
+    Junk = "ReceiveJunk", Money = "ReceiveJunk",
+    Tool = "ReceiveTool",
+    Material = "ReceiveMaterial", RecipeResource = "ReceiveMaterial",
+    FireSource = "ReceiveFireSource",
+    LightSource = "ReceiveTorch",
+    Electronics = "ReceiveElectronics",
+    Communications = "ReceiveComms",
+    Literature = "ReceiveRead", SkillBook = "ReceiveRead",
+    Cartography = "ReceiveMap",
+    Entertainment = "ReceiveFun",
+    Sports = "ReceiveSports",
+    Instrument = "ReceiveInstrument",
+    Teddy = "ReceiveTeddy",
+    Memento = "ReceiveMemento",
+    Cooking = "ReceiveCooking",
+    Gardening = "ReceiveGardening",
+    Fishing = "ReceiveFishing",
+    Trapping = "ReceiveTrapping",
+    VehicleMaintenance = "ReceiveVehiclePart",
+    Camping = "ReceiveCamping",
+    Container = "ReceiveContainer",
+    Furniture = "ReceiveFurniture",
+    Paint = "ReceivePaint",
+    Security = "ReceiveSecurity",
+    WeaponPart = "ReceiveWeaponPart",
+    Appearance = "ReceiveMakeup", MakeUp = "ReceiveMakeup",
+    AnimalPart = "ReceiveAnimalPart", Ears = "ReceiveAnimalPart", Eye = "ReceiveAnimalPart", Tail = "ReceiveAnimalPart",
+    Animal = "ReceiveAnimal", Bug = "ReceiveAnimal", Frog = "ReceiveAnimal", Bunny = "ReceiveAnimal",
+    Fox = "ReceiveAnimal", Raccoon = "ReceiveAnimal", Duck = "ReceiveAnimal", Mole = "ReceiveAnimal",
+    Goblin = "ReceiveAnimal", Spider = "ReceiveAnimal", Hedgehog = "ReceiveAnimal", Dog = "ReceiveAnimal",
+    Beaver = "ReceiveAnimal", Badger = "ReceiveAnimal", Bear = "ReceiveAnimal", Squirrel = "ReceiveAnimal",
+    Corpse = "ReceiveCorpse",
+    Household = "ReceiveHousehold",
+
+    Explosives = "ReceiveWeapon", BrokenWeapon = "ReceiveWeapon",
+    ProtectiveGear = "ReceiveCloth", Accessory = "ReceiveItem",
+
+    Cont = "ReceiveContainer", Bag = "ReceiveContainer", WaterContainer = "ReceiveContainer",
+    Med = "ReceiveMeds", Drugs = "ReceiveCigs",
+    Cook = "ReceiveCooking", Furn = "ReceiveFurniture", Mech = "ReceiveVehiclePart",
+    Appear = "ReceiveMakeup", Collect = "ReceiveTeddy", Clean = "ReceiveCleaning", Fuel = "ReceiveFuel",
+    Craft = "ReceiveMaterial", CraftCarp = "ReceiveMaterial", CraftMetal = "ReceiveMaterial", CraftTailor = "ReceiveMaterial",
+    CraftElec = "ReceiveElectronics", Elec = "ReceiveElectronics",
+    MediaA = "ReceiveFun", MediaV = "ReceiveFun",
+    LitC = "ReceiveMap", LitE = "ReceiveRead", LitR = "ReceiveRead", LitS = "ReceiveRead", LitW = "ReceiveHousehold",
+    SurCamp = "ReceiveCamping", SurFish = "ReceiveFishing", SurTrap = "ReceiveTrapping", SurBait = "ReceiveBait",
+    Farm = "ReceiveGardening", FarmSeed = "ReceiveGardening",
+    WepPart = "ReceiveWeaponPart", WepAmmoMag = "ReceiveAmmo",
+    AnimalPartWeapon = "ReceiveAnimalPart",
+    Key = "ReceiveItem", Misc = "ReceiveItem",
+    WepMelee = "ReceiveWeapon", WepBomb = "ReceiveWeapon",
+    WeapBlunt = "ReceiveWeapon", WeapBluntLong = "ReceiveWeapon",
+    WeapBlade = "ReceiveWeapon", WeapBladeLong = "ReceiveWeapon", WeapSpear = "ReceiveWeapon",
+    WepRange = "ReceiveGun",
+
+    AppearC = "ReceiveMakeup", CookB = "ReceiveCooking", MediaG = "ReceiveFun", SurFarm = "ReceiveGardening",
+    CraftAmmo = "ReceiveAmmo", CraftMas = "ReceiveMaterial",
+    WepAmmo = "ReceiveAmmo", WepAmmoMagF = "ReceiveAmmo", WepMag = "ReceiveAmmo",
+    WepBow = "ReceiveWeapon", WepShield = "ReceiveWeapon",
+    Cloth = "ReceiveCloth", ClothA = "ReceiveCloth", ClothB = "ReceiveCloth", ClothM = "ReceiveCloth",
+    ClothMisc = "ReceiveCloth", ClothAcc = "ReceiveCloth", ClothArm = "ReceiveCloth", ClothBody = "ReceiveCloth",
+    ClothFeet = "ReceiveCloth", ClothHead = "ReceiveCloth", ClothJew = "ReceiveCloth", ClothLeg = "ReceiveCloth",
+    ClothUnder = "ReceiveCloth", ClothBack = "ReceiveContainer", ClothBag = "ReceiveContainer",
+    Casings = "ReceiveAmmo", WeaponMagazine = "ReceiveAmmo", GunMag = "ReceiveAmmo", FixedMag = "ReceiveAmmo",
+    ReloadingTool = "ReceiveWeaponPart", GunClean = "ReceiveWeaponPart", Components = "ReceiveWeaponPart",
+    WeaponConversion = "ReceiveWeaponPart",
+    Devices = "ReceiveElectronics", PowerPlantParts = "ReceiveElectronics",
+    Tuning = "ReceiveVehiclePart", TuningService = "ReceiveVehiclePart", VehicleMantenance = "ReceiveVehiclePart",
+    Bulldog = "ReceiveVehiclePart", Cars = "ReceiveVehiclePart",
+    CoolerBackpack = "ReceiveContainer", Moveable = "ReceiveFurniture",
+    Tiles = "ReceivePaint", Wallpaper = "ReceivePaint", WoodStain = "ReceivePaint", Art = "ReceivePaint",
+    Toy = "ReceiveFun", Curio = "ReceiveMemento", TTPlushie = "ReceiveTeddy",
+    Tonic = "ReceiveMeds", TTTonic = "ReceiveMeds", FeminineHygiene = "ReceiveHousehold",
+    Transmog = "ReceiveItem", TransmogHide = "ReceiveItem", SurvivalGear = "ReceiveItem",
+    Box = "ReceiveItem", Mail = "ReceiveItem", TTMail = "ReceiveItem", Item = "ReceiveItem",
+    TEST = "ReceiveItem", Horse = "ReceiveItem", Magic = "ReceiveItem", ZD = "ReceiveItem",
+    VFXDistribution = "ReceiveItem",
+}
+
+local RECEIVE_GESTURE = {
+    ReceiveRotten = "NoThankYou", ReceiveTreat = "Yes",
+    ReceiveMeds = "Yes", ReceiveComms = "Yes", ReceiveInstrument = "Yes", ReceiveTeddy = "Yes",
+    ReceiveMemento = "Yes", ReceiveGardening = "Yes", ReceiveAnimal = "Yes",
+    ReceiveBattery = "Yes",
+    ReceiveFun = "Clap", ReceiveSports = "Clap", ReceiveFishing = "Clap", ReceiveMakeup = "Clap",
+    ReceiveWeaponPart = "NoThankYou", ReceiveCorpse = "NoThankYou",
+    ReceiveCigs = "NoThankYou",
+}
+
+local VALUED = { ReceiveMeds = true, ReceiveMemento = true, ReceiveTeddy = true,
+    ReceiveGardening = true, ReceiveInstrument = true }
+
+
+local FIRE_TYPES = { MagnesiumFirestarter = true, DryFirestarterBlock = true, Flint = true,
+    SteelAndFlint = true, Lighter = true, Lighter_Battery = true, Matches = true, Matchbox = true }
+
+local function itemStartsFire(item)
+    local t = itemTypeName(item)
+    if FIRE_TYPES[t] then return true end
+    return t:find("Firestarter", 1, true) ~= nil
+end
+
+local function itemIsBone(item)
+    return nameHas(item, "AnimalBone", "Animal_Brain")
+end
+
+local function isUnderwear(item)
+    local loc = nil
+    pcall(function() loc = item:getBodyLocation() end)
+    if loc == nil then return false end
+    return string.lower(tostring(loc)):find("underwear", 1, true) ~= nil
+end
+
+local TOBACCO_TYPES = { CigarettePack = true, CigaretteCarton = true, CigaretteSingle = true,
+    CigaretteRolled = true, Cigar = true, Cigarillo = true, Tobacco = true, TobaccoLoose = true,
+    TobaccoChewing = true, TobaccoDried = true, SmokingPipe = true, SmokingPipe_Tobacco = true, Cigarettes = true }
+
+local function isTobacco(item)
+    if TOBACCO_TYPES[itemTypeName(item)] then return true end
+    return tostring(mcall(item, "getDisplayCategory") or "") == "Drugs"
+end
+
+local BAIT_TYPES = { Worm = true, Cricket = true, Grasshopper = true, Cockroach = true, Maggots = true,
+    Pillbug = true, Slug = true, Snail = true, Centipede = true, Millipede = true, Caterpillar = true,
+    SawflyLarva = true, Termites = true, Leech = true, Leeches = true, Tadpole = true, BaitFish = true }
+
+local function isBait(item)
+    if BAIT_TYPES[itemTypeName(item)] then return true end
+    if tostring(mcall(item, "getDisplayCategory") or "") == "SurBait" then return true end
+    return nameHas(item, "Caterpillar", "Centipede", "Millipede")
+end
+
+local function itemIsTypeFlag(item, name)
+    local yes = false
+    pcall(function()
+        yes = item ~= nil and item.isItemType ~= nil and ItemType ~= nil and ItemType[name] ~= nil
+            and item:isItemType(ItemType[name]) == true
+    end)
+    return yes
+end
+
+
 function BridgeSocial.receivePool(item)
     if item == nil then return "ReceiveItem" end
 
@@ -617,6 +832,8 @@ function BridgeSocial.receivePool(item)
         local g = BridgeSocial.maleReceive(item)
         if g ~= nil then return g.pool end
     end
+
+    if mcall(item, "getType") == "Battery" then return "ReceiveBattery" end
 
 
 
@@ -627,6 +844,10 @@ function BridgeSocial.receivePool(item)
         if type(c) == "number" and c <= 0.0001 then return "ReceiveTorchEmpty" end
         return "ReceiveTorch"
     end
+
+    if itemStartsFire(item) then return "ReceiveFireSource" end
+
+    if itemIsBone(item) then return "ReceiveAnimalPart" end
 
 
 
@@ -653,17 +874,12 @@ function BridgeSocial.receivePool(item)
     pcall(function() weapon = BridgeWeapon ~= nil and BridgeWeapon.isMelee ~= nil and BridgeWeapon.isMelee(item) end)
     if weapon then return "ReceiveWeapon" end
 
+    if not isMale() and isTobacco(item) then return "ReceiveCigs" end
+    if isBait(item) then return "ReceiveBait" end
+
     local food = mcall(item, "IsFood") == true
     if food and itemRotten(item) then return "ReceiveRotten" end
 
-    local cat = mcall(item, "getCategory")
-
-    if cat == "Drink" then
-        if nameHas(item, "Beer", "Whiskey", "Whisky", "Wine", "Vodka", "Rum", "Bourbon", "Tequila", "Gin") then
-            return "ReceiveBooze"
-        end
-        return "ReceiveWater"
-    end
     if mcall(item, "isWaterSource") == true then
         if mcall(item, "isTaintedWater") == true then return "ReceiveTainted" end
         return "ReceiveWater"
@@ -682,15 +898,33 @@ function BridgeSocial.receivePool(item)
         return "ReceiveFood"
     end
 
-    if cat == "Ammo" then return "ReceiveAmmo" end
-    if cat == "Medical" then return "ReceiveMeds" end
+    if mcall(item, "IsClothing") == true then
+        if not presentable(item) then
+            local broken = false
+            pcall(function()
+                broken = item:isBroken() or (item.getHolesNumber ~= nil and item:getHolesNumber() > 0)
+            end)
+            return broken and "DressBroken" or "DressDirty"
+        end
+        if not isMale() and isUnderwear(item) then return "ReceiveUndies" end
+        return "ReceiveCloth"
+    end
 
-    if mcall(item, "IsClothing") == true then return "ReceiveCloth" end
+    if nameHas(item, "Corpse") then return "ReceiveCorpse" end
+
+    local cat = tostring(mcall(item, "getDisplayCategory") or "")
+    if isMale() and cat == "Drugs" then return "ReceiveSmokes" end
+    local pool = RECEIVE_CAT[cat]
+    if pool ~= nil then return pool end
+
+    if itemIsTypeFlag(item, "MEDICAL") then return "ReceiveMeds" end
+    if itemIsTypeFlag(item, "CONTAINER") then return "ReceiveContainer" end
+    if itemIsTypeFlag(item, "LITERATURE") then return "ReceiveRead" end
+    if itemIsTypeFlag(item, "AMMO") then return "ReceiveAmmo" end
+    if itemIsTypeFlag(item, "KEY") then return "ReceiveItem" end
 
     local w = mcall(item, "getActualWeight")
     if type(w) == "number" and w > 5 then return "ReceiveHeavy" end
-
-    if cat == "Junk" or cat == "Money" then return "ReceiveJunk" end
 
     return "ReceiveItem"
 end
@@ -718,10 +952,22 @@ function BridgeSocial.received(item)
 
     if isMale() then pcall(BridgeSocial.maleGift, item, pool) end
 
+    if VALUED[pool] then
+        local r = rel()
+        if r ~= nil then
+            local now = hours()
+            if now - (r.valuedAt or 0) >= 24 then
+                r.valuedAt = now
+                gain(r, 1, 0)
+            end
+        end
+    end
 
     if pool ~= "ReceiveRotten" and pool ~= "ReceiveGun" and pool ~= "ReceiveWeapon"
         and pool ~= "ReceiveCleanWeapon"
         and pool ~= "ReceiveFuel" and pool ~= "ReceiveCleaner"
+        and pool ~= "ReceiveAmmo" and pool ~= "ReceiveMeds"
+        and pool ~= "ReceiveBattery"
         and BridgeSocial.recvBefore(item) then
         pool = "ReceiveAgain"
     end
@@ -738,10 +984,9 @@ function BridgeSocial.received(item)
 
     if pool == "ReceiveGun" then
         BridgeSocial.gunNervous()
-    elseif pool == "ReceiveRotten" then
-        gesture("NoThankYou")
-    elseif pool == "ReceiveTreat" then
-        gesture("Yes")
+    else
+        local anim = RECEIVE_GESTURE[pool]
+        if anim ~= nil then gesture(anim) end
     end
     BridgeSocial.info = "received " .. pool
     log(BridgeSocial.info)
@@ -770,6 +1015,7 @@ function BridgeSocial.maleGift(item, pool)
         r.dressR = (r.dressR or 0) + dr
         r.f = clamp(r.f + df, -100, 100)
         r.r = clamp(r.r + dr, 0, 100)
+        popRel(df, dr)
         BridgeSocial.save(true)
     end
     log(string.format("male gift %s +%d/+%d f=%d r=%d", pool, df, dr, r.f, r.r))
@@ -834,6 +1080,7 @@ function BridgeSocial.dressed(item)
         r.dressR = (r.dressR or 0) + dr
         r.f = clamp(r.f + df, -100, 100)
         r.r = clamp(r.r + dr, 0, 100)
+        popRel(df, dr)
         BridgeSocial.save(true)
     end
     BridgeSocial.info = string.format("dressed %s +%d/+%d f=%d r=%d", pool, df, dr, r.f, r.r)
@@ -875,6 +1122,39 @@ local function recentFight()
     pcall(function() last = BridgeWeapon.lastFight end)
 
     return (Bridge.time - last) < AFTER_FIGHT
+end
+
+
+local function engaged()
+    if BridgeCar ~= nil and BridgeCar.holdsBody() then return false end
+    if Bridge.mode == "rest" then return false end
+    local red = BridgeData.owner()
+    local asleep = false
+    pcall(function() asleep = red ~= nil and red:isAsleep() end)
+    if asleep then return false end
+    return (BridgeFight ~= nil and BridgeFight.target ~= nil) or recentFight()
+end
+
+
+function BridgeSocial.onCombatKill(z)
+    local body = Bridge.body
+    if z == nil or body == nil or z == body then return end
+    if not engaged() then return end
+    local near = false
+    pcall(function()
+        local dx, dy = z:getX() - body:getX(), z:getY() - body:getY()
+        near = dx * dx + dy * dy < COMBAT_NEAR * COMBAT_NEAR and math.abs(z:getZ() - body:getZ()) < 1
+    end)
+    if not near then return end
+    local r = rel()
+    if r == nil then return end
+    rollDay(r)
+    if (r.combatF or 0) >= COMBAT_DAILY_CAP then return end
+    r.combatKills = (r.combatKills or 0) + 1
+    if r.combatKills % COMBAT_KILL_STEP == 0 then
+        r.combatF = (r.combatF or 0) + 1
+        gain(r, 1, 0)
+    end
 end
 
 
@@ -1169,6 +1449,10 @@ function BridgeSocial.fillMenu(context, tr)
         end
     end
     if r.f >= 20 then sub:addOption(tr("Talk_Ask"), nil, BridgeSocial.ask) end
+end
+
+if type(Events) == "table" and Events.OnZombieDead ~= nil then
+    Events.OnZombieDead.Add(function(z) pcall(BridgeSocial.onCombatKill, z) end)
 end
 
 log("loaded")

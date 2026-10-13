@@ -129,7 +129,9 @@ function BridgeQueue.wants(action)
         local c, _, w = BridgeInventory.canGesture(Bridge.body)
         can, wait = c == true, w == true
     end)
-    return can or wait
+    local seated = false
+    pcall(function() seated = BridgeInventory.seated ~= nil and BridgeInventory.seated(Bridge.body) end)
+    return can or wait or seated
 end
 
 local function indexOf(action)
@@ -141,7 +143,67 @@ end
 BridgeQueue.indexOf = indexOf
 
 
+local function mergeStack(action)
+    if type(action) ~= "table" or action.item == nil then return false end
+    if action.Type ~= "ISInventoryTransferAction" and action.Type ~= "BridgeTransferAction" then return false end
+    if action.relayId ~= nil then return false end
+    local full, w = nil, nil
+    pcall(function() full = action.item:getFullType() end)
+    pcall(function() w = action.item:getWeight() end)
+    if full == nil then return false end
+    if type(w) ~= "number" or w > 0.1 then return false end
+    local cap = (BridgeInventory ~= nil and BridgeInventory.LOOT_STACK_MAX) or 200
+    local aRelay = action.bridgeRelay ~= nil
+    for i = #BridgeQueue.jobs, 1, -1 do
+        local job = BridgeQueue.jobs[i]
+        if type(job) == "table" and (job.Type == "ISInventoryTransferAction" or job.Type == "BridgeTransferAction") then
+            local jRelay = job.bridgeRelay ~= nil
+            if job.srcContainer == action.srcContainer and job.destContainer == action.destContainer and jRelay == aRelay then
+                local jobFull = nil
+                pcall(function() jobFull = job.item:getFullType() end)
+                if jobFull == full then
+                    if aRelay then
+                        local g = job.bridgeRelay.group
+                        if g == nil then g = { job.item } job.bridgeRelay.group = g end
+                        if #g < cap then
+                            g[#g + 1] = action.item
+                            job.queueList = job.queueList or {}
+                            if type(job.queueList[1]) ~= "table" then
+                                job.queueList[1] = { items = g, time = job.maxTime, type = full }
+                            else
+                                job.queueList[1].items = g
+                                job.queueList[1].time = job.maxTime
+                                job.queueList[1].type = full
+                            end
+                            return true
+                        end
+                    elseif job.Type == "BridgeTransferAction" then
+                        job.group = job.group or { job.item }
+                        if #job.group < cap then
+                            job.group[#job.group + 1] = action.item
+                            return true
+                        end
+                    else
+                        job.queueList = job.queueList or {}
+                        local q = job.queueList[1]
+                        if type(q) ~= "table" then
+                            q = { items = { job.item }, time = job.maxTime, type = full }
+                            job.queueList[1] = q
+                        end
+                        q.items[#q.items + 1] = action.item
+                        return true
+                    end
+                end
+            end
+            break
+        end
+    end
+    return false
+end
+
+
 function BridgeQueue.push(action, after)
+    if after == nil and mergeStack(action) then return action end
     action.bridgeOwn = true
     action.bridgeStays = true
     local at = after ~= nil and indexOf(after) or nil
@@ -169,16 +231,18 @@ end
 
 local function dropped(a, why)
     if Bridge == nil or not Bridge.mp or BridgeInventory == nil or BridgeInventory.giveDirect == nil then return end
-    local item = nil
+    local items = {}
     pcall(function()
         if a.relayId ~= nil then
             if why == "cancel key" then return end
-            item = BridgeData.owner():getInventory():getItemWithIDRecursiv(a.relayId)
+            local it = BridgeData.owner():getInventory():getItemWithIDRecursiv(a.relayId)
+            if it ~= nil then items[1] = it end
         elseif a.bridgeReturn then
-            item = a.item
+            local g = a.group or { a.item }
+            for i = 1, #g do if g[i] ~= nil then items[#items + 1] = g[i] end end
         end
     end)
-    if item ~= nil then pcall(BridgeInventory.giveDirect, item, why) end
+    for i = 1, #items do pcall(BridgeInventory.giveDirect, items[i], why) end
 end
 BridgeQueue.dropped = dropped
 
@@ -240,7 +304,9 @@ function BridgeQueue.tick()
 
         local waiting = false
         pcall(function() waiting = BridgeInventory.gestureWaitingFor(a) end)
-        if waiting then mult = 0 end
+        local seated = false
+        pcall(function() seated = BridgeInventory.seated ~= nil and BridgeInventory.seated(Bridge.body) end)
+        if waiting and not seated then mult = 0 end
         f:advance(mult)
         local okU = pcall(function() a:update() end)
         if not okU then valid = false end
@@ -344,6 +410,7 @@ local function pullBack(action, previous)
         local i = indexOf(a)
         if i ~= nil then table.remove(BridgeQueue.jobs, i) end
         a.bridgeOwn = nil
+        a.bridgeStays = nil
         a.bridgeBack = true
         if a.bridgeRawMax ~= nil then a.maxTime = a.bridgeRawMax end
         a.action = nil
