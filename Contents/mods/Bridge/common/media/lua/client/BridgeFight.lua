@@ -306,10 +306,13 @@ local function attackAnims(item, prone, crit)
 end
 
 local function isProne(z)
-    local asn = z:getActionStateName()
+    local asn = "?"
+    pcall(function() asn = z:getActionStateName() end)
     local crawl = false
     pcall(function() crawl = z:isCrawling() end)
-    return z:isProne() or crawl or asn == "onground" or asn == "sitonground"
+    local prone = false
+    pcall(function() prone = z:isProne() end)
+    return prone or crawl or asn == "onground" or asn == "sitonground"
         or string.sub(asn, 1, 5) == "getup"
 end
 
@@ -551,27 +554,7 @@ local function combatTextHit(victim, item, crit)
     end)
 end
 
-local function hitTarget(body, item, victim, noMiss, fixedDmg)
-    local fake = getCell():getFakeZombieForHit()
-    local range = item:getMaxRange()
-    local d = dist(body, victim)
-
-    if d >= range + 0.3 then return string.format("miss range d=%.2f r=%.2f", d, range) end
-    if victim:isOnKillDone() then return "miss killdone" end
-    if wallBetween(body, victim) then return "miss wall" end
-
-    local miss = 0
-    if not noMiss then
-        miss = missChance(body)
-        if ZombRand(100) >= 100 - miss then
-            pcall(function() victim:setHitFromBehind(false) end)
-            return string.format("miss roll (%.0f%% f=%.2f crowd=%d)", miss, BridgeFight.fatigue, BridgeFight.crowd)
-        end
-    end
-    local behind = body:isBehind(victim)
-    victim:setHitFromBehind(behind)
-    victim:setAttackedBy(fake)
-
+local function computeSwing(item, fixedDmg)
     local crit, critChance, critMult
     if BridgeFight.swingCrit ~= nil then
         crit = BridgeFight.swingCrit
@@ -582,9 +565,6 @@ local function hitTarget(body, item, victim, noMiss, fixedDmg)
     end
     local dmg, rawDmg
     local headFloor = false
-
-
-
     local cat, rawSkill, eff = weaponSkill(item)
     local str = strengthLevel()
     local fitN = fitnessLevel()
@@ -620,8 +600,49 @@ local function hitTarget(body, item, victim, noMiss, fixedDmg)
         mult, dmg, BridgeFight.fatigue,
         fitN, fitnessSpeedAdd(fitN) * 100, fitnessDrainMult(fitN), fitnessRecoverMult(fitN)))
     BridgeFight.lastHead = headFloor
+    return crit, critChance, critMult, dmg, rawDmg, headFloor
+end
+
+local function hitTarget(body, item, victim, noMiss, fixedDmg)
+    local isAnimal = instanceof(victim, "IsoAnimal")
+    local fake = isAnimal and nil or getCell():getFakeZombieForHit()
+    local range = item:getMaxRange()
+    local d = dist(body, victim)
+
+    if d >= range + 0.3 then return string.format("miss range d=%.2f r=%.2f", d, range) end
+    if isAnimal then
+        if victim:isDead() then return "miss dead" end
+    elseif victim:isOnKillDone() then
+        return "miss killdone"
+    end
+    if wallBetween(body, victim) then return "miss wall" end
+
+    local miss = 0
+    if not noMiss then
+        miss = missChance(body)
+        if ZombRand(100) >= 100 - miss then
+            if not isAnimal then pcall(function() victim:setHitFromBehind(false) end) end
+            return string.format("miss roll (%.0f%% f=%.2f crowd=%d)", miss, BridgeFight.fatigue, BridgeFight.crowd)
+        end
+    end
+
+    local crit, critChance, critMult, dmg, rawDmg, headFloor = computeSwing(item, fixedDmg)
+
     local hpBefore = 0
     pcall(function() hpBefore = victim:getHealth() end)
+
+    if isAnimal then
+        if BridgeAnimals ~= nil then BridgeAnimals.attack(victim, dmg, body) end
+        tire(item, rawDmg, hpBefore, false, body)
+        vlog(string.format("hit animal %s dmg=%.3f hp=%.2f%s crit=%.0f%%", tostring(item:getType()),
+            dmg, hpBefore, crit and " CRIT" or "", critChance))
+        return "hit"
+    end
+
+    local behind = body:isBehind(victim)
+    victim:setHitFromBehind(behind)
+    victim:setAttackedBy(fake)
+
     victim:setPlayerAttackPosition(victim:testDotSide(body))
     pcall(function() victim:setHitHeadWhileOnFloor(headFloor and 1 or 0) end)
     pcall(function() victim:setHitLegsWhileOnFloor(false) end)
@@ -659,6 +680,7 @@ local function hitTarget(body, item, victim, noMiss, fixedDmg)
     victim:Hit(item, fake, dmg, false, 1, false)
 
     pcall(function() BridgeCallout.kill(victim) end)
+    pcall(function() if BridgeKills ~= nil then BridgeKills.credit(victim) BridgeKills.confirm(victim) end end)
 
     tire(item, rawDmg, hpBefore, isProne(victim), body)
     pcall(function() victim:playSound(item:getZombieHitSound()) end)
@@ -835,6 +857,30 @@ local function pickTarget(body, red, mode)
             end
         end
     end
+    if BridgeAnimals ~= nil and BridgeAnimals.wanted then
+        pcall(function()
+            local animals = getCell():getAnimals()
+            if animals == nil then return end
+            for i = 0, animals:size() - 1 do
+                local a = animals:get(i)
+                if a ~= nil and BridgeAnimals.hostile(a) and a:isAlive()
+                    and math.abs(a:getZ() - red:getZ()) < 0.8 and visible(a, red) then
+                    local dSelf = dist(a, body)
+                    local dRed = dist(a, red)
+                    local near = dSelf < mode.engageSelf or (not BridgeFight.guardOnly and dRed < mode.engageRed)
+                    if near then
+                        local score = BridgeFight.threat(a, body, red, mode)
+                        if BridgeAim ~= nil and BridgeAim.zone.on and BridgeAim.inCone(a:getX(), a:getY(), a:getZ()) then
+                            score = score + (BridgeAim.TARGET_PENALTY or 30)
+                        end
+                        if score < bestD then
+                            best, bestD = a, score
+                        end
+                    end
+                end
+            end
+        end)
+    end
     return best
 end
 
@@ -851,6 +897,16 @@ end
 local function validTarget(z, body, red, mode)
     mode = mode or BridgeFight.mode()
     if z == nil then return false end
+    if instanceof(z, "IsoAnimal") then
+        if BridgeAnimals == nil or not BridgeAnimals.hostile(z) then return false end
+        if not z:isAlive() then return false end
+        if math.abs(z:getZ() - red:getZ()) >= 0.8 then return false end
+        if not visible(z, red) then return false end
+        if BridgeFight.guardOnly then
+            return dist(z, body) <= BridgeData.COMBAT.bodyguard.targetMax
+        end
+        return dist(z, body) <= mode.targetMax
+    end
     if BridgeFight.ownerRisen(z, red) then return false end
     local ok, alive = pcall(function() return z:isAlive() and z:getHealth() > 0 and not z:isOnKillDone() end)
     if not ok or not alive or BridgeData.harmless(z) then return false end
@@ -1136,6 +1192,7 @@ local function shoveApply(body, victim, dot, d, crit)
         pcall(function() victim:setStaggerBack(true) end)
     end
     pcall(function() BridgeCallout.kill(victim) end)
+    pcall(function() if BridgeKills ~= nil then BridgeKills.credit(victim) BridgeKills.confirm(victim) end end)
 end
 
 
@@ -1167,7 +1224,8 @@ end
 
 local function wantShove(body, t, item)
     if SHOVE_ON ~= 1 then return false end
-    if t == nil or isProne(t) then return false end
+    if t == nil or instanceof(t, "IsoAnimal") then return false end
+    if isProne(t) then return false end
     if Bridge.time < (BridgeFight.shoveReadyAt or 0) then return false end
     if (BridgeFight.shoveStreak or 0) >= SHOVE_STREAK_MAX then return false end
     local d = dist(body, t)

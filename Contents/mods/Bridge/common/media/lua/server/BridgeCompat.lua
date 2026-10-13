@@ -6,6 +6,18 @@ BridgeCompat.missingLogged = false
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeCompat] " .. tostring(text)) end end
 
+
+local function markedOurs(z)
+    if z == nil then return false end
+    if Bridge ~= nil and Bridge.body == z then return true end
+    local ok, marked = pcall(function() return z:getVariableBoolean("NotAloneBody") end)
+    if ok and marked == true then return true end
+    local md = nil
+    pcall(function() if z:hasModData() then md = z:getModData() end end)
+    return type(md) == "table" and md.notAloneBody == true
+end
+
+
 local function modActive(id)
     local on = false
     pcall(function()
@@ -16,6 +28,7 @@ local function modActive(id)
 end
 
 function BridgeCompat.isOurBody(z)
+    if markedOurs(z) then return true end
     local ours = false
     if BridgeServer ~= nil and type(BridgeServer.isCompanionBody) == "function" then
         pcall(function() ours = BridgeServer.isCompanionBody(z) end)
@@ -27,6 +40,10 @@ function BridgeCompat.isOurId(pid)
     local ours = false
     if BridgeServer ~= nil and type(BridgeServer.isCompanionId) == "function" then
         pcall(function() ours = BridgeServer.isCompanionId(pid) end)
+    end
+    if ours then return true end
+    if pid ~= nil and Bridge ~= nil and Bridge.body ~= nil then
+        pcall(function() ours = Bridge.body:getPersistentOutfitID() == pid end)
     end
     return ours
 end
@@ -99,13 +116,7 @@ BridgeCompat.alifeCanAttack = nil
 BridgeCompat.alifeStrikeZombie = nil
 
 local function alifeOurs(z)
-    if z == nil then return false end
-    if Bridge ~= nil and Bridge.body == z then return true end
-    local ok, marked = pcall(function() return z:getVariableBoolean("NotAloneBody") end)
-    if ok and marked == true then return true end
-    local md = nil
-    pcall(function() if z:hasModData() then md = z:getModData() end end)
-    return type(md) == "table" and md.notAloneBody == true
+    return markedOurs(z)
 end
 
 function BridgeCompat.alifeInstall()

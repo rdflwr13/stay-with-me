@@ -31,8 +31,6 @@ BridgeAmbient.CFG = {
     FOG            = 0.4,
     WIND           = 0.5,
     CLOUD          = 0.6,
-    DARK_HI        = 0.28,
-    DARK_LO        = 0.22,
     TORCH          = 0.05,
 }
 
@@ -161,7 +159,7 @@ local function lightAt(red)
     return lvl, torch
 end
 
-local function snapshot(red)
+local function snapshot(red, body)
     local p = BridgeAmbient.prev
     local s = { place = "out", covered = false }
     s.place, s.covered = place(red)
@@ -189,13 +187,22 @@ local function snapshot(red)
     local sq = nil
     pcall(function() sq = red:getCurrentSquare() end)
     if sq ~= nil then pcall(function() s.power = sq:haveElectricity() end) end
-    s.light, s.torch = lightAt(red)
-    s.torchOn = (s.torch or 0) > BridgeAmbient.CFG.TORCH
-    if p and p.dark then
-        s.dark = (s.light or 1) < BridgeAmbient.CFG.DARK_HI
-    else
-        s.dark = (s.light or 1) < BridgeAmbient.CFG.DARK_LO
+    s.torchOn = (math.min(1, red:getTorchStrength()) or 0) > BridgeAmbient.CFG.TORCH
+    local dark, inside = nil, nil
+    if BridgeTorch ~= nil and type(BridgeTorch.darkHere) == "function" then
+        dark, inside = BridgeTorch.darkHere(body)
     end
+    if dark == nil then
+        local lvl = BridgeTorchShared.darkAt(body)
+        local external, why = false, "none"
+        if BridgeTorch ~= nil and type(BridgeTorch.externalLight) == "function" then
+            local ok, e, w = pcall(BridgeTorch.externalLight, body, red)
+            if ok then external, why = (e == true), (w or "none") end
+        end
+        dark = BridgeTorchShared.isDark(lvl, external, why)
+        inside = (place(body) ~= "out")
+    end
+    s.dark, s.inside = dark, inside
     pcall(function() s.night = getGameTime():isNight() end)
     pcall(function() s.car = red:getVehicle() ~= nil end)
     return s
@@ -230,7 +237,7 @@ function BridgeAmbient.update(body)
     local red = BridgeData.owner()
     if red == nil then return end
 
-    local s = snapshot(red)
+    local s = snapshot(red, body)
     local p = BridgeAmbient.prev
     BridgeAmbient.prev = s
     if p == nil then return end
@@ -245,7 +252,7 @@ function BridgeAmbient.update(body)
     end)
     if not near then return end
 
-    local room = s.place == "in"
+    local inside = s.inside
     local covered = s.covered
     local list = {}
 
@@ -274,12 +281,12 @@ function BridgeAmbient.update(body)
         if s.torchOn or herLight then
 
 
-            list[#list + 1] = room and "EvDarkRoomTorch" or "EvDarkOutTorch"
+            list[#list + 1] = inside and "EvDarkRoomTorch" or "EvDarkOutTorch"
         else
-            list[#list + 1] = room and "EvNeedLightIn" or "EvNeedLightOut"
+            list[#list + 1] = inside and "EvNeedLightIn" or "EvNeedLightOut"
         end
     end
-    if room and s.night and s.power == false and p.power ~= false then list[#list + 1] = "EvNoPowerIn" end
+    if inside and s.night and s.power == false and p.power ~= false then list[#list + 1] = "EvNoPowerIn" end
 
     if fire(list) then log(BridgeAmbient.info .. " (" .. tostring(s.place) .. ")") end
 end

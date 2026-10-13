@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Left-side sit-down root-motion source for SeatingManager:getAdjacentPosition on
+    the zombie body (state "idle"). Never plays (NARest is not set).
+-->
+<animNode>
+	<m_Name>SitOnFurnitureLeft_NA</m_Name>
+	<m_AnimName>Bob_Seated_SitDown_L</m_AnimName>
+	<m_DeferredBoneName>Bip01</m_DeferredBoneName>
+	<m_deferredBoneAxis>Z</m_deferredBoneAxis>
+	<m_Looped>false</m_Looped>
+	<m_BlendTime>0.10</m_BlendTime>
+	<m_BlendOutTime>0.20</m_BlendOutTime>
+	<m_ConditionPriority>15</m_ConditionPriority>
+	<m_Conditions>
+		<m_Name>NotAloneBody</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_BoolValue>true</m_BoolValue>
+	</m_Conditions>
+	<m_Conditions>
+		<m_Name>NARest</m_Name>
+		<m_Type>STRING</m_Type>
+		<m_StringValue>chairdown</m_StringValue>
+	</m_Conditions>
+	<m_Conditions>
+		<m_Name>SitOnFurnitureDirection</m_Name>
+		<m_Type>STRING</m_Type>
+		<m_StringValue>Left</m_StringValue>
+	</m_Conditions>
+</animNode>

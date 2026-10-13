@@ -323,7 +323,7 @@ function BridgeFastForward.noteScared(b, now)
         local it = cell:getAnimals():iterator()
         while it:hasNext() do
             local a = it:next()
-            if not a:isDead() then
+            if not a:isDead() and not (BridgeAnimals ~= nil and BridgeAnimals.hostile(a)) then
                 local dx, dy = a:getX() - bx, a:getY() - by
                 local d2 = dx * dx + dy * dy
                 if d2 <= r2 and math.abs(a:getZ() - bz) <= 1 and not companionAnimal(a) then
@@ -358,7 +358,8 @@ function BridgeFastForward.calm(b, now)
 
         local fresh, far = {}, 0
         for a, rec in pairs(BridgeFastForward.scared) do
-            if rec.at ~= nil and now - rec.at <= BridgeFastForward.CALM_WINDOW and not a:isDead() then
+            if rec.at ~= nil and now - rec.at <= BridgeFastForward.CALM_WINDOW and not a:isDead()
+                and not (BridgeAnimals ~= nil and BridgeAnimals.hostile(a)) then
                 fresh[a] = rec
                 local d = math.sqrt((a:getX() - bx) ^ 2 + (a:getY() - by) ^ 2)
                 if d > far then far = d end
