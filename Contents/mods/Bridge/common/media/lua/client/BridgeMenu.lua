@@ -694,6 +694,19 @@ local function seatUnder(worldobjects)
     return nil
 end
 
+local function bedUnder(worldobjects)
+    for _, o in ipairs(worldobjects or {}) do
+        if o ~= nil then
+            local isBed = false
+            pcall(function()
+                isBed = BridgeTask ~= nil and BridgeTask.sitIsRealBed ~= nil and BridgeTask.sitIsRealBed(o) == true
+            end)
+            if isBed then return o end
+        end
+    end
+    return nil
+end
+
 function BridgeMenu.onCutTree(target, tree)
     tree = tree or target
     if BridgeTask == nil or tree == nil then return end
@@ -732,6 +745,10 @@ end
 function BridgeMenu.addCancelTask(context)
     if context == nil then return end
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+    if BridgeTask.isLying ~= nil and BridgeTask.isLying() then
+        context:addOption(tr("GetUp"), nil, BridgeMenu.onLayGetUp)
+        return
+    end
     if BridgeTask.isSeated ~= nil and BridgeTask.isSeated() then
         context:addOption(tr("StandUp"), nil, BridgeMenu.onSitStandUp)
         return
@@ -929,11 +946,82 @@ function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
     end)
 end
 
+function BridgeMenu.onLayThis(targets)
+    if BridgeTask == nil or targets == nil or #targets == 0 then return end
+    local res = BridgeTask.start("lay", targets)
+    log("lay from menu: " .. tostring(res))
+end
+
+function BridgeMenu.onLayGetUp()
+    if BridgeTask ~= nil and BridgeTask.layStandUp ~= nil then BridgeTask.layStandUp() end
+end
+
+function BridgeMenu.onLaySleep()
+    if BridgeTask ~= nil and BridgeTask.layToggleSleep ~= nil then BridgeTask.layToggleSleep() end
+end
+
+function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.LAY_ENABLED ~= 1 then return end
+    if not present() then return end
+    local bed = bedUnder(worldobjects)
+    if bed == nil then return end
+
+    if BridgeTask.isLying ~= nil and BridgeTask.isLying() then
+        local upLabel = name() .. ": " .. tr("GetUp")
+        if context:getOptionFromName(upLabel) == nil then
+            context:addOptionOnTop(upLabel, nil, BridgeMenu.onLayGetUp)
+        end
+        local asleep = false
+        pcall(function() asleep = BridgeTask.laySleep == true end)
+        local togLabel = name() .. ": " .. tr(asleep and "Wake" or "Sleep")
+        if context:getOptionFromName(togLabel) == nil then
+            context:addOptionOnTop(togLabel, nil, BridgeMenu.onLaySleep)
+        end
+        return
+    end
+
+    if BridgeTask.active and BridgeTask.kind == "lay" then
+        local cancelLabel = name() .. ": " .. tr("CancelTask")
+        if context:getOptionFromName(cancelLabel) == nil then
+            context:addOptionOnTop(cancelLabel, nil, BridgeMenu.onCancelTask)
+        end
+        return
+    end
+
+    local label = name() .. ": " .. tr("Lay")
+    if context:getOptionFromName(label) ~= nil then return end
+    local ok = false
+    pcall(function() ok = BridgeTask.kinds.lay.available(Bridge.body) end)
+    local targets = { { obj = bed, x = 0, y = 0, z = 0 } }
+    pcall(function()
+        local sq = bed:getSquare()
+        if sq ~= nil then targets[1].x, targets[1].y, targets[1].z = sq:getX(), sq:getY(), sq:getZ() end
+    end)
+    local opt = context:addOptionOnTop(label, targets, BridgeMenu.onLayThis)
+    if not ok or BridgeTask.active then opt.notAvailable = true end
+    local occupied = false
+    pcall(function()
+        if BridgeTask.seatTaken({ obj = bed }, Bridge.body) then occupied = true end
+    end)
+    local playerOn = false
+    pcall(function() playerOn = BridgeTask.layPlayerOnBed({ obj = bed }) == true end)
+    if occupied then
+        opt.notAvailable = true
+        tip(opt, tr("LayOccupied"))
+    elseif playerOn then
+        opt.notAvailable = true
+        tip(opt, tr("LayPlayerOn"))
+    end
+end
+
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWorldMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onTreeMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onJobsMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLootMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onSitMenu)
+Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLayMenu)
 
 Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
     if Bridge ~= nil and Bridge.claimMenuFix ~= nil then pcall(Bridge.claimMenuFix, playerNum, context, worldobjects, test) end

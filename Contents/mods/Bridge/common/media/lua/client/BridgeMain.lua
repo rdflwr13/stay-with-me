@@ -3824,6 +3824,18 @@ end
 local function applyLook(z, visuals, rec, who)
     z:setVariable(BODY_VAR, true)
 
+    pcall(function()
+        local laying = BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "lay"
+        if not laying then
+            local seated = false
+            pcall(function() seated = z:isSittingOnFurniture() == true end)
+            if not seated and z:getVariableBoolean("SitOnFurnitureStarted") then
+                z:clearVariable("SitOnFurnitureStarted")
+                z:clearVariable("SitOnFurnitureDirection")
+            end
+        end
+    end)
+
 
 
 
@@ -3957,10 +3969,14 @@ local function applyLook(z, visuals, rec, who)
 
 
     local sit = rec and rec.sit or nil
+    local layBump = (sit == "bedasleep" and "LayAsleep") or (sit == "bedawake" and "LayAwake") or nil
     if sit == "chair" and l.speed < 0.02 then
         pcall(function() z:setCollidable(false) end)
         pcall(function() if z:getBumpType() ~= "SitChair" then z:setBumpType("SitChair") end end)
         pcall(function() z:setVariable("SitOnFurnitureStarted", true) end)
+    elseif layBump ~= nil and l.speed < 0.02 then
+        pcall(function() z:setCollidable(false) end)
+        pcall(function() if z:getBumpType() ~= layBump then z:setBumpType(layBump) end end)
     else
         pcall(function() if z:isSittingOnFurniture() then z:setSittingOnFurniture(false) end end)
         pcall(function() z:clearVariable("SitOnFurnitureStarted") end)
@@ -3971,6 +3987,10 @@ local function applyLook(z, visuals, rec, who)
             pcall(function()
                 local b = tostring(z:getBumpType())
                 if b == "SitChair" or b == "Sit" then z:setBumpType("") end
+                if b == "LayAwake" or b == "LayAsleep" then
+                    z:setCollidable(true)
+                    z:setBumpType("")
+                end
             end)
         end
     end

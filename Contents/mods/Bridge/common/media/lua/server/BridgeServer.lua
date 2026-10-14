@@ -1215,7 +1215,8 @@ BridgeServer.Commands.state = function(player, args)
     end
 
     if args.sit ~= nil then
-        local sit = (args.sit == "chair" or args.sit == "floor") and args.sit or nil
+        local sit = (args.sit == "chair" or args.sit == "floor"
+            or args.sit == "bedawake" or args.sit == "bedasleep") and args.sit or nil
         if rec.sit ~= sit then
             rec.sit = sit
             changed = true
