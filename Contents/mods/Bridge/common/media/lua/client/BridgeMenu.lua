@@ -362,10 +362,6 @@ local function buildKeep(context, playerNum, env)
 end
 
 local function buildCancel(context, playerNum, env)
-    if BridgeTask ~= nil and BridgeTask.isSitting ~= nil and BridgeTask.isSitting() then
-        context:addOption(tr("StandUp"), nil, BridgeMenu.onSitStandUp)
-        return
-    end
     BridgeMenu.addCancelTask(context)
 end
 
@@ -715,10 +711,13 @@ end
 function BridgeMenu.addCancelTask(context)
     if context == nil then return end
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+    if BridgeTask.isSeated ~= nil and BridgeTask.isSeated() then
+        context:addOption(tr("StandUp"), nil, BridgeMenu.onSitStandUp)
+        return
+    end
     local task = BridgeTask.active == true
     local transfers = BridgeQueue ~= nil and BridgeQueue.jobs ~= nil and #BridgeQueue.jobs > 0
     if not task and not transfers then return end
-    if task and BridgeTask.kind == "sit" then return end
     context:addOption(tr("CancelTask"), nil, BridgeMenu.onCancelTask)
 end
 
@@ -877,10 +876,18 @@ function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
     local seat = seatUnder(worldobjects)
     if seat == nil then return end
 
-    if BridgeTask.isSitting ~= nil and BridgeTask.isSitting() then
+    if BridgeTask.isSeated ~= nil and BridgeTask.isSeated() then
         local upLabel = name() .. ": " .. tr("StandUp")
         if context:getOptionFromName(upLabel) == nil then
             context:addOptionOnTop(upLabel, nil, BridgeMenu.onSitStandUp)
+        end
+        return
+    end
+
+    if BridgeTask.active and BridgeTask.kind == "sit" then
+        local cancelLabel = name() .. ": " .. tr("CancelTask")
+        if context:getOptionFromName(cancelLabel) == nil then
+            context:addOptionOnTop(cancelLabel, nil, BridgeMenu.onCancelTask)
         end
         return
     end

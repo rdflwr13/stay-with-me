@@ -1687,6 +1687,50 @@ end
 
 
 
+BridgeMove.sitFlag = false
+BridgeMove.sitFlagBody = nil
+
+function BridgeMove.isOnChair(body)
+    if body == nil then return false end
+    local seated = false
+    pcall(function() seated = body:isSittingOnFurniture() == true end)
+    if seated then return true end
+    local pose = nil
+    if Bridge ~= nil then pose = Bridge.pose end
+    if pose ~= nil and BridgeMove.CHAIR_POSES[pose.anim] == true then return true end
+    local bump = ""
+    pcall(function() bump = tostring(body:getBumpType()) end)
+    if bump == "SitChair" or bump == "SitChairDown" or bump == "SitChairUp" then return true end
+    return false
+end
+
+function BridgeMove.sitFlagOff(body)
+    if not BridgeMove.sitFlag then return end
+    local b = body or BridgeMove.sitFlagBody
+    if b ~= nil then pcall(function() b:setReanimatedForGrappleOnly(false) end) end
+    BridgeMove.sitFlag, BridgeMove.sitFlagBody = false, nil
+end
+
+function BridgeMove.sitFlagTick(body)
+    if body == nil or body.setReanimatedForGrappleOnly == nil then return end
+    if Bridge == nil or Bridge.kind ~= "zombie" then return end
+    local mp = false
+    pcall(function() mp = isClient() or isServer() end)
+    if mp then BridgeMove.sitFlagOff(body) return end
+    if BridgeFastForward ~= nil and BridgeFastForward.flagged ~= nil then return end
+    if BridgeMove.isOnChair(body) then
+        local on = false
+        pcall(function() on = body:isReanimatedForGrappleOnly() == true end)
+        if not on then
+            pcall(function() body:setReanimatedForGrappleOnly(true) end)
+            log("sit: her body out of the zombie check while seated")
+        end
+        BridgeMove.sitFlag, BridgeMove.sitFlagBody = true, body
+    else
+        BridgeMove.sitFlagOff(body)
+    end
+end
+
 function BridgeMove.sitDownNear(body, red, zones, S, d, inside)
     local bx, by = body:getX(), body:getY()
     local sameZ = math.abs(body:getZ() - zones.z) < 0.5
@@ -1878,6 +1922,7 @@ end
 
 
 function BridgeMove.seatStep(body)
+    if BridgeMove.isOnChair(body) then return true end
     local red = BridgeData.owner()
     local zones = BridgeMove.seatZones(red)
     local S = BridgeMove.seat
@@ -6218,6 +6263,7 @@ function BridgeMove.reset(body)
         pcall(function() body:setSittingOnFurniture(false) end)
     end
     BridgeMove.seatFlag = false
+    BridgeMove.sitFlagOff(body)
     BridgeMove.nearReset()
 
     BridgeMove.stride = nil
@@ -6287,5 +6333,16 @@ function BridgeMove.toCar(body, vehicle)
     local res = BridgeMove.enterCar(body, vehicle)
     BridgeMove.obstacle = "car: " .. tostring(res)
     return true
+end
+
+if type(Events) == "table" and Events.OnTick ~= nil then
+    Events.OnTick.Add(function()
+        local b = Bridge ~= nil and Bridge.body or nil
+        if b == nil then
+            pcall(function() BridgeMove.sitFlagOff(nil) end)
+            return
+        end
+        pcall(BridgeMove.sitFlagTick, b)
+    end)
 end
 

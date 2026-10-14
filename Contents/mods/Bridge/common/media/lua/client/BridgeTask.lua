@@ -1275,7 +1275,7 @@ function BridgeTask.adjacentClear(body, sq)
     return ok
 end
 
-function BridgeTask.walkTo(body, target, reach, reachClear)
+function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
     local bodyZ = math.floor(body:getZ())
     local targetSq = nil
     pcall(function() targetSq = getCell():getGridSquare(target.x, target.y, target.z) end)
@@ -1318,6 +1318,8 @@ function BridgeTask.walkTo(body, target, reach, reachClear)
         if BridgeTask.spot == nil or math.floor(BridgeTask.spot.z or target.z) ~= math.floor(target.z) then
             BridgeTask.spot = { x = target.x, y = target.y, z = target.z }
         end
+    elseif onTarget then
+        BridgeTask.spot = { x = target.x, y = target.y, z = target.z }
     elseif BridgeTask.spot == nil then
         BridgeTask.spot = reachSpot(body, targetSq, target)
         if BridgeTask.spot == nil then
@@ -1333,13 +1335,26 @@ function BridgeTask.walkTo(body, target, reach, reachClear)
     local sx, sy = BridgeTask.spot.x + 0.5, BridgeTask.spot.y + 0.5
     local dSpot = math.sqrt((body:getX() - sx) ^ 2 + (body:getY() - sy) ^ 2)
     local wx, wy = sx, sy
-    local ndx, ndy = (target.x + 0.5) - sx, (target.y + 0.5) - sy
-    local nlen = math.sqrt(ndx * ndx + ndy * ndy)
-    if nlen > 0.05 then
-        wx = sx + (ndx / nlen) * BridgeTask.SPOT_NUDGE
-        wy = sy + (ndy / nlen) * BridgeTask.SPOT_NUDGE
+    local detour = BridgeTask.detour
+    if detour ~= nil then
+        local dd = math.sqrt((body:getX() - detour.x) ^ 2 + (body:getY() - detour.y) ^ 2)
+        if Bridge.time > (detour.expires or 0) or dd <= 1.0 then
+            BridgeTask.detour = nil
+            detour = nil
+        end
     end
-    if sameFloor and dSpot <= BridgeTask.STOP_DIST
+    if detour ~= nil then
+        wx, wy = detour.x, detour.y
+        BridgeTask.progressAt = Bridge.time
+    elseif not onTarget then
+        local ndx, ndy = (target.x + 0.5) - sx, (target.y + 0.5) - sy
+        local nlen = math.sqrt(ndx * ndx + ndy * ndy)
+        if nlen > 0.05 then
+            wx = sx + (ndx / nlen) * BridgeTask.SPOT_NUDGE
+            wy = sy + (ndy / nlen) * BridgeTask.SPOT_NUDGE
+        end
+    end
+    if sameFloor and dSpot <= (onTarget and reach or BridgeTask.STOP_DIST)
             and (not reachClear or BridgeTask.adjacentClear(body, targetSq)) then
         BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
         BridgeTask.openingSince = nil
@@ -1410,6 +1425,27 @@ function BridgeTask.walkTo(body, target, reach, reachClear)
                 return "walking", nil
             else
                 BridgeTask.checkX, BridgeTask.checkY = nil, nil
+                local bx, by = body:getX(), body:getY()
+                local ddx, ddy = (target.x + 0.5) - bx, (target.y + 0.5) - by
+                local dlen = math.sqrt(ddx * ddx + ddy * ddy)
+                if dlen > 0.05 then
+                    ddx, ddy = ddx / dlen, ddy / dlen
+                    local cell = getCell()
+                    local z = math.floor(target.z)
+                    BridgeTask.detourSide = -(BridgeTask.detourSide or 1)
+                    for _, s in ipairs({ BridgeTask.detourSide, -BridgeTask.detourSide }) do
+                        local px = math.floor(bx + (-ddy * s) * 1.6)
+                        local py = math.floor(by + (ddx * s) * 1.6)
+                        local cand = cell:getGridSquare(px, py, z)
+                        local free = false
+                        if cand ~= nil then pcall(function() free = cand:isFree(false) == true end) end
+                        if free then
+                            BridgeTask.detour = { x = px + 0.5, y = py + 0.5, z = target.z, expires = Bridge.time + 150 }
+                            log(string.format("stalled: stepping around via %d,%d", px, py))
+                            break
+                        end
+                    end
+                end
                 if BridgeTask.spot ~= nil then
                     local key = BridgeTask.spot.x .. "," .. BridgeTask.spot.y
                     BridgeTask.stallKey = BridgeTask.stallKey or {}
@@ -1576,6 +1612,8 @@ function BridgeTask.reset()
     BridgeTask.sitBestD = nil
     BridgeTask.sitCloseAt = nil
     BridgeTask.sitFromX, BridgeTask.sitFromY, BridgeTask.sitSlideAt = nil, nil, nil
+    BridgeTask.detour = nil
+    BridgeTask.detourSide = nil
     restoreForcedWalk()
     Bridge.target = nil
 end
@@ -3609,6 +3647,16 @@ function BridgeTask.isSitting(body)
     return bump == "SitChair" or bump == "SitChairDown" or bump == "SitChairUp"
 end
 
+function BridgeTask.isSeated(body)
+    body = body or Bridge.body
+    if body == nil then return false end
+    if BridgeTask.active and BridgeTask.kind == "sit" and BridgeTask.phase == "sit" then return true end
+    if BridgeMove ~= nil and BridgeMove.seat ~= nil and BridgeMove.seat.phase == "sit" then return true end
+    local bump = ""
+    pcall(function() bump = tostring(body:getBumpType()) end)
+    return bump == "SitChair"
+end
+
 function BridgeTask.sitStandUp()
     if BridgeTask.active and BridgeTask.kind == "sit" then
         BridgeTask.sitUp = true
@@ -3664,6 +3712,10 @@ function BridgeTask.kinds.sit.update(body)
         BridgeTask.bestD = nil
         BridgeTask.pathFails = 0
         BridgeTask.pathFailTick = nil
+        BridgeTask.spot = nil
+        BridgeTask.still = 0
+        BridgeTask.checkX, BridgeTask.checkY = nil, nil
+        BridgeTask.detour = nil
         pcall(function()
             local sq = plan.obj:getSquare()
             log(string.format("sit: seat %s at %s, stand %.2f,%.2f facing %s (engine %s)",
@@ -3677,19 +3729,31 @@ function BridgeTask.kinds.sit.update(body)
     local phase = BridgeTask.phase or "walk"
 
     if phase == "walk" then
-        local wx = plan.walkX or plan.standX
-        local wy = plan.walkY or plan.standY
-        local d = sitDist(body:getX(), body:getY(), wx, wy)
-        local arrive = d <= BridgeTask.SIT_RANGE
+        local sx, sy = plan.sx, plan.sy
+        if sx == nil or sy == nil then
+            BridgeTask.info = "sit: no stand square"
+            BridgeTask.markUnreachable(nil)
+            return BridgeTask.finish()
+        end
+        local walk, why = BridgeTask.walkTo(body, { x = sx, y = sy, z = plan.z },
+            BridgeTask.STOP_DIST, true, true)
+        if walk == "unreachable" then
+            BridgeTask.info = "sit: no path to seat"
+            BridgeTask.markUnreachable(why)
+            return BridgeTask.finish()
+        end
+        local d = sitDist(body:getX(), body:getY(), sx + 0.5, sy + 0.5)
+        local arrive = walk == "arrived"
         if not arrive and d <= 0.75 then
             BridgeTask.sitCloseAt = BridgeTask.sitCloseAt or Bridge.time
             if (Bridge.time - BridgeTask.sitCloseAt) > 0.5 * SECOND then arrive = true end
-        else
+        elseif not arrive then
             BridgeTask.sitCloseAt = nil
         end
         if arrive then
             pcall(function() BridgeMove.stopPath(body) end)
             if BridgeMove ~= nil then BridgeMove.moving = false end
+            Bridge.target = nil
             BridgeTask.phase = "down"
             BridgeTask.since = Bridge.time
             BridgeTask.sitAnimSeen = false
@@ -3697,50 +3761,6 @@ function BridgeTask.kinds.sit.update(body)
             Bridge.speak("Sit")
             return true
         end
-
-        local moved = false
-        pcall(function() moved = BridgeMove.goStraight(body, wx, wy, plan.z) end)
-        if not moved then
-            pcall(function() BridgeMove.goToward(body, wx, wy, plan.z, true) end)
-        end
-        if BridgeMove ~= nil and BridgeMove.pathing then
-            BridgeTask.progressAt = Bridge.time
-        end
-
-        local failed = false
-        pcall(function()
-            failed = BridgeMove ~= nil and not BridgeMove.pathing
-                and BridgeMove.pathResult == tostring(BehaviorResult.Failed)
-        end)
-        if failed then
-            if BridgeTask.sitFailTick ~= Bridge.tick then
-                BridgeTask.sitPathFails = (BridgeTask.sitPathFails or 0) + 1
-            end
-            BridgeTask.sitFailTick = Bridge.tick
-            pcall(function() BridgeMove.pathResult = "none" end)
-            if (BridgeTask.sitPathFails or 0) >= BridgeTask.PATH_FAIL_LIMIT then
-                BridgeTask.info = "sit: no path to seat"
-                BridgeTask.markUnreachable(blockedReason(target))
-                return BridgeTask.finish()
-            end
-        end
-
-        if BridgeTask.sitBestD == nil or d < BridgeTask.sitBestD - 0.3 then
-            BridgeTask.sitBestD = d
-            BridgeTask.progressAt = Bridge.time
-        end
-        if (Bridge.time - (BridgeTask.progressAt or BridgeTask.since)) > BridgeTask.WALK_NO_PROGRESS
-                or (Bridge.time - (BridgeTask.since or Bridge.time)) > BridgeTask.SIT_TIMEOUT then
-            if playerOnSquare({ x = plan.sx, y = plan.sy, z = plan.z }) then
-                BridgeTask.progressAt = Bridge.time
-                BridgeTask.info = "sit: waiting for player"
-                return true
-            end
-            BridgeTask.info = "sit: no progress to seat"
-            BridgeTask.markUnreachable(blockedReason(target))
-            return BridgeTask.finish()
-        end
-
         BridgeTask.info = "sit: walking to seat"
         return true
     end

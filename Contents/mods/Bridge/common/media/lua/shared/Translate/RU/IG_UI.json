@@ -1351,7 +1351,7 @@
     "IGUI_NotAlone_ReportLogNote": "Включите подробный лог перед тем, как воспроизвести баг, затем нажмите «Создать отчёт».",
     "IGUI_NotAlone_ReportDone": "Сохранено в %1 (скопировано в буфер обмена)",
     "IGUI_NotAlone_MenuFollow": "Ждать / Следовать",
-    "IGUI_NotAlone_MenuOrderHint": "Перетащите пункт или используйте стрелки, чтобы изменить порядок контекстного меню Рин.",
+    "IGUI_NotAlone_MenuOrderHint": "Перетащите пункт или используйте стрелки, чтобы изменить порядок контекстного меню %1.",
     "IGUI_NotAlone_MenuReset": "Сбросить порядок",
     "IGUI_NotAlone_WindowAppearance": "Внешность",
     "IGUI_NotAlone_AppearanceBody": "Тело",
