@@ -717,6 +717,7 @@ function Bridge.refreshStore()
             Bridge.localKills = incomingKills
         end
     end
+    if BridgeHome ~= nil and BridgeHome.syncHandle then pcall(BridgeHome.syncHandle) end
 end
 
 function Bridge.initStore()
@@ -2010,6 +2011,28 @@ function Bridge.applyStoredMode()
 end
 
 
+function Bridge.setHome(rect)
+    local h = BridgeData.cleanHome(rect)
+    if h == nil then return "bad home" end
+    local st = Bridge.store
+    if st ~= nil then st.home = h end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { home = h }) end)
+    end
+    return "home set"
+end
+
+
+function Bridge.clearHome()
+    local st = Bridge.store
+    if st ~= nil then st.home = nil end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { clearHome = true }) end)
+    end
+    return "home cleared"
+end
+
+
 
 function Bridge.speak(key, a, b)
     local text = key
@@ -2401,6 +2424,7 @@ end
 
 function Bridge.call()
     log("call: " .. (Bridge.alive() and "already here" or "spawning"))
+    if BridgeCallout ~= nil and type(BridgeCallout.homeReset) == "function" then pcall(BridgeCallout.homeReset) end
     setWant(true)
     Bridge.leaveAt = nil
     Bridge.homeParked = false
@@ -2423,6 +2447,7 @@ end
 
 function Bridge.goodbye()
     log("goodbye: " .. (Bridge.alive() and "leaving" or "not here"))
+    if BridgeCallout ~= nil and type(BridgeCallout.homeReset) == "function" then pcall(BridgeCallout.homeReset) end
     setWant(false)
     Bridge.respawnAt = nil
     Bridge.homeParked = false
@@ -4400,7 +4425,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     rest = true, stop = true, mode = true, sit = true, stand = true, sleep = true, anim = true, walk = true,
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
-    kills = true, lose = true, despawn = true, rel = true, places = true, itemselftest = true }
+    kills = true, lose = true, despawn = true, rel = true, places = true, home = true, itemselftest = true }
 
 
 
@@ -4529,6 +4554,7 @@ function Bridge.run(line)
     if cmd == "ask" then return BridgeSocial.ask() end
     if cmd == "rel" then return BridgeSocial.relCommand(parts[3], parts[4], parts[5]) end
     if cmd == "places" then return BridgeCallout.placesCommand(parts[3], parts[4], parts[5]) end
+    if cmd == "home" then return BridgeCallout.homeCommand(parts) end
 
 
 
@@ -5660,6 +5686,11 @@ function Bridge.diagLines()
                     tostring(math.floor(tonumber(e.s) or 0)), (e.t and "1" or "0"), tostring(e.n or "?"))
             end
             add("places", #out > 0 and table.concat(out, ",") or "none")
+        end)
+        pcall(function()
+            if BridgeCallout ~= nil and type(BridgeCallout.homeStatus) == "function" then
+                add("home", BridgeCallout.homeStatus())
+            end
         end)
     end)
     return lines

@@ -21,6 +21,7 @@ require "ISUI/ISUI3DModel"
 require "ISUI/ISToolTip"
 require "BridgeOrder"
 require "BridgeReport"
+require "BridgeHome"
 
 BridgeWindow = BridgeWindow or {}
 
@@ -968,6 +969,11 @@ function BridgeWindowMain:createChildren()
     self.settings = BridgeWindowSettings:new(0, 8, self.width, inner)
     self.settings:initialise()
     self.panel:addView(tr("WindowSettings"), self.settings)
+    if BridgeHome ~= nil and BridgeHomeTab ~= nil then
+        self.home = BridgeHomeTab:new(0, 8, self.width, inner)
+        self.home:initialise()
+        self.panel:addView(tr("WindowHome"), self.home)
+    end
     self.order = BridgeOrder:new(0, 8, self.width, inner)
     self.order:initialise()
     self.panel:addView(tr("WindowOrder"), self.order)
@@ -1050,6 +1056,10 @@ function BridgeWindow.neededSize()
     if BridgeLootSettings ~= nil and type(BridgeLootSettings.heightFor) == "function" then
         w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowLoot")))
         contentH = math.max(contentH, BridgeLootSettings.heightFor(w))
+    end
+    if BridgeHomeTab ~= nil and type(BridgeHomeTab.heightFor) == "function" then
+        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowHome")))
+        contentH = math.max(contentH, BridgeHomeTab.heightFor(w))
     end
     return math.max(BridgeWindow.WIDTH, math.ceil(w)), math.ceil(contentH)
 end

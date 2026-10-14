@@ -594,6 +594,8 @@ end
 
 
 function BridgeDrive.onExit()
+    if BridgeCallout ~= nil and type(BridgeCallout.homeReturnOnExit) == "function"
+        and BridgeCallout.homeReturnOnExit() then return end
     if BridgeDrive.ENABLED == 0 then return end
     if BridgeDrive.ON.EXIT ~= 1 then return end
     local red = BridgeData.owner()

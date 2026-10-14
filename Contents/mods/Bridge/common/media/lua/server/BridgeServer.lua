@@ -1281,6 +1281,16 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.home ~= nil then
+        local h = BridgeData.cleanHome(args.home)
+        if h ~= nil then
+            rec.home = h
+            changed = true
+        end
+    elseif args.clearHome then
+        rec.home = nil
+        changed = true
+    end
     if changed then transmit() end
 end
 

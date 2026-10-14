@@ -19,6 +19,12 @@ BridgeCallout.PLACE_GAP = 60 * 60
 BridgeCallout.PLACE_DWELL = 3 * 60
 BridgeCallout.PLACE_NEAR = 12
 
+BridgeCallout.HOME_EVENT = "EvHomeReturn"
+BridgeCallout.HOME_NEAR = 12
+BridgeCallout.HOME_WITH = 12
+BridgeCallout.HOME_HOURS = 1.0
+BridgeCallout.HOME_GAP = 60 * 60
+
 BridgeCallout.SWING_COMBAT_QUIET = 60
 BridgeCallout.SWING_ZOMBIE_DIST = 10
 BridgeCallout.SWING_Z_TOL = 0.8
@@ -43,6 +49,12 @@ BridgeCallout.placeFired = false
 BridgeCallout.placeLastAt = -99999
 BridgeCallout.visitedSentAt = -9999
 BridgeCallout.visitedSign = nil
+
+BridgeCallout.homeHours = 0
+BridgeCallout.homeAge = nil
+BridgeCallout.homeFired = false
+BridgeCallout.homeSuppress = false
+BridgeCallout.homeInfo = "none"
 
 BridgeCallout.AMBIENT = { "EvTaunt" }
 
@@ -785,6 +797,284 @@ local function placeTick(body, red)
 end
 
 
+local function homeAreaHas(home, x, y, margin)
+    if home == nil then return false end
+    local x1, y1 = home.x - margin, home.y - margin
+    local x2, y2 = home.x + home.w - 1 + margin, home.y + home.h - 1 + margin
+    return x >= x1 and x <= x2 and y >= y1 and y <= y2
+end
+
+
+local function homeWithPlayer(red, bx, by)
+    local near = false
+    pcall(function()
+        local dx, dy = red:getX() - bx, red:getY() - by
+        near = dx * dx + dy * dy <= BridgeCallout.HOME_WITH * BridgeCallout.HOME_WITH
+    end)
+    return near
+end
+
+
+local function homeCanSpeak(red)
+    if BridgeCallout.ENABLED == 0 then return false end
+    if Bridge.mode == "rest" then return false end
+    if BridgeFastForward ~= nil and BridgeFastForward.active() then return false end
+    local asleep = false
+    pcall(function() asleep = red:isAsleep() end)
+    if asleep then return false end
+    local fighting = false
+    pcall(function() fighting = BridgeFight ~= nil and (BridgeFight.state ~= "idle" or BridgeFight.target ~= nil) end)
+    return not fighting
+end
+
+
+local function homeFire()
+    if BridgeMoments == nil or type(BridgeMoments.say) ~= "function" then return false end
+    local said = false
+    pcall(function() said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn") == true end)
+    return said
+end
+
+
+function BridgeCallout.homeReset()
+    BridgeCallout.homeHours = 0
+    BridgeCallout.homeFired = false
+    BridgeCallout.homeSuppress = true
+end
+
+
+function BridgeCallout.homeCanReturn(red, body)
+    if BridgeCallout.ENABLED == 0 then return false end
+    if not Bridge.alive() then return false end
+    if BridgeCallout.homeSuppress or BridgeCallout.homeFired then return false end
+    if BridgeCallout.homeHours < BridgeCallout.HOME_HOURS then return false end
+    local home = BridgeHome ~= nil and BridgeHome.get() or nil
+    if home == nil or body == nil or red == nil then return false end
+    local bx, by = nil, nil
+    pcall(function() bx, by = body:getX(), body:getY() end)
+    if bx == nil or by == nil then return false end
+    if not homeAreaHas(home, bx, by, BridgeCallout.HOME_NEAR) then return false end
+    if not homeWithPlayer(red, bx, by) then return false end
+    return homeCanSpeak(red)
+end
+
+
+function BridgeCallout.homeReturnOnExit()
+    local red = BridgeData.owner()
+    local body = Bridge.body
+    if not BridgeCallout.homeCanReturn(red, body) then return false end
+    if not homeFire() then return false end
+    BridgeCallout.homeFired = true
+    BridgeCallout.homeHours = 0
+    vlog("home return spoken on exit")
+    return true
+end
+
+
+function BridgeCallout.homeTrack(body, red)
+    if body == nil or red == nil then return end
+    local age = nil
+    pcall(function() age = getGameTime():getWorldAgeHours() end)
+    if age == nil then return end
+    local prev = BridgeCallout.homeAge
+    BridgeCallout.homeAge = age
+
+    local home = BridgeHome ~= nil and BridgeHome.get() or nil
+    if home == nil then
+        BridgeCallout.homeHours = 0
+        BridgeCallout.homeFired = false
+        BridgeCallout.homeSuppress = false
+        BridgeCallout.homeInfo = "none"
+        return
+    end
+    if not Bridge.alive() then
+        BridgeCallout.homeHours = 0
+        BridgeCallout.homeFired = false
+        BridgeCallout.homeInfo = "none"
+        return
+    end
+
+    local bx, by = nil, nil
+    pcall(function() bx, by = body:getX(), body:getY() end)
+    if bx == nil or by == nil then return end
+
+    local atHome = homeAreaHas(home, bx, by, BridgeCallout.HOME_NEAR)
+
+    if atHome then
+        BridgeCallout.homeInfo = "home"
+        if BridgeCallout.homeSuppress then
+            BridgeCallout.homeSuppress = false
+            BridgeCallout.homeHours = 0
+            BridgeCallout.homeFired = false
+            BridgeCallout.homeInfo = "home (called)"
+            return
+        end
+        if BridgeCallout.homeHours < BridgeCallout.HOME_HOURS then
+            BridgeCallout.homeHours = 0
+            BridgeCallout.homeFired = false
+            return
+        end
+        if not BridgeCallout.homeFired and homeWithPlayer(red, bx, by) and not carQuiet() then
+            if homeCanSpeak(red) and homeFire() then
+                BridgeCallout.homeFired = true
+                BridgeCallout.homeHours = 0
+                BridgeCallout.homeInfo = "returned"
+                vlog("home return spoken")
+            end
+        end
+        return
+    end
+
+    BridgeCallout.homeFired = false
+    if homeWithPlayer(red, bx, by) then
+        local dt = 0
+        if prev ~= nil and age > prev then dt = age - prev end
+        BridgeCallout.homeHours = BridgeCallout.homeHours + dt
+        BridgeCallout.homeInfo = string.format("away %.2fh", BridgeCallout.homeHours)
+    else
+        BridgeCallout.homeInfo = "away (alone)"
+    end
+end
+
+
+local function homePoolCount(pool)
+    local n = 0
+    for i = 1, 20 do
+        local key = "IGUI_NotAlone_Soc_" .. pool .. "_" .. i
+        local text = nil
+        pcall(function() text = getTextOrNull(key, "", "") end)
+        if text == nil or text == key or text == "" then break end
+        n = i
+    end
+    return n
+end
+
+
+function BridgeCallout.homeStatus()
+    local h = BridgeHome ~= nil and BridgeHome.get() or nil
+    local loc = "none"
+    if h ~= nil then loc = string.format("%d,%d z%d %dx%d", h.x, h.y, h.z, h.w, h.h) end
+    return string.format("%s away=%.2fh fired=%s suppress=%s info=%s",
+        loc, BridgeCallout.homeHours, tostring(BridgeCallout.homeFired),
+        tostring(BridgeCallout.homeSuppress), tostring(BridgeCallout.homeInfo))
+end
+
+
+function BridgeCallout.homeCommand(parts)
+    local sub = parts ~= nil and parts[3] or nil
+    local home = BridgeHome ~= nil and BridgeHome.get() or nil
+
+    if sub == nil or sub == "status" then
+        return "home=" .. BridgeCallout.homeStatus()
+    end
+
+    if sub == "why" or sub == "diag" then
+        local red = BridgeData.owner()
+        local body = Bridge.body
+        local bx, by = nil, nil
+        if body ~= nil then pcall(function() bx, by = body:getX(), body:getY() end) end
+        local atHome = home ~= nil and bx ~= nil and homeAreaHas(home, bx, by, BridgeCallout.HOME_NEAR)
+        local withYou = (bx ~= nil and red ~= nil) and homeWithPlayer(red, bx, by) or false
+        local quiet = carQuiet()
+        local asleep, fighting, ff, group = "?", "?", "?", "?"
+        if red ~= nil then pcall(function() asleep = tostring(red:isAsleep()) end) end
+        pcall(function() fighting = tostring(BridgeFight ~= nil and (BridgeFight.state ~= "idle" or BridgeFight.target ~= nil)) end)
+        pcall(function() ff = tostring(BridgeFastForward ~= nil and BridgeFastForward.active()) end)
+        pcall(function() group = tostring(BridgeMoments.group()) end)
+        local can = red ~= nil and homeCanSpeak(red)
+        local line = "none"
+        pcall(function() line = tostring(BridgeMoments.line(BridgeCallout.HOME_EVENT)) end)
+        return string.format(
+            "home why: atHome=%s withYou=%s carQuiet=%s canSpeak=%s asleep=%s ff=%s fighting=%s mode=%s enabled=%s hours=%.2f fired=%s suppress=%s group=%s pools[F=%d N=%d C=%d] line=%s",
+            tostring(atHome), tostring(withYou), tostring(quiet), tostring(can), asleep, ff, fighting,
+            tostring(Bridge.mode), tostring(BridgeCallout.ENABLED), BridgeCallout.homeHours,
+            tostring(BridgeCallout.homeFired), tostring(BridgeCallout.homeSuppress), group,
+            homePoolCount("EvHomeReturn_Far"), homePoolCount("EvHomeReturn_Near"), homePoolCount("EvHomeReturn_Close"),
+            line)
+    end
+
+    if sub == "clear" then
+        if home == nil then return "home clear: none set" end
+        Bridge.clearHome()
+        if BridgeHome ~= nil then BridgeHome.syncHandle() end
+        return "home cleared"
+    end
+
+    if sub == "set" then
+        local x, y, z, w, h
+        if parts[4] == nil then
+            local red = BridgeData.owner()
+            local sq = nil
+            if red ~= nil then pcall(function() sq = red:getCurrentSquare() end) end
+            if sq == nil then return "home set: no square" end
+            x, y, z, w, h = sq:getX(), sq:getY(), sq:getZ(), 12, 12
+        elseif parts[8] ~= nil then
+            x, y, z = tonumber(parts[4]), tonumber(parts[5]), tonumber(parts[6])
+            w, h = tonumber(parts[7]), tonumber(parts[8])
+        elseif parts[5] ~= nil then
+            local red = BridgeData.owner()
+            local sq = nil
+            if red ~= nil then pcall(function() sq = red:getCurrentSquare() end) end
+            if sq == nil then return "home set: no square" end
+            x, y, z = sq:getX(), sq:getY(), sq:getZ()
+            w, h = tonumber(parts[4]), tonumber(parts[5])
+        else
+            return "home set: use 'home set' | 'home set <w> <h>' | 'home set <x> <y> <z> <w> <h>'"
+        end
+        if type(x) ~= "number" or type(y) ~= "number" or type(z) ~= "number"
+            or type(w) ~= "number" or type(h) ~= "number" then
+            return "home set: bad numbers"
+        end
+        local res = Bridge.setHome({ x = x, y = y, z = z, w = w, h = h })
+        if BridgeHome ~= nil then BridgeHome.syncHandle() end
+        if res == "bad home" then
+            return string.format("home set failed: size must be %d-%d on both sides",
+                BridgeData.HOME_MIN, BridgeData.HOME_MAX)
+        end
+        local got = BridgeHome ~= nil and BridgeHome.get() or nil
+        if got == nil then return "home set failed: " .. tostring(res) end
+        return string.format("home set %d,%d z%d %dx%d", got.x, got.y, got.z, got.w, got.h)
+    end
+
+    if sub == "away" then
+        local hrs = tonumber(parts[4])
+        if hrs == nil then return string.format("home away=%.2fh", BridgeCallout.homeHours) end
+        BridgeCallout.homeHours = hrs
+        BridgeCallout.homeFired = false
+        BridgeCallout.homeSuppress = false
+        BridgeCallout.homeAge = nil
+        return string.format("home away=%.2fh", BridgeCallout.homeHours)
+    end
+
+    if sub == "fire" then
+        if home == nil then return "home fire: no home set" end
+        if BridgeMoments == nil then return "home fire: no moments" end
+        BridgeMoments.cool["HomeReturn"] = -99999
+        local said = false
+        pcall(function()
+            said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn") == true
+        end)
+        if said then
+            BridgeCallout.homeFired = true
+            BridgeCallout.homeHours = 0
+        end
+        return said and "home fire: said" or "home fire: could not speak"
+    end
+
+    if sub == "exit" then
+        return BridgeCallout.homeReturnOnExit() and "home exit: spoke (replaces car-exit line)"
+            or "home exit: not armed/eligible"
+    end
+
+    if sub == "reset" then
+        BridgeCallout.homeReset()
+        return "home state reset (suppressed until next arrival)"
+    end
+
+    return "home [status | why | set [x y z w h] | clear | away <hours> | fire | exit | reset]"
+end
+
+
 function BridgeCallout.placesCommand(sub, a)
     local max = BridgeData.VISITED_MAX or 200
 
@@ -860,6 +1150,9 @@ end
 
 function BridgeCallout.update(body)
     if body == nil then return end
+    if type(BridgeCallout.homeTrack) == "function" then
+        pcall(function() BridgeCallout.homeTrack(body, BridgeData.owner()) end)
+    end
     if carQuiet() then
         dropCarLines()
         BridgeCallout.info = "car"

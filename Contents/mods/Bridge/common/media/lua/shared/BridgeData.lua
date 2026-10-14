@@ -528,7 +528,7 @@ function BridgeData.lootMaxWeight(rec)
 end
 
 
-BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "fight", "torch", "jobs", "keep", "cancel" }
+BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "fight", "torch", "jobs", "keep", "home", "cancel" }
 BridgeData.MENU_ORDER_SET = {}
 for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do BridgeData.MENU_ORDER_SET[id] = true end
 
@@ -559,6 +559,30 @@ function BridgeData.menuOrder(rec)
         if not seen[id] then seen[id] = true out[#out + 1] = id end
     end
     return out
+end
+
+
+BridgeData.HOME_MIN = 4
+BridgeData.HOME_MAX = 40
+
+
+function BridgeData.cleanHome(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    for _, k in ipairs({ "x", "y", "z", "w", "h" }) do
+        local v = tonumber(t[k])
+        if v == nil or v ~= v then return nil end
+        out[k] = math.floor(v)
+    end
+    if out.w < BridgeData.HOME_MIN or out.w > BridgeData.HOME_MAX then return nil end
+    if out.h < BridgeData.HOME_MIN or out.h > BridgeData.HOME_MAX then return nil end
+    return out
+end
+
+
+function BridgeData.homeOf(rec)
+    if type(rec) ~= "table" then return nil end
+    return rec.home
 end
 
 

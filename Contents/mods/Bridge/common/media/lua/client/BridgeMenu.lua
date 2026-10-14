@@ -366,6 +366,26 @@ local function buildCancel(context, playerNum, env)
 end
 
 
+local function onHomeSet()
+    if BridgeHome ~= nil and type(BridgeHome.requestSet) == "function" then BridgeHome.requestSet(BridgeData.owner()) end
+end
+
+local function onHomeClear()
+    if BridgeHome ~= nil and type(BridgeHome.confirmClear) == "function" then BridgeHome.confirmClear(BridgeData.owner()) end
+end
+
+local function buildHome(context, playerNum, env)
+    if BridgeHome == nil then return end
+    local homeOption = context:addOption(tr("Home"))
+    local home = ISContextMenu:getNew(context)
+    context:addSubMenu(homeOption, home)
+    home:addOption(tr("HomeSetHome"), nil, onHomeSet)
+    if BridgeData.homeOf(env.st) ~= nil then
+        home:addOption(tr("HomeClear"), nil, onHomeClear)
+    end
+end
+
+
 BridgeMenu.ORDERABLE = {
     { id = "talk", label = "Talk", build = buildTalk },
     { id = "heal", label = "HealMe", build = buildHeal },
@@ -376,6 +396,7 @@ BridgeMenu.ORDERABLE = {
     { id = "torch", label = "OptTorch", build = buildTorch },
     { id = "jobs", label = "Jobs", build = buildJobs },
     { id = "keep", label = "Keep", build = buildKeep },
+    { id = "home", label = "Home", build = buildHome },
     { id = "cancel", label = "CancelTask", build = buildCancel },
 }
 
