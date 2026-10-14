@@ -347,7 +347,7 @@ end
 
 
 BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
-    relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1 }
+    relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false }
 BridgeData.HAIR_MAX = 40
 
 function BridgeData.optionOf(rec, key)
@@ -635,6 +635,7 @@ BridgeData.GENDERED_KEYS = {
     OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRelPopupsTip = true, OptRomanceTip = true,
     OptFatigueBar = true, OptFatigueBarTip = true,
     OptSitWithRed = true, OptSitWithRedTip = true,
+    OptExerciseWithMe = true, OptExerciseWithMeTip = true,
     OptTorchTip = true,
     OptEquipScale = true, OptEquipScaleTip = true,
 }

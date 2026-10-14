@@ -1687,6 +1687,55 @@ end
 
 
 
+BridgeMove.STAY_SIT = 3
+BridgeMove.STAY_SIT_OUT = 5
+
+function BridgeMove.staySitTick(body)
+    if body == nil then return false end
+    local pose = Bridge.pose
+    local ours = pose ~= nil and pose.staySit == true
+    if Bridge.mode == "wait" and (pose == nil or ours)
+            and BridgeData.optionOf(Bridge.store, "sitWithRed") then
+        local red = BridgeData.owner()
+        local busy = false
+        pcall(function()
+            busy = (BridgeTask ~= nil and BridgeTask.active)
+                or (BridgeFight ~= nil and BridgeFight.state ~= "idle")
+                or (BridgeHeal ~= nil and BridgeHeal.active)
+                or (BridgeWash ~= nil and BridgeWash.state ~= "idle")
+        end)
+        local danger = false
+        pcall(function() danger = BridgeTask ~= nil and BridgeTask.dangerNear ~= nil and BridgeTask.dangerNear(body) end)
+        local ground, sameZ, d = false, false, 99
+        if red ~= nil then
+            pcall(function()
+                ground = red:isSitOnGround() == true
+                local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
+                d = math.sqrt(dx * dx + dy * dy)
+                sameZ = math.abs(red:getZ() - body:getZ()) < 0.9
+            end)
+        end
+        local limit = ours and BridgeMove.STAY_SIT_OUT or BridgeMove.STAY_SIT
+        if ground and sameZ and d <= limit and not busy and not danger then
+            if pose == nil then
+                Bridge.pose = { anim = "Sit", staySit = true }
+                pcall(function() body:setBumpType("Sit") end)
+                pcall(function() body:faceLocationF(red:getX(), red:getY()) end)
+                pcall(function() BridgeMove.sendSit("floor") end)
+                log("stay-sit: sitting with the player while waiting")
+            end
+            return true
+        end
+    end
+    if ours then
+        Bridge.pose = nil
+        pcall(function() BridgeMove.sendSit(nil) end)
+        log("stay-sit: standing (player up, out of range, busy or danger)")
+    end
+    return false
+end
+
+
 BridgeMove.sitFlag = false
 BridgeMove.sitFlagBody = nil
 

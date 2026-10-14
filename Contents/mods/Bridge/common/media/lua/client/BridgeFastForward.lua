@@ -174,7 +174,8 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
     pcall(function() bump = tostring(b:getBumpType()) end)
     local seated = string.sub(bump, 1, 8) == "SitChair"
         or (Bridge ~= nil and Bridge.pose ~= nil and Bridge.pose.seat == true)
-        or (BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "sit")
+        or (BridgeTask ~= nil and BridgeTask.active == true
+            and (BridgeTask.kind == "sit" or BridgeTask.kind == "exercise"))
     if not SAFE[asn] and not seated then return "state " .. asn end
     if yes(b, "isDead") then return "dead" end
     if yes(b, "isOnFloor") then return "on the floor" end
@@ -193,8 +194,15 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
 
 
     local job = false
-    pcall(function() job = BridgeTask ~= nil and BridgeTask.active == true end)
-    if job and not seated then return "job" end
+    local ffJob = false
+    pcall(function()
+        if BridgeTask ~= nil and BridgeTask.active == true then
+            job = true
+            ffJob = (BridgeTask.kind == "chopTree" or BridgeTask.kind == "clearPlants"
+                or BridgeTask.kind == "cleanUp")
+        end
+    end)
+    if job and not seated and not ffJob then return "job" end
     local p = player()
     if p == nil then return "no player" end
     local far = true
@@ -441,6 +449,18 @@ function BridgeFastForward.holdStand(b)
             b:setBumpType(alt)
         end)
     end
+    if BridgeTask ~= nil and BridgeTask.active
+            and (BridgeTask.kind == "exercise" or BridgeTask.kind == "chopTree"
+                or BridgeTask.kind == "clearPlants" or BridgeTask.kind == "cleanUp") then
+        if BridgeTask.kind == "exercise" and bump ~= BridgeTask.EXERCISE_ANIM then return false end
+        if bump == "" or bump == "nil" then return false end
+        pcall(function() fin = b:getVariableBoolean("BumpAnimFinished") == true end)
+        if not fin then return false end
+        return pcall(function()
+            b:setVariable("BumpAnimFinished", false)
+            b:setBumpType(bump)
+        end)
+    end
     if HOLD_SKIP[bump] or string.sub(bump, 1, 5) == "Climb" then return false end
 
 
@@ -660,6 +680,34 @@ function BridgeFastForward.tick()
 
 
         logOnce("fast-forward: she stays in the zombie check: " .. why)
+    end
+
+
+    if BridgeFastForward.flagged ~= nil and why == nil and BridgeTask ~= nil
+            and BridgeTask.active and Bridge.body ~= nil
+            and (BridgeTask.kind == "exercise" or BridgeTask.kind == "chopTree"
+                or BridgeTask.kind == "clearPlants" or BridgeTask.kind == "cleanUp") then
+        pcall(function() BridgeTask.update(Bridge.body) end)
+        if Bridge.every(120) then
+            log("ff drive: " .. tostring(BridgeTask.kind) .. " time=" .. string.format("%.1f", Bridge.time or 0))
+        end
+    end
+
+
+    if BridgeFastForward.flagged ~= nil and why == nil and b ~= nil and Bridge.body == b
+            and BridgeMove ~= nil and BridgeMove.isOnChair ~= nil then
+        local chair = false
+        pcall(function() chair = BridgeMove.isOnChair(b) == true end)
+        if chair then
+            pcall(function() Bridge.keepHealth(b) end)
+            pcall(function()
+                local asn = tostring(b:getActionStateName())
+                if string.sub(asn, 1, 8) == "falldown" or string.sub(asn, 1, 8) == "onground" then
+                    b:changeState(ZombieGetUpState.instance())
+                end
+            end)
+            logOnce("fast-forward: she is seated on a chair, keeping her health guard on")
+        end
     end
 end
 

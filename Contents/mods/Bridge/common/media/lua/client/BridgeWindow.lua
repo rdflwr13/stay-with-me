@@ -196,6 +196,12 @@ function BridgeWindowInfo:createChildren()
     self.appearBtn:instantiate()
     self.appearBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.appearBtn)
+
+    self.exerBtn = ISButton:new(x, 0, w, BTN_H, tr("Exercise"), self, BridgeWindowInfo.onExercise)
+    self.exerBtn:initialise()
+    self.exerBtn:instantiate()
+    self.exerBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+    self:addChild(self.exerBtn)
 end
 
 
@@ -350,6 +356,50 @@ function BridgeWindowInfo:render()
     y = y + BTN_H + PAD
     self:drawText(BridgeData.text("Kills", tostring(Bridge.store.kills or 0)), x, y, 1, 1, 1, 1, UIFont.Small)
 
+    y = y + FONT_S + PAD
+    local count, tier, pct = 0, "0", 0
+    if BridgeExercise ~= nil then
+        pcall(function() count = BridgeExercise.count(Bridge.store) end)
+        pcall(function() tier = BridgeExercise.tierLabel(count) end)
+        pcall(function() pct = math.floor((BridgeExercise.mult(Bridge.store) - 1) * 100 + 0.5) end)
+    end
+    local line = BridgeData.text("ExTrainingLevel", tier, string.format("+%d%% XP", pct))
+    self:drawText(fitText(UIFont.Small, line, colW), x, y, 1, 1, 1, 1, UIFont.Small)
+
+    y = y + FONT_S + PAD
+    self:drawText(fitText(UIFont.Small, BridgeData.text("ExWorkouts", tostring(count)), colW), x, y, 1, 1, 1, 1, UIFont.Small)
+
+    y = y + FONT_S + PAD
+    local btn = self.exerBtn
+    if (type(btn) == "table" or type(btn) == "userdata") and btn.setY ~= nil then
+        btn:setY(y)
+        btn:setTitle(tr("Exercise"))
+        local reason = nil
+        if BridgeExercise ~= nil and BridgeExercise.blockReason ~= nil then
+            pcall(function() reason = BridgeExercise.blockReason() end)
+        end
+        btn:setEnable(reason == nil)
+        if reason == nil then
+            btn.tooltip = tr("ExReadyNow")
+        elseif reason == "cooldown" then
+            local left = 0
+            if BridgeExercise ~= nil and BridgeExercise.cooldownLeft ~= nil then
+                pcall(function() left = BridgeExercise.cooldownLeft(Bridge.store) or 0 end)
+            end
+            btn.tooltip = tr("ExReadyIn", string.format("%.1f", tonumber(left) or 0))
+        elseif reason == "tired" then
+            btn.tooltip = tr("Say_ExerciseWinded")
+        elseif reason == "combat" then
+            btn.tooltip = tr("ExerciseCombatTip")
+        else
+            btn.tooltip = nil
+        end
+    end
+
+end
+
+function BridgeWindowInfo:onExercise()
+    if BridgeMenu ~= nil and BridgeMenu.onExercise ~= nil then BridgeMenu.onExercise() end
 end
 
 function BridgeWindowInfo:onCall()
@@ -438,6 +488,7 @@ BridgeWindow.TICKS = {
     { key = "relPopups", label = "OptRelPopups", tip = "OptRelPopupsTip" },
     { key = "fatigueBar", label = "OptFatigueBar", tip = "OptFatigueBarTip" },
     { key = "sitWithRed", label = "OptSitWithRed", tip = "OptSitWithRedTip" },
+    { key = "exerciseWithMe", label = "OptExerciseWithMe", tip = "OptExerciseWithMeTip" },
 }
 
 function BridgeWindowSettings:createChildren()
@@ -1042,7 +1093,8 @@ function BridgeWindow.neededSize()
     w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowName") .. " " .. name()))
     local tickH = math.max(BTN_H, FONT_S) + gap
     local infoH = math.max(PAD * 2 + 2 + AVATAR_H + AVATAR_BORDER * 2,
-        PAD + FONT_M + 2 + PAD + FONT_S + 4 + BridgeWindow.relBarsHeight() + PAD + FONT_S + PAD + BTN_H + PAD * 2 + BTN_H + PAD)
+        PAD + FONT_M + 2 + PAD + FONT_S + 4 + BridgeWindow.relBarsHeight() + PAD + FONT_S + PAD + BTN_H + PAD * 2 + BTN_H + PAD
+        + FONT_S + PAD + FONT_S + PAD + BTN_H + PAD * 2 + FONT_S + PAD)
     local setH = PAD + #BridgeWindow.TICKS * (tickH + PAD) + PAD + FONT_S + PAD / 2 + BTN_H + PAD + FONT_S + 4 + BTN_H + PAD + FONT_S + 4 + BTN_H + PAD + PAD + BTN_H
     w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowReport")))
     local contentH = math.max(infoH, setH)

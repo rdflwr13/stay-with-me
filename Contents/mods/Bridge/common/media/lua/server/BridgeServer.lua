@@ -1282,6 +1282,54 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.exerciseUntil ~= nil then
+        local v = tonumber(args.exerciseUntil)
+        if v ~= nil and v >= 0 and (rec.exerciseUntil == nil or math.abs(rec.exerciseUntil - v) > 0.001) then
+            if v > 0 then rec.exerciseUntil = v else rec.exerciseUntil = nil end
+            changed = true
+        end
+    end
+    if args.exerciseTold ~= nil then
+        local v = args.exerciseTold == true
+        if (rec.exerciseTold == true) ~= v then
+            rec.exerciseTold = v or nil
+            changed = true
+        end
+    end
+    if args.exerciseCount ~= nil then
+        local v = tonumber(args.exerciseCount)
+        if v ~= nil and v >= 0 then
+            v = math.floor(v)
+            if v > (tonumber(rec.exerciseCount) or 0) then
+                rec.exerciseCount = v
+                changed = true
+            end
+        end
+    end
+    if args.exerciseLast ~= nil then
+        local v = tonumber(args.exerciseLast)
+        if v ~= nil and v > (tonumber(rec.exerciseLast) or 0) then
+            rec.exerciseLast = v
+            changed = true
+        end
+    end
+    if args.fatigue ~= nil then
+        local v = tonumber(args.fatigue)
+        if v ~= nil then
+            v = math.max(0, math.min(1, v))
+            if rec.fatigue == nil or math.abs(rec.fatigue - v) > 0.001 then
+                rec.fatigue = v
+                changed = true
+            end
+        end
+    end
+    if args.fatigueAt ~= nil then
+        local v = tonumber(args.fatigueAt)
+        if v ~= nil and v >= 0 and v > (tonumber(rec.fatigueAt) or 0) then
+            rec.fatigueAt = v
+            changed = true
+        end
+    end
     if args.home ~= nil then
         local h = BridgeData.cleanHome(args.home)
         if h ~= nil then

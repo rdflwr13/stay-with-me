@@ -169,6 +169,21 @@ function BridgeMenu.onWash()
     BridgeWash.start("menu")
 end
 
+function BridgeMenu.onExercise()
+    if BridgeExercise == nil or type(BridgeExercise.start) ~= "function" then return end
+    local function go()
+        local res = BridgeExercise.start(false)
+        log("exercise from menu: " .. tostring(res))
+    end
+    local rec = Bridge.store
+    if BridgeExercise.showNotice ~= nil and not BridgeExercise.noticeShown
+        and (rec == nil or rec.exerciseTold ~= true) then
+        BridgeExercise.showNotice(go)
+    else
+        go()
+    end
+end
+
 function BridgeMenu.onGoodbye()
     Bridge.goodbye()
 end
@@ -273,6 +288,17 @@ local function buildActions(context, playerNum, env)
             wash.notAvailable = true
         end
     end
+    local canExercise = false
+    pcall(function() canExercise = BridgeTask ~= nil and BridgeTask.kinds.exercise.available(Bridge.body) end)
+    local exBusy = false
+    pcall(function() exBusy = BridgeExercise ~= nil and BridgeExercise.hardBusy ~= nil and BridgeExercise.hardBusy() end)
+    local exercise = actions:addOption(tr("Exercise"), nil, BridgeMenu.onExercise)
+    if not canExercise or exBusy or (BridgeTask ~= nil and BridgeTask.active) then
+        exercise.notAvailable = true
+    end
+    local exCool = 0
+    pcall(function() exCool = (BridgeExercise ~= nil and BridgeExercise.cooldownLeft(nil)) or 0 end)
+    if (tonumber(exCool) or 0) > 0 then tip(exercise, tr("ExerciseTiredTip")) end
     actions:addOption(tr("Goodbye"), nil, BridgeMenu.onGoodbye)
 end
 
