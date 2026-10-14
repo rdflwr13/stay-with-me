@@ -621,7 +621,7 @@
     "IGUI_NotAlone_ReportLogNote": "Attiva il log dettagliato prima di riprodurre il bug, poi premi Genera rapporto.",
     "IGUI_NotAlone_ReportDone": "Salvato in %1 (copiato negli appunti)",
     "IGUI_NotAlone_MenuFollow": "Aspetta / Segui",
-    "IGUI_NotAlone_MenuOrderHint": "Trascina una voce o usa le frecce per cambiare l'ordine del menu contestuale di Rin.",
+    "IGUI_NotAlone_MenuOrderHint": "Trascina una voce o usa le frecce per cambiare l'ordine del menu contestuale di %1.",
     "IGUI_NotAlone_MenuReset": "Reimposta ordine",
     "IGUI_NotAlone_CallShort": "Chiama",
     "IGUI_NotAlone_OptRedKit": "Usa le tue scorte mediche",

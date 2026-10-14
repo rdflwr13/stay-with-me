@@ -202,7 +202,11 @@ function BridgeChat.create()
         local original = ISChat.onActivateView
         ISChat.onActivateView = function(...)
             local args = { ... }
-            pcall(function() original(unpack(args)) end)
+            local savedFocusOnTab = focusOnTab
+            focusOnTab = function() end
+            local ok, err = pcall(function() original(unpack(args)) end)
+            focusOnTab = savedFocusOnTab
+            if not ok then warn("onActivateView failed: " .. tostring(err)) end
         end
     end)
     if not ok then

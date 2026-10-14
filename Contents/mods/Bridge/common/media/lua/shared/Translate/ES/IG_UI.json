@@ -895,7 +895,7 @@
     "IGUI_NotAlone_ReportLogNote": "Activa el registro detallado antes de reproducir el error y luego pulsa Generar informe.",
     "IGUI_NotAlone_ReportDone": "Guardado en %1 (copiado al portapapeles)",
     "IGUI_NotAlone_MenuFollow": "Esperar / Seguir",
-    "IGUI_NotAlone_MenuOrderHint": "Arrastra una entrada o usa las flechas para cambiar el orden del menú contextual de Rin.",
+    "IGUI_NotAlone_MenuOrderHint": "Arrastra una entrada o usa las flechas para cambiar el orden del menú contextual de %1.",
     "IGUI_NotAlone_MenuReset": "Restablecer orden",
     "IGUI_NotAlone_WindowHair": "Peinado",
     "IGUI_NotAlone_WindowName": "Nombre:",

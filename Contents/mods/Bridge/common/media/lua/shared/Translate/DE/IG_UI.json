@@ -790,7 +790,7 @@
     "IGUI_NotAlone_ReportLogNote": "Aktiviere das ausführliche Log, bevor du den Bug reproduzierst, und klicke dann auf Bericht erstellen.",
     "IGUI_NotAlone_ReportDone": "Gespeichert unter %1 (in die Zwischenablage kopiert)",
     "IGUI_NotAlone_MenuFollow": "Warten / Folgen",
-    "IGUI_NotAlone_MenuOrderHint": "Ziehe einen Eintrag oder nutze die Pfeile, um die Reihenfolge von Rins Rechtsklick-Menü zu ändern.",
+    "IGUI_NotAlone_MenuOrderHint": "Ziehe einen Eintrag oder nutze die Pfeile, um die Reihenfolge des Rechtsklick-Menüs von %1 zu ändern.",
     "IGUI_NotAlone_MenuReset": "Reihenfolge zurücksetzen",
     "IGUI_NotAlone_WindowAppearance": "Erscheinungsbild",
     "IGUI_NotAlone_AppearanceBody": "Körper",

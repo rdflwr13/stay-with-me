@@ -152,7 +152,7 @@ function BridgeOrder:createChildren()
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
     self.btnH = btnH
-    self.hintLines = wrapText(UIFont.Small, tr("MenuOrderHint"), self.width - PAD * 2)
+    self.hintLines = wrapText(UIFont.Small, tr("MenuOrderHint", Bridge.companionName()), self.width - PAD * 2)
     self.hintH = #self.hintLines * (fontS + 2) + 4
 
     local listY = PAD + self.hintH
