@@ -178,7 +178,18 @@ function BridgeItems.record(item, deep)
         end
     end)
     try(function() if item:IsDrainable() then rec.u = item:getCurrentUsesFloat() end end)
-    try(function() if item:IsFood() then rec.a = item:getAge() end end)
+    try(function()
+        if not item:IsFood() then return end
+        rec.a = item:getAge()
+        -- Eaten portion: a food's remaining hunger is getHungChange() relative to
+        -- getBaseHunger(). Capture the fraction so a re-made item is not full again.
+        local base, cur = nil, nil
+        pcall(function() base = item:getBaseHunger() end)
+        pcall(function() cur = item:getHungChange() end)
+        if base ~= nil and base ~= 0 and cur ~= nil and math.abs(cur) <= math.abs(base) * 0.999 then
+            rec.fp = cur / base
+        end
+    end)
     try(function() if item:isCooked() then rec.ck = true end end)
     try(function() if item:isBurnt() then rec.bu = true end end)
     try(function() if item:isFavorite() then rec.f = true end end)
@@ -412,6 +423,17 @@ function BridgeItems.apply(item, rec)
     if rec.a ~= nil then try(function() item:setAge(rec.a) end) end
     if rec.ck then try(function() item:setCooked(true) end) end
     if rec.bu then try(function() item:setBurnt(true) end) end
+    if rec.fp ~= nil then
+        -- Restore the eaten portion and scale nutrition by the same fraction.
+        try(function()
+            local base = item:getBaseHunger()
+            if base ~= nil then item:setHungChange(base * rec.fp) end
+        end)
+        try(function() item:setCalories(item:getCalories() * rec.fp) end)
+        try(function() item:setProteins(item:getProteins() * rec.fp) end)
+        try(function() item:setLipids(item:getLipids() * rec.fp) end)
+        try(function() item:setCarbohydrates(item:getCarbohydrates() * rec.fp) end)
+    end
     if rec.f then try(function() item:setFavorite(true) end) end
     if rec.k ~= nil then try(function() item:setKeyId(rec.k) end) end
     if rec.am ~= nil then try(function() item:setCurrentAmmoCount(rec.am) end) end
@@ -515,16 +537,18 @@ end
 
 
 
+-- q is the run-count for coalesced consecutive records. It is parsed (NUM) but
+-- deliberately NOT in ORDER, so per-record field building never emits it.
 local NUM = { h = true, p = true, c = true, u = true, a = true, r = true, g = true, b = true,
               tc = true, bt = true, hue = true, k = true, am = true, fa = true, sh = true, hc = true,
-              mi = true, pg = true }
+              mi = true, pg = true, q = true, fp = true }
 local BOOL = { w = true, ck = true, bu = true, f = true, cl = true, ch = true, fe = true, as = true, cn = true }
 
 local TEXT = { n = true, lk = true, ga = true, gt = true, gp = true }
 local PACKED = { md = true, cp = true }
-local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "r", "g", "b", "tc", "bt", "hue", "dec", "ho", "pa", "bl", "di", "k", "f", "ck", "bu",
+local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "fp", "r", "g", "b", "tc", "bt", "hue", "dec", "ho", "pa", "bl", "di", "k", "f", "ck", "bu",
                 "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp" }
-local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", fa = "%.3f", sh = "%.3f" }
+local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", fa = "%.3f", sh = "%.3f", fp = "%.4f" }
 BridgeItems.MAX_LENGTH = 60000
 
 local function clean(s)
@@ -536,6 +560,24 @@ function BridgeItems.encode(list, skip)
     local parts = {}
     local length = 0
     BridgeItems.truncated = false
+
+    -- Coalesce consecutive records whose serialized field string is identical
+    -- into a single part suffixed with ";q=<run>". Decode expands each run back
+    -- in place, so every record keeps its original index.
+    local last, run = nil, 0
+    local function flush()
+        if last == nil then return true end
+        local part = (run > 1) and (last .. ";q=" .. run) or last
+        if length + #part + 1 > BridgeItems.MAX_LENGTH then
+            BridgeItems.truncated = true
+            warn("snapshot truncated at " .. tostring(#parts) .. " of " .. tostring(#list) .. " records")
+            return false
+        end
+        parts[#parts + 1] = part
+        length = length + #part + 1
+        return true
+    end
+
     for _, rec in ipairs(list) do
         local fields = {}
         for _, key in ipairs(ORDER) do
@@ -562,14 +604,14 @@ function BridgeItems.encode(list, skip)
             end
         end
         local part = table.concat(fields, ";")
-        length = length + #part + 1
-        if length > BridgeItems.MAX_LENGTH then
-            BridgeItems.truncated = true
-            warn("snapshot truncated at " .. tostring(#parts) .. " of " .. tostring(#list) .. " records")
-            break
+        if part == last then
+            run = run + 1
+        else
+            if not flush() then return table.concat(parts, ",") end
+            last, run = part, 1
         end
-        parts[#parts + 1] = part
     end
+    flush()
     return table.concat(parts, ",")
 end
 
@@ -611,6 +653,26 @@ local function decodeOld(f)
     return rec
 end
 
+local function cloneValue(v, depth)
+    if type(v) ~= "table" or depth > 3 then return v end
+    local o = {}
+    for k, vv in pairs(v) do o[k] = cloneValue(vv, depth + 1) end
+    return o
+end
+
+-- Append one decoded record, expanding a coalesced run of `q` copies. Cloning
+-- keeps expanded siblings independent (removeSubtree mutates `p` on entries).
+local function pushRec(list, rec)
+    local n = tonumber(rec.q) or 1
+    if n < 1 then n = 1 end
+    rec.q = nil
+    if n == 1 then
+        list[#list + 1] = rec
+    else
+        for _ = 1, n do list[#list + 1] = cloneValue(rec, 0) end
+    end
+end
+
 function BridgeItems.decode(text)
     local list = {}
     if text == nil or text == "" then return list end
@@ -619,7 +681,7 @@ function BridgeItems.decode(text)
         for v in string.gmatch(part .. ";", "([^;]*);") do f[#f + 1] = v end
         if f[1] ~= nil and f[1] ~= "" then
             if string.find(f[1], "=", 1, true) == nil then
-                list[#list + 1] = decodeOld(f)
+                pushRec(list, decodeOld(f))
             else
                 local rec = { h = 0, w = false }
                 for _, kv in ipairs(f) do
@@ -632,7 +694,7 @@ function BridgeItems.decode(text)
                         else rec[k] = v end
                     end
                 end
-                if rec.t ~= nil then list[#list + 1] = rec end
+                if rec.t ~= nil then pushRec(list, rec) end
             end
         end
     end

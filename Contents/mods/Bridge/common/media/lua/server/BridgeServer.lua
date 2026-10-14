@@ -970,7 +970,7 @@ BridgeServer.Commands.outfit = function(player, args)
     local rec = record(player:getUsername())
 
 
-    if type(args.items) ~= "string" or #args.items > 60000 then return end
+    if type(args.items) ~= "string" or #args.items > BridgeItems.MAX_LENGTH then return end
 
 
     if type(args.iseq) == "number" and type(rec.iseq) == "number" and args.iseq < rec.iseq then return end

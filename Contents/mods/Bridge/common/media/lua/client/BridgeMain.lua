@@ -794,6 +794,7 @@ function Bridge.saveOutfit(encoded)
     local ok = pcall(function()
         md.items = encoded
         md.saved = 1
+        md.cut = (BridgeItems.truncated == true) and 1 or nil
 
 
         if Bridge.mp then sendClientCommand(BridgeData.owner(), "Bridge", "outfit", { items = encoded, iseq = Bridge.iseq }) end
@@ -4399,11 +4400,100 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     rest = true, stop = true, mode = true, sit = true, stand = true, sleep = true, anim = true, walk = true,
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
-    kills = true, lose = true, despawn = true, rel = true, places = true }
+    kills = true, lose = true, despawn = true, rel = true, places = true, itemselftest = true }
 
 
 
 local DEV_MP_COMMANDS = { mood = true, rel = true, car = true, places = true }
+
+
+-- Debug self-test for BridgeItems coalescing. Builds synthetic record lists and
+-- asserts decode(encode(L)) preserves length, fields and p mapping. Read-only.
+local function itemselftest()
+    local fails, checks = {}, 0
+    local function check(name, cond)
+        checks = checks + 1
+        if not cond then fails[#fails + 1] = name end
+    end
+
+    -- 1. flat run of N identical records -> one q=N part
+    local N = 250
+    local flat = {}
+    for i = 1, N do flat[i] = { t = "Base.Axe", h = 4, c = 2, w = false } end
+    local text1 = BridgeItems.encode(flat)
+    check("flat: one coalesced part", select(2, string.gsub(text1, ",", "")) == 0)
+    check("flat: q=" .. N .. " present", string.find(text1, ";q=" .. N, 1, true) ~= nil)
+    local got1 = BridgeItems.decode(text1)
+    check("flat: decode length " .. #got1, #got1 == N)
+    check("flat: re-encode stable", BridgeItems.encode(got1) == BridgeItems.encode(flat))
+
+    -- 2. run, different record, same type again (non-adjacent) -> two runs
+    local mixed = {}
+    for _ = 1, 3 do mixed[#mixed + 1] = { t = "Base.Axe", h = 4, c = 2 } end
+    mixed[#mixed + 1] = { t = "Base.Hammer", h = 2, c = 3 }
+    for _ = 1, 2 do mixed[#mixed + 1] = { t = "Base.Axe", h = 4, c = 2 } end
+    local text2 = BridgeItems.encode(mixed)
+    check("mixed: two runs separated", select(2, string.gsub(text2, ",", "")) == 2)
+    local got2 = BridgeItems.decode(text2)
+    check("mixed: length", #got2 == #mixed)
+    check("mixed: type at 4", got2[4] ~= nil and got2[4].t == "Base.Hammer")
+    check("mixed: type at 5", got2[5] ~= nil and got2[5].t == "Base.Axe")
+    check("mixed: re-encode stable", BridgeItems.encode(got2) == BridgeItems.encode(mixed))
+
+    -- 3. nested bag: parent + children carrying p indices
+    local nested = {
+        { t = "Base.Bag_BigHikingBag", h = 10, c = 0, w = true },
+        { t = "Base.Apple", h = 1, p = 1, c = 0 },
+        { t = "Base.Apple", h = 1, p = 1, c = 0 },
+        { t = "Base.WaterBottleFull", h = 3, p = 1, c = 0 },
+    }
+    local got3 = BridgeItems.decode(BridgeItems.encode(nested))
+    check("nested: length", #got3 == #nested)
+    check("nested: parent p nil", got3[1] ~= nil and got3[1].p == nil)
+    check("nested: child p map", got3[2] ~= nil and got3[2].p == 1 and got3[3] ~= nil and got3[3].p == 1 and got3[4] ~= nil and got3[4].p == 1)
+    check("nested: re-encode stable", BridgeItems.encode(got3) == BridgeItems.encode(nested))
+    if got3[2] ~= nil then
+        got3[2].h = 999
+        check("nested: expanded clones independent", got3[3] ~= nil and got3[3].h ~= 999)
+    end
+
+    -- 4. hand-crafted old-format string
+    local got4 = BridgeItems.decode("Base.Axe;1;5;2;0.1;0.2;0.3;0.5;0.8")
+    check("oldfmt: length", #got4 == 1)
+    if got4[1] ~= nil then
+        check("oldfmt: t", got4[1].t == "Base.Axe")
+        check("oldfmt: w", got4[1].w == true)
+        check("oldfmt: h", got4[1].h == 5)
+        check("oldfmt: c", got4[1].c == 2)
+    end
+
+    -- 5. empty list
+    check("empty: encode", BridgeItems.encode({}) == "")
+    check("empty: decode", #BridgeItems.decode("") == 0)
+
+    -- 5b. food eaten-portion field survives encode/decode
+    local foodRec = { t = "Base.GranolaBar", h = 4, a = 12.5, fp = 0.5 }
+    local got5 = BridgeItems.decode(BridgeItems.encode({ foodRec }))
+    check("food: length", #got5 == 1)
+    check("food: fp kept", got5[1] ~= nil and math.abs((got5[1].fp or 0) - 0.5) < 0.001)
+    check("food: re-encode stable", BridgeItems.encode(got5) == BridgeItems.encode({ foodRec }))
+
+    -- 6. truncation with a temporary small cap (distinct records so runs cannot help)
+    local savedCap, savedCut = BridgeItems.MAX_LENGTH, BridgeItems.truncated
+    BridgeItems.MAX_LENGTH = 40
+    local big = {}
+    for i = 1, 50 do big[i] = { t = "Base.Item" .. i, h = 4, c = 2 } end
+    local ttext = BridgeItems.encode(big)
+    local cutFlag = BridgeItems.truncated
+    local tgot = BridgeItems.decode(ttext)
+    BridgeItems.MAX_LENGTH, BridgeItems.truncated = savedCap, savedCut
+    check("trunc: flag set", cutFlag == true)
+    check("trunc: fewer than list", #tgot < #big)
+
+    if #fails == 0 then return string.format("itemselftest PASS (%d checks)", checks) end
+    return string.format("itemselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
+end
+Bridge.itemselftest = itemselftest
 
 function Bridge.run(line)
     local parts = split(line)
@@ -4872,6 +4962,8 @@ function Bridge.run(line)
         return "items " .. total .. ": " .. table.concat(list, " ")
     end
 
+
+    if cmd == "itemselftest" then return Bridge.itemselftest() end
 
     if cmd == "menu" then
         getCore():exitToMenu()
@@ -5493,6 +5585,8 @@ function Bridge.diagLines()
                 local md = Bridge.store
                 if md == nil then add("saved_items", "no store")
                 else add("saved_items", tostring(md.items or "")) end
+                if md == nil then add("items_cut", "0")
+                else add("items_cut", tostring(md.cut or 0)) end
             end)
             if red ~= nil then
                 add("dist", string.format("%.2f", dist2d(Bridge.body, red)))
