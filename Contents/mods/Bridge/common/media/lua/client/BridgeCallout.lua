@@ -15,6 +15,10 @@ BridgeCallout.COMBAT_GRACE = 4
 BridgeCallout.FINISH_HP = 0.5
 BridgeCallout.PLAYER_HIT_DROP = 1.0
 
+BridgeCallout.PLACE_GAP = 60 * 60
+BridgeCallout.PLACE_DWELL = 3 * 60
+BridgeCallout.PLACE_NEAR = 12
+
 BridgeCallout.SWING_COMBAT_QUIET = 60
 BridgeCallout.SWING_ZOMBIE_DIST = 10
 BridgeCallout.SWING_Z_TOL = 0.8
@@ -32,6 +36,13 @@ BridgeCallout.finisherTarget = nil
 BridgeCallout.info = "none"
 BridgeCallout.lastCombatAt = -99999
 BridgeCallout.attackPrev = false
+
+BridgeCallout.placeKey = nil
+BridgeCallout.placeSince = 0
+BridgeCallout.placeFired = false
+BridgeCallout.placeLastAt = -99999
+BridgeCallout.visitedSentAt = -9999
+BridgeCallout.visitedSign = nil
 
 BridgeCallout.AMBIENT = { "EvTaunt" }
 
@@ -99,6 +110,10 @@ local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[Bri
 
 local function dlog(text)
     if BridgeCallout.DEBUG == 1 then log(text) end
+end
+
+local function vlog(text)
+    if Bridge.verbose then log(text) end
 end
 
 local function isBodyZ(z)
@@ -502,6 +517,347 @@ function BridgeCallout.lull()
     return say("EvLull")
 end
 
+
+BridgeCallout.PLACE_POOL = {
+    Fossoil = "Place_GasStation", Gas2Go = "Place_GasStation", ThunderGas = "Place_GasStation",
+    McCoys = "Place_GasStation", CarRepair = "Place_CarRepair", NolansUsedCars = "Place_CarLot",
+
+    Spiffo = "Place_Spiffo", Spiffos = "Place_Spiffo",
+    PizzaWhirled = "Place_FastFood", Dinner = "Place_FastFood", PileOCrepe = "Place_FastFood",
+    Jays = "Place_Store", Butcher = "Place_Butcher",
+    CoffeeShop = "Place_Cafe", CoffeShop = "Place_Cafe", Cafe = "Place_Cafe",
+    SeaHorse = "Place_Restaurant", Seahorse = "Place_Restaurant", SeaHorses = "Place_Restaurant",
+    Restaurant = "Place_Restaurant", FancyRestaurant = "Place_Restaurant", Bar = "Place_Bar", Smokeys = "Place_Bar",
+    Nightclub = "Place_Nightclub", Stripclub = "Place_Stripclub",
+
+    Gigamart = "Place_Supermarket", VariousFoodMarket = "Place_Supermarket", Pharmacist = "Place_Pharmacy",
+    FarmingStore = "Place_FarmingStore", Bank = "Place_Bank", KnoxBank = "Place_Bank",
+    Bowling = "Place_Bowling", Theatre = "Place_Theatre", LaserTag = "Place_Leisure",
+    Spa = "Place_Spa", HotelRich = "Place_Hotel", FancyHotel = "Place_Hotel",
+    SunstarMotel = "Place_Hotel", WaitesMotel = "Place_Hotel", CountryClub = "Place_Leisure",
+    Golf = "Place_Leisure", Tennis = "Place_Leisure", SwimmingPool = "Place_Leisure",
+    Boxing = "Place_Leisure", Athletic = "Place_Leisure", Athletics = "Place_Leisure",
+    StreetSports = "Place_Leisure", StreetSport = "Place_Leisure", WestMapleCountryClub = "Place_Leisure",
+    Baseball = "Place_Leisure", Football = "Place_Leisure", Swimmer = "Place_Leisure",
+    MusicFest = "Place_Leisure", cornmaze = "Place_Leisure",
+    HitVids = "Place_Store", Greenes = "Place_Store", UStoreIt = "Place_Storage",
+    HSmithAttorney = "Place_Office", FirstBaptistChapel = "Place_Chapel", Church = "Place_Chapel",
+    Studio = "Place_Studio", Shelter = "Place_Shelter", Beach = "Place_Beach",
+    Farm = "Place_Farm", Farmer = "Place_Farm", Pony = "Place_Farm", PonyRoama = "Place_Farm",
+    BinkysFarm = "Place_Farm",
+
+    Factory = "Place_Factory", MassGenfacCo = "Place_Factory", ConstructionSite = "Place_Construction",
+    Offices = "Place_Office", Office = "Place_Office",
+
+    Police = "Place_Police", PoliceState = "Place_Police", FireDept = "Place_FireDept",
+    School = "Place_School", University = "Place_University", NursingHome = "Place_NursingHome",
+    Doctor = "Place_Hospital",
+
+    Prison = "Place_Prison", Army = "Place_Military", SecretBase = "Place_Military",
+    SecretLab = "Place_Military", CrossRoadsMall = "Place_Mall",
+    RustyRifle = "Place_GunStore", JamietonArmySurplus = "Place_GunStore", shootingrange = "Place_GunStore",
+}
+
+BridgeCallout.PLACE_SKIP = {
+    Rich = true, StreetPoor = true, StreetRich = true, Rocker = true, Young = true, BaseballFan = true,
+    TrailerPark = true, Wedding = true, Mob = true, Cultists = true, Cowboy = true, Survivalist = true,
+    BensCabin = true, Nav = true, Default = true,
+}
+
+local function placePoolFor(name)
+    if name == nil then return nil end
+    if BridgeCallout.PLACE_SKIP[name] then return nil end
+    return BridgeCallout.PLACE_POOL[name] or "Place_Commercial"
+end
+
+local function zoneNameOf(zone)
+    local v = nil
+    pcall(function() v = zone:getName() end)
+    if type(v) ~= "string" or v == "" then return nil end
+    return v
+end
+
+local function zoneTypeOf(zone)
+    local v = nil
+    pcall(function() v = zone:getType() end)
+    if type(v) ~= "string" or v == "" then return nil end
+    return v
+end
+
+local function zoneOrigin(zone)
+    local x, y = nil, nil
+    pcall(function() x = zone:getX() end)
+    pcall(function() y = zone:getY() end)
+    if type(x) ~= "number" then x = nil end
+    if type(y) ~= "number" then y = nil end
+    return x, y
+end
+
+
+function BridgeCallout.resolvePlace(square)
+    if square == nil then return nil end
+    local sx, sy, sz = nil, nil, nil
+    pcall(function() sx, sy, sz = square:getX(), square:getY(), square:getZ() end)
+    if sx == nil or sy == nil then return nil end
+    if sz == nil then sz = 0 end
+
+    local zones = {}
+    local list = nil
+    pcall(function() list = getWorld():getMetaGrid():getZonesAt(sx, sy, sz) end)
+    if list ~= nil then
+        local n = nil
+        pcall(function() n = list:size() end)
+        if type(n) == "number" then
+            for i = 0, n - 1 do
+                local zn = nil
+                pcall(function() zn = list:get(i) end)
+                if zn ~= nil then zones[#zones + 1] = zn end
+            end
+        elseif type(list) == "table" then
+            for i = 1, #list do zones[#zones + 1] = list[i] end
+        end
+    end
+    if #zones == 0 then
+        local zn = nil
+        pcall(function() zn = square:getZone() end)
+        if zn ~= nil then zones[1] = zn end
+    end
+    if #zones == 0 then return nil end
+
+    local best, special = nil, false
+    for i = 1, #zones do
+        local t = zoneTypeOf(zones[i])
+        if t == "BuildingName" then
+            best, special = zones[i], true
+            break
+        elseif t == "ZombiesType" and best == nil then
+            best, special = zones[i], false
+        end
+    end
+    if best == nil then return nil end
+
+    local name = zoneNameOf(best)
+    if name == nil then return nil end
+    local pool = placePoolFor(name)
+    if pool == nil then return nil end
+
+    local key = nil
+    local b = nil
+    pcall(function() b = square:getBuilding() end)
+    if b ~= nil then
+        local id = nil
+        pcall(function() id = b:getDef():getIDString() end)
+        if id == nil then pcall(function() id = b:getID() end) end
+        if id ~= nil and tostring(id) ~= "" and tostring(id) ~= "0" then key = "b" .. tostring(id) end
+    end
+    if key == nil then
+        local zx, zy = zoneOrigin(best)
+        if zx == nil or zy == nil then return nil end
+        key = "z" .. string.format("%d,%d:%s", zx, zy, name)
+    end
+    return { key = key, pool = pool, name = name, special = special }
+end
+
+
+local function placeNear(red, body)
+    if red == nil or body == nil then return false end
+    local near = false
+    pcall(function()
+        local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
+        near = dx * dx + dy * dy < BridgeCallout.PLACE_NEAR * BridgeCallout.PLACE_NEAR
+            and math.abs(red:getZ() - body:getZ()) < 1
+    end)
+    return near
+end
+
+local function placeCanSpeak()
+    if Bridge.time - BridgeCallout.placeLastAt < BridgeCallout.PLACE_GAP then return false end
+    local fighting = false
+    pcall(function()
+        fighting = BridgeFight ~= nil and (BridgeFight.state ~= "idle" or BridgeFight.target ~= nil)
+    end)
+    return not fighting
+end
+
+local function evictOldest(v)
+    local n = 0
+    for _ in pairs(v) do n = n + 1 end
+    while n > BridgeData.VISITED_MAX do
+        local oldestKey, oldestS = nil, nil
+        for k, e in pairs(v) do
+            local s = tonumber(e and e.s) or 0
+            if oldestS == nil or s < oldestS then oldestKey, oldestS = k, s end
+        end
+        if oldestKey == nil then break end
+        v[oldestKey] = nil
+        n = n - 1
+    end
+end
+
+local function visitedSign(v)
+    local keys = {}
+    for k in pairs(v) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local parts = { tostring(#keys) }
+    for i = 1, #keys do
+        local e = v[keys[i]]
+        parts[#parts + 1] = keys[i] .. ":" .. tostring(e.s or 0) .. ":" .. (e.t and "1" or "0")
+    end
+    return table.concat(parts, "|")
+end
+
+
+function BridgeCallout.saveVisited()
+    if not Bridge.mp then return end
+    local st = Bridge.store
+    if st == nil or type(st.visited) ~= "table" then return end
+    local sg = visitedSign(st.visited)
+    local important = sg ~= BridgeCallout.visitedSign
+    if not important and (Bridge.time - BridgeCallout.visitedSentAt) < 18000 then return end
+    BridgeCallout.visitedSign = sg
+    BridgeCallout.visitedSentAt = Bridge.time
+    pcall(function()
+        sendClientCommand(BridgeData.owner(), "Bridge", "state", { visited = BridgeData.cleanVisited(st.visited) })
+    end)
+end
+
+
+local function placeFire(poi)
+    local st = Bridge.store
+    if st == nil then return end
+    if type(st.visited) ~= "table" then st.visited = {} end
+    local v = st.visited
+    local e = v[poi.key]
+    if e == nil then
+        v[poi.key] = { s = Bridge.time, n = poi.name }
+        evictOldest(v)
+        vlog(string.format("place %s %s seen (pool %s)", poi.key, poi.name, poi.pool))
+        if v[poi.key] ~= nil and placeCanSpeak()
+            and BridgeMoments.say(poi.pool, BridgeCallout.PLACE_GAP, true, "Place") then
+            v[poi.key].t = true
+            BridgeCallout.placeLastAt = Bridge.time
+            vlog("place " .. poi.key .. " told")
+        end
+    elseif not e.t then
+        if placeCanSpeak() and BridgeMoments.say(poi.pool, BridgeCallout.PLACE_GAP, true, "Place") then
+            e.t = true
+            BridgeCallout.placeLastAt = Bridge.time
+            vlog("place " .. poi.key .. " told")
+        end
+    else
+        if placeCanSpeak() and BridgeMoments.say(poi.pool .. "Again", BridgeCallout.PLACE_GAP, true, "Place") then
+            BridgeCallout.placeLastAt = Bridge.time
+            vlog("place " .. poi.key .. " again")
+        end
+    end
+    BridgeCallout.saveVisited()
+end
+
+
+local function placeTick(body, red)
+    if Bridge.store == nil then return end
+    if not Bridge.alive() then return end
+    if Bridge.mode == "rest" then return end
+    if BridgeFastForward ~= nil and BridgeFastForward.active() then return end
+    local asleep = false
+    pcall(function() asleep = red:isAsleep() end)
+    if asleep then return end
+    if not placeNear(red, body) then return end
+
+    local square = nil
+    pcall(function() square = red:getCurrentSquare() end)
+    local poi = BridgeCallout.resolvePlace(square)
+    if poi == nil then
+        BridgeCallout.placeKey = nil
+        return
+    end
+    if poi.key == BridgeCallout.placeKey then
+        if not BridgeCallout.placeFired
+            and (Bridge.time - BridgeCallout.placeSince) >= BridgeCallout.PLACE_DWELL then
+            BridgeCallout.placeFired = true
+            placeFire(poi)
+        end
+    else
+        BridgeCallout.placeKey = poi.key
+        BridgeCallout.placeSince = Bridge.time
+        BridgeCallout.placeFired = false
+    end
+end
+
+
+function BridgeCallout.placesCommand(sub, a)
+    local max = BridgeData.VISITED_MAX or 200
+
+    if sub == "help" or sub == "?" then
+        return "places [list | reset | forget <key> | here | test | help]"
+    end
+
+    if sub == "here" or sub == "test" then
+        local red = BridgeData.owner()
+        local square = nil
+        if red ~= nil then pcall(function() square = red:getCurrentSquare() end) end
+        local poi = BridgeCallout.resolvePlace(square)
+        if poi == nil then return "places " .. tostring(sub) .. ": no POI at this square" end
+        if sub == "here" then
+            return string.format("places here: key=%s pool=%s name=%s special=%s",
+                tostring(poi.key), tostring(poi.pool), tostring(poi.name), tostring(poi.special))
+        end
+        local st = Bridge.store
+        if st == nil then return "places test: no store" end
+        if type(st.visited) ~= "table" then st.visited = {} end
+        st.visited[poi.key] = nil
+        BridgeCallout.placeLastAt = -99999
+        BridgeCallout.placeKey = nil
+        placeFire(poi)
+        return string.format("places test: fired key=%s pool=%s name=%s",
+            tostring(poi.key), tostring(poi.pool), tostring(poi.name))
+    end
+
+    local st = Bridge.store
+    if st == nil then return "places: no store" end
+
+    if sub == "reset" then
+        st.visited = {}
+        BridgeCallout.visitedSign = nil
+        BridgeCallout.placeKey = nil
+        BridgeCallout.placeFired = false
+        BridgeCallout.saveVisited()
+        return string.format("places reset: 0/%d", max)
+    end
+
+    local v = st.visited
+    if type(v) ~= "table" then
+        if sub == "forget" then return "places forget: no entries" end
+        return string.format("places 0/%d", max)
+    end
+
+    if sub == "forget" then
+        if a == nil or a == "" then return "places forget: needs a key" end
+        if v[a] == nil then return "places forget: no such key " .. tostring(a) end
+        v[a] = nil
+        BridgeCallout.saveVisited()
+        return "places forget: removed " .. tostring(a)
+    end
+
+    local keys, n, told = {}, 0, 0
+    for k, e in pairs(v) do
+        n = n + 1
+        if e ~= nil and e.t then told = told + 1 end
+        keys[#keys + 1] = k
+    end
+    table.sort(keys)
+    if sub == "list" then
+        local out = {}
+        for i = 1, #keys do
+            local e = v[keys[i]] or {}
+            out[#out + 1] = string.format("%s %s%s", tostring(keys[i]), tostring(e.n or "?"), e.t and "*" or "")
+        end
+        return string.format("places %d/%d told=%d: %s", n, max, told, table.concat(out, "; "))
+    end
+    return string.format("places %d/%d told=%d", n, max, told)
+end
+
+
 function BridgeCallout.update(body)
     if body == nil then return end
     if carQuiet() then
@@ -514,6 +870,8 @@ function BridgeCallout.update(body)
     if not Bridge.alive() then return end
     local red = BridgeData.owner()
     if red == nil then return end
+
+    placeTick(body, red)
 
     local due = BridgeCallout.milestoneDue
     if due ~= nil then

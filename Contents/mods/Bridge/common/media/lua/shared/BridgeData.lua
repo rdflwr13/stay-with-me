@@ -1217,6 +1217,41 @@ function BridgeData.cleanRel(t)
 end
 
 
+BridgeData.VISITED_MAX = 200
+BridgeData.VISITED_KEY_MAX = 32
+BridgeData.VISITED_NAME_MAX = 32
+
+
+function BridgeData.cleanVisited(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    local n = 0
+    for k, e in pairs(t) do
+        if type(k) == "string" and #k > 0 and #k <= BridgeData.VISITED_KEY_MAX and type(e) == "table" then
+            local s = tonumber(e.s)
+            if s ~= nil and s == s and s >= 0 then
+                local rec = { s = s }
+                if e.t == true then rec.t = true end
+                if type(e.n) == "string" and #e.n > 0 and #e.n <= BridgeData.VISITED_NAME_MAX then rec.n = e.n end
+                out[k] = rec
+                n = n + 1
+            end
+        end
+    end
+    while n > BridgeData.VISITED_MAX do
+        local oldestKey, oldestS = nil, nil
+        for k, e in pairs(out) do
+            local s = tonumber(e.s) or 0
+            if oldestS == nil or s < oldestS then oldestKey, oldestS = k, s end
+        end
+        if oldestKey == nil then break end
+        out[oldestKey] = nil
+        n = n - 1
+    end
+    return out
+end
+
+
 function BridgeData.cleanCount(n)
     n = tonumber(n)
     if n == nil or n ~= n then return 0 end

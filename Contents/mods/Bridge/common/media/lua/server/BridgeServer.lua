@@ -1250,6 +1250,10 @@ BridgeServer.Commands.state = function(player, args)
 
         end
     end
+    if args.visited ~= nil then
+        local visited = BridgeData.cleanVisited(args.visited)
+        if visited ~= nil then rec.visited = visited end
+    end
     if args.skills ~= nil then
         local skills = BridgeData.cleanSkills(args.skills)
         if skills ~= nil then

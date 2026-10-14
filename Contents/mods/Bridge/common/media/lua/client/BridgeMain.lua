@@ -4399,11 +4399,11 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     rest = true, stop = true, mode = true, sit = true, stand = true, sleep = true, anim = true, walk = true,
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
-    kills = true, lose = true, despawn = true, rel = true }
+    kills = true, lose = true, despawn = true, rel = true, places = true }
 
 
 
-local DEV_MP_COMMANDS = { mood = true, rel = true, car = true }
+local DEV_MP_COMMANDS = { mood = true, rel = true, car = true, places = true }
 
 function Bridge.run(line)
     local parts = split(line)
@@ -4438,6 +4438,7 @@ function Bridge.run(line)
     if cmd == "talk" then return BridgeSocial.talk(parts[3] or "Chat") end
     if cmd == "ask" then return BridgeSocial.ask() end
     if cmd == "rel" then return BridgeSocial.relCommand(parts[3], parts[4], parts[5]) end
+    if cmd == "places" then return BridgeCallout.placesCommand(parts[3], parts[4], parts[5]) end
 
 
 
@@ -5542,6 +5543,30 @@ function Bridge.diagLines()
         pcall(function() add("game_time", getGameTime():getTimeOfDay()) end)
         pcall(function() add("chat_ready", tostring(BridgeChat ~= nil and BridgeChat.ready)) end)
         pcall(function() add("chat_seq", tostring(BridgeChat and BridgeChat.seq or 0)) end)
+        pcall(function()
+            local cap = BridgeData.VISITED_MAX or 200
+            local v = Bridge.store and Bridge.store.visited
+            if type(v) ~= "table" then
+                add("visited", "0/" .. tostring(cap) .. " told=0")
+                add("places", "none")
+                return
+            end
+            local keys, n, told = {}, 0, 0
+            for k, e in pairs(v) do
+                n = n + 1
+                if e ~= nil and e.t then told = told + 1 end
+                keys[#keys + 1] = k
+            end
+            table.sort(keys)
+            add("visited", string.format("%d/%d told=%d", n, cap, told))
+            local out = {}
+            for i = 1, #keys do
+                local e = v[keys[i]] or {}
+                out[#out + 1] = string.format("%s:%s:%s:%s", tostring(keys[i]),
+                    tostring(math.floor(tonumber(e.s) or 0)), (e.t and "1" or "0"), tostring(e.n or "?"))
+            end
+            add("places", #out > 0 and table.concat(out, ",") or "none")
+        end)
     end)
     return lines
 end
