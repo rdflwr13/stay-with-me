@@ -1908,6 +1908,7 @@
     "IGUI_NotAlone_ReportLogOn": "Registro detallado: activado",
     "IGUI_NotAlone_ReportLogNote": "Activa el registro detallado antes de reproducir el error y pulsa Crear informe.",
     "IGUI_NotAlone_ReportDone": "Guardado en %1 (copiado al portapapeles)",
+    "IGUI_NotAlone_ZombieOffWarn": "La aparición de zombis está desactivada en este mundo (Sandbox: Zombies = Ninguno), así que %1 no puede aparecer. Pon Zombies por encima de Ninguno y recarga la partida. Este aviso solo se muestra una vez.",
     "IGUI_NotAlone_MenuFollow": "Espera / Sigue",
     "IGUI_NotAlone_MenuOrderHint": "Arrastra una entrada o usa las flechas para cambiar el orden del menú de clic derecho de %1.",
     "IGUI_NotAlone_MenuReset": "Restablecer el orden",

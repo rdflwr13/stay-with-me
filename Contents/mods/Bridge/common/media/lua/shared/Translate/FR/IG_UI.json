@@ -1277,6 +1277,7 @@
     "IGUI_NotAlone_ReportLogOn": "Journal détaillé: activé",
     "IGUI_NotAlone_ReportLogNote": "Active le journal détaillé avant de reproduire le bug, puis clique sur Générer le rapport.",
     "IGUI_NotAlone_ReportDone": "Enregistré dans %1 (copié dans le presse-papiers)",
+    "IGUI_NotAlone_ZombieOffWarn": "Les zombies sont désactivés dans ce monde (Sandbox : Zombies = Aucun), donc %1 ne peut pas apparaître. Réglez Zombies au-dessus de Aucun et rechargez la sauvegarde. Ce message ne sera plus affiché.",
     "IGUI_NotAlone_MenuFollow": "Attends / Suis-moi",
     "IGUI_NotAlone_MenuOrderHint": "Fais glisser une entrée, ou utilise les flèches, pour changer l'ordre du menu clic droit de %1.",
     "IGUI_NotAlone_MenuReset": "Ordre par défaut",

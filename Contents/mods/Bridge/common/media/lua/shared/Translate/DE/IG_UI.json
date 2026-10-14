@@ -1908,6 +1908,7 @@
     "IGUI_NotAlone_ReportLogOn": "Ausführliches Protokoll: An",
     "IGUI_NotAlone_ReportLogNote": "Schalte das ausführliche Protokoll ein, bevor du den Fehler nachstellst, und klicke dann auf Bericht erstellen.",
     "IGUI_NotAlone_ReportDone": "Gespeichert unter %1 (in die Zwischenablage kopiert)",
+    "IGUI_NotAlone_ZombieOffWarn": "Das Zombie-Spawning ist in dieser Welt deaktiviert (Sandbox: Zombies = Keine), daher kann %1 nicht erscheinen. Stelle Zombies über Keine und lade den Spielstand neu. Diese Warnung wird nur einmal angezeigt.",
     "IGUI_NotAlone_MenuFollow": "Warten / Folgen",
     "IGUI_NotAlone_MenuOrderHint": "Zieh einen Eintrag oder nutze die Pfeile, um die Reihenfolge des Rechtsklickmenüs von %1 zu ändern.",
     "IGUI_NotAlone_MenuReset": "Reihenfolge zurücksetzen",

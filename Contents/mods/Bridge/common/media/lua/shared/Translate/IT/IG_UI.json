@@ -1908,6 +1908,7 @@
     "IGUI_NotAlone_ReportLogOn": "Registro dettagliato: attivato",
     "IGUI_NotAlone_ReportLogNote": "Attiva il registro dettagliato prima di riprodurre il bug, poi premi Crea rapporto.",
     "IGUI_NotAlone_ReportDone": "Salvato in %1 (copiato negli appunti)",
+    "IGUI_NotAlone_ZombieOffWarn": "La generazione di zombi è disattivata in questo mondo (Sandbox: Zombies = Nessuno), quindi %1 non può apparire. Imposta Zombies sopra Nessuno e ricarica il salvataggio. Questo avviso viene mostrato una sola volta.",
     "IGUI_NotAlone_MenuFollow": "Aspetta / Segui",
     "IGUI_NotAlone_MenuOrderHint": "Trascina una voce o usa le frecce per cambiare l'ordine del menu tasto destro di %1.",
     "IGUI_NotAlone_MenuReset": "Ripristina l'ordine",
