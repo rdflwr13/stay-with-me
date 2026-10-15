@@ -1637,6 +1637,7 @@ function BridgeTask.reset()
     BridgeTask.current = nil
     BridgeTask.phase = nil
     BridgeTask.info = "reset"
+    BridgeTask.pendingStart = nil
     BridgeTask.deferred = {}
     BridgeTask.needImplement, BridgeTask.needFluid = nil, nil
     BridgeTask.needPetrol, BridgeTask.needAshTool = nil, nil
@@ -1698,6 +1699,23 @@ function BridgeTask.start(kind, targets, corpseDest)
     if def == nil then return "unknown job" end
     if type(targets) ~= "table" then return "no targets" end
     if #targets == 0 and def.noTargets ~= true then return "no targets" end
+
+    -- A fresh start supersedes any deferred home-supply wait.
+    BridgeTask.pendingStart = nil
+
+    -- Home auto-fetch pre-phase: pull required-but-missing tools/resources
+    -- straight from a container in the home zone before def.available drives
+    -- the missing path below.
+    if BridgeFetch ~= nil and type(BridgeFetch.primeJob) == "function" then
+        local fetch = nil
+        pcall(function() fetch = BridgeFetch.primeJob(kind, targets) end)
+        if fetch == "pending" then
+            BridgeTask.pendingStart = { kind = kind, targets = targets, corpseDest = corpseDest, since = Bridge.time }
+            log("waiting for home supplies for " .. tostring(kind))
+            return "fetching"
+        end
+    end
+
     if def.available ~= nil and not def.available(Bridge.body) then
         BridgeTask.speakMissing(kind)
         return "unavailable"
@@ -1896,6 +1914,7 @@ function BridgeTask.cancel(reason)
     BridgeTask.current = nil
     BridgeTask.phase = nil
     BridgeTask.info = "cancel " .. tostring(reason)
+    BridgeTask.pendingStart = nil
     BridgeTask.target = nil
     BridgeTask.needImplement, BridgeTask.needFluid = nil, nil
     BridgeTask.needPetrol, BridgeTask.needAshTool = nil, nil

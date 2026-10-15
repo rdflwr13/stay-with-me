@@ -39,6 +39,7 @@
     "IGUI_NotAlone_JobChopTree": "Bäume fällen",
     "IGUI_NotAlone_JobCleanUp": "Aufräumen",
     "IGUI_NotAlone_CancelTask": "Arbeit abbrechen",
+    "IGUI_NotAlone_CancelExercise": "Training beenden",
     "IGUI_NotAlone_Need_Axe": "Sie braucht eine Axt im Inventar.",
     "IGUI_NotAlone_Need_CleanImplement": "Sie braucht einen Mopp oder Besen.",
     "IGUI_NotAlone_Need_Cleaner": "Sie braucht Bleichmittel oder Reinigungsmittel.",

@@ -795,7 +795,8 @@ function BridgeMenu.addCancelTask(context)
     local task = BridgeTask.active == true
     local transfers = BridgeQueue ~= nil and BridgeQueue.jobs ~= nil and #BridgeQueue.jobs > 0
     if not task and not transfers then return end
-    context:addOption(tr("CancelTask"), nil, BridgeMenu.onCancelTask)
+    local key = (task and BridgeTask.kind == "exercise") and "CancelExercise" or "CancelTask"
+    context:addOption(tr(key), nil, BridgeMenu.onCancelTask)
 end
 
 function BridgeMenu.onCancelTask()

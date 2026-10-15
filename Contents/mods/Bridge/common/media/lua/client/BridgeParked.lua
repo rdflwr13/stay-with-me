@@ -408,9 +408,68 @@ function BridgeParked.wrapPane()
     log("inventory pane wrapped for the parked lock cue")
 end
 
+-----------------------------------------------------------------------------------------------------
+-- displayed weight
+--
+-- The parked container is a plain ItemContainer; nothing in it is worn/equipped, so the engine
+-- counts every item at its full unequipped weight. Her real body inventory applies each worn
+-- bag's WeightReduction to that bag's contents ("17.12 / 15" instead of "8.55 / 15" while driving).
+-- Reproduce that here for the pane's weight label so the parked main reads the same as on foot.
+-- The bag buttons are separate containers and keep their own (unreduced) weight.
+-----------------------------------------------------------------------------------------------------
+
+function BridgeParked.loadWeight(container)
+    local main = BridgeParked.main
+    if main == nil or container == nil or container ~= main then return nil end
+    local total = nil
+    pcall(function() total = main:getCapacityWeight() end)
+    if type(total) ~= "number" then return nil end
+    local extra = BridgeParked.extra
+    pcall(function()
+        local items = main:getItems()
+        for i = 0, items:size() - 1 do
+            local item = items:get(i)
+            if item ~= nil then
+                local f = extra[item]
+                if f ~= nil and f.w == true and item:IsInventoryContainer() then
+                    local red = 0
+                    pcall(function() red = item:getWeightReduction() end)
+                    if type(red) == "number" and red > 0 then
+                        local full, own = nil, nil
+                        pcall(function() full = item:getUnequippedWeight() end)
+                        pcall(function() own = item:getActualWeight() end)
+                        if type(full) == "number" and type(own) == "number" and own <= full then
+                            total = total - (full - own) * (red / 100)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    pcall(function() total = ItemContainer.floatingPointCorrection(total) end)
+    if type(total) ~= "number" or total < 0 then return nil end
+    return total
+end
+
+function BridgeParked.wrapLoad()
+    if ISInventoryPage == nil or type(ISInventoryPage.loadWeight) ~= "function"
+        or ISInventoryPage.bridgeParkedLoadWrapped then return end
+    local loadWeight = ISInventoryPage.loadWeight
+    ISInventoryPage.loadWeight = function(inv, ...)
+        if BridgeParked.active and BridgeParked.main ~= nil then
+            local ok, w = pcall(BridgeParked.loadWeight, inv)
+            if ok and type(w) == "number" then return w end
+        end
+        return loadWeight(inv, ...)
+    end
+    ISInventoryPage.bridgeParkedLoadWrapped = true
+    log("loadWeight wrapped: the parked weight counts a worn bag's reduction")
+end
+
 pcall(BridgeParked.wrapPane)
+pcall(BridgeParked.wrapLoad)
 if Events ~= nil and Events.OnGameStart ~= nil then
-    Events.OnGameStart.Add(function() pcall(BridgeParked.wrapPane) end)
+    Events.OnGameStart.Add(function() pcall(BridgeParked.wrapPane) pcall(BridgeParked.wrapLoad) end)
 end
 
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeParked] loaded") end

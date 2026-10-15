@@ -347,7 +347,7 @@ end
 
 
 BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
-    relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false }
+    relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true }
 BridgeData.HAIR_MAX = 40
 
 function BridgeData.optionOf(rec, key)
@@ -355,6 +355,11 @@ function BridgeData.optionOf(rec, key)
     if rec ~= nil and rec[key] ~= nil then return rec[key] == true end
     if key == "romance" then return not BridgeData.sameSex(rec) end
     return BridgeData.OPTIONS[key] == true
+end
+
+
+function BridgeData.homeResources(rec)
+    return BridgeData.optionOf(rec, "homeResources")
 end
 
 
@@ -636,6 +641,7 @@ BridgeData.GENDERED_KEYS = {
     OptFatigueBar = true, OptFatigueBarTip = true,
     OptSitWithRed = true, OptSitWithRedTip = true,
     OptExerciseWithMe = true, OptExerciseWithMeTip = true,
+    OptHomeResources = true, OptHomeResourcesTip = true,
     OptTorchTip = true,
     OptEquipScale = true, OptEquipScaleTip = true,
 }

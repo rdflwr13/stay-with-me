@@ -1111,6 +1111,7 @@ function BridgeWindow.neededSize()
     end
     if BridgeHomeTab ~= nil and type(BridgeHomeTab.heightFor) == "function" then
         w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowHome")))
+        w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr("OptHomeResources")) + PAD)
         contentH = math.max(contentH, BridgeHomeTab.heightFor(w))
     end
     return math.max(BridgeWindow.WIDTH, math.ceil(w)), math.ceil(contentH)

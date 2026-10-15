@@ -1,11 +1,18 @@
 require "ISUI/ISPanel"
 require "ISUI/ISButton"
+require "ISUI/ISTickBox"
 require "ISUI/ISModalDialog"
 require "ISUI/ISWorldObjectContextMenu"
 
 BridgeHome = BridgeHome or {}
 
 local PAD = 10
+
+-- Highlight palette: the saved home and a valid selection are blue; an invalid
+-- selection stays red.
+local HOME_R, HOME_G, HOME_B, HOME_A = 0.20, 0.50, 1.00, 0.30
+local SEL_R, SEL_G, SEL_B, SEL_A = 0.20, 0.50, 1.00, 0.35
+local BAD_R, BAD_G, BAD_B = 1.00, 0.10, 0.10
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeHome] " .. tostring(text)) end end
 
@@ -248,9 +255,9 @@ function SelectUI:prerender()
     if b ~= nil then
         local ok = self:valid(b)
         addAreaHighlightForPlayer(self.playerNum, b.x1, b.y1, b.x2 + 1, b.y2 + 1, b.z,
-            ok and 0.1 or 1.0, ok and 1.0 or 0.1, 0.1, 0.35)
+            ok and SEL_R or BAD_R, ok and SEL_G or BAD_G, ok and SEL_B or BAD_B, SEL_A)
     elseif sq ~= nil then
-        addAreaHighlightForPlayer(self.playerNum, wx, wy, wx + 1, wy + 1, self.level, 0.1, 1.0, 0.1, 0.55)
+        addAreaHighlightForPlayer(self.playerNum, wx, wy, wx + 1, wy + 1, self.level, SEL_R, SEL_G, SEL_B, 0.55)
     end
 end
 
@@ -317,7 +324,8 @@ BridgeHomeTab = ISPanel:derive("BridgeHomeTab")
 function BridgeHomeTab.heightFor(width)
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
-    return PAD + fontS + PAD + btnH + PAD + btnH + PAD
+    local tickH = math.max(btnH, fontS) + (UI_BORDER_SPACING or 10)
+    return PAD + fontS + PAD + btnH + PAD + btnH + PAD + tickH + PAD
 end
 
 function BridgeHomeTab:createChildren()
@@ -338,6 +346,18 @@ function BridgeHomeTab:createChildren()
     self.clearBtn:instantiate()
     self.clearBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.clearBtn)
+    y = y + btnH + PAD
+    self.resTick = ISTickBox:new(PAD, y, self.width - PAD * 2, btnH, "", self, BridgeHomeTab.onResourceTick, "homeResources")
+    self.resTick:initialise()
+    self.resTick:instantiate()
+    self.resTick:addOption(tr("OptHomeResources"))
+    self.resTick.tooltip = tr("OptHomeResourcesTip")
+    self:addChild(self.resTick)
+    self.resTickY = y
+end
+
+function BridgeHomeTab:onResourceTick(index, selected, key)
+    if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption(key, selected == true) end
 end
 
 function BridgeHomeTab:onSet()
@@ -351,8 +371,24 @@ end
 function BridgeHomeTab:prerender()
     ISPanel.prerender(self)
     if Bridge == nil or Bridge.store == nil then return end
-    local has = BridgeHome.get() ~= nil
+    local h = BridgeHome.get()
+    local has = h ~= nil
     if self.clearBtn ~= nil and self.clearBtn.enable ~= has then self.clearBtn:setEnable(has) end
+    if self.resTick ~= nil then
+        local want = BridgeData.optionOf(Bridge.store, "homeResources")
+        if self.resTick:isSelected(1) ~= want then self.resTick:setSelected(1, want) end
+    end
+    -- Draw the current home radius in-world while the Home tab is open.
+    -- addAreaHighlightForPlayer is per-frame, so it clears itself when the tab
+    -- is switched away or the window is closed.
+    if h ~= nil then
+        local pn = 0
+        pcall(function()
+            local p = BridgeData.owner()
+            if p ~= nil then pn = p:getPlayerNum() end
+        end)
+        addAreaHighlightForPlayer(pn, h.x, h.y, h.x + h.w, h.y + h.h, h.z, HOME_R, HOME_G, HOME_B, HOME_A)
+    end
 end
 
 function BridgeHomeTab:render()

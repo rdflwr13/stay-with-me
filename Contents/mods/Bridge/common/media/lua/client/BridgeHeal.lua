@@ -603,7 +603,7 @@ end
 
 
 function BridgeHeal.start(body, red, byRequest)
-    local queue, missing, wounds = BridgeHeal.plan(body, red)
+    local queue, missing, wounds, lacking = BridgeHeal.plan(body, red)
     BridgeHeal.missing = missing
     BridgeHeal.lastAuto = Bridge.time
     if #wounds == 0 then
@@ -611,12 +611,37 @@ function BridgeHeal.start(body, red, byRequest)
         BridgeHeal.info = "clean"
         return "clean"
     end
+
+    -- Home auto-fetch: pull a missing bandage/disinfectant straight from a home
+    -- container before falling back to the "I have nothing" speech.
+    local fetched = false
+    if BridgeFetch ~= nil and type(BridgeFetch.available) == "function" and lacking ~= nil
+            and BridgeFetch.available() and type(BridgeFetch.pull) == "function" then
+        if lacking.Bandage and not BridgeHeal.hasFor(body, red, "bandage") then
+            pcall(function()
+                local res = BridgeFetch.pull("bandage")
+                if res == "moved" or res == "requested" then fetched = true end
+            end)
+        end
+        if lacking.Disinfectant and not BridgeHeal.hasFor(body, red, "disinfect") then
+            pcall(function()
+                local res = BridgeFetch.pull("disinfectant")
+                if res == "moved" or res == "requested" then fetched = true end
+            end)
+        end
+    end
+    if fetched then
+        queue, missing, wounds, lacking = BridgeHeal.plan(body, red)
+        BridgeHeal.missing = missing
+    end
+
     if #queue == 0 then
 
-        if byRequest then
+        if byRequest and not fetched then
             if #missing == 0 then say("Heal_NoWounds") else say("Heal_Nothing", table.concat(missing, ", ")) end
         end
-        BridgeHeal.info = "nothing to do: " .. table.concat(missing, ", ")
+        BridgeHeal.info = fetched and ("waiting for home supplies: " .. table.concat(missing, ", "))
+            or ("nothing to do: " .. table.concat(missing, ", "))
         return BridgeHeal.info
     end
     BridgeHeal.queue = queue

@@ -4334,10 +4334,10 @@ function Bridge.onZombieUpdate(zombie)
 
 
 
-                if Bridge.hiddenSince ~= nil and Bridge.body == zombie then
-                    Bridge.hideBody(zombie, false)
-                    Bridge.hiddenSince = nil
-                end
+                -- do not unhide here: while the body is still remote the bare
+                -- "Naked" zombie would render before the skin and outfit are
+                -- applied. The normal reveal (updateZombieBody -> showReady)
+                -- unhides her below once she is actually dressed.
                 if not ownerNearBody(zombie, BridgeData.owner()) then
                     pcall(function() applyLook(zombie, Bridge.body ~= zombie, rec, who) end)
 

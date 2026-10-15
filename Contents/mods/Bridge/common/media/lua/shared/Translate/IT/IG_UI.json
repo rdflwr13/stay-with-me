@@ -840,6 +840,7 @@
     "IGUI_NotAlone_WindowAppearance": "Aspetto",
     "IGUI_NotAlone_AppearanceBeard": "Barba",
     "IGUI_NotAlone_CancelTask": "Interrompi il lavoro",
+    "IGUI_NotAlone_CancelExercise": "Interrompi l'esercizio",
     "IGUI_NotAlone_CombatAggressiveTipMale": "Insegue gli zombi più lontani, anche se questo lo porta ad allontanarsi da te.",
     "IGUI_NotAlone_CombatBackMeUp": "Coprimi",
     "IGUI_NotAlone_CombatBackMeUpTip": "Interviene solo dopo che hai iniziato a combattere.",

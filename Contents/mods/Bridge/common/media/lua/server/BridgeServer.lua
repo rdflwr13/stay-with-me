@@ -2136,6 +2136,135 @@ end
 
 
 
+-- Home auto-fetch: move one item from a container inside the home rect straight
+-- into her body snapshot, then reply through the existing "gave" pipeline.
+-- Scans rec.home on the server (the near-companion srcRef path is too short for
+-- a 40x40 home). Enforces "near home" server-side.
+local FETCH_MARGIN = 6
+
+
+local function homeRectOf(rec)
+    local h = rec ~= nil and rec.home or nil
+    if type(h) ~= "table" then return nil end
+    if type(h.x) ~= "number" or type(h.y) ~= "number" or type(h.z) ~= "number"
+        or type(h.w) ~= "number" or type(h.h) ~= "number" then return nil end
+    return h.x, h.y, h.x + h.w - 1, h.y + h.h - 1, h.z
+end
+
+
+local function findHomeItem(rec, body, player, wantId)
+    local x1, y1, x2, y2, z = homeRectOf(rec)
+    if x1 == nil or wantId == nil then return nil, nil end
+    local found, foundC = nil, nil
+    local seen = {}
+    for x = x1, x2 do
+        if found ~= nil then break end
+        for y = y1, y2 do
+            if found ~= nil then break end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+            if sq ~= nil then
+                local function scan(objs)
+                    if objs == nil or found ~= nil then return end
+                    for i = 0, objs:size() - 1 do
+                        if found ~= nil then return end
+                        local o = objs:get(i)
+                        if o ~= nil then
+                            local n = 0
+                            pcall(function() n = o:getContainerCount() end)
+                            for j = 0, n - 1 do
+                                if found ~= nil then return end
+                                local c = nil
+                                pcall(function() c = o:getContainerByIndex(j) end)
+                                if c ~= nil and not seen[c] then
+                                    seen[c] = true
+                                    local skip = false
+                                    pcall(function() skip = body ~= nil and c == body:getInventory() end)
+                                    if not skip then
+                                        pcall(function()
+                                            if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
+                                        end)
+                                    end
+                                    if not skip then
+                                        local list = nil
+                                        pcall(function() list = c:getItems() end)
+                                        if list ~= nil then
+                                            for k = 0, list:size() - 1 do
+                                                local it = list:get(k)
+                                                local id = nil
+                                                pcall(function() if it ~= nil then id = it:getID() end end)
+                                                if id ~= nil and id == wantId then
+                                                    found, foundC = it, c
+                                                    return
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                pcall(function() scan(sq:getObjects()) end)
+                pcall(function() scan(sq:getSpecialObjects()) end)
+                pcall(function() scan(sq:getStaticMovingObjects()) end)
+            end
+        end
+    end
+    return found, foundC
+end
+
+
+BridgeServer.Commands.fetchSupply = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    local wantId = args.id
+    local function fail(why)
+        log("fetchSupply failed for " .. tostring(who) .. ": " .. tostring(why))
+        sendServerCommand(player, "Bridge", "giveFailed",
+            { id = wantId, ids = (wantId ~= nil) and { wantId } or {}, token = args.token, why = why })
+    end
+    if rec.bodyId == nil then return fail("no body") end
+    if wantId == nil then return fail("no item") end
+    local x1, y1, x2, y2, z = homeRectOf(rec)
+    if x1 == nil then return fail("no home") end
+    local body = BridgeServer.bodies[who] or currentBody(who, rec)
+    if body == nil then return fail("no body") end
+    local bx, by, bz = nil, nil, nil
+    pcall(function() bx, by, bz = math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()) end)
+    if bx == nil then return fail("no position") end
+    if math.abs((bz or 0) - z) >= 1
+            or bx < x1 - FETCH_MARGIN or bx > x2 + FETCH_MARGIN
+            or by < y1 - FETCH_MARGIN or by > y2 + FETCH_MARGIN then
+        return fail("not at home")
+    end
+    local item, container = findHomeItem(rec, body, player, wantId)
+    if item == nil or container == nil then return fail("not in home storage") end
+
+    local list = BridgeItems.decode(rec.items or "")
+    local r = BridgeItems.record(item, true)
+    flatten(r, nil, list)
+    local items = BridgeItems.encode(list)
+    if #BridgeItems.decode(items) ~= #list then return fail("snapshot full") end
+    local ok, err = pcall(function()
+        container:Remove(item)
+        sendRemoveItemFromContainer(container, item)
+    end)
+    if not ok then return fail("remove failed: " .. tostring(err)) end
+    rec.items = items
+    rec.saved = 1
+    rec.iseq = (rec.iseq or 0) + 1
+    local outIds = { item:getID() }
+    local added = {}
+    flatten(r, nil, added)
+    journalNote("G", who, rec, item:getID(), added)
+    transmit()
+    sendServerCommand(player, "Bridge", "gave", { ids = outIds, recs = { r }, token = args.token, iseq = rec.iseq })
+    log("fetch " .. tostring(r.t) .. " from home storage for " .. tostring(who))
+end
+
+
+
 BridgeServer.Commands.take = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
