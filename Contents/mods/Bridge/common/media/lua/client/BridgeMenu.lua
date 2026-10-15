@@ -366,6 +366,13 @@ local function buildJobs(context, playerNum, env)
         if not ok then jobTip(cut, "chopTree") end
         if not ok or BridgeTask.active then cut.notAvailable = true end
     end
+    if BridgeTask.MOVE_CORPSES_ENABLED == 1 then
+        local ok = false
+        pcall(function() ok = BridgeTask.kinds.moveCorpses.available(Bridge.body) end)
+        local move = jobs:addOption(tr("JobMoveCorpses"), nil, BridgeMenu.onJobMoveCorpses)
+        if not ok then jobTip(move, "moveCorpses") end
+        if not ok or BridgeTask.active then move.notAvailable = true end
+    end
 end
 
 local function buildKeep(context, playerNum, env)
@@ -767,6 +774,12 @@ function BridgeMenu.onJobLootArea()
     BridgeWorkSelect.begin(BridgeData.owner(), "lootArea")
 end
 
+function BridgeMenu.onJobMoveCorpses()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "moveCorpses")
+end
+
 
 function BridgeMenu.addCancelTask(context)
     if context == nil then return end
@@ -839,6 +852,13 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
         local area = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
         if not ok then jobTip(area, "chopTree") end
         if not ok or BridgeTask.active then area.notAvailable = true end
+    end
+    if BridgeTask.MOVE_CORPSES_ENABLED == 1 then
+        local ok = false
+        pcall(function() ok = BridgeTask.kinds.moveCorpses.available(Bridge.body) end)
+        local move = jobs:addOption(tr("JobMoveCorpses"), nil, BridgeMenu.onJobMoveCorpses)
+        if not ok then jobTip(move, "moveCorpses") end
+        if not ok or BridgeTask.active then move.notAvailable = true end
     end
     BridgeMenu.addCancelTask(sub)
 end

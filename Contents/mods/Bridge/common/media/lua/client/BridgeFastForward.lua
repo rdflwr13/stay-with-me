@@ -199,7 +199,7 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
         if BridgeTask ~= nil and BridgeTask.active == true then
             job = true
             ffJob = (BridgeTask.kind == "chopTree" or BridgeTask.kind == "clearPlants"
-                or BridgeTask.kind == "cleanUp")
+                or BridgeTask.kind == "cleanUp" or BridgeTask.kind == "moveCorpses")
         end
     end)
     if job and not seated and not ffJob then return "job" end
@@ -451,7 +451,8 @@ function BridgeFastForward.holdStand(b)
     end
     if BridgeTask ~= nil and BridgeTask.active
             and (BridgeTask.kind == "exercise" or BridgeTask.kind == "chopTree"
-                or BridgeTask.kind == "clearPlants" or BridgeTask.kind == "cleanUp") then
+                or BridgeTask.kind == "clearPlants" or BridgeTask.kind == "cleanUp"
+                or BridgeTask.kind == "moveCorpses") then
         if BridgeTask.kind == "exercise" and bump ~= BridgeTask.EXERCISE_ANIM then return false end
         if bump == "" or bump == "nil" then return false end
         pcall(function() fin = b:getVariableBoolean("BumpAnimFinished") == true end)
@@ -686,7 +687,8 @@ function BridgeFastForward.tick()
     if BridgeFastForward.flagged ~= nil and why == nil and BridgeTask ~= nil
             and BridgeTask.active and Bridge.body ~= nil
             and (BridgeTask.kind == "exercise" or BridgeTask.kind == "chopTree"
-                or BridgeTask.kind == "clearPlants" or BridgeTask.kind == "cleanUp") then
+                or BridgeTask.kind == "clearPlants" or BridgeTask.kind == "cleanUp"
+                or BridgeTask.kind == "moveCorpses") then
         pcall(function() BridgeTask.update(Bridge.body) end)
         if Bridge.every(120) then
             log("ff drive: " .. tostring(BridgeTask.kind) .. " time=" .. string.format("%.1f", Bridge.time or 0))

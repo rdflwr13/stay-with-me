@@ -35,6 +35,7 @@ BridgeServer.diedCheck = {}
 BridgeServer.deadFor = {}
 BridgeServer.undriven = {}
 BridgeServer.online = {}
+BridgeServer.corpseCarry = {}
 BridgeServer.panicSaved = {}
 BridgeServer.panicKeep = {}
 BridgeServer.panicWatch = {}
@@ -1893,6 +1894,90 @@ BridgeServer.Commands.clearPlants = function(player, args)
 end
 
 
+local function serverCorpseOn(sq, cx, cy)
+    local best, bestD = nil, nil
+    if sq == nil then return nil end
+    pcall(function()
+        local mv = sq:getStaticMovingObjects()
+        if mv == nil then return end
+        for i = 0, mv:size() - 1 do
+            local c = mv:get(i)
+            if c ~= nil and instanceof(c, "IsoDeadBody") and not c:isAnimal() then
+                local d = 0
+                if cx ~= nil and cy ~= nil then d = (c:getX() - cx) ^ 2 + (c:getY() - cy) ^ 2 end
+                if bestD == nil or d < bestD then best, bestD = c, d end
+            end
+        end
+    end)
+    return best
+end
+
+BridgeServer.Commands.corpseGrab = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("corpseGrab: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+
+    if BridgeServer.corpseCarry[who] ~= nil then
+        BridgeServer.Commands.corpseDrop(player,
+            { x = math.floor(body:getX()), y = math.floor(body:getY()), z = math.floor(body:getZ()) })
+    end
+    local corpse = serverCorpseOn(sq, tonumber(args.cx), tonumber(args.cy))
+    if corpse == nil then
+        log("corpseGrab: no corpse at " .. tostring(args.x) .. "," .. tostring(args.y) .. "," .. tostring(args.z))
+        return
+    end
+    local item = nil
+    pcall(function() item = corpse:getItem() end)
+    BridgeServer.corpseCarry[who] = { corpse = corpse, item = item,
+        x = sq:getX(), y = sq:getY(), z = sq:getZ() }
+    pcall(function() sq:removeCorpse(corpse, false) end)
+    log("corpseGrab: " .. tostring(who) .. " took a body at " .. tostring(args.x) .. "," .. tostring(args.y))
+end
+
+BridgeServer.Commands.corpseDrop = function(player, args)
+    local who = player:getUsername()
+    local carry = BridgeServer.corpseCarry[who]
+    if carry == nil then return end
+    local _body, sq = companionAtRelaxed(player, args, 6)
+    if sq == nil then
+
+        log("corpseDrop: no square for " .. tostring(args.x) .. "," .. tostring(args.y))
+        return
+    end
+    BridgeServer.corpseCarry[who] = nil
+    local x, y, z = sq:getX(), sq:getY(), sq:getZ()
+    local placed = false
+    if carry.corpse ~= nil then
+        pcall(function()
+            local c = carry.corpse
+            c:setX(x + 0.5)
+            c:setY(y + 0.5)
+            c:setZ(z)
+            if c.setSquare ~= nil then c:setSquare(sq) end
+            if c.setCurrent ~= nil then c:setCurrent(sq) end
+            sq:addCorpse(c, false)
+            placed = true
+        end)
+        if placed then
+            pcall(function()
+                if carry.corpse.transmitUpdatedSpriteToClients ~= nil then
+                    carry.corpse:transmitUpdatedSpriteToClients()
+                end
+            end)
+        end
+    end
+    if not placed and carry.item ~= nil then
+        pcall(function() sq:tryAddCorpseToWorld(carry.item, 0.5, 0.5) placed = true end)
+    end
+    log("corpseDrop: " .. tostring(who) .. " placed a body at " .. tostring(x) .. "," .. tostring(y)
+        .. (placed and "" or " (failed)"))
+end
+
+
 
 
 
@@ -2694,6 +2779,21 @@ local function onTick()
         end
         BridgeServer.onlineCount = count
         refreshOnline()
+    end
+
+    if BridgeServer.tick > 200 and BridgeServer.newSecond and sec % 5 == 0 then
+        for who, carry in pairs(BridgeServer.corpseCarry) do
+            if BridgeServer.online[who] == nil and carry ~= nil then
+                BridgeServer.corpseCarry[who] = nil
+                if carry.item ~= nil then
+                    pcall(function()
+                        local sq = getCell():getGridSquare(carry.x, carry.y, carry.z)
+                        if sq ~= nil then sq:tryAddCorpseToWorld(carry.item, 0.5, 0.5) end
+                    end)
+                end
+                log("corpseDrop: returned an orphaned body for offline " .. tostring(who))
+            end
+        end
     end
     if BridgeServer.newSecond and sec % 10 == 0 then
         for _, b in pairs(BridgeServer.bodies) do
