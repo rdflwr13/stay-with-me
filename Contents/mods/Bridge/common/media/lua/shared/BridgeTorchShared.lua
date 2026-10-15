@@ -625,7 +625,7 @@ function BridgeTorchShared.swapBattery(body)
 
 
     pcall(function()
-        if sendRemoveItemFromContainer ~= nil and removedFrom ~= nil then
+        if isServer() and sendRemoveItemFromContainer ~= nil and removedFrom ~= nil then
             sendRemoveItemFromContainer(removedFrom, battery)
         end
     end)

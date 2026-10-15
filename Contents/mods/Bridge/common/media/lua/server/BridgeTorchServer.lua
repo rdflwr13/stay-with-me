@@ -14,6 +14,8 @@
 
 
 
+if not isServer() then return end
+
 BridgeTorchServer = BridgeTorchServer or {}
 BridgeTorchServer.tick = 0
 
