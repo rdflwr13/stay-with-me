@@ -2193,6 +2193,24 @@ function Bridge.resetMenuOrder()
 end
 
 
+function Bridge.setMenuShown(id, on)
+    if type(id) ~= "string" or not BridgeData.MENU_ORDER_SET[id] then return "bad menu item" end
+    local hidden = BridgeData.menuHidden(Bridge.store)
+    local nextHidden = {}
+    for i = 1, #hidden do
+        if hidden[i] ~= id then nextHidden[#nextHidden + 1] = hidden[i] end
+    end
+    if on ~= true then nextHidden[#nextHidden + 1] = id end
+    nextHidden = BridgeData.cleanMenuHidden(nextHidden)
+    if Bridge.store ~= nil then Bridge.store.menuHidden = nextHidden end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { menuHidden = nextHidden }) end)
+    end
+    log("menuShown " .. id .. "=" .. tostring(on == true))
+    return id .. "=" .. tostring(on == true)
+end
+
+
 function Bridge.setLootCat(cat, on)
     if type(cat) ~= "string" or not BridgeData.LOOT_CAT_SET[cat] then
         return "no such loot category: " .. tostring(cat)

@@ -551,6 +551,37 @@ function BridgeData.cleanMenuOrder(value)
     return out
 end
 
+function BridgeData.cleanMenuHidden(value)
+    if type(value) ~= "table" then return nil end
+    local seen = {}
+    for _, id in ipairs(value) do
+        if type(id) == "string" and BridgeData.MENU_ORDER_SET[id] then seen[id] = true end
+    end
+    local out = {}
+    for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do
+        if seen[id] then out[#out + 1] = id end
+    end
+    return out
+end
+
+
+function BridgeData.menuHidden(rec)
+    if type(rec) ~= "table" then return {} end
+    local clean = BridgeData.cleanMenuHidden(rec.menuHidden)
+    if clean == nil then return {} end
+    return clean
+end
+
+
+function BridgeData.menuShown(rec, id)
+    local hidden = BridgeData.menuHidden(rec)
+    for i = 1, #hidden do
+        if hidden[i] == id then return false end
+    end
+    return true
+end
+
+
 function BridgeData.menuOrder(rec)
     local out, seen = {}, {}
     local clean = nil
@@ -641,6 +672,7 @@ BridgeData.GENDERED_KEYS = {
     OptFatigueBar = true, OptFatigueBarTip = true,
     OptSitWithRed = true, OptSitWithRedTip = true,
     OptExerciseWithMe = true, OptExerciseWithMeTip = true,
+    ExerciseCombatTip = true, ExerciseTiredTip = true, ExerciseNotice = true,
     OptHomeResources = true, OptHomeResourcesTip = true,
     OptTorchTip = true,
     OptEquipScale = true, OptEquipScaleTip = true,

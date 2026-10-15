@@ -1056,6 +1056,22 @@ BridgeServer.Commands.state = function(player, args)
             end
         end
     end
+    if args.menuHidden ~= nil then
+        local hidden = BridgeData.cleanMenuHidden(args.menuHidden)
+        if hidden ~= nil then
+            local old = BridgeData.cleanMenuHidden(rec.menuHidden) or {}
+            local same = #old == #hidden
+            if same then
+                for i = 1, #hidden do
+                    if old[i] ~= hidden[i] then same = false break end
+                end
+            end
+            if not same then
+                rec.menuHidden = hidden
+                changed = true
+            end
+        end
+    end
 
     if args.lootCats ~= nil then
         local cats = BridgeData.cleanLootCats(args.lootCats)

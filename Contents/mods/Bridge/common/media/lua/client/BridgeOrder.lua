@@ -46,8 +46,22 @@ function BridgeOrderList:new(x, y, width, height)
     o.itemheight = math.max(o.fontHgt + o.itemPadY * 2, DRAG_BOX + 6)
     o.boxSize = DRAG_BOX
     o.dragTexture = getTexture("media/ui/dragModIcon.png")
+    o.tickTexture = getTexture("media/ui/inventoryPanes/Tickbox_Tick.png")
+    o.tickSize = 16
     o.dragItem = nil
     return o
+end
+
+function BridgeOrderList:tickX()
+    return 8
+end
+
+function BridgeOrderList:dragX()
+    return self:tickX() + self.tickSize + 8
+end
+
+function BridgeOrderList:textX()
+    return self:dragX() + self.boxSize + 8
 end
 
 function BridgeOrderList:onMouseDown(x, y)
@@ -55,6 +69,10 @@ function BridgeOrderList:onMouseDown(x, y)
     local row = self:rowAt(x, y)
     if row < 1 or row > #self.items then return end
     self.selected = row
+    if self.mouseOverTick == self.items[row] then
+        if type(self.onToggle) == "function" then self.onToggle(self.items[row]) end
+        return
+    end
     if self.mouseOverDragIcon then
         self.dragItem = self.items[row]
         getSoundManager():playUISound("UISelectListItem")
@@ -88,6 +106,7 @@ end
 
 function BridgeOrderList:prerender()
     self.mouseOverDragIcon = nil
+    self.mouseOverTick = nil
     ISScrollingListBox.prerender(self)
 end
 
@@ -103,18 +122,37 @@ function BridgeOrderList:doDrawItem(y, item, alt)
     end
     self:drawRectBorder(0, y, self:getWidth(), item.height, 0.5, self.borderColor.r, self.borderColor.g, self.borderColor.b)
 
+    local tick = self.tickSize or 16
+    local tickX = self:tickX()
+    local tickY = y + (item.height - tick) / 2
+    self:drawRectBorder(tickX, tickY, tick, tick, 0.8, 1, 1, 1)
+    if item.on == true and self.tickTexture ~= nil then
+        local mark = tick - 4
+        local tr, tg, tb = 1, 1, 1
+        pcall(function()
+            local c = getCore():getGoodHighlitedColor()
+            tr, tg, tb = c:getR(), c:getG(), c:getB()
+        end)
+        self:drawTextureScaled(self.tickTexture, tickX + 2, tickY + 2, mark, mark, 1, tr, tg, tb)
+    end
+    local dragX = self:dragX()
     local shift = (item.height - self.boxSize) / 2
-    self:drawTexture(self.dragTexture, shift, y + shift, 1, 1, 1, 1)
+    self:drawTexture(self.dragTexture, dragX, y + shift, 1, 1, 1, 1)
     if self.mouseoverselected == item.index and self:isMouseOver() then
         local mx, my = self:getMouseX(), self:getMouseY()
-        if mx > shift and mx < shift + self.boxSize and my > y + shift and my < y + shift + self.boxSize then
+        if mx >= tickX and mx <= tickX + tick and my >= tickY and my <= tickY + tick then
+            self.mouseOverTick = item
+        end
+        if mx >= dragX and mx <= dragX + self.boxSize and my >= y + shift and my <= y + shift + self.boxSize then
             self.mouseOverDragIcon = item
         end
     end
 
     local textColor = item.textColor or self.textColor
+    local cr, cg, cb, ca = textColor.r, textColor.g, textColor.b, textColor.a
+    if item.on ~= true then cr, cg, cb, ca = 0.45, 0.45, 0.45, 1 end
     local ty = y + (item.height - self.fontHgt) / 2
-    self:drawText(item.text, self.boxSize + 14, ty, textColor.r, textColor.g, textColor.b, textColor.a, self.font)
+    self:drawText(item.text, self:textX(), ty, cr, cg, cb, ca, self.font)
     return y + item.height
 end
 
@@ -140,12 +178,43 @@ function BridgeOrderList:render()
     self:drawRect(0, gy, self:getWidth(), item.height - 1, 0.3, 0.7, 0.35, 0.15)
     self:drawRectBorder(0, gy, self:getWidth(), item.height, 0.5, self.borderColor.r, self.borderColor.g, self.borderColor.b)
     local shift = (item.height - self.boxSize) / 2
-    self:drawTexture(self.dragTexture, shift, shift + gy, 1, 1, 1, 1)
-    self:drawText(item.text, self.boxSize + 14, gy + (item.height - self.fontHgt) / 2, 0.9, 0.9, 0.9, 0.9, self.font)
+    self:drawTexture(self.dragTexture, self:dragX(), shift + gy, 1, 1, 1, 1)
+    self:drawText(item.text, self:textX(), gy + (item.height - self.fontHgt) / 2, 0.9, 0.9, 0.9, 0.9, self.font)
 end
 
 
 BridgeOrder = ISPanel:derive("BridgeOrder")
+
+function BridgeOrder.heightFor(width)
+    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    local btnH = fontS + 6
+    local who = "Rin"
+    pcall(function() if Bridge ~= nil and Bridge.companionName ~= nil then who = Bridge.companionName() end end)
+    local lines = wrapText(UIFont.Small, tr("MenuOrderHint", who), math.max(40, (width or 0) - PAD * 2))
+    local hintH = #lines * (fontS + 2) + 4
+    local rowH = math.max(fontS + 10, DRAG_BOX + 6)
+    local n = 1
+    if Bridge ~= nil and Bridge.store ~= nil and BridgeData ~= nil and BridgeData.menuOrder ~= nil then
+        n = #BridgeData.menuOrder(Bridge.store)
+    end
+    if n < 1 then n = 1 end
+    return PAD + hintH + n * rowH + PAD + btnH + PAD
+end
+
+function BridgeOrder:applyHeight(h)
+    self:setHeight(h)
+    if self.list == nil or self.upBtn == nil then return end
+    local rowY = h - PAD - self.btnH
+    if rowY < 0 then rowY = 0 end
+    local listY = PAD + (self.hintH or 0)
+    local listH = rowY - listY - PAD
+    if listH < 0 then listH = 0 end
+    self.list:setY(listY)
+    self.list:setHeight(listH)
+    self.upBtn:setY(rowY)
+    self.downBtn:setY(rowY)
+    self.resetBtn:setY(rowY)
+end
 
 function BridgeOrder:createChildren()
     ISPanel.createChildren(self)
@@ -162,6 +231,7 @@ function BridgeOrder:createChildren()
     self.list:initialise()
     self.list:instantiate()
     self.list.onReorder = function() self:onReorder() end
+    self.list.onToggle = function(item) self:onToggle(item) end
     self:addChild(self.list)
 
     local gap = PAD / 2
@@ -190,7 +260,8 @@ end
 
 function BridgeOrder:orderKey()
     if Bridge == nil or Bridge.store == nil then return "" end
-    return table.concat(BridgeData.menuOrder(Bridge.store), ",")
+    local hidden = BridgeData.menuHidden(Bridge.store)
+    return table.concat(BridgeData.menuOrder(Bridge.store), ",") .. "|" .. table.concat(hidden, ",")
 end
 
 function BridgeOrder:refresh()
@@ -207,6 +278,7 @@ function BridgeOrder:refresh()
         local label = (entry ~= nil and tr(entry.label)) or id
         local item = list:addItem(label, nil)
         item.id = id
+        item.on = BridgeData.menuShown(Bridge.store, id)
     end
     if keep == nil or keep < 1 or keep > #list.items then keep = 1 end
     list.selected = keep
@@ -228,6 +300,13 @@ function BridgeOrder:render()
         self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
         y = y + fontS + 2
     end
+end
+
+function BridgeOrder:onToggle(item)
+    if item == nil or item.id == nil or Bridge == nil or type(Bridge.setMenuShown) ~= "function" then return end
+    Bridge.setMenuShown(item.id, item.on ~= true)
+    self.key = nil
+    self:refresh()
 end
 
 function BridgeOrder:onReorder()

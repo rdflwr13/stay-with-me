@@ -106,32 +106,40 @@ end
 
 
 
-function BridgeMenu.status(short)
+function BridgeMenu.statusParts(short)
     local st = Bridge.store
     local mode = BridgeData.modeOf(st)
     local function line(key)
         if short then return tr(key .. "Short") end
         return tr(key, name())
     end
-    local function suffix()
-        local label = ""
-        pcall(function() label = BridgeSocial.label() end)
-        return (label ~= nil and label ~= "") and (" (" .. label .. ")") or ""
+    local tag = ""
+    pcall(function() tag = BridgeSocial.label() end)
+    if tag == nil then tag = "" end
+    local function withTag(text)
+        if tag ~= "" then return text, tag end
+        return text, ""
     end
     if BridgeCar ~= nil and BridgeCar.inCarForMenu() then
-        if BridgeMenu.inCarWithRed() then return line("StatusInCar") .. suffix() end
-        return line("StatusInCar")
+        if BridgeMenu.inCarWithRed() then return withTag(line("StatusInCar")) end
+        return line("StatusInCar"), ""
     end
     if present() then
-        local suffix = suffix()
-        if mode == "rest" then return line("StatusResting") .. suffix end
-        if mode == "wait" then return line("StatusWaiting") .. suffix end
-        return line("StatusHere") .. suffix
+        local key = "StatusHere"
+        if mode == "rest" then key = "StatusResting"
+        elseif mode == "wait" then key = "StatusWaiting" end
+        return withTag(line(key))
     end
     if BridgeData.wants(st) and mode ~= "follow" and st ~= nil and st.waitX ~= nil then
-        return line("StatusWaiting")
+        return line("StatusWaiting"), ""
     end
-    return line("StatusAway")
+    return line("StatusAway"), ""
+end
+
+function BridgeMenu.status(short)
+    local left, right = BridgeMenu.statusParts(short)
+    if right ~= nil and right ~= "" then return left .. " (" .. right .. ")" end
+    return left
 end
 
 
@@ -465,7 +473,7 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
     local order = BridgeData.menuOrder(st)
     for _, id in ipairs(order) do
         local entry = BridgeMenu.ORDERABLE_BY_ID[id]
-        if entry ~= nil then entry.build(context, playerNum, env) end
+        if entry ~= nil and BridgeData.menuShown(st, id) then entry.build(context, playerNum, env) end
     end
 end
 
