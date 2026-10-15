@@ -24,6 +24,7 @@ BridgeParked.locked = setmetatable({}, { __mode = "k" })
 BridgeParked.extra = setmetatable({}, { __mode = "k" })
 BridgeParked.why = nil
 BridgeParked.savedSig = nil
+BridgeParked.loadOffset = 0
 BridgeParked.containerType = "BridgeParked"
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeParked] " .. tostring(text)) end end
@@ -241,6 +242,13 @@ function BridgeParked.enter(car, why)
     BridgeParked.why = why
     local n = 0
     pcall(function() n = BridgeParked.rebuild() end)
+    pcall(BridgeParked.calibrate)
+    pcall(function()
+        local binv = nil
+        if Bridge ~= nil and Bridge.body ~= nil then binv = Bridge.body:getInventory() end
+        BridgeParked.dumpItems("real", binv, nil)
+        BridgeParked.dumpItems("parked", BridgeParked.main, BridgeParked.extra)
+    end)
     if isMP() then pcall(BridgeParked.notifyServer, true) end
     refreshPanels()
     log(string.format("enter (%s): %d records", tostring(why), tonumber(n) or 0))
@@ -252,6 +260,7 @@ function BridgeParked.exit(why)
     BridgeParked.active = false
     BridgeParked.car = nil
     BridgeParked.main = nil
+    BridgeParked.loadOffset = 0
     BridgeParked.bags = {}
     BridgeParked.locked = setmetatable({}, { __mode = "k" })
     BridgeParked.extra = setmetatable({}, { __mode = "k" })
@@ -411,44 +420,106 @@ end
 -----------------------------------------------------------------------------------------------------
 -- displayed weight
 --
--- The parked container is a plain ItemContainer; nothing in it is worn/equipped, so the engine
--- counts every item at its full unequipped weight. Her real body inventory applies each worn
--- bag's WeightReduction to that bag's contents ("17.12 / 15" instead of "8.55 / 15" while driving).
--- Reproduce that here for the pane's weight label so the parked main reads the same as on foot.
--- The bag buttons are separate containers and keep their own (unreduced) weight.
+-- The parked stand-in is a plain ItemContainer with nothing equipped, so the engine charges the same
+-- items heavier - the "13.91 / 15" instead of "8.55 / 15" while driving. The exact engine reductions
+-- depend on the live equipped/worn state a plain container cannot reproduce, so we do NOT re-derive
+-- the formula. Instead we calibrate once, while her real body still exists on entry:
+--     offset = realLoad - rawUnequippedWeight(main)
+-- The pane then shows raw + offset: it starts identical to her real container and only moves as
+-- items are actually transferred.
 -----------------------------------------------------------------------------------------------------
 
-function BridgeParked.loadWeight(container)
+function BridgeParked.rawWeight()
     local main = BridgeParked.main
-    if main == nil or container == nil or container ~= main then return nil end
-    local total = nil
-    pcall(function() total = main:getCapacityWeight() end)
-    if type(total) ~= "number" then return nil end
-    local extra = BridgeParked.extra
+    if main == nil then return 0 end
+    local total = 0
     pcall(function()
         local items = main:getItems()
         for i = 0, items:size() - 1 do
             local item = items:get(i)
             if item ~= nil then
-                local f = extra[item]
-                if f ~= nil and f.w == true and item:IsInventoryContainer() then
-                    local red = 0
-                    pcall(function() red = item:getWeightReduction() end)
-                    if type(red) == "number" and red > 0 then
-                        local full, own = nil, nil
-                        pcall(function() full = item:getUnequippedWeight() end)
-                        pcall(function() own = item:getActualWeight() end)
-                        if type(full) == "number" and type(own) == "number" and own <= full then
-                            total = total - (full - own) * (red / 100)
-                        end
-                    end
-                end
+                local w = nil
+                pcall(function() w = item:getUnequippedWeight() end)
+                if type(w) == "number" then total = total + w end
             end
         end
     end)
+    return total
+end
+
+function BridgeParked.loadWeight(container)
+    local main = BridgeParked.main
+    if main == nil or container == nil or container ~= main then return nil end
+    local total = BridgeParked.rawWeight() + (BridgeParked.loadOffset or 0)
     pcall(function() total = ItemContainer.floatingPointCorrection(total) end)
     if type(total) ~= "number" or total < 0 then return nil end
     return total
+end
+
+function BridgeParked.calibrate()
+    local main = BridgeParked.main
+    if main == nil then BridgeParked.loadOffset = 0 return 0 end
+    local raw = BridgeParked.rawWeight()
+    local base = nil
+    pcall(function()
+        if Bridge ~= nil and Bridge.body ~= nil then base = Bridge.body:getInventory():getCapacityWeight() end
+    end)
+    if type(base) ~= "number" then
+        local cut = 0
+        pcall(function()
+            local items = main:getItems()
+            for i = 0, items:size() - 1 do
+                local item = items:get(i)
+                local f = item ~= nil and BridgeParked.extra[item] or nil
+                if f ~= nil and f.w == true and item:IsInventoryContainer() then
+                    local red, full, own = 0, nil, nil
+                    pcall(function() red = item:getWeightReduction() end)
+                    pcall(function() full = item:getUnequippedWeight() end)
+                    pcall(function() own = item:getActualWeight() end)
+                    if type(red) == "number" and red > 0 and type(full) == "number"
+                        and type(own) == "number" and own <= full then
+                        cut = cut + (full - own) * (red / 100)
+                    end
+                end
+            end
+        end)
+        base = raw - cut
+    end
+    BridgeParked.loadOffset = base - raw
+    log(string.format("weight calibrated: raw=%.2f real=%.2f offset=%.2f", raw, base, BridgeParked.loadOffset))
+    return BridgeParked.loadOffset
+end
+
+-- Verbose-only per-item dump, used to diagnose weight questions with real numbers.
+function BridgeParked.dumpItems(tag, container, extra)
+    if container == nil or BridgeLog == nil or not BridgeLog.on() then return end
+    pcall(function()
+        local items = container:getItems()
+        local raw = 0
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            if it ~= nil then
+                local un, eq, hb, aw, cw, red = 0, 0, 0, 0, 0, 0
+                pcall(function() un = it:getUnequippedWeight() end)
+                pcall(function() eq = it:getEquippedWeight() end)
+                pcall(function() hb = it:getHotbarEquippedWeight() end)
+                pcall(function() aw = it:getActualWeight() end)
+                pcall(function() cw = it:getContentsWeight() end)
+                pcall(function() red = it:getWeightReduction() end)
+                local f = (extra ~= nil) and extra[it] or nil
+                local flags = ((f ~= nil and f.w == true) and "W" or "-")
+                    .. ((f ~= nil and ((tonumber(f.h) or 0) > 0 or f.as == true)) and "H" or "-")
+                    .. ((f ~= nil and f.ga ~= nil) and "B" or "-")
+                print(string.format("[BridgeParked] DBG %s %-34s %s un=%.3f eq=%.3f hb=%.3f aw=%.3f cw=%.3f red=%s",
+                    tag, tostring(it:getFullType()), flags, un, eq, hb, aw, cw, tostring(red)))
+                raw = raw + un
+            end
+        end
+        local capW, conW = "?", "?"
+        pcall(function() capW = string.format("%.3f", container:getCapacityWeight()) end)
+        pcall(function() conW = string.format("%.3f", container:getContentsWeight()) end)
+        print(string.format("[BridgeParked] DBG %s totals raw=%.3f capacityWeight=%s contentsWeight=%s", tag, raw, capW, conW))
+    end)
 end
 
 function BridgeParked.wrapLoad()
@@ -463,7 +534,7 @@ function BridgeParked.wrapLoad()
         return loadWeight(inv, ...)
     end
     ISInventoryPage.bridgeParkedLoadWrapped = true
-    log("loadWeight wrapped: the parked weight counts a worn bag's reduction")
+    log("loadWeight wrapped: the parked weight is calibrated to her real load")
 end
 
 pcall(BridgeParked.wrapPane)

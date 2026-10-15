@@ -1349,14 +1349,37 @@ end
 
 
 
+BridgeInventory.lastNote = BridgeInventory.lastNote or nil
+function BridgeInventory.note(text)
+    if BridgeInventory.lastNote == text then return end
+    BridgeInventory.lastNote = text
+    if Bridge ~= nil and Bridge.verbose then print("[BridgeInventory] " .. tostring(text)) end
+end
+
 function BridgeInventory.addButton(page)
     if page == nil or page.onCharacter then return end
 
     if page.player ~= nil and page.player ~= 0 then return end
     local b = body()
-    if b == nil then BridgeInventory.shown = false logOnce("no body") return end
+    if b == nil then BridgeInventory.shown = false BridgeInventory.note("hidden: no body") return end
     local red = getSpecificPlayer(page.player or 0)
-    if red == nil then logOnce("no player"); return end
+    if red == nil then BridgeInventory.note("hidden: no player"); return end
+
+
+    local veh = nil
+    pcall(function() veh = red:getVehicle() end)
+    local parkedHere = false
+    if BridgeParked ~= nil and BridgeParked.active then
+        pcall(function() parkedHere = BridgeParked.inSameCar() == true end)
+    end
+    local carState = "idle"
+    pcall(function() if BridgeCar ~= nil and BridgeCar.state ~= nil then carState = BridgeCar.state end end)
+    if not parkedHere and (veh ~= nil or carState == "going") then
+        BridgeInventory.shown = false
+        BridgeInventory.note("hidden: not in the car yet (player vehicle=" .. tostring(veh ~= nil)
+            .. ", carState=" .. tostring(carState) .. ")")
+        return
+    end
     local dx, dy = b:getX() - red:getX(), b:getY() - red:getY()
     local d = math.sqrt(dx * dx + dy * dy)
 
@@ -1374,9 +1397,7 @@ function BridgeInventory.addButton(page)
     if BridgeInventory.shown then limit = open and BridgeInventory.keepOpen or BridgeInventory.keep end
     if d > limit or math.abs(b:getZ() - red:getZ()) >= 1 then
         BridgeInventory.shown = false
-
-
-        if Bridge ~= nil and Bridge.verbose then logOnce(string.format("too far: %.1f", d)) else logOnce("too far") end
+        BridgeInventory.note(string.format("hidden: too far (%.1f > %.1f)", d, limit))
         return
     end
     BridgeInventory.shown = true
@@ -1416,7 +1437,7 @@ function BridgeInventory.addButton(page)
     end)
     if ok then
         BridgeInventory.added = BridgeInventory.added + 1
-        logOnce("button added")
+        BridgeInventory.note("shown: her inventory button added")
     else
         warnOnce("addContainerButton failed: " .. tostring(err))
     end
