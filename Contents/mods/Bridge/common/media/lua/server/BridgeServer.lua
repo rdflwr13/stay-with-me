@@ -509,6 +509,7 @@ BridgeServer.Commands.spawn = function(player, args)
         pcall(function() body:setTarget(player) end)
         companionFlags(body)
         applyCarry(body, rec)
+        rec.parked = nil
         rec.bodyId = body:getPersistentOutfitID()
         issue(rec.bodyId, who)
         BridgeServer.touched[body] = rec.bodyId
@@ -2041,6 +2042,18 @@ end
 
 
 
+BridgeServer.Commands.parked = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    local on = args.on == true
+    if rec.parked ~= on then
+        rec.parked = on or nil
+        transmit()
+    end
+    log("parked " .. tostring(who) .. "=" .. tostring(on))
+end
+
+
 BridgeServer.Commands.give = function(player, args)
     local ids = args.ids
     if type(ids) ~= "table" then ids = (args.id ~= nil) and { args.id } or {} end
@@ -2048,7 +2061,7 @@ BridgeServer.Commands.give = function(player, args)
         sendServerCommand(player, "Bridge", "giveFailed", { id = id or args.id, ids = ids, token = args.token, why = why })
     end
     local rec = record(player:getUsername())
-    if rec.bodyId == nil then return fail("no body") end
+    if rec.bodyId == nil and not rec.parked then return fail("no body") end
     if #ids == 0 then return fail("no item") end
     local srcC = nil
     if type(args.srcRef) == "table" then
@@ -2135,7 +2148,7 @@ BridgeServer.Commands.take = function(player, args)
         end
     end
     if #recs == 0 or type(recs[1]) ~= "table" or type(recs[1].t) ~= "string" then return answer(false, nil, "no record") end
-    if rec.bodyId == nil and args.returnId == nil then return answer(false, nil, "no body") end
+    if rec.bodyId == nil and args.returnId == nil and not rec.parked then return answer(false, nil, "no body") end
     local list = BridgeItems.decode(rec.items or "")
     local flags = { w = args.w == true, h = tonumber(args.h), top = args.top == true }
     local out = list

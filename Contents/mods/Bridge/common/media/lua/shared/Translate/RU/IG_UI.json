@@ -1,4 +1,5 @@
 {
+    "IGUI_NotAlone_ParkedWorn": "Надето на %1 — нельзя переместить за рулём",
     "IGUI_NotAlone_Exercise": "Exercise",
     "IGUI_NotAlone_OptExerciseWithMe": "Exercises when you work out",
     "IGUI_NotAlone_OptExerciseWithMeTip": "On: when you start exercising nearby, she does squats with you until you stop or she gets tired. She will not start with zombies around.",

@@ -1518,6 +1518,7 @@ function Bridge.spawnSpot(cx, cy, z, aroundPlayer)
 end
 
 function Bridge.spawnZombie(px, py, pz)
+    if BridgeParked ~= nil and BridgeParked.active then pcall(BridgeParked.exit, "spawn") end
     local red = BridgeData.owner()
     if red == nil then return "no player" end
 
@@ -3581,6 +3582,7 @@ local function updateZombieBody(body)
             if redCar ~= nil and Bridge.mode == "follow" then
                 Bridge.saveOutfit()
                 Bridge.parked = true
+                if BridgeParked ~= nil then pcall(BridgeParked.enter, redCar, "car failed") end
                 Bridge.hideBody(body, true)
                 Bridge.despawn()
                 Bridge.result = "body parked: player in car"
