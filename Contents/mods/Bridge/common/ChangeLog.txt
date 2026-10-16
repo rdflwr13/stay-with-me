@@ -111,6 +111,7 @@ Bug Fixes:
 - Rin's spawning is now atomic: her body is claimed/marked before everything else is rendered.
 - Fixed LUA errors from Maintenance gains caused by meleeing with a non-melee weapon.
 - Fixed flashlight darkness false-positive calls.
+- Flashlight no longer switches on in a lit interior during the day.
 
 Known Issues:
 - Rin may struggle to loot containers in corners.
