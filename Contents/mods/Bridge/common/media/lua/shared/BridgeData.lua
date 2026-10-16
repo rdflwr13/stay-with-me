@@ -666,6 +666,7 @@ end
 BridgeData.GENDERED_KEYS = {
     Need_Axe = true, Need_CleanImplement = true, Need_Cleaner = true, Need_CleanSupplies = true,
     Talk_Thanks = true, Talk_Comfort = true, Rel_Crush = true, InvAssign = true, LookDefault = true,
+    TalkCantBusy = true, TalkCantRepeat = true, TalkCantFull = true, TalkCantAfterFight = true,
     CombatAggressive = true, CombatAggressiveTip = true, CombatGuardTip = true,
     OptAutoHeal = true, OptAutoHealTip = true, OptHitMatters = true, OptGifts = true,
     OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRelPopupsTip = true, OptRomanceTip = true,
@@ -1248,7 +1249,8 @@ BridgeData.REL_KEYS = { f = { -100, 100 }, r = { 0, 100 }, days = { 0, 100000 },
     day = { 0, 1000000 }, gainF = { -100, 100 }, gainR = { -100, 100 }, giftAt = { 0, 100000000 },
     seen = { 0, 100000000 }, askAt = { 0, 100000000 }, healAt = { 0, 100000000 },
     valuedAt = { 0, 100000000 },
-    dressF = { 0, 100 }, dressR = { 0, 100 } }
+    dressF = { 0, 100 }, dressR = { 0, 100 },
+    giftF = { 0, 100 }, giftR = { 0, 100 } }
 
 
 function BridgeData.relOf(rec)

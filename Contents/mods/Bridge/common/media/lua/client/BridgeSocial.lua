@@ -185,8 +185,8 @@ end
 
 BridgeSocial.sentSign = nil
 local function sign(r)
-    return string.format("%d|%d|%d|%d|%d|%d|%.1f|%.1f|%.1f|%.1f", r.f, r.r, r.days, r.day, r.gainF, r.gainR,
-        r.giftAt, r.askAt, r.healAt or 0, r.valuedAt or 0)
+    return string.format("%d|%d|%d|%d|%d|%d|%.1f|%.1f|%.1f|%.1f|%d|%d", r.f, r.r, r.days, r.day, r.gainF, r.gainR,
+        r.giftAt, r.askAt, r.healAt or 0, r.valuedAt or 0, r.giftF or 0, r.giftR or 0)
 end
 function BridgeSocial.save(now)
     if not Bridge.mp then return end
@@ -216,20 +216,41 @@ local function rollDay(r)
     r.combatF = 0
     r.dressF = 0
     r.dressR = 0
+    r.giftF = 0
+    r.giftR = 0
     BridgeSocial.save(true)
 end
 
 
-local function gain(r, df, dr)
+local function tierBonus(r)
+    local tier = nil
+    pcall(function() tier = BridgeData.relTier(r) end)
+    if tier == "Close" then return 3 end
+    if tier == "Friend" then return 2 end
+    if tier == "Pal" then return 1 end
+    return 0
+end
+
+local GIFT_CAP_F, GIFT_CAP_R = 3, 1
+
+local function capF(r, relaxed)
+    return CAP_F + tierBonus(r) + ((relaxed == true) and 2 or 0)
+end
+
+local function capR(r, relaxed)
+    return CAP_R + tierBonus(r) + ((relaxed == true) and 2 or 0)
+end
+
+local function gain(r, df, dr, relaxed)
     rollDay(r)
     if df > 0 then
-        local room = CAP_F - r.gainF
+        local room = capF(r, relaxed) - r.gainF
         if room <= 0 then df = 0 elseif df > room then df = room end
         r.gainF = r.gainF + df
     end
     if dr > 0 and not BridgeSocial.romanceOn() then dr = 0 end
     if dr > 0 then
-        local room = CAP_R - r.gainR
+        local room = capR(r, relaxed) - r.gainR
         if room <= 0 then dr = 0 elseif dr > room then dr = room end
         r.gainR = r.gainR + dr
     end
@@ -264,13 +285,14 @@ function BridgeSocial.relCommand(sub, a, b)
     local r = rel()
     if r == nil then return "no rel" end
     if sub == nil or sub == "show" or sub == "status" then
-        return string.format("rel f=%d r=%d days=%d hours=%.1f gain=%d/%d combat=%d/%d",
-            r.f, r.r, r.days, r.hours, r.gainF, r.gainR, r.combatKills or 0, r.combatF or 0)
+        return string.format("rel f=%d r=%d days=%d hours=%.1f gain=%d/%d gift=%d/%d combat=%d/%d",
+            r.f, r.r, r.days, r.hours, r.gainF, r.gainR, r.giftF or 0, r.giftR or 0, r.combatKills or 0, r.combatF or 0)
     end
     if sub == "reset" then
         r.f, r.r = 0, 0
         r.days, r.hours = 0, 0
         r.gainF, r.gainR = 0, 0
+        r.giftF, r.giftR = 0, 0
         r.combatKills, r.combatF = 0, 0
         BridgeSocial.save(true)
         return "rel reset f=0 r=0"
@@ -298,7 +320,14 @@ function BridgeSocial.relCommand(sub, a, b)
         BridgeSocial.save(true)
         return string.format("rel f=%d r=%d", r.f, r.r)
     end
-    return "rel [show | add <f> [r] | remove <f> [r] | set <f> [r] | reset]"
+    if sub == "gift" or sub == "gifts" then return BridgeSocial.giftCommand("show") end
+    if sub == "giftreset" then return BridgeSocial.giftCommand("reset") end
+    if sub == "cooldown" or sub == "cooldowns" then return BridgeSocial.giftCommand("cooldown") end
+    if sub == "nextday" or sub == "newday" then return BridgeSocial.giftCommand("nextday") end
+    if sub == "forget" then return BridgeSocial.giftCommand("forget", a) end
+    if sub == "list" then return BridgeSocial.giftCommand("list") end
+    if sub == "preview" then return BridgeSocial.giftCommand("preview", a) end
+    return "rel [show | add <f> [r] | remove <f> [r] | set <f> [r] | reset | giftreset | cooldown | nextday | forget [type] | list | preview [type]]"
 end
 
 
@@ -825,6 +854,317 @@ local function itemIsTypeFlag(item, name)
 end
 
 
+-- Gift recognition is id + category based, not display-category only: mods such
+-- as Better Containers rewrite an item's DisplayCategory (TweakItem), which would
+-- otherwise defeat receivePool. Each receive pool is owned by exactly one gain
+-- path: GIFT (here), MALE_RECEIVE (maleGift), or VALUED.
+BridgeSocial.GIFT = {
+    ReceiveTreat   = { f = 2, r = 0 },
+    ReceiveFun     = { f = 2, r = 0 },
+    ReceiveTeddy   = { f = 3, r = 1 },
+    ReceiveMemento = { f = 3, r = 0 },
+    ReceiveJewelry = { f = 3, r = 1 },
+}
+local GIFT_POOLS = {}
+for giftPool in pairs(BridgeSocial.GIFT) do GIFT_POOLS[giftPool] = true end
+BridgeSocial.GIFT_POOLS = GIFT_POOLS
+
+-- Pools a male companion already gains from via maleGift (never also a gift).
+local GIFT_MALE_OWNED = { ReceiveSmokes = true, ReceiveTool = true, ReceiveGame = true,
+    ReceiveRead = true, ReceiveBooze = true }
+
+-- Male dress pools own these worn items; keep them out of the carried-gift pool.
+local JEWEL_SKIP = { "WristWatch_", "Necklace_DogTag", "Glasses_" }
+
+local function itemCat(item)
+    return string.lower(tostring(mcall(item, "getDisplayCategory") or ""))
+end
+
+local function catHas(cat, list)
+    for _, s in ipairs(list) do
+        if cat == s or string.find(cat, s, 1, true) ~= nil then return true end
+    end
+    return false
+end
+
+-- getTags() may be a Java collection with only some accessors exposed (some builds
+-- expose size()/contains() but not get(int)), so probe defensively and never call a
+-- missing method -- a bare nil call still logs an ERROR even inside pcall.
+local function hasTagLike(item, needle)
+    local yes = false
+    local lower = string.lower(needle)
+    pcall(function()
+        if type(item.getTags) ~= "function" then return end
+        local list = item:getTags()
+        if list == nil then return end
+        if type(list.contains) == "function" then
+            local ok, hit = pcall(function() return list:contains(needle) end)
+            if ok and hit == true then yes = true return end
+            ok, hit = pcall(function() return list:contains(lower) end)
+            if ok and hit == true then yes = true return end
+            ok, hit = pcall(function() return list:contains("base:" .. lower) end)
+            if ok and hit == true then yes = true return end
+        end
+        if type(list) == "table" and type(list.size) ~= "function" then
+            for _, v in ipairs(list) do
+                if string.find(string.lower(tostring(v)), lower, 1, true) ~= nil then yes = true return end
+            end
+            return
+        end
+        if type(list.size) == "function" and type(list.get) == "function" then
+            local n = 0
+            pcall(function() n = tonumber(list:size()) or 0 end)
+            for i = 0, n - 1 do
+                local s = nil
+                pcall(function() s = list:get(i) end)
+                if s ~= nil and string.find(string.lower(tostring(s)), lower, 1, true) ~= nil then
+                    yes = true return
+                end
+            end
+            return
+        end
+        local text = nil
+        pcall(function() text = tostring(list) end)
+        if text ~= nil and string.find(string.lower(text), lower, 1, true) ~= nil then yes = true end
+    end)
+    return yes
+end
+
+-- Jewelry is normally DisplayCategory "Accessory"; Better Containers moves it to
+-- "ClothJew". Match on body location plus either category, with an id fallback.
+local function isJewelGift(item)
+    if typeHas(itemTypeName(item), JEWEL_SKIP) then return false end
+    local loc = nil
+    pcall(function() loc = item:getBodyLocation() end)
+    if loc == nil or ItemBodyLocation == nil then return false end
+    local place = false
+    for _, name in ipairs(JEWEL_PLACES) do
+        if ItemBodyLocation[name] ~= nil and loc == ItemBodyLocation[name] then place = true break end
+    end
+    if not place then return false end
+    local cat = itemCat(item)
+    if cat == "accessory" or cat == "clothjew" then return true end
+    local t = string.lower(itemTypeName(item))
+    return string.find(t, "jewel", 1, true) ~= nil or string.find(t, "earring", 1, true) ~= nil
+        or string.find(t, "necklace", 1, true) ~= nil or string.find(t, "bracelet", 1, true) ~= nil
+        or string.find(t, "pendant", 1, true) ~= nil or string.find(t, "choker", 1, true) ~= nil
+end
+
+-- Category names cover vanilla and Better Containers keys; type ids cover vanilla
+-- and common mod items. Teddy is checked before memento because plushies carry the
+-- memento tag too.
+local TEDDY_CATS = { "teddy", "plush" }
+local TEDDY_TYPES = { "ToyBear", "Teddy", "Plush" }
+local MEMENTO_CATS = { "memento", "curio" }
+local MEMENTO_TYPES = { "Memento", "Curio", "Keepsake", "Souvenir" }
+local TOY_CATS = { "entertainment", "toy" }
+local TOY_TYPES = { "CardDeck", "Dice", "PokerChips", "Chess", "BackgammonBoard", "CheckerBoard",
+    "GamePiece", "Yoyo", "CatToy", "Bricktoys", "Doll", "Rubberducky", "PoolBall", "Basketball",
+    "SoccerBall", "TennisBall", "GolfBall", "Baseball", "Football", "Dart", "Cube" }
+local TOY_EXACT = { Dice = true, Cube = true, Dart = true, Baseball = true, Football = true,
+    Basketball = true, SoccerBall = true, TennisBall = true, GolfBall = true, PoolBall = true,
+    Yoyo = true, Doll = true }
+
+-- Resolve the gift class for an item. Ids/categories win over the derived pool so a
+-- recategorized item still gets the right class (and next day's first gift).
+function BridgeSocial.giftPool(item, pool)
+    if item == nil then return nil end
+    if isMale() and BridgeSocial.maleReceive(item) ~= nil then return nil end
+    if pool ~= nil and GIFT_MALE_OWNED[pool] then return nil end
+    if isJewelGift(item) then return "ReceiveJewelry" end
+    local t, cat = itemTypeName(item), itemCat(item)
+    if typeHas(t, TEDDY_TYPES) or catHas(cat, TEDDY_CATS) then return "ReceiveTeddy" end
+    if typeHas(t, MEMENTO_TYPES) or catHas(cat, MEMENTO_CATS) or hasTagLike(item, "memento") then
+        return "ReceiveMemento"
+    end
+    if pool ~= nil and GIFT_POOLS[pool] then return pool end
+    if typeHas(t, TOY_TYPES, TOY_EXACT) or catHas(cat, TOY_CATS) then return "ReceiveFun" end
+    return nil
+end
+
+-- First gift only, per-day capped in giftF/giftR, scaled by relationship tier.
+-- Returns "paid" when it granted affection, "full" when today's gift budget is
+-- spent (the item is deliberately left unmarked so it can pay out later), "done"
+-- when the item was already gifted, or nil for a non-gift.
+function BridgeSocial.gift(item, pool)
+    if item == nil or pool == nil or BridgeSocial.GIFT[pool] == nil then return nil end
+    local r = rel()
+    if r == nil then return nil end
+    local given = false
+    pcall(function() given = item:getModData().bridgeGiven == true end)
+    if given then return "done" end
+    rollDay(r)
+    local g = BridgeSocial.GIFT[pool]
+    local df = math.max(0, math.min(g.f, (GIFT_CAP_F + tierBonus(r)) - (r.giftF or 0)))
+    local dr = 0
+    if g.r > 0 and BridgeSocial.romanceOpen(r) then
+        dr = math.max(0, math.min(g.r, (GIFT_CAP_R + tierBonus(r)) - (r.giftR or 0)))
+    end
+    if df <= 0 and dr <= 0 then
+        log(string.format("gift %s held (budget full) f=%d r=%d", pool, r.f, r.r))
+        return "full"
+    end
+    BridgeSocial.markGiven(item)
+    r.giftF = (r.giftF or 0) + df
+    r.giftR = (r.giftR or 0) + dr
+    gain(r, df, dr)
+    BridgeSocial.giftVersion = (BridgeSocial.giftVersion or 0) + 1
+    log(string.format("gift %s +%d/+%d f=%d r=%d", pool, df, dr, r.f, r.r))
+    return "paid"
+end
+
+-- What gifting this item would do right now, for the inventory tooltip.
+-- nil when the item is not a gift. f/r are the base class values; effF/effR are
+-- what is still left today after the daily cap; given = already gifted once;
+-- capped = nothing left for it today.
+function BridgeSocial.giftPreview(item)
+    if item == nil or BridgeSocial.GIFT == nil then return nil end
+    local r = rel()
+    if r == nil then return nil end
+    local pool = nil
+    pcall(function()
+        pool = BridgeSocial.giftPool(item, BridgeSocial.receivePool(item))
+    end)
+    if pool == nil or BridgeSocial.GIFT[pool] == nil then return nil end
+    local g = BridgeSocial.GIFT[pool]
+    rollDay(r)
+    local given = false
+    pcall(function() given = item:getModData().bridgeGiven == true end)
+    local bonus = tierBonus(r)
+    local effF = math.max(0, math.min(g.f, (GIFT_CAP_F + bonus) - (r.giftF or 0)))
+    local effR = 0
+    if g.r > 0 and BridgeSocial.romanceOpen(r) then
+        effR = math.max(0, math.min(g.r, (GIFT_CAP_R + bonus) - (r.giftR or 0)))
+    end
+    local romanceOn = false
+    pcall(function() romanceOn = BridgeSocial.romanceOn() == true end)
+    return { pool = pool, f = g.f, r = g.r, effF = effF, effR = effR,
+        given = given, capped = (not given) and effF <= 0 and effR <= 0, romanceOn = romanceOn }
+end
+
+-- Dev/test helpers for the gift system (rel/gift commands in in.txt).
+local function eachInvItem(inv, fn)
+    if inv == nil then return end
+    pcall(function()
+        local items = inv:getItems()
+        if items == nil then return end
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            if it ~= nil then fn(it) end
+        end
+    end)
+end
+
+local function giftInventories()
+    local out = {}
+    pcall(function()
+        local red = BridgeData.owner()
+        if red ~= nil then out[#out + 1] = red:getInventory() end
+    end)
+    pcall(function()
+        if Bridge ~= nil and Bridge.alive() and Bridge.kind == "zombie" and Bridge.body ~= nil then
+            out[#out + 1] = Bridge.body:getInventory()
+        end
+    end)
+    return out
+end
+
+function BridgeSocial.giftCommand(sub, a, b)
+    local r = rel()
+    if r == nil then return "no rel" end
+    sub = sub or "show"
+    if sub == "show" or sub == "status" then
+        rollDay(r)
+        local bonus = tierBonus(r)
+        local tier = "?"
+        pcall(function() tier = BridgeData.relTier(r) end)
+        return string.format("gift giftF=%d/%d giftR=%d/%d tier=%s day=%d",
+            r.giftF or 0, GIFT_CAP_F + bonus, r.giftR or 0, GIFT_CAP_R + bonus, tostring(tier), r.day or 0)
+    end
+    if sub == "reset" or sub == "giftreset" then
+        rollDay(r)
+        r.giftF, r.giftR = 0, 0
+        BridgeSocial.giftFullDay = nil
+        BridgeSocial.save(true)
+        return string.format("gift budget reset (giftF=0 giftR=0)")
+    end
+    if sub == "cooldown" or sub == "cooldowns" then
+        BridgeSocial.last = {}
+        BridgeSocial.nagged = {}
+        BridgeSocial.talkFullDay = nil
+        BridgeSocial.giftFullDay = nil
+        return "talk/gift cooldowns cleared"
+    end
+    if sub == "nextday" or sub == "newday" then
+        rollDay(r)
+        r.gainF, r.gainR = 0, 0
+        r.dressF, r.dressR = 0, 0
+        r.giftF, r.giftR = 0, 0
+        r.days = (r.days or 0) + 1
+        BridgeSocial.talkFullDay = nil
+        BridgeSocial.giftFullDay = nil
+        BridgeSocial.save(true)
+        return string.format("next day: days=%d, daily counters reset", r.days)
+    end
+    if sub == "forget" then
+        local filter = a
+        local lower = filter ~= nil and string.lower(filter) or nil
+        local n = 0
+        for _, inv in ipairs(giftInventories()) do
+            eachInvItem(inv, function(it)
+                local match = true
+                if lower ~= nil then
+                    local t = ""
+                    pcall(function() t = string.lower(tostring(it:getType())) end)
+                    match = string.find(t, lower, 1, true) ~= nil
+                else
+                    local flagged = false
+                    pcall(function()
+                        local md = it:getModData()
+                        flagged = md.bridgeGiven == true or md.bridgeReceived == true
+                    end)
+                    match = flagged
+                end
+                if match then
+                    pcall(BridgeSocial.forget, it)
+                    n = n + 1
+                end
+            end)
+        end
+        local what = lower ~= nil and ("matching '" .. tostring(filter) .. "'") or "flagged"
+        return "forgot " .. tostring(n) .. " " .. what .. " item(s)"
+    end
+    if sub == "list" or sub == "preview" then
+        local want = (sub == "preview") and a or nil
+        local lower = want ~= nil and string.lower(want) or nil
+        local lines, n = {}, 0
+        for _, inv in ipairs(giftInventories()) do
+            eachInvItem(inv, function(it)
+                if n < 12 then
+                    local info = nil
+                    pcall(function() info = BridgeSocial.giftPreview(it) end)
+                    if info ~= nil then
+                        local t = ""
+                        pcall(function() t = tostring(it:getType()) end)
+                        if lower == nil or string.find(string.lower(t), lower, 1, true) ~= nil then
+                            local val = "+" .. tostring(info.f)
+                            if info.r > 0 and info.romanceOn then val = val .. "/+" .. tostring(info.r) end
+                            if info.given then val = val .. "(given)"
+                            elseif info.capped then val = val .. "(full)" end
+                            lines[#lines + 1] = t .. " " .. tostring(info.pool) .. " " .. val
+                            n = n + 1
+                        end
+                    end
+                end
+            end)
+        end
+        if #lines == 0 then return "no gift items found" end
+        return table.concat(lines, ", ")
+    end
+    return "gift [show | reset | cooldown | nextday | forget [type] | list | preview [type]]"
+end
+
+
 function BridgeSocial.receivePool(item)
     if item == nil then return "ReceiveItem" end
 
@@ -898,6 +1238,8 @@ function BridgeSocial.receivePool(item)
         return "ReceiveFood"
     end
 
+    if isJewelGift(item) then return "ReceiveJewelry" end
+
     if mcall(item, "IsClothing") == true then
         if not presentable(item) then
             local broken = false
@@ -945,14 +1287,25 @@ function BridgeSocial.received(item)
         lastPool = item:getModData().bridgeRecvPool
     end)
     if got and lastPool == pool then return false end
-    pcall(function()
-        item:getModData().bridgeReceived = true
-        item:getModData().bridgeRecvPool = pool
-    end)
 
-    if isMale() then pcall(BridgeSocial.maleGift, item, pool) end
+    -- Resolve the gift class and pay it before remembering the item. A gift that
+    -- cannot pay because today's gift budget is spent is left unremembered so a
+    -- later hand-over can still earn affection instead of being silently lost.
+    local gift, giftStatus = nil, nil
+    pcall(function() gift = BridgeSocial.giftPool(item, pool) end)
+    if gift ~= nil then pcall(function() giftStatus = BridgeSocial.gift(item, gift) end) end
+    local maleStatus = nil
+    if isMale() then pcall(function() maleStatus = BridgeSocial.maleGift(item, pool) end) end
+    local pendingGift = (giftStatus == "full") or (maleStatus == "full")
 
-    if VALUED[pool] then
+    if not pendingGift then
+        pcall(function()
+            item:getModData().bridgeReceived = true
+            item:getModData().bridgeRecvPool = pool
+        end)
+    end
+
+    if VALUED[pool] and not GIFT_POOLS[pool] then
         local r = rel()
         if r ~= nil then
             local now = hours()
@@ -963,15 +1316,17 @@ function BridgeSocial.received(item)
         end
     end
 
-    if pool ~= "ReceiveRotten" and pool ~= "ReceiveGun" and pool ~= "ReceiveWeapon"
-        and pool ~= "ReceiveCleanWeapon"
-        and pool ~= "ReceiveFuel" and pool ~= "ReceiveCleaner"
-        and pool ~= "ReceiveAmmo" and pool ~= "ReceiveMeds"
-        and pool ~= "ReceiveBattery"
-        and BridgeSocial.recvBefore(item) then
-        pool = "ReceiveAgain"
+    if not pendingGift then
+        if pool ~= "ReceiveRotten" and pool ~= "ReceiveGun" and pool ~= "ReceiveWeapon"
+            and pool ~= "ReceiveCleanWeapon"
+            and pool ~= "ReceiveFuel" and pool ~= "ReceiveCleaner"
+            and pool ~= "ReceiveAmmo" and pool ~= "ReceiveMeds"
+            and pool ~= "ReceiveBattery"
+            and BridgeSocial.recvBefore(item) then
+            pool = "ReceiveAgain"
+        end
+        BridgeSocial.markRecv(item)
     end
-    BridgeSocial.markRecv(item)
     local over = false
     pcall(function() over = BridgeInventory ~= nil and BridgeInventory.carryOver ~= nil and BridgeInventory.carryOver(Bridge.body) end)
     if over and not BridgeSocial.overSaid then
@@ -980,7 +1335,20 @@ function BridgeSocial.received(item)
     elseif not over then
         BridgeSocial.overSaid = false
     end
-    BridgeSocial.receiveSay(pool)
+    if pendingGift then
+        -- Today's gift budget is spent; the item stays unremembered so it can pay
+        -- out later. Tell the player at most once a day so it never spams.
+        local r = rel()
+        local day = r ~= nil and r.day or -1
+        if BridgeSocial.giftFullDay ~= day then
+            BridgeSocial.giftFullDay = day
+            say("GiftFull")
+        end
+    else
+        -- A gift keeps its own reaction line even when another mod recategorized it.
+        if gift ~= nil and pool ~= "ReceiveAgain" and pool ~= "CarryFull" then pool = gift end
+        BridgeSocial.receiveSay(pool)
+    end
 
     if pool == "ReceiveGun" then
         BridgeSocial.gunNervous()
@@ -999,26 +1367,30 @@ function BridgeSocial.maleGift(item, pool)
     local g = nil
     for _, e in ipairs(BridgeSocial.MALE_RECEIVE) do if e.pool == pool then g = e end end
     if pool == "ReceiveBooze" then g = BridgeSocial.MALE_BOOZE end
-    if g == nil then return end
+    if g == nil then return nil end
     local r = rel()
-    if r == nil then return end
+    if r == nil then return nil end
     local given = false
     pcall(function() given = item:getModData().bridgeGiven == true end)
-    if given then return end
-    BridgeSocial.markGiven(item)
+    if given then return "done" end
     rollDay(r)
     local df = math.max(0, math.min(g.f, DRESS_CAP_F - (r.dressF or 0)))
     local dr = 0
     if g.r > 0 and BridgeSocial.romanceOpen(r) then dr = math.max(0, math.min(g.r, DRESS_CAP_R - (r.dressR or 0))) end
-    if df > 0 or dr > 0 then
-        r.dressF = (r.dressF or 0) + df
-        r.dressR = (r.dressR or 0) + dr
-        r.f = clamp(r.f + df, -100, 100)
-        r.r = clamp(r.r + dr, 0, 100)
-        popRel(df, dr)
-        BridgeSocial.save(true)
+    if df <= 0 and dr <= 0 then
+        log(string.format("male gift %s held (budget full) f=%d r=%d", pool, r.f, r.r))
+        return "full"
     end
+    BridgeSocial.markGiven(item)
+    r.dressF = (r.dressF or 0) + df
+    r.dressR = (r.dressR or 0) + dr
+    r.f = clamp(r.f + df, -100, 100)
+    r.r = clamp(r.r + dr, 0, 100)
+    popRel(df, dr)
+    BridgeSocial.save(true)
+    BridgeSocial.giftVersion = (BridgeSocial.giftVersion or 0) + 1
     log(string.format("male gift %s +%d/+%d f=%d r=%d", pool, df, dr, r.f, r.r))
+    return "paid"
 end
 
 
@@ -1125,6 +1497,46 @@ local function recentFight()
 end
 
 
+-- Calm (no zombies close, not fighting) and at home / settled indoors. Grows the
+-- talk budget and shortens repeat cooldowns while it holds.
+function BridgeSocial.relaxed(r)
+    local calm = false
+    pcall(function()
+        calm = not zombiesNear(12) and not recentFight() and BridgeFight ~= nil and BridgeFight.state == "idle"
+    end)
+    if not calm then return false end
+    local home = false
+    local fallback = false
+    pcall(function()
+        local red = BridgeData.owner()
+        local sq = red ~= nil and red:getCurrentSquare() or nil
+        local h = BridgeData.homeOf(Bridge.store)
+        if sq ~= nil and type(h) == "table" then
+            local x, y, z = sq:getX(), sq:getY(), sq:getZ()
+            if z == h.z and x >= h.x and x <= (h.x + h.w) and y >= h.y and y <= (h.y + h.h) then
+                home = true
+            end
+        end
+        if not home and sq ~= nil then fallback = sq:isInARoom() == true end
+        if not home and not fallback then
+            fallback = Bridge.mode == "rest"
+                or (BridgeInventory ~= nil and BridgeInventory.seated ~= nil
+                    and BridgeInventory.seated(Bridge.body) == true)
+        end
+    end)
+    return calm and (home or fallback)
+end
+
+
+function BridgeSocial.repeatSec(id, r, relaxed)
+    local s = REPEAT_SEC[id] or 60
+    if relaxed == nil then relaxed = BridgeSocial.relaxed(r) end
+    if relaxed then s = s * 0.4 end
+    if r ~= nil and (r.f or 0) >= 45 then s = s * 0.7 end
+    return s
+end
+
+
 local function engaged()
     if BridgeCar ~= nil and BridgeCar.holdsBody() then return false end
     if Bridge.mode == "rest" then return false end
@@ -1160,17 +1572,17 @@ end
 
 
 BridgeSocial.ACTIONS = {
-    { id = "Chat", gate = function(r) return true end,
+    { id = "Chat", gate = function(r) return true end, tiered = true,
       chance = function(r) return 0.75 + r.f / 400 end, good = { 2, 0 }, bad = { 0, 0 }, anim = { "Yes", "Shrug" } },
-    { id = "Joke", gate = function(r) return true end,
-      chance = function(r) return 0.45 + r.f / 200 end, good = { 3, 0 }, bad = { -1, 0 }, anim = { "Clap", "Undecided" } },
-    { id = "Compliment", gate = function(r) return r.f >= 10 end,
-      chance = function(r) return 0.55 + r.f / 250 end, good = { 2, 1 }, bad = { -1, 0 }, anim = { "ThankYou", "NoThankYou" } },
+    { id = "Joke", gate = function(r) return true end, tiered = true,
+      chance = function(r) return 0.45 + r.f / 200 end, good = { 3, 0 }, bad = { 0, 0 }, anim = { "Clap", "Undecided" } },
+    { id = "Compliment", gate = function(r) return r.f >= 10 end, tiered = true,
+      chance = function(r) return 0.55 + r.f / 250 end, good = { 2, 1 }, bad = { 0, 0 }, anim = { "ThankYou", "NoThankYou" } },
     { id = "Thanks", gate = function(r) return true end,
       chance = function(r) return 0.9 end, good = { 1, 0 }, bad = { 0, 0 }, anim = { "Yes", "Shrug" } },
-    { id = "Comfort", gate = function(r) return r.f >= 20 end,
-      chance = function(r) return 0.5 + r.f / 200 end, good = { 3, 0 }, bad = { -1, 0 }, anim = { "Yes", "No" } },
-    { id = "Flirt", gate = function(r) return BridgeSocial.romanceOpen(r) end, romantic = true,
+    { id = "Comfort", gate = function(r) return r.f >= 20 end, tiered = true,
+      chance = function(r) return 0.5 + r.f / 200 end, good = { 3, 0 }, bad = { 0, 0 }, anim = { "Yes", "No" } },
+    { id = "Flirt", gate = function(r) return BridgeSocial.romanceOpen(r) end, romantic = true, tiered = true,
       chance = function(r) return 0.2 + (r.f - 30) / 150 + r.r / 150 end, good = { 1, 3 }, bad = { -1, -2 }, anim = { "WaveHi", "No" } },
     { id = "Hug", gate = function(r) return r.f >= 45 and r.r >= 15 and r.days >= 4 and BridgeSocial.romanceOn() end, romantic = true,
       chance = function(r) return 0.3 + r.r / 120 end, good = { 2, 3 }, bad = { -2, -3 }, anim = { "ComeHere", "No" } },
@@ -1179,6 +1591,27 @@ BridgeSocial.ACTIONS = {
 local function actionById(id)
     for _, a in ipairs(BridgeSocial.ACTIONS) do
         if a.id == id then return a end
+    end
+    return nil
+end
+
+
+-- Reason a talk action is unavailable right now, or nil. Mirrors talk()'s own
+-- refusals (busy / after fight / repeat window / daily budget) so the menu can grey
+-- the exact action and explain why. Busy covers every action; the rest are per action.
+function BridgeSocial.talkBlock(id, r, calm, busy)
+    if busy then return "Busy" end
+    local a = actionById(id)
+    if a ~= nil and a.romantic and recentFight() then return "AfterFight" end
+    local since = Bridge.time - (BridgeSocial.last[id] or -999999)
+    if since < BridgeSocial.repeatSec(id, r, calm) * 60 then return "Repeat" end
+    if a ~= nil then
+        local df, dr = a.good[1], a.good[2]
+        if df > 0 or dr > 0 then
+            local fullF = (df <= 0) or ((capF(r, calm) - (r.gainF or 0)) <= 0)
+            local fullR = (dr <= 0) or (not BridgeSocial.romanceOn()) or ((capR(r, calm) - (r.gainR or 0)) <= 0)
+            if fullF and fullR then return "Full" end
+        end
     end
     return nil
 end
@@ -1207,8 +1640,10 @@ function BridgeSocial.talk(id)
     end
 
 
+    local calm = BridgeSocial.relaxed(r)
+
     local since = Bridge.time - (BridgeSocial.last[id] or -999999)
-    if since < (REPEAT_SEC[id] or 60) * 60 then
+    if since < BridgeSocial.repeatSec(id, r, calm) * 60 then
 
 
         BridgeSocial.nagged[id] = (tonumber(BridgeSocial.nagged[id]) or 0) + 1
@@ -1228,8 +1663,34 @@ function BridgeSocial.talk(id)
     local roll = ZombRand(1000) / 1000
     local ok = roll < chance
     local shift = ok and a.good or a.bad
-    gain(r, shift[1], shift[2])
-    say(id .. (ok and "_Good" or "_Bad"))
+    local df, dr = shift[1], shift[2]
+    if not ok and calm then
+        if df < 0 then df = math.max(-1, math.floor(df * 0.5)) end
+        if dr < 0 then dr = math.max(-1, math.floor(dr * 0.5)) end
+    end
+    if ok and (df > 0 or dr > 0) then
+        local fullF = (df <= 0) or ((capF(r, calm) - (r.gainF or 0)) <= 0)
+        local fullR = (dr <= 0) or (not BridgeSocial.romanceOn()) or ((capR(r, calm) - (r.gainR or 0)) <= 0)
+        if fullF and fullR then
+            if BridgeSocial.talkFullDay ~= r.day then
+                BridgeSocial.talkFullDay = r.day
+                say("TalkFull")
+            end
+            gesture("Shrug")
+            BridgeSocial.info = id .. " talk full"
+            log(BridgeSocial.info)
+            return BridgeSocial.info
+        end
+    end
+    gain(r, df, dr, calm)
+    local pool = id .. (ok and "_Good" or "_Bad")
+    if a.tiered then
+        local group = "Far"
+        pcall(function() group = BridgeMoments.group() end)
+        local tiered = id .. (ok and "_Good_" or "_Bad_") .. group
+        if lineCount(tiered) > 0 then pool = tiered end
+    end
+    say(pool)
     gesture(ok and a.anim[1] or a.anim[2])
 
     if ok and BridgeMood ~= nil then
@@ -1426,6 +1887,16 @@ function BridgeSocial.label()
 end
 
 
+local function menuTip(option, text)
+    if option == nil or text == nil then return end
+    pcall(function()
+        local t = ISInventoryPaneContextMenu.addToolTip()
+        t.description = text
+        option.toolTip = t
+    end)
+end
+
+
 function BridgeSocial.fillMenu(context, tr)
     local r = rel()
     if r == nil then return end
@@ -1433,6 +1904,8 @@ function BridgeSocial.fillMenu(context, tr)
     local option = context:addOption(tr("Talk"))
     local sub = ISContextMenu:getNew(context)
     context:addSubMenu(option, sub)
+    local busy = zombiesNear(BUSY_DIST)
+    local calm = BridgeSocial.relaxed(r)
     local romantic = nil
     for _, a in ipairs(BridgeSocial.ACTIONS) do
         if a.gate(r) then
@@ -1445,10 +1918,21 @@ function BridgeSocial.fillMenu(context, tr)
                 end
                 target = romantic
             end
-            target:addOption(tr("Talk_" .. a.id), a.id, BridgeSocial.talk)
+            local opt = target:addOption(tr("Talk_" .. a.id), a.id, BridgeSocial.talk)
+            local reason = BridgeSocial.talkBlock(a.id, r, calm, busy)
+            if reason ~= nil then
+                opt.notAvailable = true
+                menuTip(opt, tr("TalkCant" .. reason))
+            end
         end
     end
-    if r.f >= 20 then sub:addOption(tr("Talk_Ask"), nil, BridgeSocial.ask) end
+    if r.f >= 20 then
+        local ask = sub:addOption(tr("Talk_Ask"), nil, BridgeSocial.ask)
+        if busy then
+            ask.notAvailable = true
+            menuTip(ask, tr("TalkCantBusy"))
+        end
+    end
 end
 
 if type(Events) == "table" and Events.OnZombieDead ~= nil then

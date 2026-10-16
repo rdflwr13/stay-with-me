@@ -4468,12 +4468,12 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     rest = true, stop = true, mode = true, sit = true, stand = true, sleep = true, anim = true, walk = true,
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
-    kills = true, lose = true, despawn = true, rel = true, places = true, home = true, itemselftest = true,
+    kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     exercise = true, endurance = true, skills = true, task = true }
 
 
 
-local DEV_MP_COMMANDS = { mood = true, rel = true, car = true, places = true }
+local DEV_MP_COMMANDS = { mood = true, rel = true, gift = true, car = true, places = true }
 
 
 local function itemselftest()
@@ -4587,6 +4587,7 @@ function Bridge.run(line)
     if cmd == "talk" then return BridgeSocial.talk(parts[3] or "Chat") end
     if cmd == "ask" then return BridgeSocial.ask() end
     if cmd == "rel" then return BridgeSocial.relCommand(parts[3], parts[4], parts[5]) end
+    if cmd == "gift" then return BridgeSocial.giftCommand(parts[3], parts[4], parts[5]) end
     if cmd == "places" then return BridgeCallout.placesCommand(parts[3], parts[4], parts[5]) end
     if cmd == "home" then return BridgeCallout.homeCommand(parts) end
 

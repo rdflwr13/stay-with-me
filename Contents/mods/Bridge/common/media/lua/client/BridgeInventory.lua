@@ -3084,6 +3084,78 @@ function BridgeInventory.wearOptions(context, b, player, items, list)
     end
 end
 
+-- Split one unit off a stack (returns the single item). The stock transfer action
+-- moves the whole stack, which would flag a whole stack as given, so gifts hand over
+-- one unit. Returns nil if it cannot split.
+function BridgeInventory.splitOne(item)
+    if item == nil then return nil end
+    local count = 1
+    pcall(function() count = tonumber(item:getCount()) or 1 end)
+    if count <= 1 then return item end
+    local one = nil
+    pcall(function()
+        local src = item:getContainer()
+        if src == nil then return end
+        one = src:AddItem(item:getFullType())
+        if one ~= nil then
+            one:setCount(1)
+            item:setCount(count - 1)
+        end
+    end)
+    return one
+end
+
+
+-- Right-click "Give as gift". A single item: moving it into her inventory (from the
+-- player or a container) hands it over; an item already in her inventory is credited
+-- directly, since there is nothing to transfer. Both routes end in gift/received.
+function BridgeInventory.giftOption(context, b, player, list)
+    if BridgeSocial == nil or BridgeSocial.giftPreview == nil then return end
+    if context == nil or b == nil or list == nil or #list ~= 1 then return end
+    local item = list[1]
+    if item == nil then return end
+    local info = nil
+    pcall(function() info = BridgeSocial.giftPreview(item) end)
+    if info == nil then return end
+    local hers = false
+    pcall(function() hers = BridgeInventory.inBody(item:getContainer()) end)
+    local shortText, fullText = "+0", "+0"
+    pcall(function()
+        if BridgeGiftTooltip ~= nil then
+            shortText = BridgeGiftTooltip.valueBase(info)
+            fullText = BridgeGiftTooltip.valueText(info)
+        end
+    end)
+    local opt = context:addOption(label("InvGift") .. " (" .. shortText .. ")", nil, function()
+        local unit = item
+        local count = 1
+        pcall(function() count = tonumber(item:getCount()) or 1 end)
+        if count > 1 then
+            local split = nil
+            pcall(function() split = BridgeInventory.splitOne(item) end)
+            if split ~= nil then unit = split end
+        end
+        if unit == nil then return end
+        if hers then
+            pcall(BridgeSocial.received, unit)
+        else
+            pcall(function()
+                local dest = b:getInventory()
+                if unit:getContainer() ~= dest then
+                    ISTimedActionQueue.add(ISInventoryTransferAction:new(player, unit, unit:getContainer(), dest))
+                end
+            end)
+        end
+    end)
+    pcall(function()
+        local tip = ISInventoryPaneContextMenu.addToolTip()
+        tip.description = getText("IGUI_NotAlone_TooltipGift") .. ": " .. fullText
+        opt.toolTip = tip
+    end)
+    if info.given or info.capped then opt.notAvailable = true end
+end
+
+
 function BridgeInventory.onFill(playerNum, context, items)
 
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -3103,6 +3175,10 @@ function BridgeInventory.onFill(playerNum, context, items)
         if it:getContainer() ~= inv then inMain = false end
     end
     local player = getSpecificPlayer(playerNum or 0)
+
+    if BridgeSocial ~= nil and BridgeSocial.giftPreview ~= nil then
+        pcall(BridgeInventory.giftOption, context, b, player, list)
+    end
 
     if BridgeGear ~= nil then pcall(BridgeGear.menu, context, b, player, list) end
 
