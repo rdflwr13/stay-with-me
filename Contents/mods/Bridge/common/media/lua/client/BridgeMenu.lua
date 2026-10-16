@@ -38,6 +38,7 @@ local MISSING_KEY = {
     cleaner = "Need_Cleaner",
     both = "Need_CleanSupplies",
     cut = "Need_Cut",
+    crowbar = "Need_Crowbar",
 }
 
 
@@ -929,6 +930,86 @@ function BridgeMenu.onLootThis(targets)
     log("loot this from menu: " .. tostring(res))
 end
 
+local function pryDoorAtObject(o)
+    local door = nil
+    pcall(function()
+        if o == nil then return end
+        local isDoor = instanceof(o, "IsoDoor")
+            or (instanceof(o, "IsoThumpable") and o:isDoor())
+        if not isDoor then return end
+        local closed, locked, bar = false, false, false
+        pcall(function() closed = not o:IsOpen() end)
+        pcall(function() locked = o:isLocked() or o:isLockedByKey() end)
+        pcall(function() bar = o:isBarricaded() end)
+        if closed and locked and not bar then door = o end
+    end)
+    return door
+end
+
+local function pryDoorInSquare(sq)
+    local door = nil
+    if sq == nil then return nil end
+    pcall(function()
+        local objs = sq:getObjects()
+        for i = 0, objs:size() - 1 do
+            local d = pryDoorAtObject(objs:get(i))
+            if d ~= nil then door = d return end
+        end
+    end)
+    return door
+end
+
+local function doorUnder(worldobjects)
+    for _, o in ipairs(worldobjects or {}) do
+        local d = pryDoorAtObject(o)
+        if d ~= nil then return d end
+    end
+    local sq = nil
+    for _, o in ipairs(worldobjects or {}) do
+        pcall(function() sq = o:getSquare() end)
+        if sq ~= nil then break end
+    end
+    if sq == nil then return nil end
+    local door = pryDoorInSquare(sq)
+    if door ~= nil then return door end
+    local cell = getCell()
+    local x, y, z = sq:getX(), sq:getY(), sq:getZ()
+    local offsets = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+    for i = 1, #offsets do
+        local nsq = nil
+        pcall(function() nsq = cell:getGridSquare(x + offsets[i][1], y + offsets[i][2], z) end)
+        door = pryDoorInSquare(nsq)
+        if door ~= nil then return door end
+    end
+    return nil
+end
+
+function BridgeMenu.onPryOpen(target)
+    if BridgeTask == nil or target == nil then return end
+    local res = BridgeTask.start("pryDoor", { { x = target.x, y = target.y, z = target.z } })
+    log("pry open from menu: " .. tostring(res))
+end
+
+function BridgeMenu.onPryMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.PRY_ENABLED ~= 1 then return end
+    if not present() then return end
+    local door = doorUnder(worldobjects)
+    if door == nil then return end
+    local sq = nil
+    pcall(function() sq = door:getSquare() end)
+    if sq == nil then return end
+    local label = name() .. ": " .. tr("PryOpen")
+    if context:getOptionFromName(label) ~= nil then return end
+    local target = { x = sq:getX(), y = sq:getY(), z = sq:getZ() }
+    local opt = context:addOptionOnTop(label, target, BridgeMenu.onPryOpen)
+    local hasTool = false
+    pcall(function() hasTool = BridgeTask.findCrowbar(Bridge.body) ~= nil end)
+    if not hasTool or BridgeTask.active then opt.notAvailable = true end
+    if not hasTool then tip(opt, tr("Need_Crowbar")) end
+end
+
 function BridgeMenu.onLootMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -1331,6 +1412,7 @@ Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onJobsMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLootMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onSitMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLayMenu)
+Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onPryMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWashSinkMenu)
 
 Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)

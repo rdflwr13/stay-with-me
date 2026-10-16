@@ -147,7 +147,51 @@ function BridgeExercise.setCooldown(rec)
 end
 
 
+function BridgeExercise.bankOf(rec)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    if rec == nil then return 0 end
+    local v = tonumber(rec.exerciseBank) or 0
+    if v < 0 then v = 0 elseif v > 1 then v = 1 end
+    return v
+end
+
+
+function BridgeExercise.setBank(rec, v)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    if rec == nil then return end
+    v = tonumber(v) or 0
+    if v < 0 then v = 0 elseif v > 1 then v = 1 end
+    rec.exerciseBank = v
+    if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { exerciseBank = v }) end)
+    end
+end
+
+
+function BridgeExercise.addBank(rec, d)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    if rec == nil then return end
+    BridgeExercise.setBank(rec, BridgeExercise.bankOf(rec) + (tonumber(d) or 0))
+end
+
+
+function BridgeExercise.rollBankDay(rec)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    if rec == nil then return end
+    local now = worldHours()
+    if now == nil then return end
+    local day = math.floor(now / 24)
+    if tonumber(rec.exerciseBankDay) == day then return end
+    rec.exerciseBankDay = day
+    BridgeExercise.setBank(rec, 0)
+    if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { exerciseBankDay = day }) end)
+    end
+end
+
+
 function BridgeExercise.ready(rec)
+    BridgeExercise.rollBankDay(rec)
     if BridgeExercise.cooldownLeft(rec) > 0 then return false, "cooldown" end
     if BridgeExercise.fatigue() > BridgeExercise.START_MAX_FATIGUE then return false, "tired" end
     if BridgeExercise.combatRecent() then return false, "combat" end
@@ -394,6 +438,7 @@ end
 function BridgeExercise.readyTick()
     if Bridge == nil or BridgeTask == nil then return end
     if Bridge.kind ~= "zombie" then return end
+    BridgeExercise.rollBankDay(Bridge.store)
     BridgeExercise.combatPoll()
     if not Bridge.alive() then return end
     local rec = Bridge.store

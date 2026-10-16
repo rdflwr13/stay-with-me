@@ -1040,6 +1040,13 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.aimSense ~= nil then
+        local sense = BridgeData.cleanAimSense(args.aimSense)
+        if sense ~= nil and rec.aimSense ~= sense then
+            rec.aimSense = sense
+            changed = true
+        end
+    end
     if args.menuOrder ~= nil then
         local order = BridgeData.cleanMenuOrder(args.menuOrder)
         if order ~= nil then
@@ -1305,6 +1312,26 @@ BridgeServer.Commands.state = function(player, args)
         if v ~= nil and v >= 0 and (rec.exerciseUntil == nil or math.abs(rec.exerciseUntil - v) > 0.001) then
             if v > 0 then rec.exerciseUntil = v else rec.exerciseUntil = nil end
             changed = true
+        end
+    end
+    if args.exerciseBank ~= nil then
+        local v = tonumber(args.exerciseBank)
+        if v ~= nil and v >= 0 then
+            if v > 1 then v = 1 end
+            if rec.exerciseBank == nil or math.abs((tonumber(rec.exerciseBank) or 0) - v) > 0.001 then
+                rec.exerciseBank = v
+                changed = true
+            end
+        end
+    end
+    if args.exerciseBankDay ~= nil then
+        local v = tonumber(args.exerciseBankDay)
+        if v ~= nil then
+            v = math.floor(v)
+            if (tonumber(rec.exerciseBankDay) or -1) ~= v then
+                rec.exerciseBankDay = v
+                changed = true
+            end
         end
     end
     if args.exerciseTold ~= nil then
@@ -1880,6 +1907,75 @@ BridgeServer.Commands.chopHit = function(player, args)
             if sq ~= nil then sq:transmitRemoveItemFromSquare(tree) end
         else
             tree:transmitUpdatedSpriteToClients()
+        end
+    end)
+end
+
+BridgeServer.Commands.pryDoor = function(player, args)
+    local _body, sq = companionAtRelaxed(player, args, 6)
+    if sq == nil then
+        log("pryDoor: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+    local door = nil
+    pcall(function()
+        local objs = sq:getObjects()
+        for i = 0, objs:size() - 1 do
+            local o = objs:get(i)
+            if o ~= nil then
+                local isDoor = false
+                pcall(function()
+                    isDoor = instanceof(o, "IsoDoor")
+                        or (instanceof(o, "IsoThumpable") and o:isDoor())
+                end)
+                if isDoor then
+                    local closed, locked, bar = false, false, false
+                    pcall(function() closed = not o:IsOpen() end)
+                    pcall(function() locked = o:isLocked() or o:isLockedByKey() end)
+                    pcall(function() bar = o:isBarricaded() end)
+                    if closed and locked and not bar then door = o break end
+                end
+            end
+        end
+    end)
+    if door == nil then
+        log("pryDoor: no locked door at " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+    pcall(function()
+        door:setLocked(false)
+        door:setLockedByKey(false)
+    end)
+    local open = false
+    pcall(function() open = door:IsOpen() == true end)
+    if not open then
+        local kind = "single"
+        pcall(function()
+            if instanceof(door, "IsoDoor") and IsoDoor ~= nil then
+                if IsoDoor.getDoubleDoorIndex(door) ~= -1 then kind = "double"
+                elseif IsoDoor.getGarageDoorIndex(door) ~= -1 then kind = "garage" end
+            end
+        end)
+        if kind == "double" then
+            pcall(function() IsoDoor.toggleDoubleDoor(door, true) end)
+        elseif kind == "garage" then
+            pcall(function() IsoDoor.toggleGarageDoor(door, true) end)
+        else
+            pcall(function() door:ToggleDoorSilent() end)
+        end
+    end
+    pcall(function()
+        door:DirtySlice()
+        door:syncIsoObject(false, 1, nil, nil)
+    end)
+    pcall(function() door:transmitUpdatedSpriteToClients() end)
+    pcall(function()
+        local dsq = door:getSquare()
+        if dsq ~= nil then
+            dsq:InvalidateSpecialObjectPaths()
+            dsq:RecalcProperties()
         end
     end)
 end

@@ -232,6 +232,11 @@ function BridgeMoments.update(body)
     pcall(function() asleep = red:isAsleep() end)
     if asleep then return end
 
+    local momentSay = BridgeMoments.say
+    if BridgeTask ~= nil and BridgeTask.idleChatBlocked ~= nil and BridgeTask.idleChatBlocked() then
+        momentSay = function() return false end
+    end
+
 
 
 
@@ -282,16 +287,16 @@ function BridgeMoments.update(body)
 
         local event = HEALTH_EVENTS[step]
         if not (danger or fightNow) then event = event .. "Quiet" end
-        if BridgeMoments.say(event, 0, true, "Health" .. step) then return end
+        if momentSay(event, 0, true, "Health" .. step) then return end
     end
     if danger or fightNow then
 
 
         if fresh.bite then
-            if BridgeMoments.say("EvFightBite", 20 * 60, true) then return end
+            if momentSay("EvFightBite", 20 * 60, true) then return end
         end
         if fresh.deep or fresh.glass or fresh.bullet or fresh.bleed then
-            BridgeMoments.say("EvFightHurt", 15 * 60, true)
+            momentSay("EvFightHurt", 15 * 60, true)
         end
         return
     end
@@ -319,7 +324,7 @@ function BridgeMoments.update(body)
         if not autoHeal then event = "EvHurtAsk" end
 
         if event == false then return false end
-        if BridgeMoments.say(event, cooldown, true, slot) then
+        if momentSay(event, cooldown, true, slot) then
 
             BridgeMoments.pending = {}
             return true
@@ -343,30 +348,30 @@ function BridgeMoments.update(body)
 
 
     if stat(red, "PANIC") > 0.5 then
-        if BridgeMoments.say("EvPanic", 5 * MINUTE, true) then return end
+        if momentSay("EvPanic", 5 * MINUTE, true) then return end
     end
     if busy then return end
     if stat(red, "PAIN") > 0.45 then
         local pills = hasItem(body, red, { "Base.Pills" })
-        if BridgeMoments.say(pills and "EvPain" or "EvPainNoPills", 15 * MINUTE, false, "Pain") then return end
+        if momentSay(pills and "EvPain" or "EvPainNoPills", 15 * MINUTE, false, "Pain") then return end
     end
     if stat(red, "SICKNESS") > 0.3 or stat(red, "FOOD_SICKNESS") > 0.3 then
-        if BridgeMoments.say("EvSick", 20 * MINUTE) then return end
+        if momentSay("EvSick", 20 * MINUTE) then return end
     end
     if stat(red, "UNHAPPINESS") > 0.4 or stat(red, "STRESS") > 0.55 then
-        if BridgeMoments.say("EvSad", 25 * MINUTE) then return end
+        if momentSay("EvSad", 25 * MINUTE) then return end
     end
     if stat(red, "THIRST") > 0.35 then
-        if BridgeMoments.say("EvThirsty", 20 * MINUTE) then return end
+        if momentSay("EvThirsty", 20 * MINUTE) then return end
     end
     if stat(red, "HUNGER") > 0.35 then
-        if BridgeMoments.say("EvHungry", 20 * MINUTE) then return end
+        if momentSay("EvHungry", 20 * MINUTE) then return end
     end
     if stat(red, "FATIGUE") > 0.6 then
-        if BridgeMoments.say("EvTired", 20 * MINUTE) then return end
+        if momentSay("EvTired", 20 * MINUTE) then return end
     end
     if stat(red, "WETNESS") > 0.6 then
-        if BridgeMoments.say("EvCold", 20 * MINUTE) then return end
+        if momentSay("EvCold", 20 * MINUTE) then return end
     end
 end
 

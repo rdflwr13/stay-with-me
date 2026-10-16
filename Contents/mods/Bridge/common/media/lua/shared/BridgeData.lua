@@ -405,6 +405,34 @@ function BridgeData.equipScale(rec)
 end
 
 
+BridgeData.AIM_LEVELS = {
+    { value = 0, label = "AimSensOff", tip = "AimSensOffTip" },
+    { value = 0.5, label = "AimSensLow", tip = "AimSensLowTip" },
+    { value = 1, label = "AimSensNormal", tip = "AimSensNormalTip" },
+    { value = 2, label = "AimSensHigh", tip = "AimSensHighTip" },
+}
+BridgeData.AIM_SENSES = {}
+for _, lvl in ipairs(BridgeData.AIM_LEVELS) do BridgeData.AIM_SENSES[#BridgeData.AIM_SENSES + 1] = lvl.value end
+BridgeData.DEFAULT_AIM_SENSE = 1
+
+function BridgeData.cleanAimSense(value)
+    local n = tonumber(value)
+    if n == nil or n ~= n then return nil end
+    for _, v in ipairs(BridgeData.AIM_SENSES) do
+        if math.abs(v - n) < 0.001 then return v end
+    end
+    return nil
+end
+
+function BridgeData.aimSense(rec)
+    if rec ~= nil then
+        local v = BridgeData.cleanAimSense(rec.aimSense)
+        if v ~= nil then return v end
+    end
+    return BridgeData.DEFAULT_AIM_SENSE
+end
+
+
 BridgeData.LOOT_CATS = {
     { id = "ReceiveTool", label = "LootCatTool" },
     { id = "ReceiveWeapon", label = "LootCatWeapon" },

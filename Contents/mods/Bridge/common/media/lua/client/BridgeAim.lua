@@ -16,6 +16,14 @@ local AIM_Z_TOL          = 0.5
 local AIM_QUIET          = 90
 local AIM_TARGET_PENALTY = 30
 
+local function sensitivity()
+    if BridgeData ~= nil and type(BridgeData.aimSense) == "function" then
+        return BridgeData.aimSense(Bridge ~= nil and Bridge.store or nil)
+    end
+    return 1
+end
+BridgeAim.sensitivity = sensitivity
+
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeAim] " .. tostring(text)) end end
 local function vlog(text) if Bridge ~= nil and Bridge.verbose then log(text) end end
 local function dist2d(x1, y1, x2, y2)
@@ -82,11 +90,13 @@ function BridgeAim.refresh(red)
     pcall(function() vx, vy = v:getX(), v:getY() end)
     local vl = math.sqrt(vx * vx + vy * vy)
     if vl < 0.01 then return Z end
+    local sens = sensitivity()
+    if sens <= 0 then return Z end
     Z.on = true
     Z.red = red
     Z.px, Z.py, Z.pz = red:getX(), red:getY(), red:getZ()
     Z.vx, Z.vy = vx / vl, vy / vl
-    Z.range, Z.half = AIM_RANGE, AIM_TRIGGER_W
+    Z.range, Z.half = AIM_RANGE, AIM_TRIGGER_W * sens
     return Z
 end
 

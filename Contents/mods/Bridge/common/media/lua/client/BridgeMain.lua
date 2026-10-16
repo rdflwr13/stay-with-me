@@ -2176,6 +2176,18 @@ function Bridge.setEquipScale(value)
 end
 
 
+function Bridge.setAimSense(value)
+    local v = BridgeData.cleanAimSense(value)
+    if v == nil then return "unknown aim sense " .. tostring(value) end
+    if Bridge.store ~= nil then Bridge.store.aimSense = v end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { aimSense = v }) end)
+    end
+    log("aimSense=" .. tostring(v))
+    return "aimSense=" .. tostring(v)
+end
+
+
 function Bridge.setMenuOrder(list)
     local order = BridgeData.cleanMenuOrder(list)
     if order == nil then return "bad menu order" end
@@ -4898,8 +4910,10 @@ function Bridge.run(line)
         local cd = 0
         pcall(function() cd = BridgeExercise.cooldownLeft(nil) end)
         if sub == nil or sub == "get" then
-            return string.format("stamina=%.2f fatigue=%.3f cooldown_h=%.1f",
-                1 - BridgeExercise.fatigue(), BridgeExercise.fatigue(), cd or 0)
+            local bank = 0
+            pcall(function() if BridgeExercise.bankOf ~= nil then bank = BridgeExercise.bankOf(nil) end end)
+            return string.format("stamina=%.2f fatigue=%.3f cooldown_h=%.1f bank=%.3f",
+                1 - BridgeExercise.fatigue(), BridgeExercise.fatigue(), cd or 0, bank or 0)
         end
         if sub == "reset" or sub == "clear" then
             pcall(function() if Bridge.store ~= nil then Bridge.store.exerciseUntil = nil end end)

@@ -1849,7 +1849,8 @@ function BridgeSocial.update(body)
     pcall(function() justSpoke = BridgeMoments.recent(3600) end)
     local quiet = false
     pcall(function() quiet = Bridge.quiet() end)
-    if calm and not justSpoke and Bridge.time >= BridgeSocial.nextRemark then
+    local chatter = not (BridgeTask ~= nil and BridgeTask.idleChatBlocked ~= nil and BridgeTask.idleChatBlocked())
+    if calm and not justSpoke and not chatter and Bridge.time >= BridgeSocial.nextRemark then
         BridgeSocial.nextRemark = Bridge.time + 5400 + ZombRand(9000)
 
         if not quiet then
@@ -1861,7 +1862,7 @@ function BridgeSocial.update(body)
 
 
 
-    if calm and not quiet and r.f >= 35 and now >= r.giftAt and BridgeData.optionOf(Bridge.store, "gifts")
+    if calm and not quiet and not chatter and r.f >= 35 and now >= r.giftAt and BridgeData.optionOf(Bridge.store, "gifts")
         and ZombRand(900) == 0 then
         BridgeSocial.give(BridgeSocial.pickGift(red), false)
     end

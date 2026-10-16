@@ -133,6 +133,22 @@ BridgeTask.CORPSE_XP_STRENGTH = 2
 BridgeTask.CORPSE_XP_FITNESS = 1
 
 
+BridgeTask.PRY_ENABLED = 1
+BridgeTask.PRY_ANIM = "NA_Pry"
+BridgeTask.PRY_RANGE = 0.85
+BridgeTask.PRY_TIME = 190
+BridgeTask.PRY_DANGER_RADIUS = 2
+BridgeTask.PRY_NOISE_RADIUS = 15
+BridgeTask.PRY_NOISE_EVERY = 30
+BridgeTask.PRY_STAMINA = 0.12
+BridgeTask.PRY_STAMINA_MIN = 0.30
+BridgeTask.PRY_CHANCE_FLOOR = 0.30
+BridgeTask.PRY_CHANCE_K = 3
+BridgeTask.PRY_SOUND_START = "CrowbarHit"
+BridgeTask.PRY_SOUND_SUCCESS = "BreakBarricadePlank"
+BridgeTask.PRY_SOUND_FAIL = "CrowbarBreak"
+
+
 BridgeTask.CLEAN_SOUND = "CleanBloodScrub"
 BridgeTask.CLEAN_SOUND_HAND = "CleanBloodBleach"
 BridgeTask.ASH_SOUND = "Shoveling"
@@ -180,6 +196,15 @@ BridgeTask.DIRT_PREFIXES = { "overlay_grime", "trash&junk", "trash_", "d_floorle
 BridgeTask.active = false
 BridgeTask.state = "idle"
 BridgeTask.kind = nil
+
+
+function BridgeTask.idleChatBlocked()
+    if not BridgeTask.active then return false end
+    local k = BridgeTask.kind
+    if k == "sit" then return false end
+    if k == "lay" then return BridgeTask.laySleep == true end
+    return true
+end
 BridgeTask.kinds = {}
 BridgeTask.body = nil
 BridgeTask.queue = {}
@@ -243,6 +268,8 @@ BridgeTask.lootNoRoom = 0
 BridgeTask.lootFull = false
 BridgeTask.exercisePhase = nil
 BridgeTask.exerciseRepAt = nil
+BridgeTask.exerciseRepMark = nil
+BridgeTask.exerciseBudget = nil
 BridgeTask.exerciseMirror = nil
 BridgeTask.exerciseStopReason = nil
 
@@ -347,6 +374,62 @@ function BridgeTask.findAxe(body)
         axe = best
     end)
     return axe
+end
+
+local function usableCrowbar(item)
+    local ok = false
+    pcall(function()
+        if item == nil or item:isBroken() then return end
+        if ItemTag ~= nil and ItemTag.CROWBAR ~= nil then
+            ok = item:hasTag(ItemTag.CROWBAR) == true
+            return
+        end
+        local type = tostring(item:getType() or "")
+        local full = tostring(item:getFullType() or "")
+        ok = string.find(type, "Crowbar", 1, true) ~= nil
+            or string.find(full, "Crowbar", 1, true) ~= nil
+    end)
+    return ok
+end
+
+function BridgeTask.findCrowbar(body)
+    if body == nil then return nil end
+    local crowbar = nil
+    pcall(function()
+        local hand = body:getPrimaryHandItem()
+        if usableCrowbar(hand) then crowbar = hand return end
+        local items = body:getInventory():getAllEvalRecurse(usableCrowbar)
+        if items ~= nil and items:size() > 0 then crowbar = items:get(0) end
+    end)
+    return crowbar
+end
+
+function BridgeTask.resolvePryDoor(target)
+    local door = nil
+    if target == nil then return nil end
+    pcall(function()
+        local sq = getCell():getGridSquare(target.x, target.y, target.z)
+        if sq == nil then return end
+        local objs = sq:getObjects()
+        for i = 0, objs:size() - 1 do
+            local o = objs:get(i)
+            if o ~= nil then
+                local isDoor = false
+                pcall(function()
+                    isDoor = instanceof(o, "IsoDoor")
+                        or (instanceof(o, "IsoThumpable") and o:isDoor())
+                end)
+                if isDoor then
+                    local closed, locked, bar = false, false, false
+                    pcall(function() closed = not o:IsOpen() end)
+                    pcall(function() locked = o:isLocked() or o:isLockedByKey() end)
+                    pcall(function() bar = o:isBarricaded() end)
+                    if closed and locked and not bar then door = o return end
+                end
+            end
+        end
+    end)
+    return door
 end
 
 local function resolveTree(target)
@@ -1643,13 +1726,15 @@ function BridgeTask.speakMissing(kind)
     elseif missing == "cleaner" then key = "JobNeedCleaner"
     elseif missing == "petrol" then key = "JobNeedPetrol"
     elseif missing == "ashes" then key = "JobNeedAshTool"
-    elseif missing == "broom" then key = "JobNeedBroom" end
+    elseif missing == "broom" then key = "JobNeedBroom"
+    elseif missing == "crowbar" then key = "JobNeedCrowbar" end
     Bridge.speak(key)
 end
 
-function BridgeTask.dangerNear(body)
+function BridgeTask.dangerNear(body, radius)
     local danger = false
     local red = BridgeData.owner()
+    local dr = radius or BridgeTask.DANGER_RADIUS
     pcall(function()
         if BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle") then danger = true return end
         local list = getCell():getZombieList()
@@ -1659,8 +1744,8 @@ function BridgeTask.dangerNear(body)
                 and not z:getVariableBoolean("NotAloneBody") and not BridgeData.harmless(z)
                 and math.abs(z:getZ() - body:getZ()) < 0.8 then
                 local d = dist2(z, body)
-                local dr = red ~= nil and dist2(z, red) or 999
-                if d < BridgeTask.DANGER_RADIUS or dr < BridgeTask.DANGER_RADIUS then
+                local dr2 = red ~= nil and dist2(z, red) or 999
+                if d < dr or dr2 < dr then
                     local seen = false
                     pcall(function() seen = (red ~= nil and red:CanSee(z)) or body:CanSee(z) end)
                     if seen then danger = true return end
@@ -1795,6 +1880,11 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     end
     if kind == "moveCorpses" and BridgeFight ~= nil
             and (1 - (BridgeFight.fatigue or 0)) < BridgeTask.CORPSE_REFUSE_STAMINA then
+        Bridge.speak("JobNeedRest")
+        return "tired"
+    end
+    if kind == "pryDoor" and BridgeFight ~= nil
+            and (1 - (BridgeFight.fatigue or 0)) < BridgeTask.PRY_STAMINA_MIN then
         Bridge.speak("JobNeedRest")
         return "tired"
     end
@@ -1992,6 +2082,8 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     elseif kind == "washSink" then
     elseif kind == "fillWater" then
     elseif kind == "emptyFluid" then
+    elseif kind == "pryDoor" then
+        Bridge.speak("PryStart")
     elseif startText ~= nil then
         Bridge.speakText(startText)
     else
@@ -2170,7 +2262,7 @@ function BridgeTask.finish()
         end
     else
         if finishKind == "sit" or finishKind == "lay" or finishKind == "exercise" or finishKind == "washSink"
-                or finishKind == "fillWater" or finishKind == "emptyFluid" then
+                or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor" then
         elseif wasLootFull then
             Bridge.speak("JobLootFull")
         else
@@ -2217,6 +2309,13 @@ function BridgeTask.progress()
         if p < 0 then p = 0 elseif p > 1 then p = 1 end
         return p
     end
+    if BridgeTask.phase == "pry" and BridgeTask.swingStart ~= nil then
+        local span = BridgeTask.PRY_TIME or 190
+        if span <= 0 then span = 1 end
+        local p = (t - BridgeTask.swingStart) * ffMult() / span
+        if p < 0 then p = 0 elseif p > 1 then p = 1 end
+        return p
+    end
     return nil
 end
 
@@ -2227,17 +2326,18 @@ function BridgeTask.update(body)
         return false
     end
     if BridgeTask.state ~= "running" then return false end
-    if BridgeTask.dangerNear(body) then
-        BridgeTask.cancel("danger")
-        return false
-    end
 
-    pcall(function() BridgeMove.closeBehind(body) end)
     local def = BridgeTask.kinds[BridgeTask.kind]
     if def == nil or def.update == nil then
         BridgeTask.cancel("error")
         return false
     end
+    if BridgeTask.dangerNear(body, def.dangerRadius) then
+        BridgeTask.cancel("danger")
+        return false
+    end
+
+    pcall(function() BridgeMove.closeBehind(body) end)
     local ok, res = pcall(def.update, body)
     if not ok then
         BridgeTask.info = "error " .. tostring(res)
@@ -2575,6 +2675,214 @@ end
 
 function BridgeTask.kinds.chopTree.leave(body)
     BridgeTask.clearChop(body)
+end
+
+BridgeTask.kinds.pryDoor = {}
+BridgeTask.kinds.pryDoor.dangerRadius = BridgeTask.PRY_DANGER_RADIUS
+
+function BridgeTask.kinds.pryDoor.available(body)
+    if BridgeTask.PRY_ENABLED ~= 1 then return false end
+    if BridgeTask.findCrowbar(body) == nil then return false end
+    return true
+end
+
+function BridgeTask.kinds.pryDoor.missing(body)
+    if BridgeTask.findCrowbar(body) == nil then return "crowbar" end
+    return nil
+end
+
+function BridgeTask.kinds.pryDoor.update(body)
+    if BridgeTask.PRY_ENABLED ~= 1 then return BridgeTask.finish() end
+
+    local target = BridgeTask.current
+    if target == nil then
+        if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+        target = table.remove(BridgeTask.queue, 1)
+        if BridgeTask.resolvePryDoor(target) == nil then
+            BridgeTask.info = "stale target"
+            if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+            return true
+        end
+        BridgeTask.current = target
+        BridgeTask.phase = "walk"
+        BridgeTask.since = Bridge.time
+        BridgeTask.spot = nil
+        BridgeTask.swingStart = nil
+        BridgeTask.still = 0
+        BridgeTask.checkX = nil
+        BridgeTask.animHold = 0
+        BridgeTask.bestD = nil
+        BridgeTask.progressAt = Bridge.time
+        BridgeTask.pathFails = 0
+        BridgeTask.pathFailTick = nil
+        BridgeTask.pryDrained = 0
+        BridgeTask.pryNoiseAt = nil
+    end
+
+    local door = BridgeTask.resolvePryDoor(target)
+    if door == nil then
+        BridgeTask.info = "door no longer pryable"
+        BridgeTask.current = nil
+        if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+        return true
+    end
+
+    local crowbar = BridgeTask.findCrowbar(body)
+    if crowbar == nil then
+        BridgeTask.cancel("noSupplies")
+        return false
+    end
+    local crowbarTwo = false
+    pcall(function()
+        crowbarTwo = crowbar:isTwoHandWeapon() == true or crowbar:isRequiresEquippedBothHands() == true
+    end)
+    local offWanted = crowbarTwo and crowbar or nil
+    local handsOk = false
+    pcall(function()
+        handsOk = body:getPrimaryHandItem() == crowbar and body:getSecondaryHandItem() == offWanted
+    end)
+    if not handsOk then
+        ensureInMain(body, crowbar)
+        pcall(function()
+            body:setPrimaryHandItem(crowbar)
+            body:setSecondaryHandItem(offWanted)
+            body:resetModelNextFrame()
+        end)
+        pcall(function() BridgeInventory.redress(body) end)
+    end
+
+    local walk, why = BridgeTask.walkTo(body, target, BridgeTask.PRY_RANGE, nil, true)
+    if walk == "unreachable" then return BridgeTask.dropTarget(why) end
+    if walk == "walking" then return true end
+
+    if BridgeTask.phase ~= "pry" then
+        BridgeTask.phase = "pry"
+        BridgeTask.since = Bridge.time
+        BridgeTask.swingStart = nil
+        BridgeTask.animHold = 0
+        BridgeTask.pryDrained = 0
+        BridgeTask.pryNoiseAt = Bridge.time
+        pcall(function() BridgeMove.stopPath(body) end)
+        BridgeTask.info = "prying"
+    end
+
+    pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+
+    if BridgeTask.swingStart == nil then
+        if (BridgeTask.animHold or 0) > 0 then
+            BridgeTask.animHold = BridgeTask.animHold - 1
+            pcall(function() body:setVariable("BumpAnimFinished", true) end)
+            pcall(function() body:changeState(ZombieIdleState.instance()) end)
+            pcall(function() body:setBumpType("") end)
+            BridgeTask.info = "resettling pry"
+            return true
+        end
+        BridgeTask.swingStart = Bridge.time
+        pcall(function()
+            body:setVariable("BumpAnimFinished", false)
+            body:setBumpType(BridgeTask.PRY_ANIM)
+        end)
+        BridgeSound.sfx(body, BridgeTask.PRY_SOUND_START)
+        return true
+    end
+
+    local age = (Bridge.time - BridgeTask.swingStart) * ffMult()
+
+    if BridgeFight ~= nil then
+        local span = BridgeTask.PRY_TIME or 190
+        if span <= 0 then span = 1 end
+        local frac = age / span
+        if frac > 1 then frac = 1 end
+        local want = (BridgeTask.PRY_STAMINA or 0) * frac
+        local have = BridgeTask.pryDrained or 0
+        if want > have then
+            pcall(function()
+                BridgeFight.fatigue = math.min(1, (BridgeFight.fatigue or 0) + (want - have))
+            end)
+            BridgeTask.pryDrained = want
+        end
+    end
+
+    if (Bridge.time - (BridgeTask.pryNoiseAt or -99999)) >= BridgeTask.PRY_NOISE_EVERY then
+        BridgeTask.pryNoiseAt = Bridge.time
+        pcall(function() addSound(body, target.x, target.y, target.z, BridgeTask.PRY_NOISE_RADIUS, 10) end)
+    end
+
+    if age >= BridgeTask.SCRUB_GUARD then
+        local playing = false
+        pcall(function()
+            playing = body:getActionStateName() == "bumped"
+                and tostring(body:getBumpType()) == BridgeTask.PRY_ANIM
+        end)
+        if not playing then
+            pcall(function() body:setVariable("BumpAnimFinished", true) end)
+            pcall(function() body:changeState(ZombieIdleState.instance()) end)
+            pcall(function() body:setBumpType("") end)
+            BridgeTask.animHold = 2
+            BridgeTask.swingStart = nil
+            BridgeTask.info = "pry anim lost, restarting"
+            return true
+        end
+    end
+
+    local fin = false
+    pcall(function() fin = body:getVariableBoolean("BumpAnimFinished") == true end)
+    if not fin and age < BridgeTask.PRY_TIME then
+        BridgeTask.info = "prying"
+        return true
+    end
+    BridgeTask.swingStart = nil
+
+    local strength = 0
+    pcall(function()
+        if BridgeSkills ~= nil and BridgeSkills.level ~= nil then
+            strength = tonumber(BridgeSkills.level("Strength")) or 0
+        else
+            strength = tonumber(body:getPerkLevel(Perks.Strength)) or 0
+        end
+    end)
+    local success = false
+    pcall(function()
+        local chance = BridgeTask.PRY_CHANCE_FLOOR
+            + (1 - BridgeTask.PRY_CHANCE_FLOOR) * (strength / (strength + BridgeTask.PRY_CHANCE_K))
+        success = ZombRand(100) < chance * 100
+    end)
+
+    if success then
+        pcall(function()
+            door:setLocked(false)
+            door:setLockedByKey(false)
+        end)
+        if BridgeMove ~= nil and BridgeMove.openDoor ~= nil then
+            pcall(function() BridgeMove.openDoor(body, door) end)
+        end
+        BridgeSound.sfx(body, BridgeTask.PRY_SOUND_SUCCESS)
+        pcall(function() addSound(body, target.x, target.y, target.z, BridgeTask.PRY_NOISE_RADIUS, 10) end)
+        Bridge.speak("PrySuccess")
+        if isClient() then
+            pcall(function()
+                sendClientCommand(BridgeData.owner(), "Bridge", "pryDoor",
+                    { x = target.x, y = target.y, z = target.z })
+            end)
+        end
+    else
+        BridgeSound.sfx(body, BridgeTask.PRY_SOUND_FAIL)
+        pcall(function() addSound(body, target.x, target.y, target.z, BridgeTask.PRY_NOISE_RADIUS, 10) end)
+        Bridge.speak("PryFail")
+    end
+
+    BridgeTask.current = nil
+    if #BridgeTask.queue == 0 then return BridgeTask.finish() end
+    return true
+end
+
+function BridgeTask.kinds.pryDoor.leave(body)
+    if body == nil then return end
+    pcall(function()
+        body:setVariable("BumpAnimFinished", true)
+        body:changeState(ZombieIdleState.instance())
+        body:setBumpType("")
+    end)
 end
 
 BridgeTask.kinds.cleanUp = {}
@@ -5351,6 +5659,10 @@ Events.OnTickEvenPaused.Add(function()
     if not BridgeTask.active then return end
     local body = Bridge.body
     if body == nil then return end
+    if BridgeTask.kind == "exercise" then
+        BridgeTask.exerciseRepMark = Bridge.time
+        return
+    end
     pcall(function() BridgeMove.stopPath(body) end)
     pcall(function() BridgeTask.clearChop(body) end)
 
@@ -5387,6 +5699,16 @@ end
 BridgeTask.exerciseFatigue = exerciseFatigue
 
 
+local function exerciseBank()
+    local v = 0
+    if BridgeExercise ~= nil and BridgeExercise.bankOf ~= nil then
+        pcall(function() v = BridgeExercise.bankOf() end)
+    end
+    return tonumber(v) or 0
+end
+BridgeTask.exerciseBank = exerciseBank
+
+
 local function exerciseClear(body)
     if body == nil then return end
     pcall(function()
@@ -5416,7 +5738,7 @@ end
 function BridgeTask.exerciseProgress()
     local stopAt = exerciseConst("STAMINA_STOP", 0.90)
     if stopAt <= 0 then stopAt = 0.90 end
-    local frac = exerciseFatigue() / stopAt
+    local frac = exerciseBank() / stopAt
     if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
     if BridgeProgress ~= nil and BridgeProgress.show ~= nil then pcall(function() BridgeProgress.show(frac) end) end
     if frac >= 0.5 and not BridgeTask.exerciseHalfSaid then
@@ -5447,7 +5769,8 @@ function BridgeTask.kinds.exercise.update(body)
 
     if BridgeTask.exercisePhase == nil then
         BridgeTask.exercisePhase = "active"
-        BridgeTask.exerciseRepAt = Bridge.time + exerciseConst("REP_TICKS", 3 * SECOND)
+        BridgeTask.exerciseRepMark = Bridge.time
+        BridgeTask.exerciseBudget = 0
         BridgeTask.exerciseReps = 0
         BridgeTask.exerciseHalfSaid = false
         pcall(function() body:setVariable("BumpAnimFinished", false) end)
@@ -5478,6 +5801,16 @@ function BridgeTask.kinds.exercise.update(body)
     end
 
 
+    local asn = "?"
+    pcall(function() asn = tostring(body:getActionStateName()) end)
+    if string.sub(asn, 1, 8) == "onground" or string.sub(asn, 1, 8) == "falldown" then
+        pcall(function() body:setVariable("BumpAnimFinished", false) end)
+        pcall(function() body:changeState(ZombieGetUpState.instance()) end)
+        BridgeTask.exerciseRepMark = Bridge.time
+        return true
+    end
+
+
     pcall(function()
         if tostring(body:getBumpType()) ~= anim then body:setBumpType(anim) end
     end)
@@ -5494,24 +5827,29 @@ function BridgeTask.kinds.exercise.update(body)
                 if fit ~= nil then pcall(function() ex = fit:getCurrentExe() end) end
             end
             if red == nil or ex == nil then stop = true return end
-            local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
-            local range = exerciseConst("RANGE", 4)
-            if (dx * dx + dy * dy) > (range * range) then stop = true return end
-            if math.abs(red:getZ() - body:getZ()) >= 0.9 then stop = true return end
         end)
         if stop then return BridgeTask.finish() end
     end
 
 
-    if Bridge.time >= (BridgeTask.exerciseRepAt or 0) then
-        local gmult = 1
-        pcall(function() gmult = getGameTime():getTrueMultiplier() end)
-        if type(gmult) ~= "number" or gmult < 1 then gmult = 1 end
-        if gmult > 10 then gmult = 10 end
-        BridgeTask.exerciseRepAt = Bridge.time + exerciseConst("REP_TICKS", 3 * SECOND) / gmult
-        BridgeTask.exerciseReps = (BridgeTask.exerciseReps or 0) + 1
+    local now = Bridge.time
+    local mark = BridgeTask.exerciseRepMark or now
+    BridgeTask.exerciseRepMark = now
+    BridgeTask.exerciseBudget = (BridgeTask.exerciseBudget or 0) + (now - mark) * ffMult()
+    local repSpan = exerciseConst("REP_TICKS", 3 * SECOND)
+    if repSpan <= 0 then repSpan = 3 * SECOND end
+    local reps = BridgeTask.exerciseReps or 0
+    local before = reps
+    local burst = 0
+    while BridgeTask.exerciseBudget >= repSpan and burst < 30 do
+        BridgeTask.exerciseBudget = BridgeTask.exerciseBudget - repSpan
+        burst = burst + 1
+        reps = reps + 1
         local d = exerciseDrain()
         pcall(function() BridgeFight.fatigue = math.min(1, (tonumber(BridgeFight and BridgeFight.fatigue) or 0) + d) end)
+        if BridgeExercise ~= nil and BridgeExercise.addBank ~= nil then
+            pcall(function() BridgeExercise.addBank(Bridge.store, d) end)
+        end
         if ZombRand(1000) < exerciseConst("XP_CHANCE", 100) then
             if BridgeSkills ~= nil and BridgeSkills.add ~= nil then
                 local m = 1
@@ -5527,14 +5865,17 @@ function BridgeTask.kinds.exercise.update(body)
                 BridgeSkills.add("Strength", m * cfStr, "exercise")
             end
         end
-        log(string.format("exercise rep %d drain=%.3f fatigue=%.2f speed=%.1f", BridgeTask.exerciseReps, d, exerciseFatigue(), gmult))
-        if BridgeTask.exerciseReps % 4 == 0 then
+    end
+    if reps ~= before then
+        BridgeTask.exerciseReps = reps
+        log(string.format("exercise reps %d->%d drain=%.3f fatigue=%.2f ff=%.1f", before, reps, exerciseDrain(), exerciseFatigue(), ffMult()))
+        if math.floor(reps / 4) > math.floor(before / 4) then
             Bridge.speak("ExerciseEffort" .. (1 + ZombRand(3)))
         end
     end
 
 
-    if exerciseFatigue() >= stopAt then
+    if exerciseBank() >= stopAt then
         return BridgeTask.kinds.exercise.stop(body)
     end
 
@@ -5564,6 +5905,9 @@ function BridgeTask.kinds.exercise.stop(body)
     if BridgeExercise ~= nil and BridgeExercise.recordSession ~= nil then
         pcall(function() BridgeExercise.recordSession(Bridge.store) end)
     end
+    if BridgeExercise ~= nil and BridgeExercise.setBank ~= nil then
+        pcall(function() BridgeExercise.setBank(Bridge.store, 0) end)
+    end
     Bridge.speak("ExerciseDone")
     return BridgeTask.finish()
 end
@@ -5581,6 +5925,8 @@ function BridgeTask.kinds.exercise.leave(body)
     end
     BridgeTask.exercisePhase = nil
     BridgeTask.exerciseRepAt = nil
+    BridgeTask.exerciseRepMark = nil
+    BridgeTask.exerciseBudget = nil
     BridgeTask.exerciseMirror = nil
     BridgeTask.exerciseStopReason = nil
     BridgeTask.exerciseReps = nil

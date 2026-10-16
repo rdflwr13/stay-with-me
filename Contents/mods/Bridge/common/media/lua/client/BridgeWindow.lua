@@ -573,6 +573,18 @@ function BridgeWindowSettings:createChildren()
         y = y + math.max(BTN_H, tick:getHeight()) + PAD
     end
     y = y + PAD
+    self.aimLabelY = y + math.floor((BTN_H - FONT_S) / 2)
+    local aimLabelW = textW(UIFont.Small, tr("OptAimSense")) + PAD * 2
+    local aimX = PAD + aimLabelW
+    local aimW = self.width - PAD - aimX
+    if aimW < BTN_H * 3 then aimW = BTN_H * 3 end
+    self.aimCombo = ISComboBox:new(aimX, y, aimW, BTN_H, self, BridgeWindowSettings.onAimSense)
+    self.aimCombo:initialise()
+    for _, lvl in ipairs(BridgeData.AIM_LEVELS) do
+        self.aimCombo:addOptionWithData(tr(lvl.label), lvl.value, tr(lvl.tip))
+    end
+    self:addChild(self.aimCombo)
+    y = y + BTN_H + PAD
     local frame = BridgeWindow.settingsFrame(self.width)
     self.frameX, self.frameY, self.frameW, self.frameH = frame.x, y, frame.w, frame.h
     self.colW = frame.col
@@ -613,6 +625,10 @@ function BridgeWindowSettings:prerender()
         local g = BridgeData.genderOf(Bridge.store)
         if self.genderCombo:getSelectedData() ~= g then self.genderCombo:selectData(g) end
     end
+    if self.aimCombo ~= nil then
+        local s = BridgeData.aimSense(Bridge.store)
+        if self.aimCombo:getSelectedData() ~= s then self.aimCombo:selectData(s) end
+    end
 
     local g = BridgeData.genderOf(Bridge.store)
     if self.lastGender ~= g then
@@ -635,6 +651,9 @@ function BridgeWindowSettings:render()
     local col = self.colW or 0
     self:drawText(fitText(UIFont.Small, tr("WindowName") .. " " .. name(), col), self.nameLabelX, self.nameLabelY, 1, 1, 1, 1, UIFont.Small)
     self:drawText(fitText(UIFont.Small, tr("Gender"), col), self.genderLabelX, self.genderLabelY, 1, 1, 1, 1, UIFont.Small)
+    if self.aimLabelY ~= nil then
+        self:drawText(fitText(UIFont.Small, tr("OptAimSense"), self.width - PAD * 2), PAD, self.aimLabelY, 1, 1, 1, 1, UIFont.Small)
+    end
 end
 
 function BridgeWindowSettings:onTick(index, selected, key)
@@ -645,6 +664,12 @@ function BridgeWindowSettings:onGender(combo)
     if combo == nil then return end
     local g = combo:getSelectedData()
     if g ~= nil and Bridge ~= nil and type(Bridge.setGender) == "function" then Bridge.setGender(g) end
+end
+
+function BridgeWindowSettings:onAimSense(combo)
+    if combo == nil then return end
+    local v = combo:getSelectedData()
+    if v ~= nil and Bridge ~= nil and type(Bridge.setAimSense) == "function" then Bridge.setAimSense(v) end
 end
 
 function BridgeWindowSettings:onRename()
@@ -1218,7 +1243,8 @@ end
 function BridgeWindow.settingsHeight()
     refreshFonts()
     local frameH = BOX + FONT_S + ROW + BTN_H + BOX
-    return PAD + #BridgeWindow.TICKS * (BTN_H + PAD) + PAD + frameH + PAD + BTN_H + PAD
+    local aimH = BTN_H + PAD
+    return PAD + #BridgeWindow.TICKS * (BTN_H + PAD) + PAD + aimH + frameH + PAD + BTN_H + PAD
 end
 
 function BridgeWindow.contentHeight(kind, width)
@@ -1263,6 +1289,7 @@ function BridgeWindow.neededSize()
     for _, entry in ipairs(BridgeWindow.TICKS) do
         w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr(entry.label)) + PAD)
     end
+    w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("OptAimSense")) + PAD * 4 + textW(UIFont.Small, tr("AimSensNormal")))
     w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowName") .. " " .. name()))
     w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowReport")))
     if BridgeWindow.STATSMENU_ENABLE == 1 then
