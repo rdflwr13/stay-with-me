@@ -3212,18 +3212,22 @@ local function fillApply(body, sink, item, amount)
     local fc = nil
     pcall(function() fc = item:getFluidContainer() end)
     if fc == nil then return end
+    -- Fill the container directly, exactly like the multiplayer path and the wash
+    -- job do. The engine's IsoObject:transferFluidTo only moves a fraction of the
+    -- requested amount in a single call (it is bounded by the source's own fluid
+    -- container, not by getFluidAmount()), so it is not used here; the source is
+    -- spent separately below with useFluid.
     local before = -1
     pcall(function() before = fc:getAmount() end)
-    if not isClient() then
-        pcall(function() sink:transferFluidTo(fc, amount) end)
-    end
+    local fluid = Fluid.Water
+    pcall(function() if sink:isTaintedWater() == true and Fluid.TaintedWater ~= nil then fluid = Fluid.TaintedWater end end)
+    pcall(function() fc:addFluid(fluid, amount) end)
     local after = before
     pcall(function() after = fc:getAmount() end)
-    if not (type(after) == "number" and type(before) == "number" and after > before) then
-        local fluid = Fluid.Water
-        pcall(function() if sink:isTaintedWater() == true and Fluid.TaintedWater ~= nil then fluid = Fluid.TaintedWater end end)
-        pcall(function() fc:addFluid(fluid, amount) end)
-        pcall(function() after = fc:getAmount() end)
+    local added = amount
+    if type(before) == "number" and type(after) == "number" then
+        added = after - before
+        if added < 0 then added = 0 end
     end
     pcall(function() item:syncItemFields() end)
     pcall(function() sendItemStats(item) end)
@@ -3233,13 +3237,14 @@ local function fillApply(body, sink, item, amount)
         if sq ~= nil then
             pcall(function()
                 sendClientCommand(BridgeData.owner(), "Bridge", "water",
-                    { x = sq:getX(), y = sq:getY(), z = sq:getZ(), amount = amount })
+                    { x = sq:getX(), y = sq:getY(), z = sq:getZ(), amount = added })
             end)
         end
     else
+        pcall(function() sink:useFluid(added) end)
         pcall(function() sink:transmitModData() end)
     end
-    log(string.format("fill %s +%.2f -> %s", tostring(item:getName()), amount, tostring(after)))
+    log(string.format("fill %s +%.2f -> %s", tostring(item:getName()), added, tostring(after)))
 end
 
 function BridgeTask.kinds.fillWater.available(body, scope)
