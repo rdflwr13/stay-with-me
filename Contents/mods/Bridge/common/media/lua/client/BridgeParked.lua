@@ -505,7 +505,8 @@ function BridgeParked.dumpItems(tag, container, extra)
                 pcall(function() hb = it:getHotbarEquippedWeight() end)
                 pcall(function() aw = it:getActualWeight() end)
                 pcall(function() cw = it:getContentsWeight() end)
-                pcall(function() red = it:getWeightReduction() end)
+                local fnRed = it.getWeightReduction
+                if fnRed ~= nil then pcall(function() red = fnRed(it) end) end
                 local f = (extra ~= nil) and extra[it] or nil
                 local flags = ((f ~= nil and f.w == true) and "W" or "-")
                     .. ((f ~= nil and ((tonumber(f.h) or 0) > 0 or f.as == true)) and "H" or "-")

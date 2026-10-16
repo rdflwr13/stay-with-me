@@ -4815,7 +4815,37 @@ local function isHerMain(container)
     return yes, b
 end
 
+local function stillHers(item)
+    if item == nil then return false end
+    local hers = false
+    pcall(function() hers = BridgeInventory.inBody(item:getContainer()) == true end)
+    return hers
+end
+
+function BridgeInventory.wrapEmptyFluid()
+    if ISFluidContainerMenu == nil or ISFluidContainerMenu.emptyFluidContainer == nil
+            or ISFluidContainerMenu.bridgeEmptyWrapped then
+        return
+    end
+    local empty = ISFluidContainerMenu.emptyFluidContainer
+    ISFluidContainerMenu.emptyFluidContainer = function(playerObj, container)
+        local item = nil
+        pcall(function()
+            local o = container ~= nil and container:getOwner() or nil
+            if o ~= nil and instanceof(o, "InventoryItem") then item = o end
+        end)
+        if item ~= nil and stillHers(item) and BridgeTask ~= nil and BridgeTask.start ~= nil then
+            local res = BridgeTask.start("emptyFluid", {}, nil, { items = { item } })
+            log("empty hers job: " .. tostring(res) .. " (" .. tostring(item:getName()) .. ")")
+            return
+        end
+        return empty(playerObj, container)
+    end
+    ISFluidContainerMenu.bridgeEmptyWrapped = true
+end
+
 function BridgeInventory.wrapLootControls()
+    BridgeInventory.wrapEmptyFluid()
     if ISInventoryPane ~= nil and ISInventoryPane.lootAll ~= nil and not ISInventoryPane.bridgeLootAllWrapped then
         local lootAll = ISInventoryPane.lootAll
         ISInventoryPane.lootAll = function(self, ...)

@@ -1712,9 +1712,27 @@ BridgeServer.Commands.water = function(player, args)
         for i = 0, objects:size() - 1 do
             local o = objects:get(i)
             local wet = false
-            pcall(function() wet = o:hasWater() and o:getFluidAmount() > 0 end)
+            pcall(function() wet = (o:hasWater() or o:hasFluid()) and o:getFluidAmount() > 0 end)
             if wet then
                 if o:useFluid(math.min(amount, o:getFluidAmount())) > 0 then
+                    pcall(function() o:transmitModData() end)
+                end
+                return
+            end
+            -- Entity fluid containers (e.g. the office water dispenser) are not
+            -- flagged hasWater/hasFluid but do hold water.
+            local fc = nil
+            pcall(function()
+                fc = o:getFluidContainer()
+                wet = fc ~= nil and fc:getAmount() > 0
+                    and (fc:isWaterSource() or fc:contains(Fluid.Water)
+                        or (Fluid.TaintedWater ~= nil and fc:contains(Fluid.TaintedWater)))
+            end)
+            if wet and fc ~= nil then
+                local spent = math.min(amount, fc:getAmount())
+                if spent > 0 then
+                    fc:adjustAmount(fc:getAmount() - spent)
+                    pcall(function() if o.syncModData ~= nil then o:syncModData() end end)
                     pcall(function() o:transmitModData() end)
                 end
                 return

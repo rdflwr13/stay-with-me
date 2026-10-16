@@ -136,6 +136,26 @@ BridgeTask.CORPSE_XP_FITNESS = 1
 BridgeTask.CLEAN_SOUND = "CleanBloodScrub"
 BridgeTask.CLEAN_SOUND_HAND = "CleanBloodBleach"
 BridgeTask.ASH_SOUND = "Shoveling"
+BridgeTask.WASH_REACH = 1
+BridgeTask.WASH_GREET_TICKS = 90
+BridgeTask.WASH_SOUND = "WashYourself"
+BridgeTask.WASH_SOUND_EVERY = 120
+BridgeTask.WASH_PASSES = 12
+
+
+BridgeTask.FILL_REACH = BridgeTask.WASH_REACH
+BridgeTask.FILL_ANIM = "fillBottle"
+BridgeTask.FILL_UNIT_MS = 100
+BridgeTask.FILL_BASE_MS = 30
+BridgeTask.FILL_SOUND_EVERY = 120
+BridgeTask.FILL_MIN_TICKS = 60
+
+
+BridgeTask.EMPTY_ANIM = "pourFluid"
+BridgeTask.EMPTY_UNIT_MS = 100
+BridgeTask.EMPTY_BASE_MS = 30
+BridgeTask.EMPTY_MIN_TICKS = 60
+BridgeTask.FILL_TICKS_PER_MS = 0.06
 
 
 BridgeTask.LOOT_LOW = "LootLow"
@@ -177,6 +197,32 @@ BridgeTask.subHands = nil
 BridgeTask.cleanHandsKey = nil
 BridgeTask.cleanStowPending = false
 BridgeTask.cleanDrawPending = false
+BridgeTask.washSink = nil
+BridgeTask.washPhase = nil
+BridgeTask.washSince = 0
+BridgeTask.washTicks = nil
+BridgeTask.washScope = nil
+BridgeTask.fillSink = nil
+BridgeTask.fillPhase = nil
+BridgeTask.fillSince = 0
+BridgeTask.fillItems = nil
+BridgeTask.fillItem = nil
+BridgeTask.fillIndex = nil
+BridgeTask.fillTicks = nil
+BridgeTask.fillAmount = nil
+BridgeTask.fillTainted = false
+BridgeTask.fillSoundAt = nil
+BridgeTask.fillSoundHandle = nil
+BridgeTask.fillSoundEmitter = nil
+BridgeTask.fillPourType = nil
+BridgeTask.emptyItems = nil
+BridgeTask.emptyItem = nil
+BridgeTask.emptyIndex = nil
+BridgeTask.emptyTicks = nil
+BridgeTask.emptySince = 0
+BridgeTask.emptySound = nil
+BridgeTask.emptyEmitter = nil
+BridgeTask.emptyPourType = nil
 BridgeTask.clearNeedCut = nil
 BridgeTask.chopRest = false
 BridgeTask.chopRestSitAt = nil
@@ -1650,6 +1696,21 @@ function BridgeTask.reset()
     BridgeTask.cleanHandsKey = nil
     BridgeTask.cleanStowPending = false
     BridgeTask.cleanDrawPending = false
+    BridgeTask.washSink = nil
+    BridgeTask.washPhase = nil
+    BridgeTask.washSince = 0
+    BridgeTask.washTicks = nil
+    BridgeTask.fillSink = nil
+    BridgeTask.fillPhase = nil
+    BridgeTask.fillItems = nil
+    BridgeTask.fillItem = nil
+    BridgeTask.fillIndex = nil
+    BridgeTask.fillTicks = nil
+    BridgeTask.fillAmount = nil
+    BridgeTask.emptyItems = nil
+    BridgeTask.emptyItem = nil
+    BridgeTask.emptyIndex = nil
+    BridgeTask.emptyTicks = nil
     BridgeTask.chopRest = false
     BridgeTask.chopRestSitAt = nil
     BridgeTask.chopResumeAt = nil
@@ -1690,7 +1751,7 @@ function BridgeTask.reset()
     Bridge.target = nil
 end
 
-function BridgeTask.start(kind, targets, corpseDest)
+function BridgeTask.start(kind, targets, corpseDest, opts)
     if BridgeTask.ENABLED ~= 1 then return "disabled" end
     if BridgeTask.active then return "busy" end
     if Bridge == nil or not Bridge.alive() or Bridge.kind ~= "zombie" then return "no body" end
@@ -1700,12 +1761,8 @@ function BridgeTask.start(kind, targets, corpseDest)
     if type(targets) ~= "table" then return "no targets" end
     if #targets == 0 and def.noTargets ~= true then return "no targets" end
 
-    -- A fresh start supersedes any deferred home-supply wait.
     BridgeTask.pendingStart = nil
 
-    -- Home auto-fetch pre-phase: pull required-but-missing tools/resources
-    -- straight from a container in the home zone before def.available drives
-    -- the missing path below.
     if BridgeFetch ~= nil and type(BridgeFetch.primeJob) == "function" then
         local fetch = nil
         pcall(function() fetch = BridgeFetch.primeJob(kind, targets) end)
@@ -1716,7 +1773,17 @@ function BridgeTask.start(kind, targets, corpseDest)
         end
     end
 
-    if def.available ~= nil and not def.available(Bridge.body) then
+    local availScope = nil
+    if kind == "washSink" then availScope = opts ~= nil and opts.scope or "self" end
+    if def.available ~= nil and not def.available(Bridge.body, availScope) then
+        if kind == "fillWater" then
+            Bridge.speak("JobFillNothing")
+            return "unavailable"
+        end
+        if kind == "emptyFluid" then
+            Bridge.speak("JobEmptyNothing")
+            return "unavailable"
+        end
         BridgeTask.speakMissing(kind)
         return "unavailable"
     end
@@ -1816,6 +1883,37 @@ function BridgeTask.start(kind, targets, corpseDest)
     if kind == "moveCorpses" then
         BridgeTask.corpseDest = corpseDest
     end
+    if kind == "washSink" then
+        BridgeTask.washSink = opts ~= nil and opts.sink or nil
+        BridgeTask.washPhase = nil
+        BridgeTask.washSince = 0
+        BridgeTask.washTicks = nil
+        BridgeTask.washScope = opts ~= nil and opts.scope or "self"
+    end
+    if kind == "fillWater" then
+        BridgeTask.fillSink = opts ~= nil and opts.sink or nil
+        BridgeTask.fillItems = opts ~= nil and opts.items or nil
+        BridgeTask.fillItem = opts ~= nil and opts.item or nil
+        BridgeTask.fillPhase = nil
+        BridgeTask.fillSince = 0
+        BridgeTask.fillIndex = nil
+        BridgeTask.fillTicks = nil
+        BridgeTask.fillAmount = nil
+        BridgeTask.fillTainted = false
+        BridgeTask.fillSoundAt = nil
+        BridgeTask.fillSoundHandle = nil
+        BridgeTask.fillPourType = nil
+    end
+    if kind == "emptyFluid" then
+        BridgeTask.emptyItems = opts ~= nil and opts.items or nil
+        BridgeTask.emptyItem = opts ~= nil and opts.item or nil
+        BridgeTask.emptyIndex = nil
+        BridgeTask.emptyTicks = nil
+        BridgeTask.emptySince = 0
+        BridgeTask.emptySound = nil
+        BridgeTask.emptyEmitter = nil
+        BridgeTask.emptyPourType = nil
+    end
     BridgeTask.prevForcedWalk = BridgeMove ~= nil and BridgeMove.forcedWalk or nil
     BridgeTask.forcedWalkSaved = true
     BridgeTask.cleanApplied = {}
@@ -1866,7 +1964,7 @@ function BridgeTask.start(kind, targets, corpseDest)
     pcall(function() BridgeTask.clearChop(Bridge.body) end)
 
 
-    if kind == "cleanUp" then pcall(stowCleanWeapon, Bridge.body) end
+    if kind == "cleanUp" or kind == "washSink" or kind == "fillWater" or kind == "emptyFluid" then pcall(stowCleanWeapon, Bridge.body) end
 
 
 
@@ -1891,6 +1989,9 @@ function BridgeTask.start(kind, targets, corpseDest)
         BridgeTask.clearNeedCut = clearNeedPlants
         Bridge.speak(clearNeedPlants and "JobStartNeedCutTool" or "JobStart")
     elseif kind == "exercise" then
+    elseif kind == "washSink" then
+    elseif kind == "fillWater" then
+    elseif kind == "emptyFluid" then
     elseif startText ~= nil then
         Bridge.speakText(startText)
     else
@@ -1923,6 +2024,21 @@ function BridgeTask.cancel(reason)
     BridgeTask.cleanApplied = {}
     BridgeTask.chargeCleanSpend()
     BridgeTask.cleanStowPending = false
+    BridgeTask.washSink = nil
+    BridgeTask.washPhase = nil
+    BridgeTask.washSince = 0
+    BridgeTask.washTicks = nil
+    BridgeTask.fillSink = nil
+    BridgeTask.fillPhase = nil
+    BridgeTask.fillItems = nil
+    BridgeTask.fillItem = nil
+    BridgeTask.fillIndex = nil
+    BridgeTask.fillTicks = nil
+    BridgeTask.fillAmount = nil
+    BridgeTask.emptyItems = nil
+    BridgeTask.emptyItem = nil
+    BridgeTask.emptyIndex = nil
+    BridgeTask.emptyTicks = nil
     BridgeTask.clearCorpseState()
     BridgeTask.chopRest = false
     BridgeTask.chopRestSitAt = nil
@@ -1982,6 +2098,21 @@ function BridgeTask.finish()
     BridgeTask.current = nil
     BridgeTask.phase = nil
     BridgeTask.cleanStowPending = false
+    BridgeTask.washSink = nil
+    BridgeTask.washPhase = nil
+    BridgeTask.washSince = 0
+    BridgeTask.washTicks = nil
+    BridgeTask.fillSink = nil
+    BridgeTask.fillPhase = nil
+    BridgeTask.fillItems = nil
+    BridgeTask.fillItem = nil
+    BridgeTask.fillIndex = nil
+    BridgeTask.fillTicks = nil
+    BridgeTask.fillAmount = nil
+    BridgeTask.emptyItems = nil
+    BridgeTask.emptyItem = nil
+    BridgeTask.emptyIndex = nil
+    BridgeTask.emptyTicks = nil
     BridgeTask.chopRest = false
     BridgeTask.chopRestSitAt = nil
     BridgeTask.chopResumeAt = nil
@@ -2038,7 +2169,8 @@ function BridgeTask.finish()
             Bridge.speak("JobNoPath")
         end
     else
-        if finishKind == "sit" or finishKind == "lay" or finishKind == "exercise" then
+        if finishKind == "sit" or finishKind == "lay" or finishKind == "exercise" or finishKind == "washSink"
+                or finishKind == "fillWater" or finishKind == "emptyFluid" then
         elseif wasLootFull then
             Bridge.speak("JobLootFull")
         else
@@ -2061,6 +2193,27 @@ function BridgeTask.progress()
         local span = BridgeTask.cleanSpan or BridgeTask.SCRUB_TIME or 1
         if span <= 0 then span = 1 end
         local p = (t - BridgeTask.scrubStart) / span
+        if p < 0 then p = 0 elseif p > 1 then p = 1 end
+        return p
+    end
+    if BridgeTask.washPhase == "washing" and BridgeTask.washSince ~= nil then
+        local span = BridgeTask.washTicks or 420
+        if span <= 0 then span = 1 end
+        local p = (t - BridgeTask.washSince) / span
+        if p < 0 then p = 0 elseif p > 1 then p = 1 end
+        return p
+    end
+    if BridgeTask.fillPhase == "filling" and BridgeTask.fillSince ~= nil and BridgeTask.fillTicks ~= nil then
+        local span = BridgeTask.fillTicks
+        if span <= 0 then span = 1 end
+        local p = (t - BridgeTask.fillSince) / span
+        if p < 0 then p = 0 elseif p > 1 then p = 1 end
+        return p
+    end
+    if BridgeTask.emptyTicks ~= nil and BridgeTask.emptySince ~= nil then
+        local span = BridgeTask.emptyTicks
+        if span <= 0 then span = 1 end
+        local p = (t - BridgeTask.emptySince) / span
         if p < 0 then p = 0 elseif p > 1 then p = 1 end
         return p
     end
@@ -2761,6 +2914,669 @@ function BridgeTask.kinds.cleanUp.leave(body)
     if body ~= nil then pcall(stopCleanSound, body) end
     restoreForcedWalk()
     BridgeTask.deferred = {}
+end
+
+BridgeTask.kinds.washSink = {}
+BridgeTask.kinds.washSink.unavailableSpeech = "AlreadyClean"
+
+local function washWaterOn(sq)
+    local obj = nil
+    if BridgeWash ~= nil and BridgeWash.waterOn ~= nil then
+        pcall(function() obj = BridgeWash.waterOn(sq) end)
+    end
+    return obj
+end
+
+local function washSinkWater(sink, body, scope)
+    local avail, tainted = 0, false
+    if sink ~= nil then
+        pcall(function() tainted = sink:isTaintedWater() == true end)
+        if BridgeWash ~= nil and BridgeWash.waterUnits ~= nil then
+            pcall(function() avail = BridgeWash.waterUnits(sink) end)
+        else
+            pcall(function() avail = sink:getFluidAmount() or 0 end)
+        end
+    end
+    local need = nil
+    if BridgeWash ~= nil and BridgeWash.waterNeeded ~= nil then
+        pcall(function() need = BridgeWash.waterNeeded(body, tainted, scope) end)
+    end
+    return avail, need, tainted
+end
+
+local function washSinkEmote(anim)
+    if BridgeSocial ~= nil and BridgeSocial.emote ~= nil then
+        pcall(function() BridgeSocial.emote(anim, true, true) end)
+    end
+end
+
+local function washSinkSound(body, force)
+    if body == nil or BridgeTask.WASH_SOUND == nil then return end
+    local now = Bridge.time or 0
+    if not force and BridgeTask.washSoundAt ~= nil
+        and (now - BridgeTask.washSoundAt) < (BridgeTask.WASH_SOUND_EVERY or 120) then
+        return
+    end
+    BridgeTask.washSoundAt = now
+    pcall(function() body:playSound(BridgeTask.WASH_SOUND) end)
+end
+
+local function washPools(scope)
+    if scope == "inventory" then
+        return "JobWashInv", "JobWashInvNoSoap", "JobWashInvDone"
+    end
+    return "JobWashSelf", "JobWashSelfNoSoap", "JobWashSelfDone"
+end
+
+local function washSay(pool, fallbackKey)
+    if BridgeWash ~= nil and BridgeWash.sayLine ~= nil then
+        local ok = pcall(function() BridgeWash.sayLine(pool, fallbackKey) end)
+        if ok then return end
+    end
+    Bridge.speak(fallbackKey)
+end
+
+local function washGoLine(scope, body)
+    local goPool, noSoapPool = washPools(scope)
+    local hasSoap = false
+    pcall(function()
+        hasSoap = BridgeWash ~= nil and BridgeWash.hasSoap ~= nil and BridgeWash.hasSoap(body)
+    end)
+    washSay(hasSoap and goPool or noSoapPool, "GoWash")
+end
+
+local function washDoneLine(scope)
+    local _, _, donePool = washPools(scope)
+    washSay(donePool, "Washed")
+end
+
+function BridgeTask.kinds.washSink.available(body, scope)
+    local ok = false
+    pcall(function()
+        ok = BridgeWash ~= nil and BridgeWash.dirtyParts ~= nil
+            and BridgeWash.dirtyParts(body, scope or "self") > 0
+    end)
+    return ok
+end
+
+function BridgeTask.kinds.washSink.missing(body)
+    return nil
+end
+
+function BridgeTask.kinds.washSink.update(body)
+    local scope = BridgeTask.washScope or "self"
+    local sink = BridgeTask.washSink
+    if sink == nil then
+        local t = BridgeTask.current
+        if t ~= nil then
+            sink = washWaterOn(getCell():getGridSquare(t.x, t.y, t.z))
+            BridgeTask.washSink = sink
+        end
+    end
+    local target = nil
+    if sink ~= nil then
+        local sq = nil
+        pcall(function() sq = sink:getSquare() end)
+        if sq ~= nil then target = { x = sq:getX(), y = sq:getY(), z = sq:getZ() } end
+    end
+    if target == nil then
+        Bridge.speak("NoWater")
+        return BridgeTask.finish()
+    end
+
+    if BridgeTask.washPhase == nil then
+        local cleanNow = false
+        pcall(function()
+            cleanNow = BridgeWash ~= nil and BridgeWash.dirtyParts ~= nil
+                and BridgeWash.dirtyParts(body, scope) == 0
+        end)
+        if cleanNow then
+            Bridge.speak("AlreadyClean")
+            return BridgeTask.finish()
+        end
+        local avail, need, tainted = washSinkWater(sink, body, scope)
+        local info = "?"
+        if BridgeWash ~= nil and BridgeWash.objInfo ~= nil then
+            pcall(function() info = BridgeWash.objInfo(sink) end)
+        end
+        log("wash check scope=" .. tostring(scope) .. " avail=" .. tostring(avail)
+            .. " need=" .. tostring(need) .. " tainted=" .. tostring(tainted)
+            .. " sink=" .. tostring(info))
+        if need ~= nil and need <= 0 then
+            Bridge.speak("AlreadyClean")
+            return BridgeTask.finish()
+        end
+        if avail == nil or avail <= 0 then
+            Bridge.speakText(getText("IGUI_NotAlone_Say_NotEnoughWater"))
+            return BridgeTask.finish()
+        end
+        BridgeTask.washPhase = "going"
+        BridgeTask.washSince = Bridge.time
+        washGoLine(scope, body)
+        BridgeTask.info = "wash going " .. tostring(scope)
+        return true
+    end
+
+    if BridgeTask.washPhase == "going" then
+        local res = BridgeTask.walkTo(body, target, BridgeTask.WASH_REACH or 1, true, false)
+        if res == "arrived" then
+            pcall(function() BridgeMove.stopPath(body) end)
+            Bridge.target = nil
+            BridgeTask.washPhase = "greet"
+            BridgeTask.washSince = Bridge.time
+            BridgeTask.washTicks = nil
+            if BridgeWash ~= nil and BridgeWash.washTicks ~= nil then
+                pcall(function() BridgeTask.washTicks = BridgeWash.washTicks(body) end)
+            end
+            washSinkEmote("WipeBrow")
+            BridgeTask.info = "wash greet"
+            return true
+        elseif res == "unreachable" then
+            Bridge.speak("CantReachWater")
+            return BridgeTask.finish()
+        end
+        BridgeTask.info = "wash walking"
+        return true
+    end
+
+    if BridgeTask.washPhase == "greet" then
+        if (Bridge.time - (BridgeTask.washSince or Bridge.time)) >= (BridgeTask.WASH_GREET_TICKS or 90) then
+            BridgeTask.washPhase = "washing"
+            BridgeTask.washSince = Bridge.time
+            BridgeTask.washSoundAt = nil
+            washSinkSound(body, true)
+        end
+        return true
+    end
+
+    local sq = nil
+    pcall(function() sq = sink:getSquare() end)
+    if sq == nil then
+        Bridge.speak("CantReachWater")
+        return BridgeTask.finish()
+    end
+    pcall(function() body:faceLocationF(sq:getX() + 0.5, sq:getY() + 0.5) end)
+    pcall(function()
+        if tostring(body:getBumpType()) ~= "washFace" then body:setBumpType("washFace") end
+    end)
+    washSinkSound(body, false)
+    if (Bridge.time - (BridgeTask.washSince or Bridge.time)) >= (BridgeTask.washTicks or 420) then
+        local okClean = false
+        if BridgeWash ~= nil and BridgeWash.clean ~= nil then
+            okClean = true
+            local prevDirty = -1
+            for pass = 1, (BridgeTask.WASH_PASSES or 12) do
+                local d = 0
+                pcall(function() d = BridgeWash.dirtyParts(body, scope) end)
+                if d <= 0 then break end
+                if prevDirty >= 0 and d >= prevDirty then break end
+                prevDirty = d
+                local okPass = pcall(function() BridgeWash.clean(body, sink, scope) end)
+                if not okPass then okClean = false break end
+            end
+            local leftDirty = -1
+            pcall(function() leftDirty = BridgeWash.dirtyParts(body, scope) end)
+            log("wash done scope=" .. tostring(scope) .. " dirty=" .. tostring(leftDirty))
+        end
+        pcall(function() body:setBumpType("") end)
+        if okClean then
+            washDoneLine(scope)
+            washSinkEmote("EmoteYes")
+            pcall(function() Bridge.saveOutfit() end)
+        else
+            Bridge.speak("JobNoPath")
+        end
+        return BridgeTask.finish()
+    end
+    BridgeTask.info = "washing"
+    return true
+end
+
+function BridgeTask.kinds.washSink.leave(body)
+    BridgeTask.washSink = nil
+    BridgeTask.washPhase = nil
+    BridgeTask.washSoundAt = nil
+    BridgeTask.washScope = nil
+    if body ~= nil then
+        pcall(function()
+            if tostring(body:getBumpType()) == "washFace" then body:setBumpType("") end
+        end)
+    end
+end
+
+
+BridgeTask.kinds.fillWater = {}
+BridgeTask.kinds.fillWater.unavailableSpeech = "JobFillNothing"
+
+local function fillSay(pool, fallbackKey)
+    if BridgeWash ~= nil and BridgeWash.sayLine ~= nil then
+        local ok = pcall(function() BridgeWash.sayLine(pool, fallbackKey) end)
+        if ok then return end
+    end
+    Bridge.speak(fallbackKey)
+end
+
+local function fillTicksFor(amount)
+    local ms = (amount or 0) * (BridgeTask.FILL_UNIT_MS or 100) + (BridgeTask.FILL_BASE_MS or 30)
+    local ticks = math.floor(ms * (BridgeTask.FILL_TICKS_PER_MS or 0.06))
+    local minTicks = BridgeTask.FILL_MIN_TICKS or 60
+    if ticks < minTicks then ticks = minTicks end
+    return ticks
+end
+
+local function fillCurrentItem()
+    local list = BridgeTask.fillItems
+    local i = BridgeTask.fillIndex
+    if list == nil or i == nil then return nil end
+    return list[i + 1]
+end
+
+local function fillSoundStop(body)
+    local emitter = BridgeTask.fillSoundEmitter
+    local snd = BridgeTask.fillSoundHandle
+    BridgeTask.fillSoundEmitter, BridgeTask.fillSoundHandle = nil, nil
+    if snd == nil then return end
+    if emitter ~= nil then
+        pcall(function() emitter:stopSound(snd) end)
+        return
+    end
+    if body ~= nil then
+        local playing = false
+        pcall(function() playing = body:getEmitter():isPlaying(snd) == true end)
+        if playing then pcall(function() body:stopOrTriggerSound(snd) end) end
+    end
+end
+
+local function fillSoundStart(body, item)
+    fillSoundStop(body)
+    if body == nil or BridgeTask.fillSink == nil then return end
+    local name = "GetWaterFromTap"
+    if BridgeWash ~= nil and BridgeWash.fillSoundFor ~= nil then
+        pcall(function() name = BridgeWash.fillSoundFor(BridgeTask.fillSink, item) end)
+    end
+    local emitter = nil
+    pcall(function() emitter = body:getEmitter() end)
+    local snd = nil
+    if emitter ~= nil then
+        pcall(function() snd = emitter:playSound(name) end)
+    else
+        pcall(function() snd = body:playSound(name) end)
+    end
+    BridgeTask.fillSoundEmitter = emitter
+    BridgeTask.fillSoundHandle = snd
+    log("fill sound " .. tostring(name) .. " id=" .. tostring(snd))
+end
+
+local function fillApply(body, sink, item, amount)
+    if body == nil or sink == nil or item == nil or amount == nil or amount <= 0 then return end
+    local fc = nil
+    pcall(function() fc = item:getFluidContainer() end)
+    if fc == nil then return end
+    local before = -1
+    pcall(function() before = fc:getAmount() end)
+    if not isClient() then
+        pcall(function() sink:transferFluidTo(fc, amount) end)
+    end
+    local after = before
+    pcall(function() after = fc:getAmount() end)
+    if not (type(after) == "number" and type(before) == "number" and after > before) then
+        local fluid = Fluid.Water
+        pcall(function() if sink:isTaintedWater() == true and Fluid.TaintedWater ~= nil then fluid = Fluid.TaintedWater end end)
+        pcall(function() fc:addFluid(fluid, amount) end)
+        pcall(function() after = fc:getAmount() end)
+    end
+    pcall(function() item:syncItemFields() end)
+    pcall(function() sendItemStats(item) end)
+    if isClient() then
+        local sq = nil
+        pcall(function() sq = sink:getSquare() end)
+        if sq ~= nil then
+            pcall(function()
+                sendClientCommand(BridgeData.owner(), "Bridge", "water",
+                    { x = sq:getX(), y = sq:getY(), z = sq:getZ(), amount = amount })
+            end)
+        end
+    else
+        pcall(function() sink:transmitModData() end)
+    end
+    log(string.format("fill %s +%.2f -> %s", tostring(item:getName()), amount, tostring(after)))
+end
+
+function BridgeTask.kinds.fillWater.available(body, scope)
+    local ok = false
+    pcall(function()
+        ok = BridgeWash ~= nil and BridgeWash.fillables ~= nil and #BridgeWash.fillables(body) > 0
+    end)
+    return ok
+end
+
+function BridgeTask.kinds.fillWater.missing(body)
+    return nil
+end
+
+function BridgeTask.kinds.fillWater.update(body)
+    local sink = BridgeTask.fillSink
+    local sq = nil
+    if sink ~= nil then pcall(function() sq = sink:getSquare() end) end
+    local target = nil
+    if sq ~= nil then target = { x = sq:getX(), y = sq:getY(), z = sq:getZ() } end
+    if target == nil then
+        Bridge.speak("CantReachWater")
+        return BridgeTask.finish()
+    end
+
+    if BridgeTask.fillPhase == nil then
+        local list = {}
+        if BridgeTask.fillItems ~= nil then
+            for _, it in ipairs(BridgeTask.fillItems) do list[#list + 1] = it end
+        elseif BridgeTask.fillItem ~= nil then
+            list[1] = BridgeTask.fillItem
+        end
+        local keep = {}
+        for _, it in ipairs(list) do
+            local ok = false
+            pcall(function() ok = BridgeWash.isFillable(it) and ownedByBody(body, it) end)
+            if ok then keep[#keep + 1] = it end
+        end
+        BridgeTask.fillItems = keep
+        BridgeTask.fillIndex = 0
+        log("fill containers=" .. tostring(#keep) .. " of " .. tostring(#list))
+        if #keep == 0 then
+            fillSay("JobFillNothing", "JobFillNothing")
+            return BridgeTask.finish()
+        end
+        local avail = 0
+        pcall(function() avail = BridgeWash.waterUnits(sink) end)
+        if avail <= 0 then
+            fillSay("JobFillDry", "JobFillDry")
+            return BridgeTask.finish()
+        end
+        local tainted = false
+        pcall(function() tainted = sink:isTaintedWater() == true end)
+        BridgeTask.fillTainted = tainted
+        BridgeTask.fillPhase = "going"
+        BridgeTask.fillSince = Bridge.time
+        fillSay(tainted and "JobFillTainted" or "JobFill", "JobFill")
+        BridgeTask.info = "fill going containers=" .. tostring(#keep)
+        return true
+    end
+
+    if BridgeTask.fillPhase == "going" then
+        local res = BridgeTask.walkTo(body, target, BridgeTask.FILL_REACH or 1, true, false)
+        if res == "arrived" then
+            pcall(function() BridgeMove.stopPath(body) end)
+            Bridge.target = nil
+            BridgeTask.fillPhase = "filling"
+            BridgeTask.fillSince = Bridge.time
+            BridgeTask.fillIndex = 0
+            BridgeTask.fillTicks = nil
+            BridgeTask.info = "fill at source"
+            return true
+        elseif res == "unreachable" then
+            Bridge.speak("CantReachWater")
+            return BridgeTask.finish()
+        end
+        BridgeTask.info = "fill walking"
+        return true
+    end
+
+    pcall(function() body:faceLocationF(sq:getX() + 0.5, sq:getY() + 0.5) end)
+    pcall(function()
+        if tostring(body:getBumpType()) ~= BridgeTask.FILL_ANIM then
+            body:setBumpType(BridgeTask.FILL_ANIM)
+        end
+    end)
+
+    local list = BridgeTask.fillItems or {}
+    BridgeTask.fillIndex = BridgeTask.fillIndex or 0
+    if BridgeTask.fillIndex >= #list then
+        fillSoundStop(body)
+        fillSay("JobFillDone", "JobFillDone")
+        return BridgeTask.finish()
+    end
+
+    if BridgeTask.fillTicks == nil then
+        local it = fillCurrentItem()
+        local ok = false
+        pcall(function() ok = it ~= nil and BridgeWash.isFillable(it) and ownedByBody(body, it) end)
+        if not ok then
+            BridgeTask.fillIndex = BridgeTask.fillIndex + 1
+            return true
+        end
+        local avail = 0
+        pcall(function() avail = BridgeWash.waterUnits(sink) end)
+        if avail <= 0 then
+            fillSoundStop(body)
+            fillSay("JobFillDry", "JobFillDry")
+            return BridgeTask.finish()
+        end
+        local fc = nil
+        pcall(function() fc = it:getFluidContainer() end)
+        local free = 0
+        pcall(function() free = fc:getFreeCapacity() end)
+        local amount = free
+        if avail < amount then amount = avail end
+        if type(amount) ~= "number" or amount <= 0 then
+            log(string.format("fill skip %s free=%s avail=%s", tostring(it:getName()), tostring(free), tostring(avail)))
+            BridgeTask.fillIndex = BridgeTask.fillIndex + 1
+            return true
+        end
+        BridgeTask.fillAmount = amount
+        BridgeTask.fillTicks = fillTicksFor(amount)
+        BridgeTask.fillSince = Bridge.time
+        pcall(function() body:setVariable("PourType", it:getPourType() or "Bottle") end)
+        fillSoundStart(body, it)
+        BridgeTask.info = string.format("fill %s amount=%.2f ticks=%d",
+            tostring(it:getName()), amount, BridgeTask.fillTicks)
+        return true
+    end
+
+    if (Bridge.time - (BridgeTask.fillSince or Bridge.time)) >= (BridgeTask.fillTicks or 1) then
+        local it = fillCurrentItem()
+        fillSoundStop(body)
+        fillApply(body, sink, it, BridgeTask.fillAmount)
+        BridgeTask.fillTicks = nil
+        BridgeTask.fillAmount = nil
+        BridgeTask.fillIndex = BridgeTask.fillIndex + 1
+        if BridgeTask.fillIndex >= #list then
+            fillSay("JobFillDone", "JobFillDone")
+            return BridgeTask.finish()
+        end
+        local avail = 0
+        pcall(function() avail = BridgeWash.waterUnits(sink) end)
+        if avail <= 0 then
+            fillSay("JobFillDry", "JobFillDry")
+            return BridgeTask.finish()
+        end
+        return true
+    end
+    BridgeTask.info = string.format("fill %d/%d", (BridgeTask.fillIndex or 0) + 1, #list)
+    return true
+end
+
+function BridgeTask.kinds.fillWater.leave(body)
+    fillSoundStop(body)
+    BridgeTask.fillSink = nil
+    BridgeTask.fillPhase = nil
+    BridgeTask.fillItems = nil
+    BridgeTask.fillItem = nil
+    BridgeTask.fillIndex = nil
+    BridgeTask.fillTicks = nil
+    BridgeTask.fillAmount = nil
+    BridgeTask.fillTainted = false
+    BridgeTask.fillSoundAt = nil
+    BridgeTask.fillSoundHandle = nil
+    BridgeTask.fillSoundEmitter = nil
+    if body ~= nil then
+        pcall(function()
+            if tostring(body:getBumpType()) == BridgeTask.FILL_ANIM then body:setBumpType("") end
+        end)
+        pcall(function() body:setVariable("PourType", "") end)
+    end
+end
+
+
+BridgeTask.kinds.emptyFluid = {}
+BridgeTask.kinds.emptyFluid.noTargets = true
+BridgeTask.kinds.emptyFluid.unavailableSpeech = "JobEmptyNothing"
+
+local function emptyTicksFor(amount, item)
+    local ms = nil
+    pcall(function()
+        local perLiter = FluidUtil.getTransferActionTimePerLiter()
+        local minTime = FluidUtil.getMinTransferActionTime()
+        if type(perLiter) == "number" and perLiter > 0 then ms = (amount or 0) * perLiter end
+        local rate = 0
+        pcall(function() rate = item:getFluidContainer():getTransferRate() end)
+        if type(ms) == "number" and type(rate) == "number" and rate > 0 then ms = ms / rate end
+        if type(minTime) == "number" and (ms == nil or ms < minTime) then ms = minTime end
+    end)
+    if type(ms) ~= "number" then
+        ms = (amount or 0) * (BridgeTask.EMPTY_UNIT_MS or 100) + (BridgeTask.EMPTY_BASE_MS or 30)
+    end
+    local ticks = math.floor(ms * (BridgeTask.FILL_TICKS_PER_MS or 0.06))
+    if ticks < (BridgeTask.EMPTY_MIN_TICKS or 60) then ticks = BridgeTask.EMPTY_MIN_TICKS or 60 end
+    return ticks
+end
+
+local function emptySoundStop(body)
+    local emitter = BridgeTask.emptyEmitter
+    local snd = BridgeTask.emptySound
+    BridgeTask.emptyEmitter, BridgeTask.emptySound = nil, nil
+    if snd == nil then return end
+    if emitter ~= nil then
+        pcall(function() emitter:stopSound(snd) end)
+        return
+    end
+    if body ~= nil then
+        local playing = false
+        pcall(function() playing = body:getEmitter():isPlaying(snd) == true end)
+        if playing then pcall(function() body:stopOrTriggerSound(snd) end) end
+    end
+end
+
+local function emptySoundStart(body, item)
+    emptySoundStop(body)
+    if body == nil or item == nil then return end
+    local name = nil
+    pcall(function() name = item:getPourLiquidOnGroundSound() end)
+    if type(name) ~= "string" or name == "" then name = "PourLiquidOnGround" end
+    local emitter = nil
+    pcall(function() emitter = body:getEmitter() end)
+    local snd = nil
+    if emitter ~= nil then
+        pcall(function() snd = emitter:playSound(name) end)
+    else
+        pcall(function() snd = body:playSound(name) end)
+    end
+    BridgeTask.emptyEmitter = emitter
+    BridgeTask.emptySound = snd
+    log("empty sound " .. tostring(name) .. " id=" .. tostring(snd))
+end
+
+local function emptyApply(body, item)
+    if item == nil then return end
+    local cont = nil
+    pcall(function() cont = item:getFluidContainer() end)
+    if cont == nil then return end
+    local ok = false
+    pcall(function() cont:Empty() ok = true end)
+    pcall(function() item:syncItemFields() end)
+    pcall(function() sendItemStats(item) end)
+    log("empty " .. tostring(item:getName()) .. (ok and "" or " (failed)"))
+end
+
+function BridgeTask.kinds.emptyFluid.available(body, scope)
+    local ok = false
+    pcall(function()
+        ok = BridgeWash ~= nil and BridgeWash.emptyables ~= nil and #BridgeWash.emptyables(body) > 0
+    end)
+    return ok
+end
+
+function BridgeTask.kinds.emptyFluid.missing(body)
+    return nil
+end
+
+function BridgeTask.kinds.emptyFluid.update(body)
+    local list = BridgeTask.emptyItems
+    if list == nil then
+        list = {}
+        if BridgeTask.emptyItem ~= nil then list[1] = BridgeTask.emptyItem end
+        BridgeTask.emptyItems = list
+        BridgeTask.emptyIndex = 0
+    end
+    BridgeTask.emptyIndex = BridgeTask.emptyIndex or 0
+    if BridgeTask.emptyIndex >= #list then
+        emptySoundStop(body)
+        Bridge.speak("JobEmptyDone")
+        return BridgeTask.finish()
+    end
+
+    pcall(function()
+        if tostring(body:getBumpType()) ~= BridgeTask.EMPTY_ANIM then
+            body:setBumpType(BridgeTask.EMPTY_ANIM)
+        end
+    end)
+
+    local it = list[BridgeTask.emptyIndex + 1]
+    local ok = false
+    pcall(function()
+        ok = it ~= nil and ownedByBody(body, it)
+            and it:getFluidContainer() ~= nil and it:getFluidContainer():getAmount() > 0
+    end)
+    if not ok then
+        emptySoundStop(body)
+        BridgeTask.emptyTicks = nil
+        BridgeTask.emptyIndex = BridgeTask.emptyIndex + 1
+        return true
+    end
+
+    if BridgeTask.emptyTicks == nil then
+        local amount = 0
+        pcall(function() amount = it:getFluidContainer():getAmount() end)
+        BridgeTask.emptyTicks = emptyTicksFor(amount, it)
+        BridgeTask.emptySince = Bridge.time
+        local pt = nil
+        pcall(function() pt = it:getPourType() end)
+        BridgeTask.emptyPourType = pt
+        pcall(function() body:setVariable("PourType", pt or "Bottle") end)
+        emptySoundStart(body, it)
+        BridgeTask.info = string.format("empty %s amount=%.2f ticks=%d",
+            tostring(it:getName()), amount, BridgeTask.emptyTicks)
+        return true
+    end
+
+    if (Bridge.time - (BridgeTask.emptySince or Bridge.time)) >= (BridgeTask.emptyTicks or 1) then
+        emptySoundStop(body)
+        emptyApply(body, it)
+        BridgeTask.emptyTicks = nil
+        BridgeTask.emptyIndex = BridgeTask.emptyIndex + 1
+        pcall(function() body:setVariable("PourType", "") end)
+        if BridgeTask.emptyIndex >= #list then
+            Bridge.speak("JobEmptyDone")
+            return BridgeTask.finish()
+        end
+        return true
+    end
+    BridgeTask.info = string.format("emptying %d/%d", (BridgeTask.emptyIndex or 0) + 1, #list)
+    return true
+end
+
+function BridgeTask.kinds.emptyFluid.leave(body)
+    emptySoundStop(body)
+    BridgeTask.emptyItems = nil
+    BridgeTask.emptyItem = nil
+    BridgeTask.emptyIndex = nil
+    BridgeTask.emptyTicks = nil
+    BridgeTask.emptySince = 0
+    BridgeTask.emptyPourType = nil
+    if body ~= nil then
+        pcall(function()
+            if tostring(body:getBumpType()) == BridgeTask.EMPTY_ANIM then body:setBumpType("") end
+        end)
+        pcall(function() body:setVariable("PourType", "") end)
+    end
 end
 
 local function dropBushTargets()

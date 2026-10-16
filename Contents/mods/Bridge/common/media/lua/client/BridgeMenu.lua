@@ -290,12 +290,6 @@ local function buildActions(context, playerNum, env)
     elseif env.inRange then
         actions:addOption(tr("Rest"), nil, BridgeMenu.onRest)
     end
-    if env.inRange then
-        local wash = actions:addOption(tr("Wash"), nil, BridgeMenu.onWash)
-        if not Bridge.drivable() then
-            wash.notAvailable = true
-        end
-    end
     local canExercise = false
     pcall(function() canExercise = BridgeTask ~= nil and BridgeTask.kinds.exercise.available(Bridge.body) end)
     local exBusy = false
@@ -1071,12 +1065,273 @@ function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
     end
 end
 
+local function waterUnder(worldobjects)
+    for _, o in ipairs(worldobjects or {}) do
+        if o ~= nil then
+            local wet = false
+            pcall(function()
+                wet = BridgeWash ~= nil and BridgeWash.isWaterObject ~= nil and BridgeWash.isWaterObject(o)
+            end)
+            if not wet then
+                local isWI = false
+                if instanceof ~= nil then pcall(function() isWI = instanceof(o, "IsoWorldInventoryObject") end) end
+                if not isWI then
+                    local call = BridgeWash ~= nil and BridgeWash.safeCall or nil
+                    if call ~= nil then
+                        wet = call(o, "hasWater") == true or call(o, "hasFluid") == true
+                        if wet then wet = (tonumber(call(o, "getFluidAmount")) or 0) > 0 end
+                    end
+                end
+            end
+            if wet then
+                if BridgeWash ~= nil and BridgeWash.objInfo ~= nil then
+                    pcall(function() log("waterUnder " .. BridgeWash.objInfo(o)) end)
+                end
+                return o
+            end
+        end
+    end
+    for _, o in ipairs(worldobjects or {}) do
+        if o ~= nil then
+            local sq = nil
+            pcall(function() sq = o:getSquare() end)
+            if sq ~= nil then
+                local found = nil
+                pcall(function()
+                    if BridgeWash ~= nil and BridgeWash.waterOn ~= nil then
+                        found = BridgeWash.waterOn(sq)
+                    end
+                end)
+                if found ~= nil then
+                    if BridgeWash ~= nil and BridgeWash.objInfo ~= nil then
+                        pcall(function() log("waterUnder (tile) " .. BridgeWash.objInfo(found)) end)
+                    end
+                    return found
+                end
+            end
+        end
+    end
+    if BridgeWash ~= nil and BridgeWash.waterOn ~= nil and BridgeWash.waterSquare ~= nil then
+        local found = nil
+        pcall(function()
+            local red = (BridgeData ~= nil and BridgeData.owner ~= nil) and BridgeData.owner() or nil
+            local cur = red ~= nil and red:getCurrentSquare() or nil
+            if cur == nil then return end
+            local x, y, z = cur:getX(), cur:getY(), cur:getZ()
+            local cell = getCell()
+            for dy = -1, 1 do
+                for dx = -1, 1 do
+                    if found == nil then
+                        local sq = (dx == 0 and dy == 0) and cur or cell:getGridSquare(x + dx, y + dy, z)
+                        if sq ~= nil and BridgeWash.waterSquare(sq) then
+                            found = BridgeWash.waterOn(sq)
+                        end
+                    end
+                end
+            end
+        end)
+        if found ~= nil then
+            log("waterUnder (natural) near the player")
+            return found
+        end
+    end
+    return nil
+end
+
+function BridgeMenu.onWashSinkThis(sink, scope)
+    if BridgeTask == nil or sink == nil then return end
+    local sq = nil
+    pcall(function() sq = sink:getSquare() end)
+    if sq == nil then return end
+    local res = BridgeTask.start("washSink",
+        { { x = sq:getX(), y = sq:getY(), z = sq:getZ() } }, nil,
+        { sink = sink, scope = scope })
+    log("wash sink from menu: " .. tostring(res) .. " scope=" .. tostring(scope))
+end
+
+local function washObjectName(sink)
+    local nm = nil
+    local isItem = false
+    if instanceof ~= nil then pcall(function() isItem = instanceof(sink, "IsoWorldInventoryObject") end) end
+    if isItem then
+        pcall(function()
+            local item = sink:getItem()
+            if item ~= nil then nm = item:getName() end
+        end)
+    elseif type(sink) ~= "table" and getMoveableDisplayName ~= nil then
+        local shown = nil
+        pcall(function() shown = getMoveableDisplayName(sink) end)
+        if shown ~= nil and tostring(shown) ~= "nil" and tostring(shown) ~= "" then nm = tostring(shown) end
+    end
+    if nm == nil or nm == "" then
+        if isItem then
+            pcall(function() nm = sink:getName() end)
+        else
+            nm = getText("ContextMenu_NaturalWaterSource")
+        end
+    end
+    return nm
+end
+
+local function washScopeReady(scope)
+    local ok = false
+    pcall(function()
+        ok = BridgeTask ~= nil and BridgeTask.kinds ~= nil and BridgeTask.kinds.washSink ~= nil
+            and BridgeTask.kinds.washSink.available ~= nil
+            and BridgeTask.kinds.washSink.available(Bridge.body, scope)
+    end)
+    return ok
+end
+
+function BridgeMenu.onFillThis(sink, list, item)
+    if BridgeTask == nil or sink == nil then return end
+    local sq = nil
+    pcall(function() sq = sink:getSquare() end)
+    if sq == nil then return end
+    local targets = { { x = sq:getX(), y = sq:getY(), z = sq:getZ() } }
+    local opts = { sink = sink }
+    if list ~= nil then opts.items = list
+    elseif item ~= nil then opts.item = item end
+    local res = BridgeTask.start("fillWater", targets, nil, opts)
+    log("fill from menu: " .. tostring(res))
+end
+
+local function fillNum(v)
+    if type(v) ~= "number" then return "0" end
+    if math.floor(v) == v then return string.format("%d", v) end
+    return string.format("%.2f", v)
+end
+
+local function addFillActions(menu, sink)
+    local busy = BridgeTask ~= nil and BridgeTask.active
+    local list = {}
+    pcall(function()
+        if BridgeWash ~= nil and BridgeWash.fillables ~= nil then list = BridgeWash.fillables(Bridge.body) end
+    end)
+    local fillOpt = menu:addOption(getText("ContextMenu_Fill"), nil, nil)
+    log("fill menu containers=" .. tostring(#list) .. (busy and " (busy)" or ""))
+    if busy or #list == 0 then
+        fillOpt.notAvailable = true
+        if #list == 0 and not busy then tip(fillOpt, tr("Say_JobFillNothing")) end
+        return
+    end
+    local containerMenu = ISContextMenu:getNew(menu)
+    menu:addSubMenu(fillOpt, containerMenu)
+    if #list >= 1 then
+        containerMenu:addOption(getText("ContextMenu_FillAll"), sink, BridgeMenu.onFillThis, list, nil)
+    end
+    local groups = {}
+    pcall(function()
+        if BridgeWash ~= nil and BridgeWash.groupByName ~= nil then groups = BridgeWash.groupByName(list) end
+    end)
+    for _, g in ipairs(groups) do
+        local first = g[1]
+        local nm = ""
+        pcall(function() nm = tostring(first:getName() or "") end)
+        if #g > 1 then
+            local typeOpt = containerMenu:addOption(nm .. " (" .. #g .. ")", nil, nil)
+            pcall(function() typeOpt.itemForTexture = first end)
+            local typeMenu = ISContextMenu:getNew(containerMenu)
+            containerMenu:addSubMenu(typeOpt, typeMenu)
+            typeMenu:addOption(getText("ContextMenu_FillOne"), sink, BridgeMenu.onFillThis, nil, first)
+            typeMenu:addOption(getText("ContextMenu_FillAll"), sink, BridgeMenu.onFillThis, g, nil)
+        else
+            local oneOpt = containerMenu:addOption(nm, sink, BridgeMenu.onFillThis, nil, first)
+            pcall(function() oneOpt.itemForTexture = first end)
+            pcall(function()
+                local fc = first:getFluidContainer()
+                if fc == nil then return end
+                local t = ISWorldObjectContextMenu.addToolTip()
+                t.maxLineWidth = 512
+                t.description = getText("ContextMenu_ItemWaterCapacity") .. " "
+                    .. fillNum(fc:getFreeCapacity()) .. " / " .. fillNum(fc:getCapacity())
+                oneOpt.toolTip = t
+            end)
+        end
+    end
+end
+
+local function addRinActions(menu, sink)
+    local busy = BridgeTask ~= nil and BridgeTask.active
+    local selfOpt = menu:addOption(tr("WashSelf"), sink, BridgeMenu.onWashSinkThis, "self")
+    local invOpt = menu:addOption(tr("WashInventory"), sink, BridgeMenu.onWashSinkThis, "inventory")
+    if busy or not washScopeReady("self") then
+        selfOpt.notAvailable = true
+        local clean = false
+        pcall(function()
+            clean = BridgeWash ~= nil and BridgeWash.dirtyParts ~= nil
+                and BridgeWash.dirtyParts(Bridge.body, "self") == 0
+        end)
+        if clean and not busy then tip(selfOpt, tr("Say_AlreadyClean")) end
+    end
+    if busy or not washScopeReady("inventory") then
+        invOpt.notAvailable = true
+        local clean = false
+        pcall(function()
+            clean = BridgeWash ~= nil and BridgeWash.dirtyParts ~= nil
+                and BridgeWash.dirtyParts(Bridge.body, "inventory") == 0
+        end)
+        if clean and not busy then tip(invOpt, tr("Say_AlreadyClean")) end
+    end
+    addFillActions(menu, sink)
+end
+
+function BridgeMenu.onWashSinkMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+    if not present() then return end
+    if not BridgeMenu.inTalkRange() then return end
+    local sink = waterUnder(worldobjects)
+    if sink == nil then return end
+
+    local rinMenu = nil
+    local objName = washObjectName(sink)
+    local parentOpt = nil
+    if objName ~= nil then
+        pcall(function() parentOpt = context:getOptionFromName(objName) end)
+    end
+    if parentOpt ~= nil and parentOpt.subOption ~= nil then
+        local sub = nil
+        pcall(function() sub = context:getSubMenu(parentOpt.subOption) end)
+        if sub ~= nil then
+            local exists = nil
+            pcall(function() exists = sub:getOptionFromName(name()) end)
+            if exists == nil then
+                local rinOpt = sub:addOption(name())
+                rinMenu = ISContextMenu:getNew(sub)
+                sub:addSubMenu(rinOpt, rinMenu)
+            end
+        end
+    end
+    if rinMenu == nil then
+        local existing = nil
+        pcall(function() existing = context:getOptionFromName(name()) end)
+        if existing ~= nil then
+            pcall(function() rinMenu = context:getSubMenu(existing.subOption) end)
+            if rinMenu == nil then return end
+        else
+            local rinOpt = context:addOption(name())
+            rinMenu = ISContextMenu:getNew(context)
+            context:addSubMenu(rinOpt, rinMenu)
+        end
+    end
+
+    local dupe = nil
+    pcall(function() dupe = rinMenu:getOptionFromName(tr("WashSelf")) end)
+    if dupe ~= nil then return end
+
+    addRinActions(rinMenu, sink)
+    log("wash sink menu obj=" .. tostring(objName))
+end
+
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWorldMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onTreeMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onJobsMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLootMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onSitMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLayMenu)
+Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWashSinkMenu)
 
 Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
     if Bridge ~= nil and Bridge.claimMenuFix ~= nil then pcall(Bridge.claimMenuFix, playerNum, context, worldobjects, test) end

@@ -4583,7 +4583,6 @@ function Bridge.run(line)
     if cmd == "rest" then return Bridge.setMode("rest") end
     if cmd == "mode" then return Bridge.setMode(parts[3] or "follow") end
     if cmd == "name" then return Bridge.setName(decode(tail(line, 2))) end
-    if cmd == "wash" then return BridgeWash.start("command") end
 
     if cmd == "talk" then return BridgeSocial.talk(parts[3] or "Chat") end
     if cmd == "ask" then return BridgeSocial.ask() end
