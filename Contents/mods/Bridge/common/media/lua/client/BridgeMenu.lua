@@ -1158,9 +1158,9 @@ local function washObjectName(sink)
             local item = sink:getItem()
             if item ~= nil then nm = item:getName() end
         end)
-    elseif type(sink) ~= "table" and getMoveableDisplayName ~= nil then
+    elseif type(sink) ~= "table" and ISWorldObjectContextMenu ~= nil and ISWorldObjectContextMenu.getMoveableDisplayName ~= nil then
         local shown = nil
-        pcall(function() shown = getMoveableDisplayName(sink) end)
+        pcall(function() shown = ISWorldObjectContextMenu.getMoveableDisplayName(sink) end)
         if shown ~= nil and tostring(shown) ~= "nil" and tostring(shown) ~= "" then nm = tostring(shown) end
     end
     if nm == nil or nm == "" then
