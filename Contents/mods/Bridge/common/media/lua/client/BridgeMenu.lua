@@ -1010,6 +1010,32 @@ function BridgeMenu.onPryMenu(playerNum, context, worldobjects, test)
     if not hasTool then tip(opt, tr("Need_Crowbar")) end
 end
 
+-- Option icons: an item's own icon (optionally tinted, like "Rin: wear") or the
+-- generic container icon used for loot-the-container options.
+local GENERIC_LOOT_ICON = "media/textures/WorldItems/CrateBasic.png"
+
+local function iconOf(option, item, withColor)
+    if option == nil or item == nil then return end
+    pcall(function()
+        local tex = item:getTex()
+        if tex ~= nil then option.iconTexture = tex:splitIcon() end
+    end)
+    if withColor then
+        pcall(function()
+            local c = item:getColor()
+            if c ~= nil then option.color = { r = c:getR(), g = c:getG(), b = c:getB() } end
+        end)
+    end
+end
+
+local function lootIcon(option)
+    if option == nil then return end
+    pcall(function()
+        local tex = getTexture(GENERIC_LOOT_ICON)
+        if tex ~= nil then option.iconTexture = tex end
+    end)
+end
+
 function BridgeMenu.onLootMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -1023,7 +1049,85 @@ function BridgeMenu.onLootMenu(playerNum, context, worldobjects, test)
     local ok = false
     pcall(function() ok = BridgeTask.kinds.lootArea.available(Bridge.body) end)
     local opt = context:addOptionOnTop(label, targets, BridgeMenu.onLootThis)
+    lootIcon(opt)
     if not ok or BridgeTask.active then opt.notAvailable = true end
+end
+
+-- Items picked in a loot window, grouped by their (world) container. Skips the
+-- player's own inventory and worn bags; her own inventory is excluded by the
+-- target resolver. whole=true builds container targets, else picks-only targets.
+local function lootTargetsForItems(list, playerNum, whole)
+    local targets = {}
+    if BridgeWorkSelect == nil or BridgeWorkSelect.lootTargetForContainer == nil then return targets end
+    local playerInv = nil
+    pcall(function()
+        local p = getSpecificPlayer(playerNum or 0)
+        if p ~= nil then playerInv = p:getInventory() end
+    end)
+    local groups, order = {}, {}
+    for _, it in ipairs(list or {}) do
+        local c = nil
+        pcall(function() c = it:getContainer() end)
+        if c ~= nil then
+            local outer = c
+            pcall(function() outer = BridgeWorkSelect.outerWorldContainer(c) end)
+            local mine = false
+            pcall(function() mine = playerInv ~= nil and outer == playerInv end)
+            if not mine then
+                if groups[c] == nil then
+                    groups[c] = {}
+                    order[#order + 1] = c
+                end
+                groups[c][#groups[c] + 1] = it
+            end
+        end
+    end
+    for i = 1, #order do
+        local c = order[i]
+        local t = nil
+        pcall(function()
+            if whole then t = BridgeWorkSelect.lootTargetForContainer(c)
+            else t = BridgeWorkSelect.lootTargetForContainer(c, groups[c]) end
+        end)
+        if t ~= nil then targets[#targets + 1] = t end
+    end
+    return targets
+end
+
+-- Add the item loot entries ("Loot this" / "Loot all") into the given submenu.
+-- Called from BridgeInventory.onFill when it builds the "Rin" item submenu, so
+-- they only appear when she is nearby and grey out while she is on a job.
+function BridgeMenu.addItemLootOptions(menu, list, playerNum)
+    if menu == nil or type(list) ~= "table" or #list == 0 then return 0 end
+    if Bridge == nil or Bridge.store == nil then return 0 end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.LOOTING_ENABLED ~= 1 then return 0 end
+    if not present() then return 0 end
+    if not BridgeMenu.inTalkRange() then return 0 end
+    local ok = false
+    pcall(function() ok = BridgeTask.kinds.lootArea.available(Bridge.body) end)
+    local busy = BridgeTask.active
+    local added = 0
+
+    if menu:getOptionFromName(tr("LootThis")) == nil then
+        local targets = lootTargetsForItems(list, playerNum, false)
+        if #targets > 0 then
+            local opt = menu:addOption(tr("LootThis"), targets, BridgeMenu.onLootThis)
+            iconOf(opt, list[1], true)
+            if not ok or busy then opt.notAvailable = true end
+            added = added + 1
+        end
+    end
+
+    if menu:getOptionFromName(tr("LootAll")) == nil then
+        local targets = lootTargetsForItems(list, playerNum, true)
+        if #targets > 0 then
+            local opt = menu:addOption(tr("LootAll"), targets, BridgeMenu.onLootThis)
+            lootIcon(opt)
+            if not ok or busy then opt.notAvailable = true end
+            added = added + 1
+        end
+    end
+    return added
 end
 
 function BridgeMenu.onSitThis(targets)

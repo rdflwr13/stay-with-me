@@ -1895,6 +1895,20 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     if BridgeWorkSelect ~= nil and BridgeWorkSelect.sortTargets ~= nil then
         pcall(BridgeWorkSelect.sortTargets, BridgeTask.queue)
     end
+    -- A "grab" job is a loot job whose targets are all single items picked by
+    -- hand ("only"). It skips the "JobDone" chatter so the loot line stays put.
+    BridgeTask.grabOnly = false
+    if kind == "lootArea" and #targets > 0 then
+        local allOnly = true
+        for i = 1, #targets do
+            local t = targets[i]
+            if type(t) ~= "table" or type(t.only) ~= "table" or #t.only == 0 then
+                allOnly = false
+                break
+            end
+        end
+        BridgeTask.grabOnly = allOnly
+    end
     if kind == "lootArea" then
         local wanted, fits = BridgeTask.lootScan(Bridge.body)
         if not wanted then
@@ -2211,6 +2225,7 @@ function BridgeTask.finish()
     BridgeTask.info = "done"
     Bridge.target = nil
     local wasLootFull = BridgeTask.lootFull == true
+    local wasGrabOnly = BridgeTask.grabOnly == true
     BridgeTask.lootList = nil
     BridgeTask.lootIdx = nil
     BridgeTask.lootPending = nil
@@ -2265,6 +2280,8 @@ function BridgeTask.finish()
                 or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor" then
         elseif wasLootFull then
             Bridge.speak("JobLootFull")
+        elseif wasGrabOnly then
+            -- single-item grab: keep the loot line, skip the "all done" chatter
         else
             Bridge.speak("JobDone")
         end
@@ -4206,6 +4223,18 @@ function BridgeTask.lootItems(body, target)
     if target == nil then return items end
     local c = target.cont
     if c == nil then return items end
+    -- "only" targets (right-click a single item) grab exactly those items and
+    -- ignore the category filters, since the player picked them by hand.
+    if type(target.only) == "table" and #target.only > 0 then
+        for i = 1, #target.only do
+            local it = target.only[i]
+            local present = false
+            pcall(function() present = it ~= nil and c:contains(it) == true end)
+            if present then items[#items + 1] = { item = it, w = BridgeTask.lootWeight(it) } end
+        end
+        table.sort(items, function(a, b) return a.w < b.w end)
+        return items
+    end
     pcall(function()
         local list = c:getItems()
         if list == nil then return end
@@ -4268,28 +4297,33 @@ function BridgeTask.lootTake(body, target, item, dest)
     local chr = BridgeData ~= nil and BridgeData.owner() or nil
     pcall(function() act = ISInventoryTransferAction:new(chr, item, src, dest) end)
     if act == nil then return false end
-    pcall(function()
-        if isClient() then
-            local group = BridgeInventory.sameStack(src, item, BridgeInventory.LOOT_STACK_MAX)
-            if act.bridgeRelay ~= nil then
-                act.queueList = { { items = group, time = act.maxTime, type = item:getFullType() } }
-                act.bridgeRelay.group = group
+    -- "only" targets take exactly the picked item: skip the same-type stack
+    -- grouping that area looting (and store "bought" marking) relies on.
+    local single = target ~= nil and type(target.only) == "table" and #target.only > 0
+    if not single then
+        pcall(function()
+            if isClient() then
+                local group = BridgeInventory.sameStack(src, item, BridgeInventory.LOOT_STACK_MAX)
+                if act.bridgeRelay ~= nil then
+                    act.queueList = { { items = group, time = act.maxTime, type = item:getFullType() } }
+                    act.bridgeRelay.group = group
+                else
+                    act.group = group
+                end
             else
-                act.group = group
+                local full = item:getFullType()
+                local group = { item }
+                local list = src:getItems()
+                for i = 0, list:size() - 1 do
+                    local it = list:get(i)
+                    if it ~= nil and it ~= item and it:getFullType() == full then group[#group + 1] = it end
+                end
+                if #group > 1 then
+                    act.queueList = { { items = group, time = act.maxTime, type = full } }
+                end
             end
-        else
-            local full = item:getFullType()
-            local group = { item }
-            local list = src:getItems()
-            for i = 0, list:size() - 1 do
-                local it = list:get(i)
-                if it ~= nil and it ~= item and it:getFullType() == full then group[#group + 1] = it end
-            end
-            if #group > 1 then
-                act.queueList = { { items = group, time = act.maxTime, type = full } }
-            end
-        end
-    end)
+        end)
+    end
     pcall(function() act.bridgeHerLoot = BridgeTask.lootAnim(src) end)
     BridgeTask.lootAct = act
     BridgeTask.lootSrc = src
@@ -4549,7 +4583,9 @@ function BridgeTask.kinds.lootArea.update(body)
         local present = false
         pcall(function() present = target.cont ~= nil and target.cont:contains(item) end)
         local skip = false
-        pcall(function() skip = BridgeTask.lootFilter(item, target.kind) == true end)
+        if type(target.only) ~= "table" or #target.only == 0 then
+            pcall(function() skip = BridgeTask.lootFilter(item, target.kind) == true end)
+        end
         if present and not skip then
             local dest = BridgeTask.lootDestFor(body, item, dests)
             if dest == nil then

@@ -2999,7 +2999,7 @@ local function iconOf(option, item, withColor)
 end
 
 local function extraMenu(context, b, item, pick, fits)
-    local parent = context:addOption(label("InvWear"))
+    local parent = context:addOption(label("MenuWear"))
     iconOf(parent, item, false)
     local sub = context:getNew(context)
     context:addSubMenu(parent, sub)
@@ -3044,7 +3044,7 @@ function BridgeInventory.wearOptions(context, b, player, items, list)
 
     if plain and outside and #plan.entries == 0 then plain = false end
     if plain and extraSubmenu(target) == nil then
-        local o = context:addOption(label("InvWear"), player, BridgeInventory.wearList, plan)
+        local o = context:addOption(label("MenuWear"), player, BridgeInventory.wearList, plan)
         if list[1] ~= nil then iconOf(o, list[1], true) end
         wearTooltip(b, o, target, target)
         local wearing = {}
@@ -3080,7 +3080,7 @@ function BridgeInventory.wearOptions(context, b, player, items, list)
     end
 
     if t.unequip ~= nil and b:isEquippedClothing(t.unequip) then
-        context:addOption(label("InvUnwear"), b, BridgeInventory.unwearAll, list)
+        context:addOption(label("MenuTakeOff"), b, BridgeInventory.unwearAll, list)
     end
 end
 
@@ -3176,15 +3176,16 @@ function BridgeInventory.onFill(playerNum, context, items)
     end
     local player = getSpecificPlayer(playerNum or 0)
 
-    if BridgeSocial ~= nil and BridgeSocial.giftPreview ~= nil then
-        pcall(BridgeInventory.giftOption, context, b, player, list)
-    end
+    -- Group every companion action for this item under one "Rin" submenu (top).
+    local parentName = companionName()
+    if context:getOptionFromName(parentName) ~= nil then return end
+    local rin = context:getNew(context)
 
-    if BridgeGear ~= nil then pcall(BridgeGear.menu, context, b, player, list) end
+    -- (gear is built into the Rin submenu below)
 
 
     if inMain or BridgeInventory.shown then
-        local ok, err = pcall(BridgeInventory.wearOptions, context, b, player, items, list)
+        local ok, err = pcall(BridgeInventory.wearOptions, rin, b, player, items, list)
         if not ok then warnOnce("wear menu failed: " .. tostring(err)) end
     end
     if not inMain then
@@ -3199,7 +3200,7 @@ function BridgeInventory.onFill(playerNum, context, items)
         end
         if BridgeInventory.shown and weapon ~= nil then
             pcall(function()
-                local opt = context:addOption(label("InvAssign"), player, BridgeInventory.assignOnHer, weapon)
+                local opt = rin:addOption(label("MenuAssign"), player, BridgeInventory.assignOnHer, weapon)
 
                 local fits = viaPlayerFits(player, weapon)
                 if fits then pcall(function() fits = BridgeInventory.overflowDest(b, player, weapon, nil) ~= nil end) end
@@ -3211,18 +3212,36 @@ function BridgeInventory.onFill(playerNum, context, items)
                 end
             end)
         end
-        return
     end
 
 
-    local item = list[1]
-    if BridgeWeapon.isMelee(item) then
-        if BridgeWeapon.isAssigned(b, item) then
-            context:addOption(label("InvUnassign"), b, BridgeInventory.drop, item)
-        else
-            context:addOption(label("InvAssign"), b, BridgeInventory.hands, item)
+    if inMain then
+        local item = list[1]
+        if BridgeWeapon.isMelee(item) then
+            if BridgeWeapon.isAssigned(b, item) then
+                rin:addOption(label("MenuUnassign"), b, BridgeInventory.drop, item)
+            else
+                rin:addOption(label("MenuAssign"), b, BridgeInventory.hands, item)
+            end
         end
     end
+
+    -- Equip / Unequip gear
+    if BridgeGear ~= nil then pcall(BridgeGear.menu, rin, b, player, list) end
+
+    -- Loot this / Loot all (world containers only)
+    if BridgeMenu ~= nil and BridgeMenu.addItemLootOptions ~= nil then
+        pcall(BridgeMenu.addItemLootOptions, rin, list, playerNum)
+    end
+
+    -- Give as gift
+    if BridgeSocial ~= nil and BridgeSocial.giftPreview ~= nil then
+        pcall(BridgeInventory.giftOption, rin, b, player, list)
+    end
+
+    if rin.numOptions <= 1 then return end
+    local opt = context:addOptionOnTop(parentName)
+    context:addSubMenu(opt, rin)
 end
 
 

@@ -442,6 +442,52 @@ function BridgeWorkSelect.lootTargetFor(c, o, kind)
     return { x = x, y = y, z = z, kind = kind or "obj", cont = c, ref = lootRef(c), items = n }
 end
 
+-- Walk up to the outermost (world) container, e.g. a bag stored inside a crate.
+function BridgeWorkSelect.outerWorldContainer(c)
+    if c == nil then return nil end
+    local outer = nil
+    pcall(function() outer = c:getOutermostContainer() end)
+    return outer or c
+end
+
+-- Build a loot target for one world container, optionally restricted to specific
+-- items ("only"). Coordinates come from the outermost world container so a nested
+-- bag still resolves to the crate/floor/corpse/vehicle she has to walk to.
+function BridgeWorkSelect.lootTargetForContainer(c, only)
+    if c == nil then return nil end
+    if not lootAllowedContainer(c, nil) then return nil end
+    local outer = BridgeWorkSelect.outerWorldContainer(c)
+    local ref = nil
+    pcall(function() ref = lootRef(outer) end)
+    if ref == nil then pcall(function() ref = lootRef(c) end) end
+    local x, y, z, kind = nil, nil, nil, "obj"
+    if type(ref) == "table" then
+        kind = ref.kind or "obj"
+        x, y, z = ref.x, ref.y, ref.z
+    end
+    if x == nil then
+        pcall(function()
+            local p = c:getParent()
+            local sq = nil
+            if p ~= nil then pcall(function() sq = p:getSquare() end) end
+            if sq == nil then pcall(function() sq = c:getSourceGrid() end) end
+            if sq == nil and outer ~= c then
+                local po = outer:getParent()
+                if po ~= nil then pcall(function() sq = po:getSquare() end) end
+            end
+            if sq ~= nil then x, y, z = sq:getX(), sq:getY(), sq:getZ() end
+        end)
+    end
+    if x == nil then return nil end
+    if type(only) == "table" and #only > 0 then
+        return { x = x, y = y, z = z, kind = kind, cont = c, ref = ref, items = #only, only = only }
+    end
+    local n = 0
+    pcall(function() n = c:getItems():size() end)
+    if n <= 0 then return nil end
+    return { x = x, y = y, z = z, kind = kind, cont = c, ref = ref, items = n }
+end
+
 function BridgeWorkSelect.lootTargetsForObject(o)
     local list = {}
     if o == nil then return list end
