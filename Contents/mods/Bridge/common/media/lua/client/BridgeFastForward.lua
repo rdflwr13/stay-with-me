@@ -199,7 +199,9 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
         if BridgeTask ~= nil and BridgeTask.active == true then
             job = true
             ffJob = (BridgeTask.kind == "chopTree" or BridgeTask.kind == "clearPlants"
-                or BridgeTask.kind == "cleanUp" or BridgeTask.kind == "moveCorpses")
+                or BridgeTask.kind == "cleanUp" or BridgeTask.kind == "moveCorpses"
+                or BridgeTask.kind == "washSink" or BridgeTask.kind == "fillWater"
+                or BridgeTask.kind == "emptyFluid")
         end
     end)
     if job and not seated and not ffJob then return "job" end
@@ -452,7 +454,9 @@ function BridgeFastForward.holdStand(b)
     if BridgeTask ~= nil and BridgeTask.active
             and (BridgeTask.kind == "exercise" or BridgeTask.kind == "chopTree"
                 or BridgeTask.kind == "clearPlants" or BridgeTask.kind == "cleanUp"
-                or BridgeTask.kind == "moveCorpses") then
+                or BridgeTask.kind == "moveCorpses"
+                or BridgeTask.kind == "washSink" or BridgeTask.kind == "fillWater"
+                or BridgeTask.kind == "emptyFluid") then
         if BridgeTask.kind == "exercise" and bump ~= BridgeTask.EXERCISE_ANIM then return false end
         if bump == "" or bump == "nil" then return false end
         pcall(function() fin = b:getVariableBoolean("BumpAnimFinished") == true end)
@@ -688,7 +692,9 @@ function BridgeFastForward.tick()
             and BridgeTask.active and Bridge.body ~= nil
             and (BridgeTask.kind == "exercise" or BridgeTask.kind == "chopTree"
                 or BridgeTask.kind == "clearPlants" or BridgeTask.kind == "cleanUp"
-                or BridgeTask.kind == "moveCorpses") then
+                or BridgeTask.kind == "moveCorpses"
+                or BridgeTask.kind == "washSink" or BridgeTask.kind == "fillWater"
+                or BridgeTask.kind == "emptyFluid") then
         pcall(function() BridgeTask.update(Bridge.body) end)
         if Bridge.every(120) then
             log("ff drive: " .. tostring(BridgeTask.kind) .. " time=" .. string.format("%.1f", Bridge.time or 0))

@@ -2192,28 +2192,28 @@ function BridgeTask.progress()
     if BridgeTask.phase == "scrub" and BridgeTask.scrubStart ~= nil then
         local span = BridgeTask.cleanSpan or BridgeTask.SCRUB_TIME or 1
         if span <= 0 then span = 1 end
-        local p = (t - BridgeTask.scrubStart) / span
+        local p = (t - BridgeTask.scrubStart) * ffMult() / span
         if p < 0 then p = 0 elseif p > 1 then p = 1 end
         return p
     end
     if BridgeTask.washPhase == "washing" and BridgeTask.washSince ~= nil then
         local span = BridgeTask.washTicks or 420
         if span <= 0 then span = 1 end
-        local p = (t - BridgeTask.washSince) / span
+        local p = (t - BridgeTask.washSince) * ffMult() / span
         if p < 0 then p = 0 elseif p > 1 then p = 1 end
         return p
     end
     if BridgeTask.fillPhase == "filling" and BridgeTask.fillSince ~= nil and BridgeTask.fillTicks ~= nil then
         local span = BridgeTask.fillTicks
         if span <= 0 then span = 1 end
-        local p = (t - BridgeTask.fillSince) / span
+        local p = (t - BridgeTask.fillSince) * ffMult() / span
         if p < 0 then p = 0 elseif p > 1 then p = 1 end
         return p
     end
     if BridgeTask.emptyTicks ~= nil and BridgeTask.emptySince ~= nil then
         local span = BridgeTask.emptyTicks
         if span <= 0 then span = 1 end
-        local p = (t - BridgeTask.emptySince) / span
+        local p = (t - BridgeTask.emptySince) * ffMult() / span
         if p < 0 then p = 0 elseif p > 1 then p = 1 end
         return p
     end
@@ -3080,7 +3080,7 @@ function BridgeTask.kinds.washSink.update(body)
     end
 
     if BridgeTask.washPhase == "greet" then
-        if (Bridge.time - (BridgeTask.washSince or Bridge.time)) >= (BridgeTask.WASH_GREET_TICKS or 90) then
+        if (Bridge.time - (BridgeTask.washSince or Bridge.time)) * ffMult() >= (BridgeTask.WASH_GREET_TICKS or 90) then
             BridgeTask.washPhase = "washing"
             BridgeTask.washSince = Bridge.time
             BridgeTask.washSoundAt = nil
@@ -3100,7 +3100,7 @@ function BridgeTask.kinds.washSink.update(body)
         if tostring(body:getBumpType()) ~= "washFace" then body:setBumpType("washFace") end
     end)
     washSinkSound(body, false)
-    if (Bridge.time - (BridgeTask.washSince or Bridge.time)) >= (BridgeTask.washTicks or 420) then
+    if (Bridge.time - (BridgeTask.washSince or Bridge.time)) * ffMult() >= (BridgeTask.washTicks or 420) then
         local okClean = false
         if BridgeWash ~= nil and BridgeWash.clean ~= nil then
             okClean = true
@@ -3376,7 +3376,7 @@ function BridgeTask.kinds.fillWater.update(body)
         return true
     end
 
-    if (Bridge.time - (BridgeTask.fillSince or Bridge.time)) >= (BridgeTask.fillTicks or 1) then
+    if (Bridge.time - (BridgeTask.fillSince or Bridge.time)) * ffMult() >= (BridgeTask.fillTicks or 1) then
         local it = fillCurrentItem()
         fillSoundStop(body)
         fillApply(body, sink, it, BridgeTask.fillAmount)
@@ -3552,7 +3552,7 @@ function BridgeTask.kinds.emptyFluid.update(body)
         return true
     end
 
-    if (Bridge.time - (BridgeTask.emptySince or Bridge.time)) >= (BridgeTask.emptyTicks or 1) then
+    if (Bridge.time - (BridgeTask.emptySince or Bridge.time)) * ffMult() >= (BridgeTask.emptyTicks or 1) then
         emptySoundStop(body)
         emptyApply(body, it)
         BridgeTask.emptyTicks = nil
