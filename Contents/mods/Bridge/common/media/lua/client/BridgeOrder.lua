@@ -3,7 +3,6 @@ require "ISUI/ISPanel"
 require "ISUI/ISButton"
 
 local PAD = 10
-local DRAG_BOX = 22
 
 local function tr(key, a)
     if BridgeData ~= nil and type(BridgeData.text) == "function" then return BridgeData.text(key, a) end
@@ -43,11 +42,11 @@ function BridgeOrderList:new(x, y, width, height)
     o.font = UIFont.Small
     o.fontHgt = getTextManager():getFontHeight(UIFont.Small)
     o.itemPadY = 5
-    o.itemheight = math.max(o.fontHgt + o.itemPadY * 2, DRAG_BOX + 6)
-    o.boxSize = DRAG_BOX
+    o.tickSize = o.fontHgt
+    o.boxSize = o.fontHgt
+    o.itemheight = o.fontHgt + o.itemPadY * 2
     o.dragTexture = getTexture("media/ui/dragModIcon.png")
     o.tickTexture = getTexture("media/ui/inventoryPanes/Tickbox_Tick.png")
-    o.tickSize = 16
     o.dragItem = nil
     return o
 end
@@ -136,14 +135,17 @@ function BridgeOrderList:doDrawItem(y, item, alt)
         self:drawTextureScaled(self.tickTexture, tickX + 2, tickY + 2, mark, mark, 1, tr, tg, tb)
     end
     local dragX = self:dragX()
-    local shift = (item.height - self.boxSize) / 2
-    self:drawTexture(self.dragTexture, dragX, y + shift, 1, 1, 1, 1)
+    local box = self.boxSize
+    local shift = (item.height - box) / 2
+    if self.dragTexture ~= nil then
+        self:drawTextureScaled(self.dragTexture, dragX, y + shift, box, box, 1, 1, 1, 1)
+    end
     if self.mouseoverselected == item.index and self:isMouseOver() then
         local mx, my = self:getMouseX(), self:getMouseY()
         if mx >= tickX and mx <= tickX + tick and my >= tickY and my <= tickY + tick then
             self.mouseOverTick = item
         end
-        if mx >= dragX and mx <= dragX + self.boxSize and my >= y + shift and my <= y + shift + self.boxSize then
+        if mx >= dragX and mx <= dragX + box and my >= y + shift and my <= y + shift + box then
             self.mouseOverDragIcon = item
         end
     end
@@ -177,8 +179,11 @@ function BridgeOrderList:render()
     local gy = y - item.height / 2
     self:drawRect(0, gy, self:getWidth(), item.height - 1, 0.3, 0.7, 0.35, 0.15)
     self:drawRectBorder(0, gy, self:getWidth(), item.height, 0.5, self.borderColor.r, self.borderColor.g, self.borderColor.b)
-    local shift = (item.height - self.boxSize) / 2
-    self:drawTexture(self.dragTexture, self:dragX(), shift + gy, 1, 1, 1, 1)
+    local box = self.boxSize
+    local shift = (item.height - box) / 2
+    if self.dragTexture ~= nil then
+        self:drawTextureScaled(self.dragTexture, self:dragX(), shift + gy, box, box, 1, 1, 1, 1)
+    end
     self:drawText(item.text, self:textX(), gy + (item.height - self.fontHgt) / 2, 0.9, 0.9, 0.9, 0.9, self.font)
 end
 
@@ -192,7 +197,7 @@ function BridgeOrder.heightFor(width)
     pcall(function() if Bridge ~= nil and Bridge.companionName ~= nil then who = Bridge.companionName() end end)
     local lines = wrapText(UIFont.Small, tr("MenuOrderHint", who), math.max(40, (width or 0) - PAD * 2))
     local hintH = #lines * (fontS + 2) + 4
-    local rowH = math.max(fontS + 10, DRAG_BOX + 6)
+    local rowH = fontS + 10
     local n = 1
     if Bridge ~= nil and Bridge.store ~= nil and BridgeData ~= nil and BridgeData.menuOrder ~= nil then
         n = #BridgeData.menuOrder(Bridge.store)

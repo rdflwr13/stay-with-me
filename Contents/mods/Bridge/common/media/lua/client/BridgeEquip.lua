@@ -1,6 +1,7 @@
 
 require "ISUI/ISCollapsableWindow"
 require "ISUI/ISPanel"
+require "ISUI/ISComboBox"
 require "ISUI/ISUI3DModel"
 require "ISUI/ISToolTipInv"
 require "ISUI/ISMouseDrag"
@@ -1276,6 +1277,21 @@ function BridgeEquipWindow:createChildren()
     self.popup:initialise()
     self.popup:setVisible(false)
     self:addChild(self.popup)
+
+    self.scaleCombo = ISComboBox:new(0, 0, 10, 18, self, BridgeEquipWindow.onScale)
+    self.scaleCombo:initialise()
+    if BridgeData ~= nil and BridgeData.EQUIP_SCALES ~= nil then
+        for _, entry in ipairs(BridgeData.EQUIP_SCALES) do
+            self.scaleCombo:addOptionWithData(string.format("%gx", entry), entry)
+        end
+    end
+    self:addChild(self.scaleCombo)
+end
+
+function BridgeEquipWindow:onScale(combo)
+    if combo == nil then return end
+    local s = combo:getSelectedData()
+    if s ~= nil and Bridge ~= nil and type(Bridge.setEquipScale) == "function" then Bridge.setEquipScale(s) end
 end
 
 function BridgeEquipWindow:relayout()
@@ -1283,7 +1299,6 @@ function BridgeEquipWindow:relayout()
     local S = L.S
     local b = her()
     local th = self:titleBarHeight()
-    local rw = self:resizeWidgetHeight()
 
     self.canvas:setX(0)
     self.canvas:setY(th)
@@ -1365,14 +1380,51 @@ function BridgeEquipWindow:relayout()
     end
 
     local gearH = gearRows * (L.SUPER_SLOT_SIZE + L.HOTBAR_MARGIN)
-    local contentH = self.yGearTop + gearH + L.BOTTOM_PADDING
+    local fontH = 14
+    pcall(function() fontH = getTextManager():getFontHeight(UIFont.Small) end)
+    local btnH = fontH + 6
+    local inset = math.max(8, math.floor(10 * S))
+    local gap = math.max(8, math.floor(10 * S))
+    local inner = math.max(40, L.PANEL_WIDTH - inset * 2)
+    local lineY = self.yGearTop + gearH + gap
+    self.scaleLineY = lineY
+    self.scaleInset = inset
+    self.scaleFontH = fontH
+    local lines = {}
+    local line, maxW = "", inner
+    local function fits(s)
+        local w = 0
+        pcall(function() w = getTextManager():MeasureStringX(UIFont.Small, s) end)
+        return w <= maxW
+    end
+    for word in string.gmatch(tostring(tr("OptEquipScale") or ""), "%S+") do
+        if line ~= "" and fits(line .. " " .. word) then line = line .. " " .. word
+        else
+            if line ~= "" then lines[#lines + 1] = line end
+            line = word
+        end
+    end
+    if line ~= "" then lines[#lines + 1] = line end
+    if #lines == 0 then lines[1] = tr("OptEquipScale") end
+    self.scaleLines = lines
+    local labelY = lineY + gap
+    self.scaleLabelY = labelY
+    local comboY = labelY + #lines * fontH + 4
+    if self.scaleCombo ~= nil then
+        self.scaleCombo:setX(inset)
+        self.scaleCombo:setWidth(inner)
+        self.scaleCombo:setHeight(btnH)
+        self.scaleCombo:setY(th + comboY)
+        self.scaleCombo:setVisible(self.isCollapsed ~= true)
+    end
+    local contentH = comboY + btnH + gap
     self.contentH = contentH
     self.canvas:setHeight(contentH)
-    self:setWidth(L.PANEL_WIDTH + rw)
+    self:setWidth(L.PANEL_WIDTH)
     if self.isCollapsed then
         self:setMaxDrawHeight(self:titleBarHeight())
     else
-        self:setHeight(th + contentH + rw)
+        self:setHeight(th + contentH)
     end
     if self.popup ~= nil and self.popup:isVisible() then self:hidePopup() end
 end
@@ -1458,10 +1510,12 @@ function BridgeEquipWindow:setCollapsed(on)
         if self.collapseButton ~= nil then self.collapseButton:setVisible(false) end
         if self.pinButton ~= nil then self.pinButton:setVisible(true) self.pinButton:bringToTop() end
         self:hidePopup()
+        if self.scaleCombo ~= nil then self.scaleCombo:setVisible(false) end
     else
         self:clearMaxDrawHeight()
         if self.collapseButton ~= nil then self.collapseButton:setVisible(true) end
         if self.pinButton ~= nil then self.pinButton:setVisible(false) end
+        if self.scaleCombo ~= nil then self.scaleCombo:setVisible(true) end
     end
 end
 
@@ -1475,7 +1529,11 @@ function BridgeEquipWindow:onMouseDown(x, y)
 end
 
 function BridgeEquipWindow:prerender()
-    self.title = herName() .. " - " .. tr("WindowEquip")
+    self.title = herName()
+    if self.scaleCombo ~= nil and Bridge ~= nil and BridgeData ~= nil then
+        local s = BridgeData.equipScale(Bridge.store)
+        if self.scaleCombo:getSelectedData() ~= s then self.scaleCombo:selectData(s) end
+    end
     ISCollapsableWindow.prerender(self)
 end
 
@@ -1489,6 +1547,17 @@ function BridgeEquipWindow:render()
         self:drawTextCentre(tr("EquipWorn"), cx, th + self.yDynHeader, 0.85, 0.85, 0.85, 1, UIFont.Small)
     end
     self:drawTextCentre(tr("EquipHotbar"), cx, th + self.yHotbarHeader, 1, 1, 1, 1, UIFont.Small)
+    if self.scaleLineY ~= nil and self.isCollapsed ~= true then
+        local inset = self.scaleInset or 8
+        local lineW = (L.PANEL_WIDTH or self:getWidth()) - inset * 2
+        self:drawRect(inset, th + self.scaleLineY, lineW, 1, 1, 0.4, 0.4, 0.4)
+        local fontH = self.scaleFontH or 14
+        local y = th + (self.scaleLabelY or (self.scaleLineY + 8))
+        for _, line in ipairs(self.scaleLines or {}) do
+            self:drawText(line, inset, y, 1, 1, 1, 1, UIFont.Small)
+            y = y + fontH
+        end
+    end
 
     if BridgeEquip.drag ~= nil and ISMouseDrag ~= nil and ISMouseDrag.dragging ~= nil then
         local mx, my = getMouseX(), getMouseY()
@@ -1515,7 +1584,7 @@ function BridgeEquipWindow:new(x, y, w, h)
     self.__index = self
     o.backgroundColor.a = 0.9
     o:setResizable(false)
-    o.title = herName() .. " - " .. tr("WindowEquip")
+    o.title = herName()
     return o
 end
 

@@ -573,33 +573,25 @@ function BridgeWindowSettings:createChildren()
         y = y + math.max(BTN_H, tick:getHeight()) + PAD
     end
     y = y + PAD
-    self.nameY = y
-    local label = tr("Rename")
-    local bw = getTextManager():MeasureStringX(UIFont.Small, label) + PAD * 2
-    self.renameBtn = ISButton:new(PAD, y + FONT_S + PAD / 2, bw, BTN_H, label, self, BridgeWindowSettings.onRename)
+    local frame = BridgeWindow.settingsFrame(self.width)
+    self.frameX, self.frameY, self.frameW, self.frameH = frame.x, y, frame.w, frame.h
+    self.colW = frame.col
+    self.nameLabelX, self.nameLabelY = frame.left, y + frame.labelDy
+    self.genderLabelX, self.genderLabelY = frame.right, y + frame.labelDy
+    local ctrlY = y + frame.ctrlDy
+    self.renameBtn = ISButton:new(frame.left, ctrlY, frame.col, BTN_H, tr("Rename"), self, BridgeWindowSettings.onRename)
     self.renameBtn:initialise()
     self.renameBtn:instantiate()
     self.renameBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.renameBtn)
 
-    self.genderLabelY = y + FONT_S + PAD / 2 + BTN_H + PAD
-    local gy = self.genderLabelY + FONT_S + 4
-    self.genderCombo = ISComboBox:new(PAD, gy, self.width - PAD * 2, BTN_H, self, BridgeWindowSettings.onGender)
+    self.genderCombo = ISComboBox:new(frame.right, ctrlY, frame.col, BTN_H, self, BridgeWindowSettings.onGender)
     self.genderCombo:initialise()
     self.genderCombo:addOptionWithData(tr("GenderFemale"), "female")
     self.genderCombo:addOptionWithData(tr("GenderMale"), "male")
     self:addChild(self.genderCombo)
 
-    self.equipLabelY = gy + BTN_H + PAD
-    local ey = self.equipLabelY + FONT_S + 4
-    self.equipCombo = ISComboBox:new(PAD, ey, self.width - PAD * 2, BTN_H, self, BridgeWindowSettings.onEquipScale)
-    self.equipCombo:initialise()
-    for _, entry in ipairs(BridgeData.EQUIP_SCALES) do
-        self.equipCombo:addOptionWithData(string.format("%gx", entry), entry)
-    end
-    self:addChild(self.equipCombo)
-
-    self.newsY = ey + BTN_H + PAD
+    self.newsY = y + frame.h + PAD
     local newsLabel = tr("NewsButton")
     local nbw = getTextManager():MeasureStringX(UIFont.Small, newsLabel) + PAD * 2
     self.newsBtn = ISButton:new(PAD, self.newsY, nbw, BTN_H, newsLabel, self, BridgeWindowSettings.onNews)
@@ -621,10 +613,6 @@ function BridgeWindowSettings:prerender()
         local g = BridgeData.genderOf(Bridge.store)
         if self.genderCombo:getSelectedData() ~= g then self.genderCombo:selectData(g) end
     end
-    if self.equipCombo ~= nil then
-        local s = BridgeData.equipScale(Bridge.store)
-        if self.equipCombo:getSelectedData() ~= s then self.equipCombo:selectData(s) end
-    end
 
     local g = BridgeData.genderOf(Bridge.store)
     if self.lastGender ~= g then
@@ -641,9 +629,12 @@ end
 
 function BridgeWindowSettings:render()
     if Bridge == nil or Bridge.store == nil then return end
-    self:drawText(tr("WindowName") .. " " .. name(), PAD, self.nameY, 1, 1, 1, 1, UIFont.Small)
-    self:drawText(tr("Gender"), PAD, self.genderLabelY, 1, 1, 1, 1, UIFont.Small)
-    self:drawText(tr("OptEquipScale"), PAD, self.equipLabelY, 1, 1, 1, 1, UIFont.Small)
+    if self.frameY == nil then return end
+    self:drawRect(self.frameX, self.frameY, self.frameW, self.frameH, 0.4, 0.07, 0.07, 0.07)
+    self:drawRectBorder(self.frameX, self.frameY, self.frameW, self.frameH, 0.55, 0.32, 0.32, 0.32)
+    local col = self.colW or 0
+    self:drawText(fitText(UIFont.Small, tr("WindowName") .. " " .. name(), col), self.nameLabelX, self.nameLabelY, 1, 1, 1, 1, UIFont.Small)
+    self:drawText(fitText(UIFont.Small, tr("Gender"), col), self.genderLabelX, self.genderLabelY, 1, 1, 1, 1, UIFont.Small)
 end
 
 function BridgeWindowSettings:onTick(index, selected, key)
@@ -654,12 +645,6 @@ function BridgeWindowSettings:onGender(combo)
     if combo == nil then return end
     local g = combo:getSelectedData()
     if g ~= nil and Bridge ~= nil and type(Bridge.setGender) == "function" then Bridge.setGender(g) end
-end
-
-function BridgeWindowSettings:onEquipScale(combo)
-    if combo == nil then return end
-    local s = combo:getSelectedData()
-    if s ~= nil and Bridge ~= nil and type(Bridge.setEquipScale) == "function" then Bridge.setEquipScale(s) end
 end
 
 function BridgeWindowSettings:onRename()
@@ -1110,16 +1095,16 @@ function BridgeWindowMain:createChildren()
         self.skills = page("skills", function(x, y, w, h) return BridgeWindowSkills:new(x, y, w, h) end)
         self.panel:addView(tr("WindowSkills"), self.skills)
     end
-    self.settings = page("settings", function(x, y, w, h) return BridgeWindowSettings:new(x, y, w, h) end)
-    self.panel:addView(tr("WindowSettings"), self.settings)
     if BridgeHome ~= nil and BridgeHomeTab ~= nil then
         self.home = page("home", function(x, y, w, h) return BridgeHomeTab:new(x, y, w, h) end)
         self.panel:addView(tr("WindowHome"), self.home)
     end
-    self.order = page("order", function(x, y, w, h) return BridgeOrder:new(x, y, w, h) end)
-    self.panel:addView(tr("WindowOrder"), self.order)
     self.loot = page("loot", function(x, y, w, h) return BridgeLootSettings:new(x, y, w, h) end)
     self.panel:addView(tr("WindowLoot"), self.loot)
+    self.order = page("order", function(x, y, w, h) return BridgeOrder:new(x, y, w, h) end)
+    self.panel:addView(tr("WindowOrder"), self.order)
+    self.settings = page("settings", function(x, y, w, h) return BridgeWindowSettings:new(x, y, w, h) end)
+    self.panel:addView(tr("WindowSettings"), self.settings)
     self.report = nil
     if BridgeReport ~= nil and BridgeReportTab ~= nil then
         self.report = page("report", function(x, y, w, h) return BridgeReportTab:new(x, y, w, h) end)
@@ -1215,12 +1200,25 @@ function BridgeWindow.infoHeight()
     return math.max(text, avatar)
 end
 
+function BridgeWindow.settingsFrame(width)
+    refreshFonts()
+    local x = PAD
+    local w = math.max(0, (width or 0) - PAD * 2)
+    local inner = math.max(0, w - BOX * 2)
+    local gap = PAD
+    local col = math.floor((inner - gap) / 2)
+    if col < 1 then col = 1 end
+    return {
+        x = x, w = w, h = BOX + FONT_S + ROW + BTN_H + BOX,
+        left = x + BOX, right = x + BOX + col + gap, col = col,
+        labelDy = BOX, ctrlDy = BOX + FONT_S + ROW,
+    }
+end
+
 function BridgeWindow.settingsHeight()
     refreshFonts()
-    local gap = UI_BORDER_SPACING or 10
-    local tickH = math.max(BTN_H, FONT_S) + gap
-    return PAD + #BridgeWindow.TICKS * (tickH + PAD) + PAD + FONT_S + PAD / 2 + BTN_H + PAD
-        + FONT_S + 4 + BTN_H + PAD + FONT_S + 4 + BTN_H + PAD + PAD + BTN_H
+    local frameH = BOX + FONT_S + ROW + BTN_H + BOX
+    return PAD + #BridgeWindow.TICKS * (BTN_H + PAD) + PAD + frameH + PAD + BTN_H + PAD
 end
 
 function BridgeWindow.contentHeight(kind, width)
