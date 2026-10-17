@@ -709,6 +709,22 @@ end
 
 
 
+-- Fragrance gifts (female-grooming-gifts plan). Perfume/Cologne are vanilla
+-- DisplayCategory "Junk" fluid containers, so they are recognized by exact type
+-- id here and routed before the generic Junk -> ReceiveJunk fallback.
+local FRAGRANCE_POOLS = { Perfume = "ReceivePerfume", Cologne = "ReceiveCologne" }
+
+-- Hair-care items form one themed personal pool (master plan §15 minimum): these
+-- are female grooming gifts, spoken via Soc_/SocM_ReceiveHairCare. Comb is Junk,
+-- HairDryer/HairIron are Electronics, Hairgel/Hairspray2/HairDye* are Appearance,
+-- so the id set must win before those display-category routes.
+local HAIR_TYPES = { HairDryer = true, HairIron = true, Comb = true, Hairgel = true,
+    Hairspray2 = true, HairDyeCommon = true, HairDyeUncommon = true, HairDyeRare = true }
+local function personalPool(item)
+    if HAIR_TYPES[itemTypeName(item)] then return "ReceiveHairCare" end
+    return nil
+end
+
 local RECEIVE_CAT = {
     Ammo = "ReceiveAmmo",
     FirstAid = "ReceiveMeds", Bandage = "ReceiveMeds", Wound = "ReceiveMeds", Medical = "ReceiveMeds",
@@ -864,10 +880,23 @@ BridgeSocial.GIFT = {
     ReceiveTeddy   = { f = 3, r = 1 },
     ReceiveMemento = { f = 3, r = 0 },
     ReceiveJewelry = { f = 3, r = 1 },
+
+    -- Grooming/fragrance gifts (female-grooming-gifts plan). Small gifts: friend
+    -- affection only, gated to one gender via GIFT_FEMALE_ONLY/GIFT_MALE_ONLY.
+    ReceiveHairCare = { f = 1, r = 0 },
+    ReceiveMakeup   = { f = 1, r = 0 },
+    ReceivePerfume  = { f = 1, r = 0 },
+    ReceiveCologne  = { f = 1, r = 0 },
 }
 local GIFT_POOLS = {}
 for giftPool in pairs(BridgeSocial.GIFT) do GIFT_POOLS[giftPool] = true end
 BridgeSocial.GIFT_POOLS = GIFT_POOLS
+
+-- Gender-gated gifts: grooming/fragrance pools count for one gender only; every
+-- other gift class stays shared. These keep the wrong gender from resolving the
+-- pool as a gift while still allowing a plain (non-gift) receive line.
+local GIFT_FEMALE_ONLY = { ReceiveHairCare = true, ReceiveMakeup = true, ReceivePerfume = true }
+local GIFT_MALE_ONLY = { ReceiveCologne = true }
 
 -- Pools a male companion already gains from via maleGift (never also a gift).
 local GIFT_MALE_OWNED = { ReceiveSmokes = true, ReceiveTool = true, ReceiveGame = true,
@@ -971,6 +1000,8 @@ function BridgeSocial.giftPool(item, pool)
     if item == nil then return nil end
     if isMale() and BridgeSocial.maleReceive(item) ~= nil then return nil end
     if pool ~= nil and GIFT_MALE_OWNED[pool] then return nil end
+    if pool ~= nil and GIFT_FEMALE_ONLY[pool] and isMale() then return nil end
+    if pool ~= nil and GIFT_MALE_ONLY[pool] and not isMale() then return nil end
     if isJewelGift(item) then return "ReceiveJewelry" end
     local t, cat = itemTypeName(item), itemCat(item)
     if typeHas(t, TEDDY_TYPES) or catHas(cat, TEDDY_CATS) then return "ReceiveTeddy" end
@@ -1205,6 +1236,15 @@ function BridgeSocial.receivePool(item)
         or CLEAN_FLUIDS[fname] then
         return "ReceiveCleaner"
     end
+
+    -- Fragrance (Perfume/Cologne) and hair care are recognized by exact id before
+    -- the food and gun/weapon checks: Perfume/Cologne are Junk fluid containers,
+    -- and Hairgel/Hairspray2/HairDye* would otherwise read as ReceiveMakeup.
+    local frag = FRAGRANCE_POOLS[itemTypeName(item)]
+    if frag ~= nil then return frag end
+
+    local personal = personalPool(item)
+    if personal ~= nil then return personal end
 
     local gun = false
     pcall(function() gun = BridgeInventory ~= nil and BridgeInventory.isGun ~= nil and BridgeInventory.isGun(item) end)
