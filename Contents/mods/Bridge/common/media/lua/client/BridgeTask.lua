@@ -160,6 +160,7 @@ BridgeTask.WASH_PASSES = 12
 
 
 BridgeTask.FILL_REACH = BridgeTask.WASH_REACH
+BridgeTask.BATH_REACH = 1.5
 BridgeTask.FILL_ANIM = "fillBottle"
 BridgeTask.FILL_UNIT_MS = 100
 BridgeTask.FILL_BASE_MS = 30
@@ -3383,7 +3384,9 @@ function BridgeTask.kinds.washSink.update(body)
     end
 
     if BridgeTask.washPhase == "going" then
-        local res = BridgeTask.walkTo(body, target, BridgeTask.WASH_REACH or 1, true, false)
+        local bath = sink ~= nil and sink.bridgeBath == true
+        local res = BridgeTask.walkTo(body, target,
+            bath and (BridgeTask.BATH_REACH or 1.5) or (BridgeTask.WASH_REACH or 1), not bath, bath)
         if res == "arrived" then
             pcall(function() BridgeMove.stopPath(body) end)
             Bridge.target = nil
@@ -3632,7 +3635,9 @@ function BridgeTask.kinds.fillWater.update(body)
     end
 
     if BridgeTask.fillPhase == "going" then
-        local res = BridgeTask.walkTo(body, target, BridgeTask.FILL_REACH or 1, true, false)
+        local bath = sink ~= nil and sink.bridgeBath == true
+        local res = BridgeTask.walkTo(body, target,
+            bath and (BridgeTask.BATH_REACH or 1.5) or (BridgeTask.FILL_REACH or 1), not bath, bath)
         if res == "arrived" then
             pcall(function() BridgeMove.stopPath(body) end)
             Bridge.target = nil

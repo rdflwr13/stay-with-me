@@ -1436,7 +1436,7 @@ local function addFillActions(menu, sink)
     end
 end
 
-local function addRinActions(menu, sink)
+function BridgeMenu.addRinActions(menu, sink)
     local busy = BridgeTask ~= nil and BridgeTask.active
     local selfOpt = menu:addOption(tr("WashSelf"), sink, BridgeMenu.onWashSinkThis, "self")
     local invOpt = menu:addOption(tr("WashInventory"), sink, BridgeMenu.onWashSinkThis, "inventory")
@@ -1506,7 +1506,7 @@ function BridgeMenu.onWashSinkMenu(playerNum, context, worldobjects, test)
     pcall(function() dupe = rinMenu:getOptionFromName(tr("WashSelf")) end)
     if dupe ~= nil then return end
 
-    addRinActions(rinMenu, sink)
+    BridgeMenu.addRinActions(rinMenu, sink)
     log("wash sink menu obj=" .. tostring(objName))
 end
 

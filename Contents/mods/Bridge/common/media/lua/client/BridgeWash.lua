@@ -483,7 +483,10 @@ function BridgeWash.emptyables(body)
 end
 
 function BridgeWash.fillSoundFor(obj, item)
-    if type(obj) == "table" then return "GetWaterFromLake" end
+    if type(obj) == "table" then
+        if obj.bridgeTap == true then return "GetWaterFromTap" end
+        return "GetWaterFromLake"
+    end
     local function itemSound(fn)
         local s = nil
         if item ~= nil then s = BridgeWash.safeCall(item, fn) end
