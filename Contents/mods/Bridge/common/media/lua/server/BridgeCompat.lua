@@ -114,6 +114,7 @@ BridgeCompat.alifeTicks = 0
 BridgeCompat.alifeMarked = nil
 BridgeCompat.alifeCanAttack = nil
 BridgeCompat.alifeStrikeZombie = nil
+BridgeCompat.alifeOurBody = nil
 
 local function alifeOurs(z)
     return markedOurs(z)
@@ -163,6 +164,19 @@ function BridgeCompat.alifeInstall()
             return original(shell, zombie, weapon, reaction, share)
         end
         combat.strikeZombie = BridgeCompat.alifeStrikeZombie
+        installed = true
+    end
+
+
+    local withdraw = mod.ModuleWithdraw
+    if type(withdraw) == "table" and type(withdraw.ours) == "function"
+            and withdraw.ours ~= BridgeCompat.alifeOurBody then
+        local original = withdraw.ours
+        BridgeCompat.alifeOurBody = function(body)
+            if alifeOurs(body) then return true end
+            return original(body)
+        end
+        withdraw.ours = BridgeCompat.alifeOurBody
         installed = true
     end
 
