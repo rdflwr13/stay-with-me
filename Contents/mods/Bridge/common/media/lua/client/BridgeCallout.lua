@@ -32,6 +32,27 @@ BridgeCallout.SWING_RANGE_TOL = 0.3
 
 BridgeCallout.FLANK_SIGN = -1
 
+-- City entry callouts. B42 exposes no queriable "city" region, so a city is a
+-- coordinate box; the nearest box centre wins when boxes overlap.
+BridgeCallout.CITY_MIN_AWAY = 24
+BridgeCallout.CITY_DWELL    = 20 * BridgeCallout.SEC
+BridgeCallout.CITY_GAP      = 30 * BridgeCallout.SEC
+BridgeCallout.CITY_NEAR     = 12
+BridgeCallout.CITY_BOXES = {
+    { id = "muldraugh",      label = "Muldraugh",      minX = 9631,  maxX = 12731, minY = 8175,  maxY = 11275 },
+    { id = "west_point",     label = "West Point",     minX = 10181, maxX = 12981, minY = 5516,  maxY = 8316  },
+    { id = "riverside",      label = "Riverside",      minX = 4950,  maxX = 7650,  minY = 4318,  maxY = 7018  },
+    { id = "rosewood",       label = "Rosewood",       minX = 7246,  maxX = 9646,  minY = 10356, maxY = 12756 },
+    { id = "march_ridge",    label = "March Ridge",    minX = 8721,  maxX = 11121, minY = 11403, maxY = 13803 },
+    { id = "valley_station", label = "Valley Station", minX = 11656, maxX = 14456, minY = 4631,  maxY = 7431  },
+    { id = "louisville",     label = "Louisville",     minX = 11700, maxX = 14699, minY = 900,   maxY = 3899  },
+    { id = "brandenburg",    label = "Brandenburg",    minX = 1064,  maxX = 3564,  minY = 5003,  maxY = 7503  },
+    { id = "irvington",      label = "Irvington",      minX = 1479,  maxX = 3979,  minY = 12547, maxY = 15047 },
+    { id = "ekron",          label = "Ekron",          minX = -30,   maxX = 2070,  minY = 8788,  maxY = 10888 },
+    { id = "echo_creek",     label = "Echo Creek",     minX = 3185,  maxX = 5285,  minY = 10019, maxY = 12119 },
+    { id = "fallas_lake",    label = "Fallas Lake",    minX = 6298,  maxX = 8398,  minY = 7321,  maxY = 9421  },
+}
+
 BridgeCallout.lastAny = -99999
 BridgeCallout.deferred = {}
 BridgeCallout.fightingAt = -99999
@@ -55,6 +76,14 @@ BridgeCallout.homeAge = nil
 BridgeCallout.homeFired = false
 BridgeCallout.homeSuppress = false
 BridgeCallout.homeInfo = "none"
+
+BridgeCallout.cityKey = nil
+BridgeCallout.citySince = 0
+BridgeCallout.cityFired = false
+BridgeCallout.cityLastAt = -99999
+BridgeCallout.cityAway = nil
+BridgeCallout.citiesSign = nil
+BridgeCallout.citiesSentAt = -9999
 
 BridgeCallout.AMBIENT = { "EvTaunt" }
 
@@ -1213,6 +1242,216 @@ function BridgeCallout.placesCommand(sub, a)
         return string.format("places %d/%d told=%d: %s", n, max, told, table.concat(out, "; "))
     end
     return string.format("places %d/%d told=%d", n, max, told)
+end
+
+
+-- ---- City entry callouts -------------------------------------------------
+
+local function cityAt(x, y)
+    local best, bestD2 = nil, nil
+    for i = 1, #BridgeCallout.CITY_BOXES do
+        local b = BridgeCallout.CITY_BOXES[i]
+        if x >= b.minX and x <= b.maxX and y >= b.minY and y <= b.maxY then
+            local dx, dy = x - (b.minX + b.maxX) / 2, y - (b.minY + b.maxY) / 2
+            local d2 = dx * dx + dy * dy
+            if bestD2 == nil or d2 < bestD2 then best, bestD2 = b, d2 end
+        end
+    end
+    return best
+end
+
+
+local function citiesSignOf(v)
+    local keys = {}
+    for k in pairs(v) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local parts = { tostring(#keys) }
+    for i = 1, #keys do
+        local e = v[keys[i]] or {}
+        parts[#parts + 1] = keys[i] .. ":" .. (e.seen and "1" or "0") .. ":"
+            .. string.format("%.2f", tonumber(e.lastAge) or 0)
+    end
+    return table.concat(parts, "|")
+end
+
+
+function BridgeCallout.saveCities()
+    if not Bridge.mp then return end
+    local st = Bridge.store
+    if st == nil or type(st.cities) ~= "table" then return end
+    local sg = citiesSignOf(st.cities)
+    local important = sg ~= BridgeCallout.citiesSign
+    if not important and (Bridge.time - BridgeCallout.citiesSentAt) < 18000 then return end
+    BridgeCallout.citiesSign = sg
+    BridgeCallout.citiesSentAt = Bridge.time
+    pcall(function()
+        sendClientCommand(BridgeData.owner(), "Bridge", "state", { cities = BridgeData.cleanCities(st.cities) })
+    end)
+end
+
+
+function BridgeCallout.cityTick(body)
+    if Bridge.store == nil then return end
+    if not Bridge.alive() then return end
+    if Bridge.mode == "rest" then return end
+    if BridgeFastForward ~= nil and BridgeFastForward.active() then return end
+    local red = BridgeData.owner()
+    if red == nil then return end
+
+    local asleep = false
+    pcall(function() asleep = red:isAsleep() end)
+    if asleep then return end
+
+    local age = nil
+    pcall(function() age = getGameTime():getWorldAgeHours() end)
+    if age == nil then return end
+
+    local x, y = nil, nil
+    pcall(function() x, y = red:getX(), red:getY() end)
+    if x == nil or y == nil then return end
+
+    local box = cityAt(x, y)
+    if box == nil then
+        if BridgeCallout.cityKey ~= nil then
+            BridgeCallout.cityKey = nil
+            BridgeCallout.cityFired = false
+            BridgeCallout.cityAway = nil
+        end
+        return
+    end
+
+    local st = Bridge.store
+    if type(st.cities) ~= "table" then st.cities = {} end
+    local cities = st.cities
+    local e = cities[box.id]
+    if type(e) ~= "table" then e = {} cities[box.id] = e end
+
+    -- On entry, cache how long we were away before lastAge is refreshed below.
+    if box.id ~= BridgeCallout.cityKey then
+        BridgeCallout.cityKey = box.id
+        BridgeCallout.citySince = Bridge.time
+        BridgeCallout.cityFired = false
+        BridgeCallout.cityAway = nil
+        local prev = tonumber(e.lastAge)
+        if e.seen == true and prev ~= nil and age >= prev then
+            BridgeCallout.cityAway = age - prev
+        end
+    end
+
+    -- While inside keep lastAge at "now", so a later re-entry measures real time away.
+    e.lastAge = age
+
+    if BridgeCallout.cityFired then
+        BridgeCallout.saveCities()
+        return
+    end
+    if (Bridge.time - BridgeCallout.citySince) < BridgeCallout.CITY_DWELL then
+        BridgeCallout.saveCities()
+        return
+    end
+    if (Bridge.time - BridgeCallout.cityLastAt) < BridgeCallout.CITY_GAP then
+        BridgeCallout.saveCities()
+        return
+    end
+
+    local near = false
+    pcall(function()
+        local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
+        near = dx * dx + dy * dy <= BridgeCallout.CITY_NEAR * BridgeCallout.CITY_NEAR
+            and math.abs(red:getZ() - body:getZ()) < 1
+    end)
+    local inCar = false
+    pcall(function()
+        inCar = BridgeCar ~= nil and type(BridgeCar.withRed) == "function" and BridgeCar.withRed(red) == true
+    end)
+    if not near and not inCar then
+        BridgeCallout.saveCities()
+        return
+    end
+
+    -- Past dwell + spacing: at most one line per stay.
+    BridgeCallout.cityFired = true
+    local pool = nil
+    if e.seen ~= true then
+        pool = "City_" .. box.id
+    elseif BridgeCallout.cityAway ~= nil and BridgeCallout.cityAway >= BridgeCallout.CITY_MIN_AWAY then
+        pool = "City_" .. box.id .. "Again"
+    end
+    e.seen = true
+    e.lastAge = age
+    BridgeCallout.saveCities()
+
+    if pool ~= nil and BridgeMoments ~= nil and type(BridgeMoments.say) == "function" then
+        local said = false
+        pcall(function() said = BridgeMoments.say(pool, BridgeCallout.CITY_GAP, true, "City") == true end)
+        if said then
+            BridgeCallout.cityLastAt = Bridge.time
+            vlog("city " .. box.id .. " -> " .. pool)
+        end
+    end
+end
+
+
+function BridgeCallout.citiesCommand(sub, a)
+    local boxes = BridgeCallout.CITY_BOXES or {}
+    if sub == "help" or sub == "?" then
+        return "cities [here | list | reset | fire <id> | again <id>]"
+    end
+    local st = Bridge.store
+    if st == nil then return "cities: no store" end
+    if type(st.cities) ~= "table" then st.cities = {} end
+
+    if sub == "here" then
+        local red = BridgeData.owner()
+        local x, y = nil, nil
+        if red ~= nil then pcall(function() x, y = red:getX(), red:getY() end) end
+        if x == nil then return "cities here: unknown position" end
+        local box = cityAt(x, y)
+        if box == nil then return string.format("cities here: none (%.0f,%.0f)", x, y) end
+        return string.format("cities here: %s (%s) %.0f,%.0f", tostring(box.id), tostring(box.label), x, y)
+    end
+
+    if sub == "reset" then
+        st.cities = {}
+        BridgeCallout.citiesSign = nil
+        BridgeCallout.cityKey = nil
+        BridgeCallout.cityFired = false
+        BridgeCallout.cityAway = nil
+        BridgeCallout.saveCities()
+        return "cities reset: 0"
+    end
+
+    local function findBox(id)
+        for i = 1, #boxes do if boxes[i].id == id then return boxes[i] end end
+        return nil
+    end
+
+    if sub == "fire" or sub == "again" then
+        local box = findBox(a)
+        if box == nil then return "cities " .. tostring(sub) .. ": unknown id " .. tostring(a) end
+        local pool = (sub == "fire") and ("City_" .. box.id) or ("City_" .. box.id .. "Again")
+        local said = false
+        if BridgeMoments ~= nil and type(BridgeMoments.say) == "function" then
+            pcall(function() said = BridgeMoments.say(pool, 0, true, "City") == true end)
+        end
+        BridgeCallout.cityLastAt = Bridge.time
+        return string.format("cities %s %s -> %s (%s)", tostring(sub), tostring(box.id), pool, said and "spoke" or "no line")
+    end
+
+    local age = nil
+    pcall(function() age = getGameTime():getWorldAgeHours() end)
+    local keys = {}
+    for k in pairs(st.cities) do keys[#keys + 1] = k end
+    table.sort(keys)
+    if #keys == 0 then return "cities: none seen" end
+    local out = {}
+    for i = 1, #keys do
+        local e = st.cities[keys[i]] or {}
+        local away = "?"
+        if age ~= nil and tonumber(e.lastAge) ~= nil then away = string.format("%.1f", age - tonumber(e.lastAge)) end
+        out[#out + 1] = string.format("%s(seen=%s away=%s)", tostring(keys[i]), tostring(e.seen == true), away)
+    end
+    return "cities " .. #keys .. ": " .. table.concat(out, ", ")
 end
 
 

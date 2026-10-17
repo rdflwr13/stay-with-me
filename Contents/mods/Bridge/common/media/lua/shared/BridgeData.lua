@@ -1314,6 +1314,34 @@ BridgeData.VISITED_MAX = 200
 BridgeData.VISITED_KEY_MAX = 32
 BridgeData.VISITED_NAME_MAX = 32
 
+BridgeData.CITIES_MAX = 32
+BridgeData.CITY_KEY_MAX = 32
+
+
+function BridgeData.cleanCities(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    local n = 0
+    for k, e in pairs(t) do
+        if type(k) == "string" and #k > 0 and #k <= BridgeData.CITY_KEY_MAX and type(e) == "table" then
+            local rec = {}
+            if e.seen == true then rec.seen = true end
+            local a = tonumber(e.lastAge)
+            if a ~= nil and a == a and a >= 0 then rec.lastAge = a end
+            out[k] = rec
+            n = n + 1
+        end
+    end
+    while n > BridgeData.CITIES_MAX do
+        local drop = nil
+        for k in pairs(out) do drop = k break end
+        if drop == nil then break end
+        out[drop] = nil
+        n = n - 1
+    end
+    return out
+end
+
 
 function BridgeData.cleanVisited(t)
     if type(t) ~= "table" then return nil end

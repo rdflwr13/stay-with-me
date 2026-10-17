@@ -16,6 +16,7 @@ BridgeSocial.nextRemark = nil
 BridgeSocial.lastCheck = 0
 BridgeSocial.sentAt = -9999
 BridgeSocial.info = "none"
+BridgeSocial.CAR_CHAT_CHANCE = 0.6
 
 local CAP_F = 6
 local CAP_R = 3
@@ -110,7 +111,7 @@ BridgeSocial.recent = {}
 function BridgeSocial.pick(pool, n)
     local recent = BridgeSocial.recent[pool] or {}
     BridgeSocial.recent[pool] = recent
-    local keep = math.min(n - 1, math.floor(n * 0.6))
+    local keep = math.min(n - 1, math.max(2, math.floor(n * 0.8)))
     local free = {}
     for i = 1, n do
         local used = false
@@ -126,11 +127,34 @@ end
 
 
 
+local SAID_RING = 24
+local function normSaid(s) return (string.lower(tostring(s or "")):gsub("[%.!%?]+$", "")) end
+
+
+function BridgeSocial.noteSaid(text)
+    if text == nil or Bridge == nil then return end
+    local ring = Bridge.saidRecent
+    if type(ring) ~= "table" then ring = {} Bridge.saidRecent = ring end
+    ring[#ring + 1] = normSaid(text)
+    while #ring > SAID_RING do table.remove(ring, 1) end
+end
+
+
+function BridgeSocial.saidRecently(text)
+    if Bridge == nil or text == nil then return false end
+    local ring = Bridge.saidRecent
+    if type(ring) ~= "table" then return false end
+    local n = normSaid(text)
+    for i = 1, #ring do if ring[i] == n then return true end end
+    return false
+end
+
+
 function BridgeSocial.sameAsLast(text)
+    if text == nil then return false end
     local last = Bridge ~= nil and Bridge.lastSpokeText or nil
-    if text == nil or last == nil then return false end
-    local function norm(s) return (string.lower(tostring(s)):gsub("[%.!%?]+$", "")) end
-    return norm(text) == norm(last)
+    if last ~= nil and normSaid(text) == normSaid(last) then return true end
+    return BridgeSocial.saidRecently(text)
 end
 
 function BridgeSocial.line(pool)
@@ -1847,9 +1871,27 @@ local function remarkPool(r, red)
 end
 
 
+-- Idle pool chooser shared by the on-foot update and the in-car tick. In a car it
+-- sometimes returns the group-gated car overlay (RemarkCar_<group>); otherwise the
+-- usual tier/conditional remark pool. Falls back cleanly when the car pool is empty.
+function BridgeSocial.idlePool(r, red, inCar)
+    if inCar then
+        local group = "Near"
+        pcall(function()
+            if BridgeMoments ~= nil and type(BridgeMoments.group) == "function" then group = BridgeMoments.group() end
+        end)
+        local pool = "RemarkCar_" .. tostring(group)
+        if lineCount(pool) > 0 and (ZombRand(1000) / 1000) < (BridgeSocial.CAR_CHAT_CHANCE or 0.6) then
+            return pool
+        end
+    end
+    return remarkPool(r, red)
+end
+
+
 -- Idle remark shared by the on-foot update and the in-car tick. Same pools, same
 -- nextRemark timer, so driving idle chatter matches the on-foot behaviour.
-function BridgeSocial.idleRemark(red)
+function BridgeSocial.idleRemark(red, inCar)
     local r = rel()
     if r == nil or red == nil then return false end
     if BridgeSocial.nextRemark == nil then BridgeSocial.nextRemark = Bridge.time + 3600 end
@@ -1861,7 +1903,7 @@ function BridgeSocial.idleRemark(red)
     pcall(function() justSpoke = BridgeMoments.recent(3600) end)
     if justSpoke then return false end
     BridgeSocial.nextRemark = Bridge.time + 5400 + ZombRand(9000)
-    local pool = remarkPool(r, red)
+    local pool = BridgeSocial.idlePool(r, red, inCar)
     if say(pool) == nil then say("Remark" .. BridgeData.relTier(r)) end
     BridgeSocial.lastRemark = Bridge.time
     return true
@@ -1917,7 +1959,7 @@ function BridgeSocial.update(body)
         BridgeSocial.nextRemark = Bridge.time + 5400 + ZombRand(9000)
 
         if not quiet then
-            local pool = remarkPool(r, red)
+            local pool = BridgeSocial.idlePool(r, red, false)
             if say(pool) == nil then say("Remark" .. BridgeData.relTier(r)) end
             BridgeSocial.lastRemark = Bridge.time
         end

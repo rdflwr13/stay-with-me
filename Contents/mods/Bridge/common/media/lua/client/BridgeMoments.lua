@@ -130,7 +130,7 @@ end
 
 
 
-local HUNDRED = { PAIN = true, PANIC = true, UNHAPPINESS = true, WETNESS = true, FOOD_SICKNESS = true }
+local HUNDRED = { PAIN = true, PANIC = true, UNHAPPINESS = true, WETNESS = true, FOOD_SICKNESS = true, BOREDOM = true }
 local function stat(red, name)
     local v = 0
     pcall(function() v = red:getStats():get(CharacterStat[name]) end)
@@ -172,6 +172,87 @@ local function zombiesNear(red, dist)
         end
     end)
     return near
+end
+
+-- Moodle probes for the on-foot cold/hot lines (B42 names, B41 fallback).
+local COLD_MOODLE, HOT_MOODLE = nil, nil
+pcall(function() COLD_MOODLE = MoodleType.HYPOTHERMIA end)
+if COLD_MOODLE == nil then pcall(function() COLD_MOODLE = MoodleType.Hypothermia end) end
+pcall(function() HOT_MOODLE = MoodleType.HYPERTHERMIA end)
+if HOT_MOODLE == nil then pcall(function() HOT_MOODLE = MoodleType.Hyperthermia end) end
+
+local function moodle(red, m)
+    if m == nil then return 0 end
+    local lv = 0
+    pcall(function() lv = red:getMoodles():getMoodleLevel(m) end)
+    return tonumber(lv) or 0
+end
+
+local function nightNow()
+    local n = false
+    pcall(function() n = getGameTime():isNight() == true end)
+    return n
+end
+
+local function wetWeather()
+    local wet = false
+    pcall(function()
+        local c = getClimateManager()
+        if c ~= nil then
+            wet = c:getPrecipitationIntensity() > 0.05 or c:getSnowStrength() > 0.05
+        end
+    end)
+    return wet
+end
+
+local function bleeding(red)
+    local n = 0
+    pcall(function() n = red:getBodyDamage():getNumPartsBleeding() end)
+    return (tonumber(n) or 0) > 0
+end
+
+local function eatingNow(red)
+    local eating = false
+    pcall(function()
+        local q = ISTimedActionQueue.getTimedActionQueue(red)
+        if q ~= nil and q.current ~= nil and q.current.isEating == true then eating = true end
+    end)
+    return eating
+end
+
+-- Corpse smell tiers: 4 / 8 / 16 bodies within SMELL_RADIUS tiles on the same floor.
+local SMELL_RADIUS = 8
+local SMELL_TIERS = { 4, 8, 16 }
+local function bodiesNear(red, radius)
+    local n = 0
+    pcall(function()
+        local cell = getCell()
+        local cx, cy, cz = math.floor(red:getX()), math.floor(red:getY()), math.floor(red:getZ())
+        local r = tonumber(radius) or SMELL_RADIUS
+        for dx = -r, r do
+            for dy = -r, r do
+                local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
+                if sq ~= nil then
+                    local bodies = nil
+                    pcall(function() bodies = sq:getDeadBodys() end)
+                    if bodies ~= nil then
+                        local sz = 0
+                        pcall(function() sz = bodies:size() end)
+                        n = n + (tonumber(sz) or 0)
+                    end
+                end
+            end
+        end
+    end)
+    return n
+end
+
+local function smellTierOf(n)
+    local best = nil
+    for i = 1, #SMELL_TIERS do
+        if n >= SMELL_TIERS[i] then best = SMELL_TIERS[i] end
+    end
+    return best
 end
 
 
@@ -346,11 +427,27 @@ function BridgeMoments.update(body)
     if wound("bleed", "EvBleed", 2 * MINUTE, "bandage", "EvBleedNoBandage") then return end
 
 
+    -- Standing bleed: the fresh-wound path may already have spoken, but if the
+    -- player is still bleeding the same line fires on the live state too. Shares
+    -- the "EvBleed" slot so it obeys the same cooldown and variants.
+    if bleeding(red) then
+        local ev = has("bandage") and "EvBleed" or "EvBleedNoBandage"
+        if not autoHeal then ev = "EvHurtAsk" end
+        if momentSay(ev, 2 * MINUTE, true, "EvBleed") then return end
+    end
+
+
 
     if stat(red, "PANIC") > 0.5 then
         if momentSay("EvPanic", 5 * MINUTE, true) then return end
     end
     if busy then return end
+    if wetWeather() and stat(red, "WETNESS") > 0.6 then
+        if momentSay("EvColdWet", 20 * MINUTE) then return end
+    end
+    if nightNow() and stat(red, "FATIGUE") > 0.6 then
+        if momentSay("EvTiredNight", 20 * MINUTE) then return end
+    end
     if stat(red, "PAIN") > 0.45 then
         local pills = hasItem(body, red, { "Base.Pills" })
         if momentSay(pills and "EvPain" or "EvPainNoPills", 15 * MINUTE, false, "Pain") then return end
@@ -372,6 +469,22 @@ function BridgeMoments.update(body)
     end
     if stat(red, "WETNESS") > 0.6 then
         if momentSay("EvCold", 20 * MINUTE) then return end
+    end
+    if stat(red, "BOREDOM") > 0.6 then
+        if momentSay("EvBored", 20 * MINUTE) then return end
+    end
+    if moodle(red, COLD_MOODLE) >= 1 then
+        if momentSay("EvFreezing", 20 * MINUTE) then return end
+    end
+    if moodle(red, HOT_MOODLE) >= 1 then
+        if momentSay("EvOverheat", 20 * MINUTE) then return end
+    end
+    if eatingNow(red) then
+        if momentSay("EvEating", 20 * MINUTE) then return end
+    end
+    local smell = smellTierOf(bodiesNear(red, SMELL_RADIUS))
+    if smell ~= nil then
+        if momentSay("EvSmell" .. smell, 10 * MINUTE, false, "Smell" .. smell) then return end
     end
 end
 

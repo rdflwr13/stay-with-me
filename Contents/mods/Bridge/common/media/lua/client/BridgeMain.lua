@@ -2133,6 +2133,10 @@ function Bridge.speakText(text)
     Bridge.lastSpokeAt = Bridge.time
     Bridge.lastSpokeText = tostring(text)
 
+    if BridgeSocial ~= nil and type(BridgeSocial.noteSaid) == "function" then
+        pcall(function() BridgeSocial.noteSaid(text) end)
+    end
+
 
     pcall(function() log("line hex:" .. BridgeChat.toHex(tostring(text))) end)
 
@@ -4647,6 +4651,7 @@ function Bridge.run(line)
     if cmd == "rel" then return BridgeSocial.relCommand(parts[3], parts[4], parts[5]) end
     if cmd == "gift" then return BridgeSocial.giftCommand(parts[3], parts[4], parts[5]) end
     if cmd == "places" then return BridgeCallout.placesCommand(parts[3], parts[4], parts[5]) end
+    if cmd == "cities" then return BridgeCallout.citiesCommand(parts[3], parts[4]) end
     if cmd == "home" then return BridgeCallout.homeCommand(parts) end
 
 
@@ -6443,6 +6448,16 @@ function Bridge.onTick()
     pcall(Bridge.pullOnTeleport)
     carTick()
     driveTick()
+
+
+    -- City entry callouts run at the scan cadence from here, not from
+    -- BridgeCallout.update: while she rides in a vehicle her body is despawned and
+    -- updateZombieBody (and therefore BridgeCallout.update) does not run, so a hook
+    -- there would never fire city lines in a car. cityTick gates on "near her or in
+    -- the same vehicle" itself and handles a nil body.
+    if Bridge.every(15) and BridgeCallout ~= nil and type(BridgeCallout.cityTick) == "function" then
+        pcall(function() BridgeCallout.cityTick(Bridge.body) end)
+    end
 
 
 

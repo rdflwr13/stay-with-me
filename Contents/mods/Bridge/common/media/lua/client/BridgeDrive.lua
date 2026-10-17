@@ -99,10 +99,12 @@ BridgeDrive.WIND       = 0.5
 
 BridgeDrive.SMELL_EVERY  = 60
 BridgeDrive.SMELL_RADIUS = 4
+BridgeDrive.SMELL_TIERS  = { 4, 8, 16 }
 
 
 BridgeDrive.CORPSE_SICK_MIN    = 0.3
 BridgeDrive.CORPSE_SICK_RADIUS = 8
+BridgeDrive.CORPSE_MIN         = 4
 BridgeDrive.CORPSE_EMOTE_GAP   = 600
 
 
@@ -278,7 +280,9 @@ BridgeDrive.EVENTS = {
     EvCarColdWet      = { slot = "DriveColdWet",     cooldown = 600,  urgent = true,  cat = "STATE" },
     EvCarTiredNight   = { slot = "DriveTiredNight",  cooldown = 600,  urgent = true,  cat = "STATE" },
     EvCarEating       = { slot = "DriveEating",      cooldown = 120,  urgent = true,  cat = "STATE" },
-    EvCarSmell        = { slot = "DriveSmell",        cooldown = 300,  urgent = false, cat = "SMELL" },
+    EvCarSmell4       = { slot = "DriveSmell4",       cooldown = 300,  urgent = false, cat = "SMELL" },
+    EvCarSmell8       = { slot = "DriveSmell8",       cooldown = 300,  urgent = false, cat = "SMELL" },
+    EvCarSmell16      = { slot = "DriveSmell16",      cooldown = 300,  urgent = false, cat = "SMELL" },
     EvCarCorpseSick   = { slot = "DriveCorpseSick",   cooldown = 300,  urgent = true,  cat = "SICK" },
 
     -- Fuel / engine / lights / radio / health (added).
@@ -853,6 +857,9 @@ function BridgeDrive.tick()
 
 
     -- Health tiers: cross below 50 / 30 / 15 (rearm 10 above the step).
+    -- The step is only committed once the line actually speaks: if say() is
+    -- blocked by the 12 s global gap, the crossing stays pending and retries
+    -- next tick instead of being consumed silently.
     if hp ~= nil then
         while BridgeDrive.healthStep > 0
             and hp >= BridgeDrive.HP_STEPS[BridgeDrive.healthStep] + BridgeDrive.HP_BACK do
@@ -863,9 +870,9 @@ function BridgeDrive.tick()
             if hp < limit then step = i end
         end
         if step > BridgeDrive.healthStep then
-            BridgeDrive.healthStep = step
             local ev = BridgeDrive.HP_EVENTS[step]
             if ev ~= nil and say(ev) then
+                BridgeDrive.healthStep = step
                 BridgeDrive.hpBase = hp or BridgeDrive.hpBase
                 return
             end
@@ -928,7 +935,7 @@ function BridgeDrive.tick()
         if sick > BridgeDrive.CORPSE_SICK_MIN then
             local n = 0
             pcall(function() n = corpsesNear(red, BridgeDrive.CORPSE_SICK_RADIUS) end)
-            if n > 0 then
+            if n >= BridgeDrive.CORPSE_MIN then
                 if Bridge.time - (BridgeDrive.corpseEmoteAt or -99999) > BridgeDrive.CORPSE_EMOTE_GAP then
                     BridgeDrive.corpseEmoteAt = Bridge.time
                     if BridgeSocial ~= nil and BridgeSocial.emote ~= nil then
@@ -980,10 +987,19 @@ function BridgeDrive.tick()
         end
 
         if not on and speed < 1 then
+            -- Only a failed attempt deserves "won't start": the keys must be in
+            -- the ignition (or it is hotwired) and the engine not cranking right
+            -- now. Without this, a car that is merely switched off reports a
+            -- failed start whenever its battery is low or its engine is worn.
+            local trying = false
+            pcall(function()
+                trying = (car:isKeysInIgnition() == true or car:isHotwired() == true)
+                    and car:isStarting() ~= true
+            end)
             local critical = (econd ~= nil and econd < 25)
                 or (batt ~= nil and batt <= 0.1)
                 or (ratio ~= nil and ratio <= 0.02)
-            if critical and say("EvCarNoStart") then
+            if trying and critical and say("EvCarNoStart") then
                 BridgeDrive.hpBase = hp or BridgeDrive.hpBase
                 return
             end
@@ -1015,7 +1031,7 @@ function BridgeDrive.tick()
         if BridgeSocial ~= nil and type(BridgeSocial.idleRemark) == "function" and calmFight then
             local danger = 0
             if BridgeHorde ~= nil then danger = BridgeHorde.countCone(car, 0, 8, nil, true, red) end
-            if danger == 0 and BridgeSocial.idleRemark(red) then
+            if danger == 0 and BridgeSocial.idleRemark(red, true) then
                 BridgeDrive.hpBase = hp or BridgeDrive.hpBase
                 return
             end
@@ -1068,7 +1084,11 @@ function BridgeDrive.tick()
     if Bridge.every(BridgeDrive.SMELL_EVERY) then
         local n = 0
         pcall(function() n = corpsesNear(red, BridgeDrive.SMELL_RADIUS) end)
-        if n > 0 and say("EvCarSmell") then
+        local tier = nil
+        for i = 1, #BridgeDrive.SMELL_TIERS do
+            if n >= BridgeDrive.SMELL_TIERS[i] then tier = BridgeDrive.SMELL_TIERS[i] end
+        end
+        if tier ~= nil and say("EvCarSmell" .. tier) then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
