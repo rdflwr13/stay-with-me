@@ -371,7 +371,14 @@ local function buildActions(context, playerNum, env)
     end
     local exCool = 0
     pcall(function() exCool = (BridgeExercise ~= nil and BridgeExercise.cooldownLeft(nil)) or 0 end)
-    if (tonumber(exCool) or 0) > 0 then tip(exercise, tr("ExerciseTiredTip")) end
+    if (tonumber(exCool) or 0) > 0 then
+        local hours = string.format("%.0f", tonumber(exCool) or 0)
+        local coolText = tr("ExReadyIn", hours)
+        if type(coolText) ~= "string" or coolText == "" or string.find(coolText, "ExReadyIn", 1, true) ~= nil then
+            coolText = string.format("Ready to train again in %sh", hours)
+        end
+        tip(exercise, coolText)
+    end
     actions:addOption(tr("Goodbye"), nil, BridgeMenu.onGoodbye)
 end
 
