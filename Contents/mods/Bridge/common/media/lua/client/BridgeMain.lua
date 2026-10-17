@@ -20,6 +20,12 @@ if BridgeLog ~= nil and BridgeLog.on() then print("[Bridge] main loaded v225") e
 
 local START_AXE = { condition = 10, head = 10, sharpness = 0.6 }
 
+
+-- Spawn speech grace (BridgeMain). Bridge.time advances ~60 units per real second
+-- (Bridge.onTick: dt = getRealworldSecondsSinceLastUpdate() * 60), so 5 * 60 is a
+-- 5 real-second window. While graced she may not say any line (see Bridge.speakText).
+local SPAWN_SPEAK_GRACE = 5 * 60
+
 Bridge = Bridge or {}
 Bridge.body = nil
 Bridge.kind = nil
@@ -59,6 +65,7 @@ Bridge.holdPos = nil
 Bridge.nextIdleAnim = 0
 Bridge.scareStopped = 0
 Bridge.hiddenSince = nil
+Bridge.speakGraceUntil = 0
 Bridge.parked = false
 Bridge.mp = false
 Bridge.spawnAsked = nil
@@ -1445,6 +1452,7 @@ function Bridge.adoptServerBody(zombie)
     pcall(function() BridgeWeapon.reset() end)
     Bridge.body = zombie
     Bridge.kind = "zombie"
+    Bridge.noteSpawned()
     Bridge.target = nil
     Bridge.spawnAsked = nil
     if (Bridge.lostTries or 0) > 0 then log("body received after " .. tostring(Bridge.lostTries) .. " respawn asks") end
@@ -1579,6 +1587,7 @@ function Bridge.spawnZombie(px, py, pz)
 
         Bridge.body = body
         Bridge.kind = "zombie"
+        Bridge.noteSpawned()
         pcall(function() body:setVariable(BODY_VAR, true) end)
         Bridge.hideBody(body, true)
         Bridge.hiddenSince = Bridge.tick
@@ -1656,6 +1665,7 @@ function Bridge.spawnPlayer()
 
         Bridge.body = body
         Bridge.kind = "player"
+        Bridge.noteSpawned()
     end)
 
     if not ok then return "spawn player failed: " .. tostring(err) end
@@ -2097,7 +2107,28 @@ function Bridge.carLine(text)
 end
 
 
+-- True while she is inside the post-spawn speech grace window.
+function Bridge.speechGraced()
+    return Bridge.time < (Bridge.speakGraceUntil or 0)
+end
+
+
+-- Start (or restart) the post-spawn speech grace. Called when a live companion
+-- body is adopted, and again immediately after the arrival greeting, so that
+-- "I'm here" is the only line on spawn and every other line waits 5 s after it.
+function Bridge.noteSpawned()
+    Bridge.speakGraceUntil = Bridge.time + SPAWN_SPEAK_GRACE
+end
+
+
 function Bridge.speakText(text)
+
+    -- Global spawn gate: no line from any path (Bridge.speak, BridgeMoments,
+    -- BridgeSocial, menus, tasks, ...) is spoken until the grace window ends.
+    if Bridge.speechGraced() then
+        log("speech held during spawn grace (" .. tostring(math.ceil((Bridge.speakGraceUntil or 0) - Bridge.time)) .. "t): " .. tostring(text))
+        return text
+    end
 
     Bridge.lastSpokeAt = Bridge.time
     Bridge.lastSpokeText = tostring(text)
@@ -3237,7 +3268,11 @@ local function updateZombieBody(body)
             log("body revealed after " .. tostring(age) .. " ticks, " .. tostring(why))
             if Bridge.greetOnReveal then
                 Bridge.greetOnReveal = nil
+                -- The arrival greeting is the one line allowed on spawn: speak it
+                -- now, then hold every other line for the 5 s grace that follows.
+                Bridge.speakGraceUntil = 0
                 Bridge.speak("Hello")
+                Bridge.noteSpawned()
             end
         end
     end
@@ -4425,6 +4460,7 @@ function Bridge.onZombieUpdate(zombie)
         Bridge.hideBody(zombie, false)
         Bridge.body = zombie
         Bridge.kind = "zombie"
+        Bridge.noteSpawned()
         Bridge.follow = true
         Bridge.mode = "follow"
         Bridge.pose = nil
@@ -4448,6 +4484,7 @@ function Bridge.onZombieUpdate(zombie)
 
         Bridge.body = zombie
         Bridge.kind = "zombie"
+        Bridge.noteSpawned()
         Bridge.follow = true
         Bridge.hideBody(zombie, false)
         log("adopted existing body")

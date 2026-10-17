@@ -69,7 +69,10 @@ BridgeCallout.SAY = {
     EvBehind     = 0,
     EvEngage     = 1,
     EvKill       = 1,
-    EvHorde      = 1,
+    EvHorde4     = 1,
+    EvHorde8     = 1,
+    EvHorde16    = 1,
+    EvHorde32    = 1,
     EvBreakOff   = 1,
     EvSpot       = 1,
     EvLull       = 1,
@@ -100,7 +103,10 @@ BridgeCallout.EVENTS = {
     EvBehind     = { slot = "Behind",     cooldown = 45 },
     EvEngage     = { slot = "Engage",     cooldown = 25 },
     EvKill       = { slot = "Kill",       cooldown = 20 },
-    EvHorde      = { slot = "Horde",      cooldown = 75 },
+    EvHorde4     = { slot = "Horde4",     cooldown = 75 },
+    EvHorde8     = { slot = "Horde8",     cooldown = 90 },
+    EvHorde16    = { slot = "Horde16",    cooldown = 120 },
+    EvHorde32    = { slot = "Horde32",    cooldown = 150 },
     EvBreakOff   = { slot = "BreakOff",   cooldown = 30 },
     EvSpot       = { slot = "Spot",       cooldown = 120 },
     EvLull       = { slot = "Lull",       cooldown = 150 },
@@ -163,10 +169,13 @@ local function attackSignals(red)
     return h2h, atk
 end
 
-local function threatZ(z, body)
+-- inclRemote == true keeps remote zombies in scope (used by the swing-clear
+-- close-threat check); otherwise remote zombies are ignored (main callout facts).
+local function threatZ(z, body, inclRemote)
     local alive = false
     pcall(function() alive = z:isAlive() and z:getHealth() > 0 end)
-    return z ~= nil and z ~= body and alive and not isBodyZ(z) and not remoteZ(z) and not BridgeData.harmless(z)
+    return z ~= nil and z ~= body and alive and not isBodyZ(z)
+        and (inclRemote == true or not remoteZ(z)) and not BridgeData.harmless(z)
 end
 
 local function target()
@@ -185,28 +194,12 @@ end
 
 local DEFER = { EvKill = true }
 
-local function trySay(event)
-    local e = BridgeCallout.EVENTS[event]
-    if e == nil then return false end
-    if BridgeCallout.ENABLED == 0 then return false end
-    if BridgeCallout.SAY[event] == 0 then return false end
-    local gap = BridgeCallout.REPEAT_GAP * BridgeCallout.SEC
-    if Bridge.time - BridgeCallout.lastAny < gap then return false end
-    local said = false
-    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeCallout.SEC, true, e.slot) == true end)
-    if said then
-        BridgeCallout.lastAny = Bridge.time
-        BridgeCallout.info = event
-        log(event)
-        local grp = "?"
-        pcall(function() grp = BridgeMoments.group() end)
-        dlog("said " .. event .. " (slot " .. tostring(e.slot) .. ", " .. tostring(grp)
-            .. ", cd " .. tostring(e.cooldown) .. "s)")
-    else
-        BridgeCallout.info = "blocked " .. event
-    end
-    return said
-end
+
+-- Shared gate for every callout. `priority` (BridgeCallout.sayPriority) also
+-- respects carQuiet, drops the deferred queue on success, and marks gap-blocks.
+local attempt
+
+local function trySay(event) return attempt(event, false) end
 
 function BridgeCallout.defer(event)
     local q = BridgeCallout.deferred
@@ -240,6 +233,40 @@ local function dropCarLines()
     BridgeCallout.lastHealth = nil
 end
 
+
+attempt = function(event, priority)
+    if BridgeCallout.ENABLED == 0 then return false end
+    if priority and carQuiet() then return false end
+    local e = BridgeCallout.EVENTS[event]
+    if e == nil then return false end
+    if BridgeCallout.SAY[event] == 0 then return false end
+    local gap = BridgeCallout.REPEAT_GAP * BridgeCallout.SEC
+    if Bridge.time - BridgeCallout.lastAny < gap then
+        if priority then BridgeCallout.info = "blocked " .. event end
+        return false
+    end
+    local said = false
+    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeCallout.SEC, true, e.slot) == true end)
+    if said then
+        BridgeCallout.lastAny = Bridge.time
+        if priority then BridgeCallout.deferred = {} end
+        BridgeCallout.info = event
+        log(event)
+        if priority then
+            dlog("said priority " .. event .. " (slot " .. tostring(e.slot) .. ")")
+        else
+            local grp = "?"
+            pcall(function() grp = BridgeMoments.group() end)
+            dlog("said " .. event .. " (slot " .. tostring(e.slot) .. ", " .. tostring(grp)
+                .. ", cd " .. tostring(e.cooldown) .. "s)")
+        end
+    else
+        BridgeCallout.info = "blocked " .. event
+    end
+    return said
+end
+
+
 local function say(event)
     if carQuiet() then dropCarLines() return false end
     if BridgeCallout.ENABLED == 0 then return false end
@@ -263,20 +290,43 @@ local function flush()
     return false
 end
 
-local function scanWorld(body, red)
-    local facts = { horde = 0, near8 = 0, behind = false, flank = false, flankSide = nil,
-        crawler = false, breach = false, spot = false }
+-- Reused across scans to avoid allocating a table every update.
+local scanFacts = { near8 = 0, behind = false, flank = false, flankSide = nil,
+    crawler = false, breach = false, spot = false, anyThreatInSwing = false }
+
+local function scanWorld(body, red, wantClear)
+    local facts = scanFacts
+    facts.near8 = 0
+    facts.behind = false
+    facts.flank = false
+    facts.flankSide = nil
+    facts.crawler = false
+    facts.breach = false
+    facts.spot = false
+    facts.anyThreatInSwing = false
+
     local S = BridgeCallout.SAY
-    local wantHorde = S.EvHorde ~= 0
     local wantNear = S.EvLull ~= 0
     local wantBehind = S.EvBehind ~= 0
     local wantFlank = S.EvFlankLeft ~= 0 or S.EvFlankRight ~= 0
     local wantSpot = S.EvSpot ~= 0
     local wantCrawler = S.EvCrawler ~= 0
     local wantBreach = S.EvBreach ~= 0
-    if not (wantHorde or wantNear or wantBehind or wantFlank or wantSpot or wantCrawler or wantBreach) then
+    local wantBody = wantNear
+    local wantRed = wantBehind or wantFlank or wantSpot or wantCrawler or wantBreach
+    if not (wantBody or wantRed or wantClear) then
         return facts
     end
+
+    local near2 = 8 * 8
+    local behind2 = BridgeCallout.BEHIND_DIST * BridgeCallout.BEHIND_DIST
+    local flank2 = BridgeCallout.FLANK_DIST * BridgeCallout.FLANK_DIST
+    local spotMin2 = BridgeCallout.SPOT_MIN_DIST * BridgeCallout.SPOT_MIN_DIST
+    local spot2 = BridgeCallout.SPOT_DIST * BridgeCallout.SPOT_DIST
+    local crawler2 = BridgeCallout.CRAWLER_DIST * BridgeCallout.CRAWLER_DIST
+    local breach2 = BridgeCallout.BREACH_DIST * BridgeCallout.BREACH_DIST
+    local swing2 = BridgeCallout.SWING_ZOMBIE_DIST * BridgeCallout.SWING_ZOMBIE_DIST
+
     local t = (wantBehind or wantFlank or wantSpot) and target() or nil
     local fx, fy = nil, nil
     if wantFlank then
@@ -288,58 +338,96 @@ local function scanWorld(body, red)
         local fl = math.sqrt(ax * ax + ay * ay)
         if fl >= 0.01 then fx, fy = ax / fl, ay / fl end
     end
+
+    local bodyx, bodyy, bodyz = 0, 0, 0
+    local redx, redy, redz = 0, 0, 0
+    pcall(function() bodyx, bodyy, bodyz = body:getX(), body:getY(), body:getZ() end)
+    pcall(function() redx, redy, redz = red:getX(), red:getY(), red:getZ() end)
+
     pcall(function()
         local list = getCell():getZombieList()
-        for i = 0, list:size() - 1 do
-            local z = list:get(i)
-            if threatZ(z, body) then
-                local bx, by = z:getX() - body:getX(), z:getY() - body:getY()
-                local bd2 = bx * bx + by * by
-                if (wantHorde or wantNear) and math.abs(z:getZ() - body:getZ()) < 0.8 then
-                    if wantHorde and bd2 < 4 * 4 then facts.horde = facts.horde + 1 end
-                    if wantNear and bd2 < 8 * 8 then facts.near8 = facts.near8 + 1 end
-                end
-                if math.abs(z:getZ() - red:getZ()) < 1 then
-                    local rx, ry = z:getX() - red:getX(), z:getY() - red:getY()
+        local n = list:size()
+        for i = 0, n - 1 do
+            local z = nil
+            pcall(function() z = list:get(i) end)
+            if z ~= nil then
+                local zx, zy, zz = nil, nil, nil
+                pcall(function() zx, zy, zz = z:getX(), z:getY(), z:getZ() end)
+                if zx ~= nil then
+                    local bx, by = zx - bodyx, zy - bodyy
+                    local bd2 = bx * bx + by * by
+                    local rx, ry = zx - redx, zy - redy
                     local rd2 = rx * rx + ry * ry
-                    if wantBehind and not facts.behind and z ~= t
-                        and rd2 < BridgeCallout.BEHIND_DIST * BridgeCallout.BEHIND_DIST then
-                        local seeBody, seeRed = false, false
-                        pcall(function() seeBody = body:CanSee(z) end)
-                        pcall(function() seeRed = red:CanSee(z) end)
-                        if seeBody and not seeRed then facts.behind = true end
+                    local dzBody = zz - bodyz
+                    local dzRed = zz - redz
+                    local inRedBand = math.abs(dzRed) < 1
+
+                    -- Cheap relevance cull so distant/other-floor zombies skip the
+                    -- pcall-heavy threatZ/CanSee work (superset of every enabled check).
+                    local relevant = false
+                    if wantNear and math.abs(dzBody) < 0.8 and bd2 < near2 then
+                        relevant = true
                     end
-                    if wantFlank and not facts.flank and z ~= t and fx ~= nil
-                        and rd2 > 2.25 and rd2 < BridgeCallout.FLANK_DIST * BridgeCallout.FLANK_DIST then
-                        local d = math.sqrt(rd2)
-                        local cross = fx * (ry / d) - fy * (rx / d)
-                        if math.abs(cross) >= 0.7 then
-                            local seen = false
-                            pcall(function() seen = red:CanSee(z) end)
-                            if seen then
-                                facts.flank = true
-                                facts.flankSide = (cross * BridgeCallout.FLANK_SIGN) > 0 and "left" or "right"
+                    if not relevant and wantRed and inRedBand and (rd2 < spot2 or bd2 < breach2) then
+                        relevant = true
+                    end
+                    local clearRel = wantClear and inRedBand and rd2 < swing2
+
+                    if relevant or clearRel then
+                        -- inclRemote keeps the swing-clear check identical to the old
+                        -- noZombiesInSight predicate; the main facts exclude remote.
+                        if threatZ(z, body, true) then
+                            local isRemote = remoteZ(z)
+                            if relevant and not isRemote then
+                                if wantNear and math.abs(dzBody) < 0.8 and bd2 < near2 then
+                                    facts.near8 = facts.near8 + 1
+                                end
+                                if inRedBand then
+                                    if wantBehind and not facts.behind and z ~= t and rd2 < behind2 then
+                                        local seeBody, seeRed = false, false
+                                        pcall(function() seeBody = body:CanSee(z) end)
+                                        pcall(function() seeRed = red:CanSee(z) end)
+                                        if seeBody and not seeRed then facts.behind = true end
+                                    end
+                                    if wantFlank and not facts.flank and z ~= t and fx ~= nil
+                                        and rd2 > 2.25 and rd2 < flank2 then
+                                        local d = math.sqrt(rd2)
+                                        local cross = fx * (ry / d) - fy * (rx / d)
+                                        if math.abs(cross) >= 0.7 then
+                                            local seen = false
+                                            pcall(function() seen = red:CanSee(z) end)
+                                            if seen then
+                                                facts.flank = true
+                                                facts.flankSide = (cross * BridgeCallout.FLANK_SIGN) > 0 and "left" or "right"
+                                            end
+                                        end
+                                    end
+                                    if wantSpot and not facts.spot and z ~= t
+                                        and rd2 > spotMin2 and rd2 < spot2 then
+                                        local seen = false
+                                        pcall(function() seen = BridgeFight.visible(z, red) end)
+                                        if seen then facts.spot = true end
+                                    end
+                                    if wantCrawler and not facts.crawler and proneZ(z)
+                                        and math.min(bd2, rd2) < crawler2 then
+                                        local seen = false
+                                        pcall(function() seen = red:CanSee(z) or body:CanSee(z) end)
+                                        if seen then facts.crawler = true end
+                                    end
+                                    if wantBreach and not facts.breach and tostring(z:getActionStateName()) == "thump"
+                                        and math.min(bd2, rd2) < breach2 then
+                                        local seen = false
+                                        pcall(function() seen = red:CanSee(z) or body:CanSee(z) end)
+                                        if seen then facts.breach = true end
+                                    end
+                                end
+                            end
+                            if clearRel and not facts.anyThreatInSwing then
+                                local seen = false
+                                pcall(function() seen = red:CanSee(z) end)
+                                if seen then facts.anyThreatInSwing = true end
                             end
                         end
-                    end
-                    if wantSpot and not facts.spot and z ~= t
-                        and rd2 > BridgeCallout.SPOT_MIN_DIST * BridgeCallout.SPOT_MIN_DIST
-                        and rd2 < BridgeCallout.SPOT_DIST * BridgeCallout.SPOT_DIST then
-                        local seen = false
-                        pcall(function() seen = BridgeFight.visible(z, red) end)
-                        if seen then facts.spot = true end
-                    end
-                    if wantCrawler and not facts.crawler and proneZ(z)
-                        and math.min(math.sqrt(bd2), math.sqrt(rd2)) < BridgeCallout.CRAWLER_DIST then
-                        local seen = false
-                        pcall(function() seen = red:CanSee(z) or body:CanSee(z) end)
-                        if seen then facts.crawler = true end
-                    end
-                    if wantBreach and not facts.breach and tostring(z:getActionStateName()) == "thump"
-                        and math.min(math.sqrt(bd2), math.sqrt(rd2)) < BridgeCallout.BREACH_DIST then
-                        local seen = false
-                        pcall(function() seen = red:CanSee(z) or body:CanSee(z) end)
-                        if seen then facts.breach = true end
                     end
                 end
             end
@@ -350,20 +438,19 @@ end
 
 local function noZombiesInSight(red, body, dist)
     local clear = true
+    local d2 = dist * dist
     pcall(function()
         local list = getCell():getZombieList()
-        for i = 0, list:size() - 1 do
-            local z = list:get(i)
-            if z ~= nil and z ~= body and not isBodyZ(z) and not BridgeData.harmless(z) then
-                local alive = false
-                pcall(function() alive = z:isAlive() and z:getHealth() > 0 end)
-                if alive then
-                    local dx, dy = z:getX() - red:getX(), z:getY() - red:getY()
-                    if dx * dx + dy * dy < dist * dist and math.abs(z:getZ() - red:getZ()) < 1 then
-                        local seen = false
-                        pcall(function() seen = red:CanSee(z) end)
-                        if seen then clear = false return end
-                    end
+        local n = list:size()
+        for i = 0, n - 1 do
+            local z = nil
+            pcall(function() z = list:get(i) end)
+            if z ~= nil and threatZ(z, body, true) then
+                local dx, dy = z:getX() - red:getX(), z:getY() - red:getY()
+                if dx * dx + dy * dy < d2 and math.abs(z:getZ() - red:getZ()) < 1 then
+                    local seen = false
+                    pcall(function() seen = red:CanSee(z) end)
+                    if seen then clear = false return end
                 end
             end
         end
@@ -479,28 +566,7 @@ function BridgeCallout.lostTarget()
 end
 
 function BridgeCallout.sayPriority(event)
-    if BridgeCallout.ENABLED == 0 then return false end
-    if carQuiet() then return false end
-    local e = BridgeCallout.EVENTS[event]
-    if e == nil then return false end
-    if BridgeCallout.SAY[event] == 0 then return false end
-    local gap = BridgeCallout.REPEAT_GAP * BridgeCallout.SEC
-    if Bridge.time - BridgeCallout.lastAny < gap then
-        BridgeCallout.info = "blocked " .. event
-        return false
-    end
-    local said = false
-    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeCallout.SEC, true, e.slot) == true end)
-    if said then
-        BridgeCallout.lastAny = Bridge.time
-        BridgeCallout.deferred = {}
-        BridgeCallout.info = event
-        log(event)
-        dlog("said priority " .. event .. " (slot " .. tostring(e.slot) .. ")")
-    else
-        BridgeCallout.info = "blocked " .. event
-    end
-    return said
+    return attempt(event, true)
 end
 
 function BridgeCallout.aimClear(onMe)
@@ -517,8 +583,10 @@ function BridgeCallout.behind()
 end
 
 function BridgeCallout.horde(n)
-    if n ~= nil and n < BridgeCallout.HORDE_COUNT then return false end
-    return say("EvHorde")
+    if BridgeHorde == nil then return false end
+    local tier = BridgeHorde.tier(n)
+    if tier == nil then return false end
+    return say("EvHorde" .. tier)
 end
 
 function BridgeCallout.spot()
@@ -1150,7 +1218,11 @@ end
 
 function BridgeCallout.update(body)
     if body == nil then return end
-    if type(BridgeCallout.homeTrack) == "function" then
+    local scanDue = Bridge.every(15)
+    -- homeTrack accumulates from world-age deltas, so sampling it at the scan
+    -- cadence (not every frame) keeps the same result. carQuiet stays per-frame
+    -- because it guards flush()/dropCarLines() ordering.
+    if scanDue and type(BridgeCallout.homeTrack) == "function" then
         pcall(function() BridgeCallout.homeTrack(body, BridgeData.owner()) end)
     end
     if carQuiet() then
@@ -1159,7 +1231,7 @@ function BridgeCallout.update(body)
         return
     end
     if BridgeCallout.ENABLED == 0 then return end
-    if not Bridge.every(15) then return end
+    if not scanDue then return end
     if not Bridge.alive() then return end
     local red = BridgeData.owner()
     if red == nil then return end
@@ -1210,14 +1282,33 @@ function BridgeCallout.update(body)
         BridgeCallout.lastHealth = health
     end
 
-    local facts = scanWorld(body, red)
+    -- Unified horde tiers are a priority line in both idle and combat.
+    if BridgeHorde ~= nil then
+        local SAY = BridgeCallout.SAY
+        if SAY.EvHorde32 ~= 0 or SAY.EvHorde16 ~= 0 or SAY.EvHorde8 ~= 0 or SAY.EvHorde4 ~= 0 then
+            local hx, hy, hz = nil, nil, nil
+            pcall(function() hx, hy, hz = red:getX(), red:getY(), red:getZ() end)
+            if hx ~= nil then
+                local n = BridgeHorde.count(hx, hy, hz, BridgeHorde.RADIUS)
+                local tiers = BridgeHorde.TIERS
+                for i = #tiers, 1, -1 do
+                    local t = tiers[i]
+                    if n >= t and SAY["EvHorde" .. t] ~= 0 then
+                        if say("EvHorde" .. t) then return end
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    local facts = scanWorld(body, red, not engaged)
 
     if facts.breach and say("EvBreach") then return end
 
     if fighting then
         if facts.behind and say("EvBehind") then return end
         if facts.flank and say(facts.flankSide == "left" and "EvFlankLeft" or "EvFlankRight") then return end
-        if facts.horde >= BridgeCallout.HORDE_COUNT and say("EvHorde") then return end
         if facts.crawler and say("EvCrawler") then return end
         if BridgeCallout.SAY.EvFinisher ~= 0 and scanFinisher() and say("EvFinisher") then return end
         if BridgeCallout.SAY.EvTaunt ~= 0 and nearTarget(body) then
@@ -1251,7 +1342,7 @@ function BridgeCallout.update(body)
     if not engaged
         and not (BridgeTask ~= nil and BridgeTask.active)
         and (Bridge.time - BridgeCallout.lastCombatAt) >= BridgeCallout.SWING_COMBAT_QUIET * BridgeCallout.SEC
-        and noZombiesInSight(red, body, BridgeCallout.SWING_ZOMBIE_DIST)
+        and not facts.anyThreatInSwing
         and swingingAtHer(red, body, attackingNow, prevAttack) then
         BridgeCallout.swingAtMe()
     end

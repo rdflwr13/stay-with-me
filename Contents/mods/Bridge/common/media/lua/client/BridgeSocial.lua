@@ -1847,6 +1847,27 @@ local function remarkPool(r, red)
 end
 
 
+-- Idle remark shared by the on-foot update and the in-car tick. Same pools, same
+-- nextRemark timer, so driving idle chatter matches the on-foot behaviour.
+function BridgeSocial.idleRemark(red)
+    local r = rel()
+    if r == nil or red == nil then return false end
+    if BridgeSocial.nextRemark == nil then BridgeSocial.nextRemark = Bridge.time + 3600 end
+    if Bridge.time < BridgeSocial.nextRemark then return false end
+    local quiet = false
+    pcall(function() quiet = Bridge.quiet() end)
+    if quiet then return false end
+    local justSpoke = false
+    pcall(function() justSpoke = BridgeMoments.recent(3600) end)
+    if justSpoke then return false end
+    BridgeSocial.nextRemark = Bridge.time + 5400 + ZombRand(9000)
+    local pool = remarkPool(r, red)
+    if say(pool) == nil then say("Remark" .. BridgeData.relTier(r)) end
+    BridgeSocial.lastRemark = Bridge.time
+    return true
+end
+
+
 function BridgeSocial.update(body)
     if Bridge.time - BridgeSocial.lastCheck < 60 then return end
     BridgeSocial.lastCheck = Bridge.time
