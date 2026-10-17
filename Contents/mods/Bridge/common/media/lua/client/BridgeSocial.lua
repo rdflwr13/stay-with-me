@@ -1885,7 +1885,20 @@ end
 
 
 
-local function remarkPool(r, red)
+-- Unseen-but-close zombies: she spots none within 12 tiles, yet the sightless
+-- horde counter finds 1-3 on the same floor nearby. Only 1-3 so the EvHorde
+-- callout keeps handling 4+. Used to pick a tense idle remark.
+local function unseenNearby(red)
+    if red == nil or BridgeHorde == nil or BridgeHorde.count == nil then return false end
+    if zombiesNear(12) then return false end
+    local n = 0
+    pcall(function() n = BridgeHorde.count(red:getX(), red:getY(), red:getZ(), 12) end)
+    n = tonumber(n) or 0
+    return n >= 1 and n <= 3
+end
+
+
+local function remarkPool(r, red, inCar)
     local hurt = false
     pcall(function() hurt = red:getBodyDamage():getNumPartsBleeding() > 0 end)
 
@@ -1893,6 +1906,8 @@ local function remarkPool(r, red)
     pcall(function() recent = BridgeMoments.recent(4 * 3600) end)
     if hurt and not recent then return "RemarkHurt" end
     if recentFight() then return "RemarkAfterFight" end
+    -- Zombies close but not visible (1-3, below the horde tier): a tense aside.
+    if not inCar and unseenNearby(red) then return "RemarkTense" end
     local hour = 12
     pcall(function() hour = getGameTime():getHour() end)
     if (hour >= 22 or hour < 5) and ZombRand(3) == 0 then return "RemarkNight" end
@@ -1915,7 +1930,7 @@ function BridgeSocial.idlePool(r, red, inCar)
             return pool
         end
     end
-    return remarkPool(r, red)
+    return remarkPool(r, red, inCar)
 end
 
 
@@ -1982,10 +1997,12 @@ function BridgeSocial.update(body)
     pcall(function() justSpoke = BridgeMoments.recent(3600) end)
     local quiet = false
     pcall(function() quiet = Bridge.quiet() end)
+    -- chatter = she is free to make an idle remark: no blocking job running (sit and
+    -- lay-awake count as free; lay-asleep is blocked, so she stays silent in bed).
     local chatter = not (BridgeTask ~= nil and BridgeTask.idleChatBlocked ~= nil and BridgeTask.idleChatBlocked())
     -- Shower-only suppression: no idle remarks/gifts while she is in the shower routine.
     local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
-    if calm and not justSpoke and not chatter and not showering and Bridge.time >= BridgeSocial.nextRemark then
+    if calm and not justSpoke and chatter and not showering and Bridge.time >= BridgeSocial.nextRemark then
         BridgeSocial.nextRemark = Bridge.time + 5400 + ZombRand(9000)
 
         if not quiet then
@@ -1997,7 +2014,7 @@ function BridgeSocial.update(body)
 
 
 
-    if calm and not quiet and not chatter and not showering and r.f >= 35 and now >= r.giftAt and BridgeData.optionOf(Bridge.store, "gifts")
+    if calm and not quiet and chatter and not showering and r.f >= 35 and now >= r.giftAt and BridgeData.optionOf(Bridge.store, "gifts")
         and ZombRand(900) == 0 then
         BridgeSocial.give(BridgeSocial.pickGift(red), false)
     end

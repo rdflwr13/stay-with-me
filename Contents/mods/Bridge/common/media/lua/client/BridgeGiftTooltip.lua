@@ -1,7 +1,7 @@
 -- Adds a "Gift" line to the inventory item hover tooltip showing what the companion
--- would gain from the item. Uses the B42 ObjectTooltip layout API (same one the base
--- game's farming/trough tooltips use). Wrapped defensively: if the API or the item
--- class is not available, the vanilla tooltip is drawn unchanged.
+-- would gain from the item. Hooks the item class metatable's DoTooltip once and
+-- appends the line after the vanilla draw, so other mods replacing ISToolTipInv.render
+-- cannot bypass it. Wrapped defensively: on any failure the vanilla tooltip stands.
 BridgeGiftTooltip = BridgeGiftTooltip or {}
 local B = BridgeGiftTooltip
 
@@ -54,85 +54,111 @@ function B.valueText(info)
     return text
 end
 
--- Reserve the same top space Starlit-style wrapping does: the item's title line,
--- plus a line per extra item and for food with spices.
-local function topOffset(item, tooltip)
-    local spacing = 16
-    pcall(function() spacing = tooltip:getLineSpacing() + 5 end)
-    local off = spacing
-    pcall(function()
-        local extra = item:getExtraItems()
-        if extra ~= nil then off = off + spacing * extra:size() end
-    end)
-    pcall(function()
-        if instanceof ~= nil and instanceof(item, "Food") and item:getSpices() ~= nil then
-            off = off + spacing
-        end
-    end)
-    return off
-end
-
-local function padX(tooltip)
-    local pad = 8
-    pcall(function() pad = getTextManager():MeasureStringX(tooltip:getFont(), "0") or pad end)
+-- The line is drawn AFTER the original DoTooltip has finished (its layout is
+-- already closed), so DrawText is used and the tooltip box is grown to hold it.
+local function appendGift(item, tooltip)
+    local info = previewFor(item)
+    if info == nil then return end
+    local font, spacing, pad = nil, 14, 8
+    pcall(function() font = tooltip:getFont() end)
+    pcall(function() spacing = tooltip:getLineSpacing() or 14 end)
+    pcall(function() pad = tooltip.padLeft or pad end)
     if type(pad) ~= "number" or pad <= 0 then pad = 8 end
-    return pad
+    local text = tr("TooltipGift") .. ": " .. B.valueText(info)
+    local y, w = 0, 0
+    pcall(function() y = tooltip:getHeight(); w = tooltip:getWidth() end)
+    pcall(function() tooltip:DrawText(font, text, pad, y + 2, 0.6, 1, 0.6, 1) end)
+    local need = 0
+    pcall(function() need = getTextManager():MeasureStringX(font, text) + pad * 2 end)
+    if need > w then pcall(function() tooltip:setWidth(need) end) end
+    pcall(function() tooltip:setHeight(y + spacing) end)
 end
 
-local function drawWithGift(item, tooltip, info, oldDoTooltip)
-    local ok = pcall(function()
-        local layout = tooltip:beginLayout()
-        pcall(function() layout:setMinLabelWidth(80) end)
-        pcall(function() layout:setMinValueWidth(80) end)
-        item:DoTooltipEmbedded(tooltip, layout, 0)
-        local row = layout:addItem()
-        row:setLabel(tr("TooltipGift") .. ":", 1, 1, 0.8, 1)
-        row:setValue(B.valueText(info), 0.6, 1, 0.6, 1)
-        local pad = padX(tooltip)
-        local height = layout:render(pad, topOffset(item, tooltip), tooltip)
-        tooltip:endLayout(layout)
-        local width = tooltip:getWidth()
-        if type(width) ~= "number" or width < 150 then width = 150 end
-        tooltip:setHeight(height + math.floor(pad / 2))
-        tooltip:setWidth(width)
+-- Install ONCE on the item class metatable and never restore it. Other mods may
+-- replace ISToolTipInv.render, but every tooltip path still ends in DoTooltip.
+local function hookItemClass(item)
+    if item == nil or type(getmetatable) ~= "function" then return false end
+    local mt = getmetatable(item)
+    local im = mt ~= nil and mt.__index or nil
+    if im == nil or type(im.DoTooltip) ~= "function" then return false end
+    if im.bridgeGiftHooked then return true end
+    local orig = im.DoTooltip
+    im.DoTooltip = function(self, tooltip)
+        orig(self, tooltip)
+        if B.enabled then pcall(appendGift, self, tooltip) end
+    end
+    im.bridgeGiftHooked = true
+    log("gift tooltip hooked")
+    return true
+end
+
+-- Grab a live InventoryItem and hook its class. No player/inventory yet -> false.
+local function tryHook()
+    local item = nil
+    pcall(function()
+        local p = getSpecificPlayer(0)
+        local inv = p and p:getInventory()
+        local items = inv and inv:getItems()
+        if items ~= nil and items:size() > 0 then item = items:get(0) end
     end)
-    if not ok then pcall(oldDoTooltip, item, tooltip) end
+    return hookItemClass(item)
 end
 
 local function install()
+    if tryHook() then return true end
+    -- Fallback: thin probe that hooks the class on the first hover, then defers.
     if ISToolTipInv == nil or type(ISToolTipInv.render) ~= "function" then return false end
-    if ISToolTipInv.bridgeGiftWrapped then return true end
+    if ISToolTipInv.bridgeGiftProbe then return false end
     local oldRender = ISToolTipInv.render
     ISToolTipInv.render = function(self)
-        local item = self ~= nil and self.item or nil
-        if not B.enabled or item == nil or type(getmetatable) ~= "function" then
-            return oldRender(self)
-        end
-        local info = previewFor(item)
-        if info == nil then
-            return oldRender(self)
-        end
-        local mt = getmetatable(item)
-        local itemMetatable = mt ~= nil and mt.__index or nil
-        if itemMetatable == nil or type(itemMetatable.DoTooltip) ~= "function" then
-            return oldRender(self)
-        end
-        local oldDoTooltip = itemMetatable.DoTooltip
-        itemMetatable.DoTooltip = function(innerItem, tooltip)
-            drawWithGift(innerItem, tooltip, info, oldDoTooltip)
-        end
-        local ok, err = pcall(oldRender, self)
-        itemMetatable.DoTooltip = oldDoTooltip
-        if not ok then log("render error: " .. tostring(err)) end
+        if self ~= nil and self.item ~= nil then hookItemClass(self.item) end
+        return oldRender(self)
     end
-    ISToolTipInv.bridgeGiftWrapped = true
-    log("gift tooltip installed")
+    ISToolTipInv.bridgeGiftProbe = true
+    return true
+end
+
+-- Starlit Library replaces ISToolTipInv.render and, while rendering, replaces the
+-- item's DoTooltip WITHOUT calling the original (see Starlit/client/ui/InventoryUI.lua),
+-- so the DoTooltip hook above is bypassed whenever Starlit is installed. Starlit fires
+-- onFillItemTooltip(tooltip, layout, item) for exactly this, so add our row there too.
+local function hookStarlit()
+    if B.starlitHooked then return true end
+    local ok, inv = pcall(require, "Starlit/client/ui/InventoryUI")
+    if not ok or inv == nil or inv.onFillItemTooltip == nil
+        or type(inv.onFillItemTooltip.addListener) ~= "function" then
+        return false
+    end
+    inv.onFillItemTooltip:addListener(function(tooltip, layout, item)
+        if not B.enabled or layout == nil or item == nil then return end
+        pcall(function()
+            local info = previewFor(item)
+            if info == nil then return end
+            local row = layout:addItem()
+            row:setLabel(tr("TooltipGift") .. ":", 1, 1, 0.8, 1)
+            row:setValue(B.valueText(info), 0.6, 1, 0.6, 1)
+        end)
+    end)
+    B.starlitHooked = true
+    log("starlit tooltip listener added")
     return true
 end
 
 B.install = install
-if not install() then
-    if type(Events) == "table" and Events.OnGameStart ~= nil then
-        Events.OnGameStart.Add(function() install() end)
+install()
+hookStarlit()
+if type(Events) == "table" and Events.OnGameStart ~= nil then
+    Events.OnGameStart.Add(function() install(); hookStarlit() end)
+end
+-- Retry until the class is hooked: covers an inventory empty at game start and
+-- mods that take over ISToolTipInv.render before the first hover.
+if type(Events) == "table" and Events.OnTick ~= nil and Events.OnTick.Add ~= nil then
+    local tries = 0
+    local function retry()
+        tries = tries + 1
+        if tryHook() or tries > 600 then
+            pcall(function() Events.OnTick.Remove(retry) end)
+        end
     end
+    Events.OnTick.Add(retry)
 end

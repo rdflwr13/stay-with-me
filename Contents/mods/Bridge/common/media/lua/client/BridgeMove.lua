@@ -4890,6 +4890,7 @@ function BridgeMove.shouldCross(body, kind, from, to)
         local yes, why = BridgeMove.trailCrosses(body, from, to)
         return yes, why
     end
+    if Bridge.time < BridgeMove.noGapUntil then return true, "gap suppressed" end
     local g = BridgeMove.goal
     if g == nil then return true, "no goal" end
     local bx, by = body:getX(), body:getY()
@@ -4914,7 +4915,19 @@ end
 
 BridgeMove.gapWay = nil
 BridgeMove.noGapUntil = 0
+BridgeMove.passFirst = 0
+BridgeMove.passCount = 0
 function BridgeMove.setGapWay(a, b)
+    if (Bridge.time - (BridgeMove.passFirst or 0)) > 120 then
+        BridgeMove.passFirst, BridgeMove.passCount = Bridge.time, 0
+    end
+    BridgeMove.passCount = (BridgeMove.passCount or 0) + 1
+    if BridgeMove.passCount > 2 then
+        BridgeMove.gapWay = nil
+        BridgeMove.noGapUntil = Bridge.time + 600
+        log("pass looped " .. BridgeMove.passCount .. "x, climbing")
+        return
+    end
     BridgeMove.gapWay = { ax = a:getX() + 0.5, ay = a:getY() + 0.5, bx = b:getX() + 0.5, by = b:getY() + 0.5,
         z = a:getZ(), stage = 1, best = math.huge, bestAt = Bridge.time, tick = Bridge.tick }
     log(sformat("pass instead of climbing: via %d,%d > %d,%d", a:getX(), a:getY(), b:getX(), b:getY()))

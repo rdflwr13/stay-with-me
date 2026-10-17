@@ -15,7 +15,7 @@ BridgeDrive.ON = {
     FAST   = 1,
     ZOMBIE = 1,
     GREET  = 1,
-    ANIMAL = 1,
+    ANIMAL = 0,
     EXIT   = 1,
     STATE  = 1,
     ROADKILL = 1,
@@ -926,6 +926,16 @@ function BridgeDrive.tick()
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
+        -- Generic "spotted one" while driving: any single zombie seen ahead of the
+        -- car in the road-scan range (6-22 tiles), beyond the close range above.
+        -- Only when no horde tier spoke, so hordes keep priority. Reuses the
+        -- existing EvCarZombie (DriveZombie) lines; non-urgent, 40 s cooldown.
+        if hordeTier == nil and BridgeHorde ~= nil
+            and BridgeHorde.countCone(car, BridgeDrive.SCAN_MIN, BridgeDrive.SCAN_MAX, nil, true, red) > 0
+            and say("EvCarZombie") then
+            BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+            return
+        end
     end
 
 
@@ -1095,7 +1105,7 @@ function BridgeDrive.tick()
     end
 
 
-    if Bridge.every(BridgeDrive.ANIMAL_EVERY) then
+    if BridgeDrive.ON.ANIMAL == 1 and Bridge.every(BridgeDrive.ANIMAL_EVERY) then
         local animal = nil
         pcall(function() animal = scanAnimal(car, red) end)
         if animal ~= nil and say("EvCarAnimal") then
