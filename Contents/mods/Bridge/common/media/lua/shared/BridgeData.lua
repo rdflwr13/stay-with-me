@@ -22,6 +22,27 @@ BridgeData.NAME_MAX = 20
 BridgeData.MODES = { follow = true, wait = true, rest = true }
 
 
+-- World-locked sandbox options (page "StayWithMe", see media/sandbox-options.txt).
+-- Read fresh per call so runtime sandbox mutation is respected; nil-safe because
+-- SandboxVars is briefly unset while a world loads.
+BridgeData.SANDBOX_PAGE = "StayWithMe"
+
+function BridgeData.sandbox()
+    local t = nil
+    pcall(function() t = (SandboxVars ~= nil) and SandboxVars[BridgeData.SANDBOX_PAGE] or nil end)
+    return t
+end
+
+function BridgeData.sandboxNumber(key, default, min, max)
+    local t = BridgeData.sandbox()
+    local v = (t ~= nil) and tonumber(t[key]) or nil
+    if v == nil or v ~= v then v = default end
+    if min ~= nil and v < min then v = min end
+    if max ~= nil and v > max then v = max end
+    return v
+end
+
+
 
 
 
@@ -1442,7 +1463,8 @@ BridgeData.STRENGTH_CARRY = { 15, 16, 17, 18, 20, 21, 23, 24, 25, 27, 29 }
 
 function BridgeData.carryForStrengthLevel(level)
     level = math.max(0, math.min(10, math.floor(tonumber(level) or 0)))
-    return BridgeData.STRENGTH_CARRY[level + 1]
+    local bonus = BridgeData.sandboxNumber("CarryCapacityBonus", 0, 0, 20)
+    return BridgeData.STRENGTH_CARRY[level + 1] + bonus
 end
 
 

@@ -132,11 +132,13 @@ end
 function BridgeMood.roll(id)
     local t = BridgeMood.TALK[id]
     if t == nil then return nil end
+    local m = BridgeData.sandboxNumber("MoodEffectMultiplier", 1, 0, 3)
     local out = {}
     for key, range in pairs(t) do
         local v = range[1]
         pcall(function() v = ZombRandFloat(range[1], range[2]) end)
         if type(v) ~= "number" or v < range[1] or v > range[2] then v = range[1] end
+        if m ~= 1 then v = v * m end
         out[key] = v
     end
     return out
@@ -284,12 +286,17 @@ end
 
 function BridgeMood.flush(red)
     local acc = BridgeMood.acc
+    local m = BridgeData.sandboxNumber("MoodEffectMultiplier", 1, 0, 3)
+    if m == 1 then m = nil end
     local deltas = {
         bored = acc.bored * BridgeMood.global("BoredomDecrease") * 0.1,
         unhappy = acc.unhappy * BridgeMood.global("UnhappinessIncrease"),
         stress = acc.stress * BridgeMood.global("StressDecrease"),
         anger = acc.anger * BridgeMood.global("AngerDecrease"),
     }
+    if m ~= nil then
+        for k, v in pairs(deltas) do deltas[k] = v * m end
+    end
     BridgeMood.acc = { bored = 0, unhappy = 0, stress = 0, anger = 0 }
     local any = false
     for _, v in pairs(deltas) do if v > 0 then any = true end end

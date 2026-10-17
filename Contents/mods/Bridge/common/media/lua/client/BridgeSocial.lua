@@ -18,8 +18,8 @@ BridgeSocial.sentAt = -9999
 BridgeSocial.info = "none"
 BridgeSocial.CAR_CHAT_CHANCE = 0.6
 
-local CAP_F = 6
-local CAP_R = 3
+-- Relationship/gift daily caps are sandbox-tunable (BridgeData.sandboxNumber).
+-- The literals here are the fallback defaults when no sandbox page is loaded.
 local COMBAT_KILL_STEP = 5
 local COMBAT_DAILY_CAP = 3
 local COMBAT_NEAR = 10
@@ -64,6 +64,16 @@ local function clamp(v, lo, hi)
     if v > hi then return hi end
     return v
 end
+
+-- Scaling helper: returns v unchanged at the default multiplier so a world with
+-- no sandbox page behaves exactly as before (no float drift in displayed values).
+local function mult(v, m)
+    if m == 1 then return v end
+    return v * m
+end
+
+local function relMult() return BridgeData.sandboxNumber("RelationshipGainMultiplier", 1, 0, 5) end
+local function giftMult() return BridgeData.sandboxNumber("GiftAffectionMultiplier", 1, 0, 5) end
 
 
 local function popRel(df, dr)
@@ -230,7 +240,7 @@ local function rollDay(r)
     if r.day == day then return end
     if r.seen > 0 and r.hours >= DAY_HOURS then
         r.days = r.days + 1
-        r.f = clamp(r.f + 1, -100, 100)
+        r.f = clamp(r.f + mult(1, relMult()), -100, 100)
     end
     r.day = day
     r.hours = 0
@@ -255,28 +265,34 @@ local function tierBonus(r)
     return 0
 end
 
-local GIFT_CAP_F, GIFT_CAP_R = 3, 1
+local function giftCaps()
+    return BridgeData.sandboxNumber("DailyGiftCapFriend", 3, 0, 50),
+        BridgeData.sandboxNumber("DailyGiftCapRomance", 1, 0, 50)
+end
 
 local function capF(r, relaxed)
-    return CAP_F + tierBonus(r) + ((relaxed == true) and 2 or 0)
+    return BridgeData.sandboxNumber("DailyFriendCap", 6, 0, 50) + tierBonus(r) + ((relaxed == true) and 2 or 0)
 end
 
 local function capR(r, relaxed)
-    return CAP_R + tierBonus(r) + ((relaxed == true) and 2 or 0)
+    return BridgeData.sandboxNumber("DailyRomanceCap", 3, 0, 50) + tierBonus(r) + ((relaxed == true) and 2 or 0)
 end
 
 local function gain(r, df, dr, relaxed)
     rollDay(r)
+    local m = relMult()
     if df > 0 then
         local room = capF(r, relaxed) - r.gainF
         if room <= 0 then df = 0 elseif df > room then df = room end
         r.gainF = r.gainF + df
+        df = mult(df, m)
     end
     if dr > 0 and not BridgeSocial.romanceOn() then dr = 0 end
     if dr > 0 then
         local room = capR(r, relaxed) - r.gainR
         if room <= 0 then dr = 0 elseif dr > room then dr = room end
         r.gainR = r.gainR + dr
+        dr = mult(dr, m)
     end
     r.f = clamp(r.f + df, -100, 100)
     r.r = clamp(r.r + dr, 0, 100)
@@ -294,12 +310,15 @@ function BridgeSocial.deed(kind)
         local now = hours()
         if now < (r.healAt or 0) then return end
         r.healAt = now + 6
-        r.f = clamp(r.f + 2, -100, 100)
-        popRel(2, 0)
+        local heal = mult(2, relMult())
+        r.f = clamp(r.f + heal, -100, 100)
+        popRel(heal, 0)
     elseif kind == "hit" then
-        r.f = clamp(r.f - 8, -100, 100)
-        r.r = clamp(r.r - 5, 0, 100)
-        popRel(-8, -5)
+        local v = BridgeData.sandboxNumber("RelationshipLossOnHit", 8, 0, 50)
+        local dr = math.floor(v * 5 / 8 + 0.5)
+        r.f = clamp(r.f - v, -100, 100)
+        r.r = clamp(r.r - dr, 0, 100)
+        popRel(-v, -dr)
     end
     BridgeSocial.save(true)
 end
@@ -363,7 +382,10 @@ function BridgeSocial.romanceOn()
 end
 
 function BridgeSocial.romanceOpen(r)
-    return r ~= nil and r.f >= 30 and r.days >= 2 and BridgeSocial.romanceOn()
+    return r ~= nil
+        and r.f >= BridgeData.sandboxNumber("RomanceRequirementFriend", 30, 0, 100)
+        and r.days >= BridgeData.sandboxNumber("RomanceRequirementDays", 2, 0, 30)
+        and BridgeSocial.romanceOn()
 end
 
 
@@ -1050,10 +1072,12 @@ function BridgeSocial.gift(item, pool)
     if given then return "done" end
     rollDay(r)
     local g = BridgeSocial.GIFT[pool]
-    local df = math.max(0, math.min(g.f, (GIFT_CAP_F + tierBonus(r)) - (r.giftF or 0)))
+    local gf, gr = mult(g.f, giftMult()), mult(g.r, giftMult())
+    local capFg, capRg = giftCaps()
+    local df = math.max(0, math.min(gf, (capFg + tierBonus(r)) - (r.giftF or 0)))
     local dr = 0
-    if g.r > 0 and BridgeSocial.romanceOpen(r) then
-        dr = math.max(0, math.min(g.r, (GIFT_CAP_R + tierBonus(r)) - (r.giftR or 0)))
+    if gr > 0 and BridgeSocial.romanceOpen(r) then
+        dr = math.max(0, math.min(gr, (capRg + tierBonus(r)) - (r.giftR or 0)))
     end
     if df <= 0 and dr <= 0 then
         log(string.format("gift %s held (budget full) f=%d r=%d", pool, r.f, r.r))
@@ -1086,14 +1110,16 @@ function BridgeSocial.giftPreview(item)
     local given = false
     pcall(function() given = item:getModData().bridgeGiven == true end)
     local bonus = tierBonus(r)
-    local effF = math.max(0, math.min(g.f, (GIFT_CAP_F + bonus) - (r.giftF or 0)))
+    local gf, gr = mult(g.f, giftMult()), mult(g.r, giftMult())
+    local capFg, capRg = giftCaps()
+    local effF = math.max(0, math.min(gf, (capFg + bonus) - (r.giftF or 0)))
     local effR = 0
-    if g.r > 0 and BridgeSocial.romanceOpen(r) then
-        effR = math.max(0, math.min(g.r, (GIFT_CAP_R + bonus) - (r.giftR or 0)))
+    if gr > 0 and BridgeSocial.romanceOpen(r) then
+        effR = math.max(0, math.min(gr, (capRg + bonus) - (r.giftR or 0)))
     end
     local romanceOn = false
     pcall(function() romanceOn = BridgeSocial.romanceOn() == true end)
-    return { pool = pool, f = g.f, r = g.r, effF = effF, effR = effR,
+    return { pool = pool, f = gf, r = gr, effF = effF, effR = effR,
         given = given, capped = (not given) and effF <= 0 and effR <= 0, romanceOn = romanceOn }
 end
 
@@ -1131,10 +1157,11 @@ function BridgeSocial.giftCommand(sub, a, b)
     if sub == "show" or sub == "status" then
         rollDay(r)
         local bonus = tierBonus(r)
+        local capFg, capRg = giftCaps()
         local tier = "?"
         pcall(function() tier = BridgeData.relTier(r) end)
         return string.format("gift giftF=%d/%d giftR=%d/%d tier=%s day=%d",
-            r.giftF or 0, GIFT_CAP_F + bonus, r.giftR or 0, GIFT_CAP_R + bonus, tostring(tier), r.day or 0)
+            r.giftF or 0, capFg + bonus, r.giftR or 0, capRg + bonus, tostring(tier), r.day or 0)
     end
     if sub == "reset" or sub == "giftreset" then
         rollDay(r)
@@ -1438,9 +1465,11 @@ function BridgeSocial.maleGift(item, pool)
     pcall(function() given = item:getModData().bridgeGiven == true end)
     if given then return "done" end
     rollDay(r)
-    local df = math.max(0, math.min(g.f, DRESS_CAP_F - (r.dressF or 0)))
+    local m = relMult()
+    local gf, gr = mult(g.f, giftMult()), mult(g.r, giftMult())
+    local df = math.max(0, math.min(gf, DRESS_CAP_F - (r.dressF or 0)))
     local dr = 0
-    if g.r > 0 and BridgeSocial.romanceOpen(r) then dr = math.max(0, math.min(g.r, DRESS_CAP_R - (r.dressR or 0))) end
+    if gr > 0 and BridgeSocial.romanceOpen(r) then dr = math.max(0, math.min(gr, DRESS_CAP_R - (r.dressR or 0))) end
     if df <= 0 and dr <= 0 then
         log(string.format("male gift %s held (budget full) f=%d r=%d", pool, r.f, r.r))
         return "full"
@@ -1448,9 +1477,9 @@ function BridgeSocial.maleGift(item, pool)
     BridgeSocial.markGiven(item)
     r.dressF = (r.dressF or 0) + df
     r.dressR = (r.dressR or 0) + dr
-    r.f = clamp(r.f + df, -100, 100)
-    r.r = clamp(r.r + dr, 0, 100)
-    popRel(df, dr)
+    r.f = clamp(r.f + mult(df, m), -100, 100)
+    r.r = clamp(r.r + mult(dr, m), 0, 100)
+    popRel(mult(df, m), mult(dr, m))
     BridgeSocial.save(true)
     BridgeSocial.giftVersion = (BridgeSocial.giftVersion or 0) + 1
     log(string.format("male gift %s +%d/+%d f=%d r=%d", pool, df, dr, r.f, r.r))
@@ -1508,15 +1537,16 @@ function BridgeSocial.dressed(item)
     if isMale() then
         kind = BridgeSocial.MALE_DRESS[pool] or (isJewel(item) and BridgeSocial.MALE_DRESS.DressJewel) or BridgeSocial.DRESS.cloth
     end
+    local m = relMult()
     local df = math.max(0, math.min(kind.f, DRESS_CAP_F - (r.dressF or 0)))
     local dr = 0
     if kind.r > 0 and BridgeSocial.romanceOpen(r) then dr = math.max(0, math.min(kind.r, DRESS_CAP_R - (r.dressR or 0))) end
     if df > 0 or dr > 0 then
         r.dressF = (r.dressF or 0) + df
         r.dressR = (r.dressR or 0) + dr
-        r.f = clamp(r.f + df, -100, 100)
-        r.r = clamp(r.r + dr, 0, 100)
-        popRel(df, dr)
+        r.f = clamp(r.f + mult(df, m), -100, 100)
+        r.r = clamp(r.r + mult(dr, m), 0, 100)
+        popRel(mult(df, m), mult(dr, m))
         BridgeSocial.save(true)
     end
     BridgeSocial.info = string.format("dressed %s +%d/+%d f=%d r=%d", pool, df, dr, r.f, r.r)

@@ -554,7 +554,7 @@ local function humanize(body)
         if BridgeSkills ~= nil then
             BridgeSkills.applyCarry(body)
         else
-            body:getInventory():setCapacity(15)
+            body:getInventory():setCapacity(BridgeData.carryForStrengthLevel(0))
         end
     end)
     pcall(function() body:getInventory():setExplored(true) end)

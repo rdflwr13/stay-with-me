@@ -1269,6 +1269,17 @@ BridgeServer.Commands.state = function(player, args)
         local rel = BridgeData.cleanRel(args.rel)
         if rel ~= nil then
 
+            -- Sandbox relationship ceilings. The rate multiplier is a client-side
+            -- value that cannot be re-derived from absolute server state, so the
+            -- server only limits the stored daily counters to the sandbox caps
+            -- plus the shared tier bonus; it never raises a stored value.
+            local tier = BridgeData.relTier(rel)
+            local bonus = (tier == "Close" and 3) or (tier == "Friend" and 2) or (tier == "Pal" and 1) or 0
+            rel.gainF = math.min(rel.gainF, BridgeData.sandboxNumber("DailyFriendCap", 6, 0, 50) + bonus)
+            rel.gainR = math.min(rel.gainR, BridgeData.sandboxNumber("DailyRomanceCap", 3, 0, 50) + bonus)
+            rel.giftF = math.min(rel.giftF, BridgeData.sandboxNumber("DailyGiftCapFriend", 3, 0, 50) + bonus)
+            rel.giftR = math.min(rel.giftR, BridgeData.sandboxNumber("DailyGiftCapRomance", 1, 0, 50) + bonus)
+
             local old = BridgeData.relOf(rec)
             rel.giftAt = math.max(rel.giftAt or 0, old.giftAt or 0)
             rec.rel = rel
