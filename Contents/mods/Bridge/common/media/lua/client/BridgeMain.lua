@@ -21,9 +21,6 @@ if BridgeLog ~= nil and BridgeLog.on() then print("[Bridge] main loaded v225") e
 local START_AXE = { condition = 10, head = 10, sharpness = 0.6 }
 
 
--- Spawn speech grace (BridgeMain). Bridge.time advances ~60 units per real second
--- (Bridge.onTick: dt = getRealworldSecondsSinceLastUpdate() * 60), so 5 * 60 is a
--- 5 real-second window. While graced she may not say any line (see Bridge.speakText).
 local SPAWN_SPEAK_GRACE = 5 * 60
 
 Bridge = Bridge or {}
@@ -1084,7 +1081,6 @@ local function dressBody(body)
 
 
     local restored = wearSaved(body)
-    -- If a shower was interrupted by a save/reload, put her pre-shower outfit back on.
     if BridgeShower ~= nil and BridgeShower.restorePersisted ~= nil then
         pcall(function()
             if BridgeShower.restorePersisted(body) and restored == nil then restored = "shower resume" end
@@ -2109,15 +2105,11 @@ function Bridge.carLine(text)
 end
 
 
--- True while she is inside the post-spawn speech grace window.
 function Bridge.speechGraced()
     return Bridge.time < (Bridge.speakGraceUntil or 0)
 end
 
 
--- Start (or restart) the post-spawn speech grace. Called when a live companion
--- body is adopted, and again immediately after the arrival greeting, so that
--- "I'm here" is the only line on spawn and every other line waits 5 s after it.
 function Bridge.noteSpawned()
     Bridge.speakGraceUntil = Bridge.time + SPAWN_SPEAK_GRACE
 end
@@ -2125,8 +2117,6 @@ end
 
 function Bridge.speakText(text)
 
-    -- Global spawn gate: no line from any path (Bridge.speak, BridgeMoments,
-    -- BridgeSocial, menus, tasks, ...) is spoken until the grace window ends.
     if Bridge.speechGraced() then
         log("speech held during spawn grace (" .. tostring(math.ceil((Bridge.speakGraceUntil or 0) - Bridge.time)) .. "t): " .. tostring(text))
         return text
@@ -3023,13 +3013,8 @@ function Bridge.onZombieDead(zombie)
 end
 
 
--- Fail-safe: if she keeps dying, or keeps falling over while seated/lying, put her
--- back at the player as if she had just respawned. Singleplayer only.
 local FAILSAFE_LIMIT, FAILSAFE_WINDOW, FAILSAFE_COOLDOWN = 3, 3600, 600
 
--- Count one failure (a death, or a fall while posed). Returns true when the count
--- reached the limit and she was reset. The counter clears after FAILSAFE_WINDOW with
--- no further failure, so unrelated one-off deaths never accumulate.
 function Bridge.notePoseFail(why)
     if Bridge.mp then return false end
     local fs = Bridge.failSafe
@@ -3336,8 +3321,6 @@ local function updateZombieBody(body)
             log("body revealed after " .. tostring(age) .. " ticks, " .. tostring(why))
             if Bridge.greetOnReveal then
                 Bridge.greetOnReveal = nil
-                -- The arrival greeting is the one line allowed on spawn: speak it
-                -- now, then hold every other line for the 5 s grace that follows.
                 Bridge.speakGraceUntil = 0
                 Bridge.speak("Hello")
                 Bridge.noteSpawned()
@@ -3414,8 +3397,6 @@ local function updateZombieBody(body)
 
 
         local okSnap, list = pcall(function() return BridgeInventory.snapshot(body) end)
-        -- While she is in the shower her clothes are un-worn on purpose: don't persist that as the
-        -- canonical outfit, so a save/reload re-dresses her from the last dressed state.
         local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
         if okSnap and not showering then
             local sign = BridgeItems.signature(list)
@@ -4488,10 +4469,6 @@ function Bridge.onZombieUpdate(zombie)
 
 
 
-                -- do not unhide here: while the body is still remote the bare
-                -- "Naked" zombie would render before the skin and outfit are
-                -- applied. The normal reveal (updateZombieBody -> showReady)
-                -- unhides her below once she is actually dressed.
                 if not ownerNearBody(zombie, BridgeData.owner()) then
                     pcall(function() applyLook(zombie, Bridge.body ~= zombie, rec, who) end)
 
@@ -6526,11 +6503,6 @@ function Bridge.onTick()
     driveTick()
 
 
-    -- City entry callouts run at the scan cadence from here, not from
-    -- BridgeCallout.update: while she rides in a vehicle her body is despawned and
-    -- updateZombieBody (and therefore BridgeCallout.update) does not run, so a hook
-    -- there would never fire city lines in a car. cityTick gates on "near her or in
-    -- the same vehicle" itself and handles a nil body.
     if Bridge.every(15) and BridgeCallout ~= nil and type(BridgeCallout.cityTick) == "function" then
         pcall(function() BridgeCallout.cityTick(Bridge.body) end)
     end

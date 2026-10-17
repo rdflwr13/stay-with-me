@@ -58,8 +58,6 @@ BridgeTorchShared.CFG = {
     DARK_HI = 0.55,
 
 
-    -- Indoor daylight offset (0..1) added to a room's light level in darkAt so a
-    -- sunlit interior is not misread as dark. 0 disables the behaviour.
     INDOOR_DAY = 0.35,
 
 
@@ -403,8 +401,6 @@ function BridgeTorchShared.darkAt(body)
         if sq:isOutside() then
             if c ~= nil then lvl = math.max(c:getDayLightStrength(), lvl) end
         else
-            -- Indoors: nudge the level up by daylight strength so a sunlit room is
-            -- not read as dark. Torch-independent, so it cannot cause flicker.
             if c ~= nil then lvl = lvl + (tonumber(c:getDayLightStrength()) or 0) * BridgeTorchShared.CFG.INDOOR_DAY end
         end
     end)

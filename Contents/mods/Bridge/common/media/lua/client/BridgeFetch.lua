@@ -1,21 +1,9 @@
 
--- BridgeFetch
--- Home auto-fetch: instantly moves a needed item from a container inside the
--- home zone straight into her inventory. No walking, no pathing, no looting
--- animation, no gesture. One item per need.
---
--- Triggered on demand only:
---   * job start that needs a missing tool/resource (chopTree, clearPlants, cleanUp)
---   * auto-heal bandage / disinfectant
---   * auto-torch battery
---
--- Guarded by the "homeResources" option (Home tab), a set home, and her being
--- in or near the home zone. Anything unsatisfied falls back to today's behavior.
 
 BridgeFetch = BridgeFetch or {}
 
-local MARGIN = 6            -- tiles outside the home rect still count as "near home"
-local PENDING_TIMEOUT = 240 -- frames a deferred job waits for an MP transfer before giving up
+local MARGIN = 6
+local PENDING_TIMEOUT = 240
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeFetch] " .. tostring(text)) end end
 
@@ -140,8 +128,6 @@ BridgeFetch.BY_ID = {}
 for _, n in ipairs(BridgeFetch.NEEDS) do BridgeFetch.BY_ID[n.id] = n end
 
 
--- Does she already carry one of these? Uses the same predicates the jobs use, so
--- "has" matches the job's own notion of "missing".
 function BridgeFetch.has(id)
     local b = Bridge.body
     if b == nil then return false end
@@ -184,9 +170,6 @@ function BridgeFetch.available()
 end
 
 
--- Client-side selection: nearest matching container; for cleaning fluid, the
--- container holding the most fluid. Respects locked/her-own filters (via
--- BridgeWorkSelect.lootTargets).
 function BridgeFetch.findItem(needId)
     local need = BridgeFetch.BY_ID[needId]
     local b = Bridge.body
@@ -234,9 +217,6 @@ function BridgeFetch.findItem(needId)
 end
 
 
--- Move one item for a need. SP: instant container -> inventory. MP: ask the
--- server, which moves it and replies through the existing "gave" pipeline.
--- Returns "moved" | "requested" | "have" | "absent" | "noroom" | "unavailable" | "failed".
 function BridgeFetch.pull(needId)
     if not BridgeFetch.available() then return "unavailable" end
     if BridgeFetch.has(needId) then return "have" end
@@ -292,7 +272,6 @@ local function jobEnabled(kind)
 end
 
 
--- Which curated need ids is this job missing right now?
 function BridgeFetch.jobMissing(kind, targets)
     local out = {}
     local b = Bridge.body
@@ -348,11 +327,6 @@ function BridgeFetch.jobMissing(kind, targets)
 end
 
 
--- Pre-phase for BridgeTask.start. Returns:
---   "skip"    -- nothing to do (option off / away / already supplied); continue normally
---   "ok"      -- item(s) pulled (SP) or already satisfied; continue normally
---   "pending" -- MP request(s) in flight; defer the job
---   "blocked" -- a need could not be satisfied; fall back to the normal missing path
 function BridgeFetch.primeJob(kind, targets)
     if not BridgeFetch.available() then return "skip" end
     local missing = BridgeFetch.jobMissing(kind, targets)

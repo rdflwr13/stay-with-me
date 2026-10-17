@@ -612,8 +612,6 @@ function BridgeHeal.start(body, red, byRequest)
         return "clean"
     end
 
-    -- Home auto-fetch: pull a missing bandage/disinfectant straight from a home
-    -- container before falling back to the "I have nothing" speech.
     local fetched = false
     if BridgeFetch ~= nil and type(BridgeFetch.available) == "function" and lacking ~= nil
             and BridgeFetch.available() and type(BridgeFetch.pull) == "function" then

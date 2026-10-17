@@ -1,16 +1,3 @@
--- Soft compatibility with "Take A Bath And Shower [SP/MP]" (TABAS, id TakeABathAndShowerNew).
---
--- TABAS does not use vanilla water objects for bathtubs and showers: tub water lives in a
--- custom "TubFluidContainer" special object and the faucet is a separate grid-extension bath
--- sprite (showers expose the shower object itself as the water source). Bridge's normal sink
--- detection (BridgeWash.isWaterObject / BridgeMenu.waterUnder) therefore never sees them, so
--- the companion Wash/Fill menu never appears there.
---
--- This module detects TABAS, resolves the bathtub/shower through TABAS' own API, exposes a
--- usable water source as a Bridge "sink" proxy, and injects the companion submenu into TABAS'
--- root option (the moveable display name, e.g. "White Bath" / "White Shower"). The handler is
--- added on OnGameStart because TABAS registers its handler at file load (Bridge loads before
--- TABAS) and rebuilds its root option on every context-menu fill.
 
 BridgeBath = BridgeBath or {}
 
@@ -31,8 +18,6 @@ function BridgeBath.active()
     return BridgeBath._active
 end
 
--- TABAS modules are required lazily: Bridge loads before TABAS, so requiring them at
--- file-load time would fail.
 local function tabas()
     if BridgeBath._iso == nil then
         local ok, mod = pcall(require, "TABAS_Iso")
@@ -89,7 +74,6 @@ local function useTfc(tfc, amount)
     return used
 end
 
--- Wrap a TABAS bathtub as a Bridge-compatible sink object.
 function BridgeBath.sinkProxy(faucetObj)
     local iso, water = tabas()
     if iso == nil or faucetObj == nil then return nil end
@@ -131,7 +115,6 @@ function BridgeBath.sinkProxy(faucetObj)
     return proxy
 end
 
--- Resolve a TABAS bathtub or shower from the world objects under the cursor.
 function BridgeBath.sinkFor(worldobjects)
     local iso = tabas()
     if iso == nil then return nil end
@@ -197,16 +180,12 @@ function BridgeBath.onWashSinkMenu(playerNum, context, worldobjects, test)
     if dupe ~= nil then return end
 
     BridgeMenu.addRinActions(rinMenu, sink)
-    -- Showers use the shower object; bathtubs resolve to their faucet, which TABAS also treats as a
-    -- valid shower source (getShowerObjectOnSquare(sq, true)). Both support the shower routine.
     if (btype == "Shower" or btype == "Bathtub") and BridgeMenu.addShowerAction ~= nil then
         BridgeMenu.addShowerAction(rinMenu, faucetObj)
     end
     log("tabas bath sink menu obj=" .. tostring(rootName) .. " type=" .. tostring(btype))
 end
 
--- TABAS registers its context handler at file load; registering ours on OnGameStart keeps it
--- after TABAS, so the bathtub root option already exists when we attach to it.
 Events.OnGameStart.Add(function()
     if not BridgeBath.active() then return end
     if BridgeBath.registered then return end

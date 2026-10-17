@@ -181,8 +181,6 @@ function BridgeItems.record(item, deep)
     try(function()
         if not item:IsFood() then return end
         rec.a = item:getAge()
-        -- Eaten portion: a food's remaining hunger is getHungChange() relative to
-        -- getBaseHunger(). Capture the fraction so a re-made item is not full again.
         local base, cur = nil, nil
         pcall(function() base = item:getBaseHunger() end)
         pcall(function() cur = item:getHungChange() end)
@@ -424,7 +422,6 @@ function BridgeItems.apply(item, rec)
     if rec.ck then try(function() item:setCooked(true) end) end
     if rec.bu then try(function() item:setBurnt(true) end) end
     if rec.fp ~= nil then
-        -- Restore the eaten portion and scale nutrition by the same fraction.
         try(function()
             local base = item:getBaseHunger()
             if base ~= nil then item:setHungChange(base * rec.fp) end
@@ -537,8 +534,6 @@ end
 
 
 
--- q is the run-count for coalesced consecutive records. It is parsed (NUM) but
--- deliberately NOT in ORDER, so per-record field building never emits it.
 local NUM = { h = true, p = true, c = true, u = true, a = true, r = true, g = true, b = true,
               tc = true, bt = true, hue = true, k = true, am = true, fa = true, sh = true, hc = true,
               mi = true, pg = true, q = true, fp = true }
@@ -561,9 +556,6 @@ function BridgeItems.encode(list, skip)
     local length = 0
     BridgeItems.truncated = false
 
-    -- Coalesce consecutive records whose serialized field string is identical
-    -- into a single part suffixed with ";q=<run>". Decode expands each run back
-    -- in place, so every record keeps its original index.
     local last, run = nil, 0
     local function flush()
         if last == nil then return true end
@@ -660,8 +652,6 @@ local function cloneValue(v, depth)
     return o
 end
 
--- Append one decoded record, expanding a coalesced run of `q` copies. Cloning
--- keeps expanded siblings independent (removeSubtree mutates `p` on entries).
 local function pushRec(list, rec)
     local n = tonumber(rec.q) or 1
     if n < 1 then n = 1 end

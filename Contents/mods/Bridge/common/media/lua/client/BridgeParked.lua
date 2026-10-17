@@ -1,18 +1,3 @@
-----------------------------------------------------------------------------------------------------
--- BridgeParked: show the companion's inventory while the player drives, and allow moving items
--- in and out of it through the vanilla loot pane.
---
--- While she rides in the car her body is despawned. This module rebuilds a stand-in container
--- (main + worn bags) from the saved snapshot (Bridge.store.items) so the loot pane can show it,
--- and writes the snapshot back so her body is dressed correctly when she gets out again.
---
--- Singleplayer: this container is the source of truth while parked; every change is written back
--- to the store. Multiplayer: it is a client-side mirror of the server-owned snapshot; take/give go
--- through the existing server commands and the mirror follows the server responses.
---
--- Everything here is defensive: the file loads after BridgeMain.lua, so every cross reference is
--- resolved at call time and wrapped in pcall.
------------------------------------------------------------------------------------------------------
 
 BridgeParked = BridgeParked or {}
 
@@ -66,9 +51,6 @@ local function refreshPanels()
 end
 
 
-----------------------------------------------------------------------------------------------------
--- identity
------------------------------------------------------------------------------------------------------
 
 function BridgeParked.isParked(container)
     if not BridgeParked.active or container == nil then return false end
@@ -109,9 +91,6 @@ function BridgeParked.inSameCar()
 end
 
 
-----------------------------------------------------------------------------------------------------
--- build / extra / save
------------------------------------------------------------------------------------------------------
 
 function BridgeParked.rebuild()
     local md = store()
@@ -220,9 +199,6 @@ function BridgeParked.save()
 end
 
 
-----------------------------------------------------------------------------------------------------
--- enter / exit / server notice
------------------------------------------------------------------------------------------------------
 
 function BridgeParked.notifyServer(on)
     local red = owner()
@@ -270,9 +246,6 @@ function BridgeParked.exit(why)
 end
 
 
-----------------------------------------------------------------------------------------------------
--- loot pane buttons
------------------------------------------------------------------------------------------------------
 
 function BridgeParked.addButtons(page)
     if page == nil or page.onCharacter then return false end
@@ -325,9 +298,6 @@ function BridgeParked.addButtons(page)
 end
 
 
-----------------------------------------------------------------------------------------------------
--- context menu + take all
------------------------------------------------------------------------------------------------------
 
 function BridgeParked.onFill(playerNum, context, items)
     if context == nil or not BridgeParked.active then return end
@@ -374,9 +344,6 @@ function BridgeParked.lootAll(pane)
 end
 
 
-----------------------------------------------------------------------------------------------------
--- visual cue for locked (worn/held) items
------------------------------------------------------------------------------------------------------
 
 function BridgeParked.drawLocks(pane)
     if pane == nil or pane.inventory == nil then return end
@@ -417,17 +384,6 @@ function BridgeParked.wrapPane()
     log("inventory pane wrapped for the parked lock cue")
 end
 
------------------------------------------------------------------------------------------------------
--- displayed weight
---
--- The parked stand-in is a plain ItemContainer with nothing equipped, so the engine charges the same
--- items heavier - the "13.91 / 15" instead of "8.55 / 15" while driving. The exact engine reductions
--- depend on the live equipped/worn state a plain container cannot reproduce, so we do NOT re-derive
--- the formula. Instead we calibrate once, while her real body still exists on entry:
---     offset = realLoad - rawUnequippedWeight(main)
--- The pane then shows raw + offset: it starts identical to her real container and only moves as
--- items are actually transferred.
------------------------------------------------------------------------------------------------------
 
 function BridgeParked.rawWeight()
     local main = BridgeParked.main
@@ -490,7 +446,6 @@ function BridgeParked.calibrate()
     return BridgeParked.loadOffset
 end
 
--- Verbose-only per-item dump, used to diagnose weight questions with real numbers.
 function BridgeParked.dumpItems(tag, container, extra)
     if container == nil or BridgeLog == nil or not BridgeLog.on() then return end
     pcall(function()

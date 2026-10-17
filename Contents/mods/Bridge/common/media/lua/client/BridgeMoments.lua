@@ -174,7 +174,6 @@ local function zombiesNear(red, dist)
     return near
 end
 
--- Moodle probes for the on-foot cold/hot lines (B42 names, B41 fallback).
 local COLD_MOODLE, HOT_MOODLE = nil, nil
 pcall(function() COLD_MOODLE = MoodleType.HYPOTHERMIA end)
 if COLD_MOODLE == nil then pcall(function() COLD_MOODLE = MoodleType.Hypothermia end) end
@@ -220,7 +219,6 @@ local function eatingNow(red)
     return eating
 end
 
--- Corpse smell tiers: 4 / 8 / 16 bodies within SMELL_RADIUS tiles on the same floor.
 local SMELL_RADIUS = 8
 local SMELL_TIERS = { 4, 8, 16 }
 local function bodiesNear(red, radius)
@@ -427,9 +425,6 @@ function BridgeMoments.update(body)
     if wound("bleed", "EvBleed", 2 * MINUTE, "bandage", "EvBleedNoBandage") then return end
 
 
-    -- Standing bleed: the fresh-wound path may already have spoken, but if the
-    -- player is still bleeding the same line fires on the live state too. Shares
-    -- the "EvBleed" slot so it obeys the same cooldown and variants.
     if bleeding(red) then
         local ev = has("bandage") and "EvBleed" or "EvBleedNoBandage"
         if not autoHeal then ev = "EvHurtAsk" end

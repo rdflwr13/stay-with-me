@@ -22,9 +22,6 @@ BridgeData.NAME_MAX = 20
 BridgeData.MODES = { follow = true, wait = true, rest = true }
 
 
--- World-locked sandbox options (page "StayWithMe", see media/sandbox-options.txt).
--- Read fresh per call so runtime sandbox mutation is respected; nil-safe because
--- SandboxVars is briefly unset while a world loads.
 BridgeData.SANDBOX_PAGE = "StayWithMe"
 
 function BridgeData.sandbox()

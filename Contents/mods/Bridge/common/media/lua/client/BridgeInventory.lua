@@ -3084,9 +3084,6 @@ function BridgeInventory.wearOptions(context, b, player, items, list)
     end
 end
 
--- Split one unit off a stack (returns the single item). The stock transfer action
--- moves the whole stack, which would flag a whole stack as given, so gifts hand over
--- one unit. Returns nil if it cannot split.
 function BridgeInventory.splitOne(item)
     if item == nil then return nil end
     local count = 1
@@ -3106,9 +3103,6 @@ function BridgeInventory.splitOne(item)
 end
 
 
--- Right-click "Give as gift". A single item: moving it into her inventory (from the
--- player or a container) hands it over; an item already in her inventory is credited
--- directly, since there is nothing to transfer. Both routes end in gift/received.
 function BridgeInventory.giftOption(context, b, player, list)
     if BridgeSocial == nil or BridgeSocial.giftPreview == nil then return end
     if context == nil or b == nil or list == nil or #list ~= 1 then return end
@@ -3176,12 +3170,10 @@ function BridgeInventory.onFill(playerNum, context, items)
     end
     local player = getSpecificPlayer(playerNum or 0)
 
-    -- Group every companion action for this item under one "Rin" submenu (top).
     local parentName = companionName()
     if context:getOptionFromName(parentName) ~= nil then return end
     local rin = context:getNew(context)
 
-    -- (gear is built into the Rin submenu below)
 
 
     if inMain or BridgeInventory.shown then
@@ -3226,15 +3218,12 @@ function BridgeInventory.onFill(playerNum, context, items)
         end
     end
 
-    -- Equip / Unequip gear
     if BridgeGear ~= nil then pcall(BridgeGear.menu, rin, b, player, list) end
 
-    -- Loot this / Loot all (world containers only)
     if BridgeMenu ~= nil and BridgeMenu.addItemLootOptions ~= nil then
         pcall(BridgeMenu.addItemLootOptions, rin, list, playerNum)
     end
 
-    -- Give as gift
     if BridgeSocial ~= nil and BridgeSocial.giftPreview ~= nil then
         pcall(BridgeInventory.giftOption, rin, b, player, list)
     end
@@ -4547,9 +4536,6 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeStay
     local isValid = ISInventoryTransferAction.isValid
     if isValid ~= nil then
         ISInventoryTransferAction.isValid = function(self, ...)
-            -- While she is showering her clothes are un-worn on purpose and the outfit snapshot is
-            -- frozen, so block moving items into/out of her containers -- otherwise an item could be
-            -- taken during the shower and then be re-created by the resume restore (a duplication).
             if BridgeShower ~= nil and BridgeShower.showing ~= nil and BridgeShower.showing()
                     and (BridgeInventory.isHers(self.srcContainer) or BridgeInventory.isHers(self.destContainer)) then
                 return false

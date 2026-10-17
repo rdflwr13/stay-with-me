@@ -58,9 +58,6 @@ local function name() return Bridge.companionName() end
 
 BridgeMenu.TALK_RANGE = 12
 
--- Set false to keep the read-only status line ("With you" / "Resting" / "Waiting where you parted")
--- out of the Rin context menus. BridgeMenu.statusParts/status themselves are left intact (the
--- sidebar icon tooltip and the companion window header still use them).
 BridgeMenu.SHOW_STATUS = false
 
 
@@ -111,8 +108,6 @@ function BridgeMenu.inTalkRange()
 end
 
 
--- The grid square under the mouse (the same screenToIso conversion BridgeHome uses), so a click can
--- be resolved to the exact tile that was clicked.
 local function cursorSquare(playerNum)
     local sq = nil
     pcall(function()
@@ -139,9 +134,6 @@ local function clickedSquare(worldobjects, playerNum)
     return nil
 end
 
--- True when the clicked tile is bare ground: nothing on it but the floor (no tile objects such as
--- walls, fences, furniture, containers or trees, and no items lying on the ground). Used to keep
--- the compact Rin > Work menu off objects.
 local function emptySpaceUnder(worldobjects, playerNum)
     local sq = clickedSquare(worldobjects, playerNum)
     if sq == nil then return false end
@@ -1103,8 +1095,6 @@ function BridgeMenu.onPryMenu(playerNum, context, worldobjects, test)
     if not hasTool then tip(opt, tr("Need_Crowbar")) end
 end
 
--- Option icons: an item's own icon (optionally tinted, like "Rin: wear") or the
--- generic container icon used for loot-the-container options.
 local GENERIC_LOOT_ICON = "media/textures/WorldItems/CrateBasic.png"
 
 local function iconOf(option, item, withColor)
@@ -1146,9 +1136,6 @@ function BridgeMenu.onLootMenu(playerNum, context, worldobjects, test)
     if not ok or BridgeTask.active then opt.notAvailable = true end
 end
 
--- Items picked in a loot window, grouped by their (world) container. Skips the
--- player's own inventory and worn bags; her own inventory is excluded by the
--- target resolver. whole=true builds container targets, else picks-only targets.
 local function lootTargetsForItems(list, playerNum, whole)
     local targets = {}
     if BridgeWorkSelect == nil or BridgeWorkSelect.lootTargetForContainer == nil then return targets end
@@ -1187,9 +1174,6 @@ local function lootTargetsForItems(list, playerNum, whole)
     return targets
 end
 
--- Add the item loot entries ("Loot this" / "Loot all") into the given submenu.
--- Called from BridgeInventory.onFill when it builds the "Rin" item submenu, so
--- they only appear when she is nearby and grey out while she is on a job.
 function BridgeMenu.addItemLootOptions(menu, list, playerNum)
     if menu == nil or type(list) ~= "table" or #list == 0 then return 0 end
     if Bridge == nil or Bridge.store == nil then return 0 end
@@ -1343,10 +1327,6 @@ function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
     end
 end
 
--- Resolve a water source for the companion Wash/Fill menu. Water counts only when it is the object
--- under the cursor or a water source on the clicked tile (including the natural-water proxy). It is
--- deliberately NOT resolved from the player's surroundings, so the option no longer appears on
--- unrelated objects (a forge, a wall, ...) merely because the player stands near water.
 local function waterUnder(worldobjects, playerNum)
     for _, o in ipairs(worldobjects or {}) do
         if o ~= nil and BridgeWash ~= nil and BridgeWash.isWaterObject ~= nil and BridgeWash.isWaterObject(o) then

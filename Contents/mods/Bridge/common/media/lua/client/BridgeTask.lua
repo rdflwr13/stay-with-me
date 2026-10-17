@@ -162,7 +162,6 @@ BridgeTask.WASH_PASSES = 12
 BridgeTask.FILL_REACH = BridgeTask.WASH_REACH
 BridgeTask.BATH_REACH = 1.5
 BridgeTask.FILL_ANIM = "fillBottle"
--- Vanilla ISTakeWaterAction:getDuration() = waterUnit * 100 + 30, in 1/60s ticks (the PZ maxTime unit).
 BridgeTask.FILL_UNIT_TICKS = 100
 BridgeTask.FILL_BASE_TICKS = 30
 BridgeTask.FILL_SOUND_EVERY = 120
@@ -1896,8 +1895,6 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     if BridgeWorkSelect ~= nil and BridgeWorkSelect.sortTargets ~= nil then
         pcall(BridgeWorkSelect.sortTargets, BridgeTask.queue)
     end
-    -- A "grab" job is a loot job whose targets are all single items picked by
-    -- hand ("only"). It skips the "JobDone" chatter so the loot line stays put.
     BridgeTask.grabOnly = false
     if kind == "lootArea" and #targets > 0 then
         local allOnly = true
@@ -2309,7 +2306,6 @@ function BridgeTask.finish()
         elseif wasLootFull then
             Bridge.speak("JobLootFull")
         elseif wasGrabOnly then
-            -- single-item grab: keep the loot line, skip the "all done" chatter
         else
             Bridge.speak("JobDone")
         end
@@ -3518,8 +3514,6 @@ local function fillSay(pool, fallbackKey)
 end
 
 local function fillTicksFor(amount)
-    -- Matches vanilla ISTakeWaterAction:getDuration() exactly: the value is already in 1/60s
-    -- ticks, the same unit as Bridge.time, so there is no ms -> ticks conversion.
     local ticks = math.floor((amount or 0) * (BridgeTask.FILL_UNIT_TICKS or 100) + (BridgeTask.FILL_BASE_TICKS or 30))
     local minTicks = BridgeTask.FILL_MIN_TICKS or 60
     if ticks < minTicks then ticks = minTicks end
@@ -3574,11 +3568,6 @@ local function fillApply(body, sink, item, amount)
     local fc = nil
     pcall(function() fc = item:getFluidContainer() end)
     if fc == nil then return end
-    -- Fill the container directly, exactly like the multiplayer path and the wash
-    -- job do. The engine's IsoObject:transferFluidTo only moves a fraction of the
-    -- requested amount in a single call (it is bounded by the source's own fluid
-    -- container, not by getFluidAmount()), so it is not used here; the source is
-    -- spent separately below with useFluid.
     local before = -1
     pcall(function() before = fc:getAmount() end)
     local fluid = Fluid.Water
@@ -3803,8 +3792,6 @@ local function emptyTicksFor(amount, item)
     if type(ms) ~= "number" then
         ms = (amount or 0) * (BridgeTask.EMPTY_UNIT_TICKS or 100) + (BridgeTask.EMPTY_BASE_TICKS or 30)
     end
-    -- ms here is vanilla ISFluidEmptyAction's maxTime (amount * transfer time per liter, / transfer
-    -- rate), already in 1/60s ticks, so no ms -> ticks conversion is applied.
     local ticks = math.floor(ms)
     if ticks < (BridgeTask.EMPTY_MIN_TICKS or 60) then ticks = BridgeTask.EMPTY_MIN_TICKS or 60 end
     return ticks
@@ -4264,8 +4251,6 @@ function BridgeTask.lootItems(body, target)
     if target == nil then return items end
     local c = target.cont
     if c == nil then return items end
-    -- "only" targets (right-click a single item) grab exactly those items and
-    -- ignore the category filters, since the player picked them by hand.
     if type(target.only) == "table" and #target.only > 0 then
         for i = 1, #target.only do
             local it = target.only[i]
@@ -4338,8 +4323,6 @@ function BridgeTask.lootTake(body, target, item, dest)
     local chr = BridgeData ~= nil and BridgeData.owner() or nil
     pcall(function() act = ISInventoryTransferAction:new(chr, item, src, dest) end)
     if act == nil then return false end
-    -- "only" targets take exactly the picked item: skip the same-type stack
-    -- grouping that area looting (and store "bought" marking) relies on.
     local single = target ~= nil and type(target.only) == "table" and #target.only > 0
     if not single then
         pcall(function()
@@ -5740,8 +5723,6 @@ Events.OnTickEvenPaused.Add(function()
         BridgeTask.exerciseRepMark = Bridge.time
         return
     end
-    -- A seated or lying pose task must not be re-pathed: forcing idle here leaves
-    -- the body in idle with the sit/lay bump, and the engine plays falldown from there.
     if BridgeTask.kind == "sit" or BridgeTask.kind == "lay" then
         local posed = false
         if BridgeMove ~= nil and BridgeMove.isOnChair ~= nil and BridgeMove.isOnChair(body) then posed = true end
@@ -6019,19 +6000,11 @@ function BridgeTask.kinds.exercise.leave(body)
 end
 
 
--- ------------------------------------------------------------- shower routine (TABAS soft-compat)
--- Animation-only routine at a TABAS shower/bathtub: undress beside it, step under the water, turn
--- it on (TABAS FX), wash, turn off, step out, towel dry if she carries a towel, then dress again.
 
 BridgeTask.SHOWER_ENABLED = 1
 BridgeTask.SHOWER_ONESHOT_MAX = 6 * SECOND
--- Wash length as REAL in-game time (30 in-game minutes), measured off the game clock so it is
--- exactly "30 in-game minutes" at any day length, and shortens when the player fast-forwards.
 BridgeTask.SHOWER_WASH_HOURS = 30 / 60
--- Fallback only, if the game clock is unavailable: ff-scaled tick budget.
 BridgeTask.SHOWER_WASH_TICKS = 75 * SECOND
--- Mount reach: small so she must actually path onto the fixture (a bathtub makes her climb in)
--- instead of reporting arrival from an adjacent tile and getting pushed back out.
 BridgeTask.SHOWER_MOUNT_REACH = 0.35
 
 BridgeTask.kinds.shower = {}
@@ -6068,8 +6041,6 @@ local function showerClear(body)
 end
 
 
--- True once a one-shot shower bump has finished (or the engine moved us off it), with a timeout
--- fallback so a missing safety flag can never wedge the routine.
 local function showerWait(body, bump, startAt)
     local cur, fin = "", false
     pcall(function() cur = tostring(body:getBumpType()) end)
@@ -6097,15 +6068,12 @@ local function showerSquare()
 end
 
 
--- TABAS maps the fixture's sprite Facing to the direction the character faces (see
--- TABAS_TakeShower:getFacingDir): S->N, E->W, W->E, anything else -> S.
 local function showerFacingDir()
     if BridgeShower == nil then return "S" end
     return BridgeShower.faceDirName(BridgeTask.showerFacing)
 end
 
 
--- Re-assert facing (zombie bodies can turn away), as TABAS does every perform tick.
 local function showerFace(body)
     local dir = nil
     pcall(function() dir = IsoDirections.fromString(showerFacingDir()) end)
@@ -6123,7 +6091,6 @@ local function showerSnap(body, x, y, z)
 end
 
 
--- Pick a free (standable) square next to t, preferring the one nearest to the owner/body.
 local function showerFreeSquare(t, body)
     if t == nil then return nil end
     local best, bestScore = nil, nil
@@ -6158,9 +6125,6 @@ local function showerFreeSquare(t, body)
 end
 
 
--- Total wash progress 0..1 for the shower in progress. It starts at the persisted progress
--- (BridgeShower.progress), so a shower resumed after an interruption only has to do the remainder.
--- Measured off the in-game clock (falls back to the ff-scaled tick budget if the clock is missing).
 function BridgeTask.showerWashFrac()
     local start = BridgeTask.showerProgressStart or 0
     if start < 0 then start = 0 elseif start > 1 then start = 1 end
@@ -6200,7 +6164,6 @@ function BridgeTask.kinds.shower.update(body)
         if t == nil then return BridgeTask.finish() end
         BridgeTask.showerSq = { x = t.x, y = t.y, z = t.z }
 
-        -- Resume any unfinished wash from an earlier interrupted shower (like the exercise bank).
         local startP = BridgeShower.progress(Bridge.store)
         if startP >= 1 then startP = 0 end
         BridgeTask.showerProgressStart = startP
@@ -6208,8 +6171,6 @@ function BridgeTask.kinds.shower.update(body)
         local waterShare = 1 - startP
         if waterShare < 0.05 then waterShare = 0.05 end
 
-        -- Resolve the water source up front (the same proxy the faucet Fill/Wash menu uses) and
-        -- require water to start. Total used is a random amount, drained gradually during the wash.
         BridgeTask.showerSink = nil
         pcall(function() BridgeTask.showerSink = BridgeShower.waterSink(BridgeTask.showerObj) end)
         BridgeTask.showerWaterUsed = 0
@@ -6226,10 +6187,8 @@ function BridgeTask.kinds.shower.update(body)
             BridgeTask.showerWaterTotal = math.max(1, math.floor(full * waterShare + 0.5))
         end
 
-        -- Close her equipment window so it cannot be used mid-routine.
         pcall(function() if BridgeEquip ~= nil and BridgeEquip.close ~= nil then BridgeEquip.close() end end)
 
-        -- Undress FIRST, wherever she is, so clothes come off before she steps in (safe in MP too).
         pcall(function() BridgeShower.snapshotOutfit(body) end)
         pcall(function() BridgeShower.strip(body) end)
         BridgeTask.showerPhase = "undress"
@@ -6249,9 +6208,6 @@ function BridgeTask.kinds.shower.update(body)
             BridgeTask.showerBesideSince = nil
             BridgeTask.showerWalkIn = nil
             pcall(function()
-                -- A bathtub is a TABAS bath object: its tile is only entered by hopping the tub edge,
-                -- so it must keep the tiny mount reach. A stand-in/wall shower tile is walked into
-                -- normally. BridgeBath hands us the shower object itself, or a tub part object.
                 local iso = require("TABAS_Iso")
                 if BridgeTask.showerObj ~= nil then
                     BridgeTask.showerWalkIn = iso.isBathObject(BridgeTask.showerObj) ~= true
@@ -6262,25 +6218,13 @@ function BridgeTask.kinds.shower.update(body)
         return true
     end
 
-    -- step onto the shower tile, face the water source, then turn it on
     if phase == "mount" then
         local t = BridgeTask.showerSq
-        -- The movement code stops the companion at ~STOP_DIST from the walk target, so a stand-in
-        -- shower must accept that arrival distance: requiring the bathtub's tiny reach here never
-        -- reported arrival, so she stalled at the tile edge, detoured sideways and looped until the
-        -- snap. Bathtubs keep the tiny reach and mount via onTile/parked/unreachable below.
         local reach = BridgeTask.SHOWER_MOUNT_REACH
         if BridgeTask.showerWalkIn == true then reach = BridgeTask.STOP_DIST end
         local res = BridgeTask.walkTo(body, t, reach, false, true)
-        -- Arrival is "her square IS the fixture square" (a bathtub climb can leave her just short of
-        -- centre, and distance-based arrival both fires too early from an adjacent tile and never
-        -- fires once she is on the edge -- which made her walk in and out).
         local onTile = false
         pcall(function() onTile = math.floor(body:getX()) == t.x and math.floor(body:getY()) == t.y end)
-        -- A bathtub square can only be entered by hopping its TABAS edge, and which side is hoppable
-        -- depends on the tub's facing (see TABAS_TubEdge.createTubEdge). When she is beside the
-        -- fixture but the engine is not putting her onto it, mount now instead of pacing back and
-        -- forth: distance to the fixture centre keeps it independent of the tub's orientation.
         local beside = false
         pcall(function()
             local dx, dy = body:getX() - (t.x + 0.5), body:getY() - (t.y + 0.5)
@@ -6322,7 +6266,6 @@ function BridgeTask.kinds.shower.update(body)
             local t = BridgeTask.showerSq
             local sq = nil
             pcall(function() sq = getCell():getGridSquare(t.x, t.y, t.z) end)
-            -- always hot so the TABAS steam FX can play (steam also needs the TABAS option enabled)
             pcall(function() BridgeShower.spawnShowerWater(sq, BridgeTask.showerFacing, true) end)
             BridgeTask.showerWaterOn = true
         end
@@ -6353,7 +6296,6 @@ function BridgeTask.kinds.shower.update(body)
             Bridge.speak("ShowerWash")
         end
 
-        -- Drain the fixture's water gradually, using the same proxy/units the faucet actions use.
         if BridgeTask.showerSink ~= nil and BridgeTask.showerWaterTotal ~= nil and not BridgeTask.showerWaterDry then
             local want = math.floor(p * BridgeTask.showerWaterTotal + 0.5)
             local used = BridgeTask.showerWaterUsed or 0
@@ -6378,7 +6320,6 @@ function BridgeTask.kinds.shower.update(body)
 
         if BridgeTask.showerPart ~= part then
             BridgeTask.showerPart = part
-            -- toggle the bump so the animator re-selects the looped node for the new part
             pcall(function() body:setVariable("ShowerWashPart", part) end)
             pcall(function() body:setBumpType("Stand") end)
             pcall(function() body:setBumpType(bump) end)
@@ -6418,7 +6359,6 @@ function BridgeTask.kinds.shower.update(body)
         return true
     end
 
-    -- get out of the shower before dressing
     if phase == "off" then
         pcall(function()
             if tostring(body:getBumpType()) ~= "" then body:setBumpType("") end
@@ -6446,7 +6386,6 @@ function BridgeTask.kinds.shower.update(body)
             BridgeTask.showerSeen = false
         elseif res == "unreachable"
                 or (Bridge.time - (BridgeTask.showerSince or Bridge.time)) > (6 * SECOND) then
-            -- guaranteed exit: snap her onto the free square
             pcall(function() BridgeMove.stopPath(body) end)
             showerSnap(body, to.x + 0.5, to.y + 0.5, to.z)
             BridgeTask.showerPhase = "towel"
@@ -6508,12 +6447,10 @@ end
 function BridgeTask.kinds.shower.stop(body)
     showerClear(body)
     pcall(function() BridgeShower.removeShowerWater() end)
-    -- A finished shower clears the wash progress, so the next one starts fresh.
     pcall(function() if BridgeShower ~= nil and BridgeShower.setProgress ~= nil then BridgeShower.setProgress(Bridge.store, 0) end end)
     pcall(function()
         if BridgeShower ~= nil and BridgeShower.setCooldown ~= nil then BridgeShower.setCooldown(Bridge.store) end
     end)
-    -- safety net: never finish undressed
     pcall(function()
         if BridgeShower ~= nil and BridgeShower.hasPreShower ~= nil and BridgeShower.hasPreShower() then
             BridgeShower.restorePreShower(body)
@@ -6532,7 +6469,6 @@ function BridgeTask.kinds.shower.leave(body)
             BridgeShower.restorePreShower(body)
         end
     end)
-    -- Persist how much of the wash was done, so an interrupted shower can be finished later.
     pcall(function()
         if BridgeShower ~= nil and BridgeShower.setProgress ~= nil and BridgeTask.showerProgressStart ~= nil then
             local total = BridgeTask.showerProgressTotal or BridgeTask.showerProgressStart or 0

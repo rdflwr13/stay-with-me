@@ -32,8 +32,6 @@ BridgeCallout.SWING_RANGE_TOL = 0.3
 
 BridgeCallout.FLANK_SIGN = -1
 
--- City entry callouts. B42 exposes no queriable "city" region, so a city is a
--- coordinate box; the nearest box centre wins when boxes overlap.
 BridgeCallout.CITY_MIN_AWAY = 24
 BridgeCallout.CITY_DWELL    = 20 * BridgeCallout.SEC
 BridgeCallout.CITY_GAP      = 30 * BridgeCallout.SEC
@@ -198,8 +196,6 @@ local function attackSignals(red)
     return h2h, atk
 end
 
--- inclRemote == true keeps remote zombies in scope (used by the swing-clear
--- close-threat check); otherwise remote zombies are ignored (main callout facts).
 local function threatZ(z, body, inclRemote)
     local alive = false
     pcall(function() alive = z:isAlive() and z:getHealth() > 0 end)
@@ -224,8 +220,6 @@ end
 local DEFER = { EvKill = true }
 
 
--- Shared gate for every callout. `priority` (BridgeCallout.sayPriority) also
--- respects carQuiet, drops the deferred queue on success, and marks gap-blocks.
 local attempt
 
 local function trySay(event) return attempt(event, false) end
@@ -319,7 +313,6 @@ local function flush()
     return false
 end
 
--- Reused across scans to avoid allocating a table every update.
 local scanFacts = { near8 = 0, behind = false, flank = false, flankSide = nil,
     crawler = false, breach = false, spot = false, anyThreatInSwing = false }
 
@@ -391,8 +384,6 @@ local function scanWorld(body, red, wantClear)
                     local dzRed = zz - redz
                     local inRedBand = math.abs(dzRed) < 1
 
-                    -- Cheap relevance cull so distant/other-floor zombies skip the
-                    -- pcall-heavy threatZ/CanSee work (superset of every enabled check).
                     local relevant = false
                     if wantNear and math.abs(dzBody) < 0.8 and bd2 < near2 then
                         relevant = true
@@ -403,8 +394,6 @@ local function scanWorld(body, red, wantClear)
                     local clearRel = wantClear and inRedBand and rd2 < swing2
 
                     if relevant or clearRel then
-                        -- inclRemote keeps the swing-clear check identical to the old
-                        -- noZombiesInSight predicate; the main facts exclude remote.
                         if threatZ(z, body, true) then
                             local isRemote = remoteZ(z)
                             if relevant and not isRemote then
@@ -1245,7 +1234,6 @@ function BridgeCallout.placesCommand(sub, a)
 end
 
 
--- ---- City entry callouts -------------------------------------------------
 
 local function cityAt(x, y)
     local best, bestD2 = nil, nil
@@ -1326,7 +1314,6 @@ function BridgeCallout.cityTick(body)
     local e = cities[box.id]
     if type(e) ~= "table" then e = {} cities[box.id] = e end
 
-    -- On entry, cache how long we were away before lastAge is refreshed below.
     if box.id ~= BridgeCallout.cityKey then
         BridgeCallout.cityKey = box.id
         BridgeCallout.citySince = Bridge.time
@@ -1338,7 +1325,6 @@ function BridgeCallout.cityTick(body)
         end
     end
 
-    -- While inside keep lastAge at "now", so a later re-entry measures real time away.
     e.lastAge = age
 
     if BridgeCallout.cityFired then
@@ -1369,7 +1355,6 @@ function BridgeCallout.cityTick(body)
         return
     end
 
-    -- Past dwell + spacing: at most one line per stay.
     BridgeCallout.cityFired = true
     local pool = nil
     if e.seen ~= true then
@@ -1458,9 +1443,6 @@ end
 function BridgeCallout.update(body)
     if body == nil then return end
     local scanDue = Bridge.every(15)
-    -- homeTrack accumulates from world-age deltas, so sampling it at the scan
-    -- cadence (not every frame) keeps the same result. carQuiet stays per-frame
-    -- because it guards flush()/dropCarLines() ordering.
     if scanDue and type(BridgeCallout.homeTrack) == "function" then
         pcall(function() BridgeCallout.homeTrack(body, BridgeData.owner()) end)
     end
@@ -1521,7 +1503,6 @@ function BridgeCallout.update(body)
         BridgeCallout.lastHealth = health
     end
 
-    -- Unified horde tiers are a priority line in both idle and combat.
     if BridgeHorde ~= nil then
         local SAY = BridgeCallout.SAY
         if SAY.EvHorde32 ~= 0 or SAY.EvHorde16 ~= 0 or SAY.EvHorde8 ~= 0 or SAY.EvHorde4 ~= 0 then

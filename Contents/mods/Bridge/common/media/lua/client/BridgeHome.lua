@@ -8,8 +8,6 @@ BridgeHome = BridgeHome or {}
 
 local PAD = 10
 
--- Highlight palette: the saved home and a valid selection are blue; an invalid
--- selection stays red.
 local HOME_R, HOME_G, HOME_B, HOME_A = 0.20, 0.50, 1.00, 0.30
 local SEL_R, SEL_G, SEL_B, SEL_A = 0.20, 0.50, 1.00, 0.35
 local BAD_R, BAD_G, BAD_B = 1.00, 0.10, 0.10
@@ -378,9 +376,6 @@ function BridgeHomeTab:prerender()
         local want = BridgeData.optionOf(Bridge.store, "homeResources")
         if self.resTick:isSelected(1) ~= want then self.resTick:setSelected(1, want) end
     end
-    -- Draw the current home radius in-world while the Home tab is open.
-    -- addAreaHighlightForPlayer is per-frame, so it clears itself when the tab
-    -- is switched away or the window is closed.
     if h ~= nil then
         local pn = 0
         pcall(function()

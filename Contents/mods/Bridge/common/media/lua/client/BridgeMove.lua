@@ -1791,9 +1791,6 @@ function BridgeMove.sitFlagTick(body)
     if mp then BridgeMove.sitFlagOff(body) return end
     if BridgeFastForward ~= nil and BridgeFastForward.flagged ~= nil then return end
     if BridgeMove.isOnChair(body) then
-        -- Seated pose only exists in the bumped state. If the body was knocked
-        -- out of it (unpause, respawn, a forced idle), put it straight back in,
-        -- instead of letting idle+SitChair fall her over.
         if BridgeTask ~= nil and BridgeTask.isSeated ~= nil and BridgeTask.isSeated(body) then
             local asn, bump = "", ""
             pcall(function() asn = tostring(body:getActionStateName()) end)
@@ -1814,8 +1811,6 @@ function BridgeMove.sitFlagTick(body)
     else
         BridgeMove.sitFlagOff(body)
     end
-    -- Hold the lying pose (bed / sleeping) in the bumped state the same way: a
-    -- LayAwake/LayAsleep bump in any other action state falls her over too.
     if BridgeTask ~= nil and BridgeTask.isLying ~= nil and BridgeTask.isLying(body) then
         local asn, bump = "", ""
         pcall(function() asn = tostring(body:getActionStateName()) end)

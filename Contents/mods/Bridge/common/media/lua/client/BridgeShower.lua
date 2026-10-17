@@ -1,16 +1,3 @@
--- Rin shower routine (TABAS soft-compat).
---
--- Animation/job routine only: the companion walks to the shower and undresses BESIDE it first, then
--- steps onto the tile and faces the water source, turns the water on (spawning the TABAS
--- "ShowerWater" special object so TABAS' own FX module animates the spray, sound and steam), washes
--- for ~30 in-game minutes, turns off, steps back out, dries with a towel if she carries one, then
--- dresses again.
---
--- It is purely a routine: no grime, no wetness, no water consumption and no change to her
--- cleanliness or her items' cleanliness. Available at most once per 24 in-game hours.
---
--- This module mirrors BridgeExercise for the cooldown gate and BridgeWash for the water object,
--- and reuses BridgeInventory for the outfit snapshot/restore so the body always ends up dressed.
 
 BridgeShower = BridgeShower or {}
 
@@ -19,7 +6,6 @@ local function warn(text) print("[BridgeShower] " .. tostring(text)) end
 
 BridgeShower.enabled = true
 BridgeShower.COOLDOWN_HOURS = 24
--- Water units drained per shower (random in this range), using the fixture's own water source.
 BridgeShower.WATER_MIN = 5
 BridgeShower.WATER_MAX = 15
 
@@ -31,11 +17,9 @@ BridgeShower.BUMP_TOWEL = "ShowerTowelDry"
 BridgeShower.BUMP_WASH = "ShowerWash"
 BridgeShower.BUMP_WASH_V = "ShowerWashV"
 
--- Wash-part loops: TABAS clips when TABAS is active, vanilla clips otherwise.
 BridgeShower.WASH_PARTS_TABAS = { "Torso", "Arms", "Head" }
 BridgeShower.WASH_PARTS_VANILLA = { "Face", "Hands", "Mid" }
 
--- Encoded outfit snapshot taken before the strip; cleared after a successful restore.
 BridgeShower.preShower = nil
 BridgeShower.waterObj = nil
 BridgeShower.waterSq = nil
@@ -77,8 +61,6 @@ function BridgeShower.facingOf(showerObj)
 end
 
 
--- Direction the character faces while under the water. Mirrors TABAS_TakeShower:getFacingDir
--- exactly: S->N, E->W, W->E, and S for anything else (including an unknown/nil facing).
 function BridgeShower.faceDirName(facing)
     if facing == "S" then return "N" end
     if facing == "E" then return "W" end
@@ -97,7 +79,6 @@ function BridgeShower.canHot(showerObj)
 end
 
 
--- ------------------------------------------------------------------ cooldown gate (exercise pattern)
 
 function BridgeShower.cooldownLeft(rec)
     rec = rec or (Bridge ~= nil and Bridge.store) or nil
@@ -140,8 +121,6 @@ function BridgeShower.ready(rec)
 end
 
 
--- Wash progress toward the current shower (0..1), persisted like the exercise bank. If she is
--- interrupted partway she keeps this and finishes the remainder on a later shower.
 function BridgeShower.progress(rec)
     rec = rec or (Bridge ~= nil and Bridge.store) or nil
     if rec == nil then return 0 end
@@ -163,7 +142,6 @@ function BridgeShower.setProgress(rec, v)
 end
 
 
--- ------------------------------------------------------------------ outfit snapshot / strip / restore
 
 function BridgeShower.hasPreShower()
     return BridgeShower.preShower ~= nil
@@ -179,8 +157,6 @@ function BridgeShower.snapshotOutfit(b)
     local enc = ""
     pcall(function() enc = BridgeInventory.encode(list) end)
     BridgeShower.preShower = { enc = enc }
-    -- Also persist the pre-shower outfit in the saved store, so a save/reload mid-shower can
-    -- re-dress her from it (the in-memory snapshot is lost when the game closes).
     pcall(function()
         if Bridge ~= nil and Bridge.store ~= nil and type(enc) == "string" and enc ~= "" then
             Bridge.store.showerOutfit = enc
@@ -191,7 +167,6 @@ function BridgeShower.snapshotOutfit(b)
 end
 
 
--- Remove worn clothing, hand items and attached gear into her inventory only (never the world).
 function BridgeShower.strip(b)
     b = b or body()
     if b == nil then return false end
@@ -199,13 +174,11 @@ function BridgeShower.strip(b)
     pcall(function() inv = b:getInventory() end)
     if inv == nil then return false end
 
-    -- hands first (clothing may be held)
     local main, sec = nil, nil
     pcall(function() main = b:getPrimaryHandItem() end)
     pcall(function() sec = b:getSecondaryHandItem() end)
     pcall(function() b:setPrimaryHandItem(nil) end)
     pcall(function() b:setSecondaryHandItem(nil) end)
-    -- held items can be dropped from the container when unequipped; put them back if so (never world)
     if main ~= nil then
         local here = false
         pcall(function() here = inv:contains(main) end)
@@ -217,10 +190,6 @@ function BridgeShower.strip(b)
         if not here then pcall(function() inv:AddItem(sec) end) end
     end
 
-    -- worn clothing (snapshot first, so restore is exact). getWornItems():get() returns a WornItem
-    -- wrapper, but removeWornItem/contains/AddItem need the InventoryItem, so use getItemByIndex
-    -- (same idiom as BridgeInventory). Worn items stay in her inventory, so only re-add if the
-    -- container lost them -- never the world. Iterate backwards because removal shifts indexes.
     local wornCount = 0
     local worn = nil
     pcall(function() worn = b:getWornItems() end)
@@ -268,8 +237,6 @@ function BridgeShower.restorePreShower(b)
 end
 
 
--- Re-dress from the persisted pre-shower outfit (used on load when a shower was left in progress).
--- Returns true if it applied and cleared the marker.
 function BridgeShower.restorePersisted(b)
     b = b or body()
     if b == nil then return false end
@@ -310,7 +277,6 @@ function BridgeShower.findTowel(b)
 end
 
 
--- ------------------------------------------------------------------ water FX (TABAS ShowerWater object)
 
 function BridgeShower.spawnShowerWater(sq, facing, hot)
     if sq == nil then return nil end
@@ -359,7 +325,6 @@ function BridgeShower.removeShowerWater()
 end
 
 
--- ------------------------------------------------------------------ start / stop
 
 function BridgeShower.showing()
     return BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
@@ -393,8 +358,6 @@ function BridgeShower.startAtNearest()
 end
 
 
--- Water source for the fixture: the same proxy the faucet Fill/Wash menu uses (BridgeBath.sinkProxy
--- wraps TABAS_WaterReader + the tub fluid container + the faucet's own fluid).
 function BridgeShower.waterSink(showerObj)
     if BridgeBath == nil or BridgeBath.sinkProxy == nil then return nil end
     local sink = nil
@@ -403,7 +366,6 @@ function BridgeShower.waterSink(showerObj)
 end
 
 
--- How much water is available on the fixture (0 if none / not resolvable).
 function BridgeShower.waterAvailable(sink)
     if sink == nil then return 0 end
     local avail = 0
@@ -413,8 +375,6 @@ function BridgeShower.waterAvailable(sink)
 end
 
 
--- Drain water from the fixture. Uses the fixture's proxy (TABAS_WaterReader), exactly like the
--- faucet actions do; the proxy handles piped/external/tub water.
 function BridgeShower.consumeWater(sink, sq, amount)
     if sink == nil or amount == nil or amount <= 0 then return 0 end
     local used = 0
@@ -425,8 +385,6 @@ function BridgeShower.consumeWater(sink, sq, amount)
 end
 
 
--- True when the fixture is already in use: some TABAS shower water is on the square, TABAS reports
--- a player using it, or the player is standing on the fixture tile.
 function BridgeShower.occupied(object)
     if object == nil then return false end
     local sq = nil
@@ -459,8 +417,6 @@ function BridgeShower.occupied(object)
 end
 
 
--- Block the player from starting a TABAS shower/bath on the fixture Rin is currently using.
--- TABAS' own occupancy is keyed to players on the tile, so it cannot see her; we wrap its actions.
 function BridgeShower.guardTabas()
     if BridgeShower.tabasGuarded then return end
     local mod = nil
@@ -558,8 +514,6 @@ function BridgeShower.stop()
 end
 
 
--- Install the TABAS action guard at game start (before any context menu captures the original
--- function), so the player cannot start a shower on the fixture Rin is using.
 if Events ~= nil and Events.OnGameStart ~= nil then
     Events.OnGameStart.Add(function()
         pcall(function() BridgeShower.guardTabas() end)

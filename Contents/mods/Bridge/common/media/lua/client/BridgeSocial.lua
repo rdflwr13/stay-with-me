@@ -18,8 +18,6 @@ BridgeSocial.sentAt = -9999
 BridgeSocial.info = "none"
 BridgeSocial.CAR_CHAT_CHANCE = 0.6
 
--- Relationship/gift daily caps are sandbox-tunable (BridgeData.sandboxNumber).
--- The literals here are the fallback defaults when no sandbox page is loaded.
 local COMBAT_KILL_STEP = 5
 local COMBAT_DAILY_CAP = 3
 local COMBAT_NEAR = 10
@@ -65,8 +63,6 @@ local function clamp(v, lo, hi)
     return v
 end
 
--- Scaling helper: returns v unchanged at the default multiplier so a world with
--- no sandbox page behaves exactly as before (no float drift in displayed values).
 local function mult(v, m)
     if m == 1 then return v end
     return v * m
@@ -755,15 +751,8 @@ end
 
 
 
--- Fragrance gifts (female-grooming-gifts plan). Perfume/Cologne are vanilla
--- DisplayCategory "Junk" fluid containers, so they are recognized by exact type
--- id here and routed before the generic Junk -> ReceiveJunk fallback.
 local FRAGRANCE_POOLS = { Perfume = "ReceivePerfume", Cologne = "ReceiveCologne" }
 
--- Hair-care items form one themed personal pool (master plan §15 minimum): these
--- are female grooming gifts, spoken via Soc_/SocM_ReceiveHairCare. Comb is Junk,
--- HairDryer/HairIron are Electronics, Hairgel/Hairspray2/HairDye* are Appearance,
--- so the id set must win before those display-category routes.
 local HAIR_TYPES = { HairDryer = true, HairIron = true, Comb = true, Hairgel = true,
     Hairspray2 = true, HairDyeCommon = true, HairDyeUncommon = true, HairDyeRare = true }
 local function personalPool(item)
@@ -916,10 +905,6 @@ local function itemIsTypeFlag(item, name)
 end
 
 
--- Gift recognition is id + category based, not display-category only: mods such
--- as Better Containers rewrite an item's DisplayCategory (TweakItem), which would
--- otherwise defeat receivePool. Each receive pool is owned by exactly one gain
--- path: GIFT (here), MALE_RECEIVE (maleGift), or VALUED.
 BridgeSocial.GIFT = {
     ReceiveTreat   = { f = 2, r = 0 },
     ReceiveFun     = { f = 2, r = 0 },
@@ -927,8 +912,6 @@ BridgeSocial.GIFT = {
     ReceiveMemento = { f = 3, r = 0 },
     ReceiveJewelry = { f = 3, r = 1 },
 
-    -- Grooming/fragrance gifts (female-grooming-gifts plan). Small gifts: friend
-    -- affection only, gated to one gender via GIFT_FEMALE_ONLY/GIFT_MALE_ONLY.
     ReceiveHairCare = { f = 1, r = 0 },
     ReceiveMakeup   = { f = 1, r = 0 },
     ReceivePerfume  = { f = 1, r = 0 },
@@ -938,17 +921,12 @@ local GIFT_POOLS = {}
 for giftPool in pairs(BridgeSocial.GIFT) do GIFT_POOLS[giftPool] = true end
 BridgeSocial.GIFT_POOLS = GIFT_POOLS
 
--- Gender-gated gifts: grooming/fragrance pools count for one gender only; every
--- other gift class stays shared. These keep the wrong gender from resolving the
--- pool as a gift while still allowing a plain (non-gift) receive line.
 local GIFT_FEMALE_ONLY = { ReceiveHairCare = true, ReceiveMakeup = true, ReceivePerfume = true }
 local GIFT_MALE_ONLY = { ReceiveCologne = true }
 
--- Pools a male companion already gains from via maleGift (never also a gift).
 local GIFT_MALE_OWNED = { ReceiveSmokes = true, ReceiveTool = true, ReceiveGame = true,
     ReceiveRead = true, ReceiveBooze = true }
 
--- Male dress pools own these worn items; keep them out of the carried-gift pool.
 local JEWEL_SKIP = { "WristWatch_", "Necklace_DogTag", "Glasses_" }
 
 local function itemCat(item)
@@ -962,9 +940,6 @@ local function catHas(cat, list)
     return false
 end
 
--- getTags() may be a Java collection with only some accessors exposed (some builds
--- expose size()/contains() but not get(int)), so probe defensively and never call a
--- missing method -- a bare nil call still logs an ERROR even inside pcall.
 local function hasTagLike(item, needle)
     local yes = false
     local lower = string.lower(needle)
@@ -1005,8 +980,6 @@ local function hasTagLike(item, needle)
     return yes
 end
 
--- Jewelry is normally DisplayCategory "Accessory"; Better Containers moves it to
--- "ClothJew". Match on body location plus either category, with an id fallback.
 local function isJewelGift(item)
     if typeHas(itemTypeName(item), JEWEL_SKIP) then return false end
     local loc = nil
@@ -1025,9 +998,6 @@ local function isJewelGift(item)
         or string.find(t, "pendant", 1, true) ~= nil or string.find(t, "choker", 1, true) ~= nil
 end
 
--- Category names cover vanilla and Better Containers keys; type ids cover vanilla
--- and common mod items. Teddy is checked before memento because plushies carry the
--- memento tag too.
 local TEDDY_CATS = { "teddy", "plush" }
 local TEDDY_TYPES = { "ToyBear", "Teddy", "Plush" }
 local MEMENTO_CATS = { "memento", "curio" }
@@ -1040,8 +1010,6 @@ local TOY_EXACT = { Dice = true, Cube = true, Dart = true, Baseball = true, Foot
     Basketball = true, SoccerBall = true, TennisBall = true, GolfBall = true, PoolBall = true,
     Yoyo = true, Doll = true }
 
--- Resolve the gift class for an item. Ids/categories win over the derived pool so a
--- recategorized item still gets the right class (and next day's first gift).
 function BridgeSocial.giftPool(item, pool)
     if item == nil then return nil end
     if isMale() and BridgeSocial.maleReceive(item) ~= nil then return nil end
@@ -1059,10 +1027,6 @@ function BridgeSocial.giftPool(item, pool)
     return nil
 end
 
--- First gift only, per-day capped in giftF/giftR, scaled by relationship tier.
--- Returns "paid" when it granted affection, "full" when today's gift budget is
--- spent (the item is deliberately left unmarked so it can pay out later), "done"
--- when the item was already gifted, or nil for a non-gift.
 function BridgeSocial.gift(item, pool)
     if item == nil or pool == nil or BridgeSocial.GIFT[pool] == nil then return nil end
     local r = rel()
@@ -1092,10 +1056,6 @@ function BridgeSocial.gift(item, pool)
     return "paid"
 end
 
--- What gifting this item would do right now, for the inventory tooltip.
--- nil when the item is not a gift. f/r are the base class values; effF/effR are
--- what is still left today after the daily cap; given = already gifted once;
--- capped = nothing left for it today.
 function BridgeSocial.giftPreview(item)
     if item == nil or BridgeSocial.GIFT == nil then return nil end
     local r = rel()
@@ -1123,7 +1083,6 @@ function BridgeSocial.giftPreview(item)
         given = given, capped = (not given) and effF <= 0 and effR <= 0, romanceOn = romanceOn }
 end
 
--- Dev/test helpers for the gift system (rel/gift commands in in.txt).
 local function eachInvItem(inv, fn)
     if inv == nil then return end
     pcall(function()
@@ -1288,9 +1247,6 @@ function BridgeSocial.receivePool(item)
         return "ReceiveCleaner"
     end
 
-    -- Fragrance (Perfume/Cologne) and hair care are recognized by exact id before
-    -- the food and gun/weapon checks: Perfume/Cologne are Junk fluid containers,
-    -- and Hairgel/Hairspray2/HairDye* would otherwise read as ReceiveMakeup.
     local frag = FRAGRANCE_POOLS[itemTypeName(item)]
     if frag ~= nil then return frag end
 
@@ -1379,9 +1335,6 @@ function BridgeSocial.received(item)
     end)
     if got and lastPool == pool then return false end
 
-    -- Resolve the gift class and pay it before remembering the item. A gift that
-    -- cannot pay because today's gift budget is spent is left unremembered so a
-    -- later hand-over can still earn affection instead of being silently lost.
     local gift, giftStatus = nil, nil
     pcall(function() gift = BridgeSocial.giftPool(item, pool) end)
     if gift ~= nil then pcall(function() giftStatus = BridgeSocial.gift(item, gift) end) end
@@ -1427,8 +1380,6 @@ function BridgeSocial.received(item)
         BridgeSocial.overSaid = false
     end
     if pendingGift then
-        -- Today's gift budget is spent; the item stays unremembered so it can pay
-        -- out later. Tell the player at most once a day so it never spams.
         local r = rel()
         local day = r ~= nil and r.day or -1
         if BridgeSocial.giftFullDay ~= day then
@@ -1436,7 +1387,6 @@ function BridgeSocial.received(item)
             say("GiftFull")
         end
     else
-        -- A gift keeps its own reaction line even when another mod recategorized it.
         if gift ~= nil and pool ~= "ReceiveAgain" and pool ~= "CarryFull" then pool = gift end
         BridgeSocial.receiveSay(pool)
     end
@@ -1591,8 +1541,6 @@ local function recentFight()
 end
 
 
--- Calm (no zombies close, not fighting) and at home / settled indoors. Grows the
--- talk budget and shortens repeat cooldowns while it holds.
 function BridgeSocial.relaxed(r)
     local calm = false
     pcall(function()
@@ -1690,9 +1638,6 @@ local function actionById(id)
 end
 
 
--- Reason a talk action is unavailable right now, or nil. Mirrors talk()'s own
--- refusals (busy / after fight / repeat window / daily budget) so the menu can grey
--- the exact action and explain why. Busy covers every action; the rest are per action.
 function BridgeSocial.talkBlock(id, r, calm, busy)
     if busy then return "Busy" end
     local a = actionById(id)
@@ -1885,9 +1830,6 @@ end
 
 
 
--- Unseen-but-close zombies: she spots none within 12 tiles, yet the sightless
--- horde counter finds 1-3 on the same floor nearby. Only 1-3 so the EvHorde
--- callout keeps handling 4+. Used to pick a tense idle remark.
 local function unseenNearby(red)
     if red == nil or BridgeHorde == nil or BridgeHorde.count == nil then return false end
     if zombiesNear(12) then return false end
@@ -1906,7 +1848,6 @@ local function remarkPool(r, red, inCar)
     pcall(function() recent = BridgeMoments.recent(4 * 3600) end)
     if hurt and not recent then return "RemarkHurt" end
     if recentFight() then return "RemarkAfterFight" end
-    -- Zombies close but not visible (1-3, below the horde tier): a tense aside.
     if not inCar and unseenNearby(red) then return "RemarkTense" end
     local hour = 12
     pcall(function() hour = getGameTime():getHour() end)
@@ -1916,9 +1857,6 @@ local function remarkPool(r, red, inCar)
 end
 
 
--- Idle pool chooser shared by the on-foot update and the in-car tick. In a car it
--- sometimes returns the group-gated car overlay (RemarkCar_<group>); otherwise the
--- usual tier/conditional remark pool. Falls back cleanly when the car pool is empty.
 function BridgeSocial.idlePool(r, red, inCar)
     if inCar then
         local group = "Near"
@@ -1934,8 +1872,6 @@ function BridgeSocial.idlePool(r, red, inCar)
 end
 
 
--- Idle remark shared by the on-foot update and the in-car tick. Same pools, same
--- nextRemark timer, so driving idle chatter matches the on-foot behaviour.
 function BridgeSocial.idleRemark(red, inCar)
     local r = rel()
     if r == nil or red == nil then return false end
@@ -1997,10 +1933,7 @@ function BridgeSocial.update(body)
     pcall(function() justSpoke = BridgeMoments.recent(3600) end)
     local quiet = false
     pcall(function() quiet = Bridge.quiet() end)
-    -- chatter = she is free to make an idle remark: no blocking job running (sit and
-    -- lay-awake count as free; lay-asleep is blocked, so she stays silent in bed).
     local chatter = not (BridgeTask ~= nil and BridgeTask.idleChatBlocked ~= nil and BridgeTask.idleChatBlocked())
-    -- Shower-only suppression: no idle remarks/gifts while she is in the shower routine.
     local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
     if calm and not justSpoke and chatter and not showering and Bridge.time >= BridgeSocial.nextRemark then
         BridgeSocial.nextRemark = Bridge.time + 5400 + ZombRand(9000)

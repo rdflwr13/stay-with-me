@@ -71,8 +71,6 @@ local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[Bri
 local function warn(text) print("[BridgeTorch] " .. tostring(text)) end
 
 
--- Home auto-fetch: if she has no battery at all, pull one from a container in
--- the home zone before swapping locally (SP) or asking the server (MP).
 local function ensureBattery(body)
     if BridgeFetch == nil or type(BridgeFetch.available) ~= "function"
             or type(BridgeFetch.pull) ~= "function" then return end

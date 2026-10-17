@@ -1,19 +1,15 @@
--- Unified horde detection, shared by BridgeCallout (on foot) and BridgeDrive (in car).
--- One threat definition and one tier mapping for every callout that reports hordes.
 BridgeHorde = BridgeHorde or {}
 
-BridgeHorde.RADIUS    = 14     -- on foot: tiles around the player
-BridgeHorde.CONE_MIN  = 5      -- in car: near edge of the forward cone
-BridgeHorde.CONE_MAX  = 35     -- in car: far edge of the forward cone
-BridgeHorde.CONE_HALF = 2.5    -- lateral slack added to the car half-width
+BridgeHorde.RADIUS    = 14
+BridgeHorde.CONE_MIN  = 5
+BridgeHorde.CONE_MAX  = 35
+BridgeHorde.CONE_HALF = 2.5
 
--- Minimum tier is 4; topped out at 32. tier(n) returns the highest tier <= n.
 BridgeHorde.TIERS = { 4, 8, 16, 32 }
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeHorde] " .. tostring(text)) end end
 
 
--- A live, non-companion, non-harmless, non-remote zombie. Single source of truth.
 function BridgeHorde.threat(z)
     if z == nil then return false end
     local alive = false
@@ -41,7 +37,6 @@ function BridgeHorde.tier(n)
 end
 
 
--- Count threats within `radius` of (cx, cy, cz) on the same floor.
 function BridgeHorde.count(cx, cy, cz, radius)
     if cx == nil or cy == nil then return 0 end
     local r = tonumber(radius) or BridgeHorde.RADIUS
@@ -64,8 +59,6 @@ function BridgeHorde.count(cx, cy, cz, radius)
 end
 
 
--- Count threats in the car's forward cone between minD and maxD (tiles), within the
--- car half-width plus `half`. When `seen` is true, the target must be visible to `red`.
 function BridgeHorde.countCone(car, minD, maxD, half, seen, red)
     if car == nil or BridgeCar == nil then return 0 end
     local C = BridgeCar.frame(car)

@@ -136,9 +136,6 @@ BridgeEquip.REGIONS = {
     { id = "fur", x = 106, y = 128, locs = { "FUR" } },
 }
 
--- The Furry mod creates its "Fur" body location at runtime, so it is not in
--- ItemBodyLocation. Pre-seed the region's value cache from the live body
--- location group (best-effort; falls back to a worn fur item, else unmapped row).
 local function furRegionOf()
     for _, r in ipairs(BridgeEquip.REGIONS) do
         if r.id == "fur" then return r end
@@ -150,8 +147,6 @@ function BridgeEquip.primeFurRegion()
     local region = furRegionOf()
     if region == nil or region._vals ~= nil then return end
     local vals = {}
-    -- Newer (B42) Furry exposes the body location(s); include both the
-    -- ItemBodyLocation and the BodyLocation so either comparison matches.
     pcall(function()
         if type(FurManager) == "table" then
             if FurManager.furItemBodyLocation ~= nil then vals[#vals + 1] = FurManager.furItemBodyLocation end

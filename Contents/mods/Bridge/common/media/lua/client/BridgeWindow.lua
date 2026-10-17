@@ -142,8 +142,6 @@ function BridgeWindow.makeDesc(st, furSpecies)
     local bc = BridgeData.beardColorOf(st)
     pcall(function() hv:setBeardColor(ImmutableColor.new(bc.r, bc.g, bc.b)) end)
     pcall(function() hv:setNaturalBeardColor(ImmutableColor.new(bc.r, bc.g, bc.b)) end)
-    -- When a species is given (Appearance preview) the staged fur replaces the
-    -- fur recorded in the saved outfit; other callers omit it and keep the worn fur.
     local overrideFur = furSpecies ~= nil
     for _, rec in ipairs(BridgeWindow.wornRecords(st ~= nil and st.items or "")) do
         pcall(function()

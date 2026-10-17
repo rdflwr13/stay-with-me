@@ -442,7 +442,6 @@ function BridgeWorkSelect.lootTargetFor(c, o, kind)
     return { x = x, y = y, z = z, kind = kind or "obj", cont = c, ref = lootRef(c), items = n }
 end
 
--- Walk up to the outermost (world) container, e.g. a bag stored inside a crate.
 function BridgeWorkSelect.outerWorldContainer(c)
     if c == nil then return nil end
     local outer = nil
@@ -450,9 +449,6 @@ function BridgeWorkSelect.outerWorldContainer(c)
     return outer or c
 end
 
--- Build a loot target for one world container, optionally restricted to specific
--- items ("only"). Coordinates come from the outermost world container so a nested
--- bag still resolves to the crate/floor/corpse/vehicle she has to walk to.
 function BridgeWorkSelect.lootTargetForContainer(c, only)
     if c == nil then return nil end
     if not lootAllowedContainer(c, nil) then return nil end

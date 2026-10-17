@@ -1269,10 +1269,6 @@ BridgeServer.Commands.state = function(player, args)
         local rel = BridgeData.cleanRel(args.rel)
         if rel ~= nil then
 
-            -- Sandbox relationship ceilings. The rate multiplier is a client-side
-            -- value that cannot be re-derived from absolute server state, so the
-            -- server only limits the stored daily counters to the sandbox caps
-            -- plus the shared tier bonus; it never raises a stored value.
             local tier = BridgeData.relTier(rel)
             local bonus = (tier == "Close" and 3) or (tier == "Friend" and 2) or (tier == "Pal" and 1) or 0
             rel.gainF = math.min(rel.gainF, BridgeData.sandboxNumber("DailyFriendCap", 6, 0, 50) + bonus)
@@ -1771,8 +1767,6 @@ BridgeServer.Commands.water = function(player, args)
         for i = 0, objects:size() - 1 do
             local o = objects:get(i)
             local wet = false
-            -- Flagged water objects: validate the fluid is actually water, not just any fluid
-            -- (a barrel of petrol is hasFluid() but must never be consumed as washing water).
             pcall(function()
                 local flagged = o:hasWater() == true or o:hasFluid() == true
                 if flagged then
@@ -1791,8 +1785,6 @@ BridgeServer.Commands.water = function(player, args)
                 end
                 return
             end
-            -- Entity fluid containers (e.g. the office water dispenser) are not
-            -- flagged hasWater/hasFluid but do hold water.
             local fc = nil
             pcall(function()
                 fc = o:getFluidContainer()
@@ -2311,10 +2303,6 @@ end
 
 
 
--- Home auto-fetch: move one item from a container inside the home rect straight
--- into her body snapshot, then reply through the existing "gave" pipeline.
--- Scans rec.home on the server (the near-companion srcRef path is too short for
--- a 40x40 home). Enforces "near home" server-side.
 local FETCH_MARGIN = 6
 
 

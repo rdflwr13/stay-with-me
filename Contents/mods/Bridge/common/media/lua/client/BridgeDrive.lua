@@ -147,7 +147,6 @@ local function bleeding(red)
 end
 
 
--- Vehicle / moodle probes (added for the new drive callouts).
 local function engineOn(car)
     local on = false
     pcall(function() on = car:isEngineStarted() == true or car:isEngineRunning() == true end)
@@ -195,7 +194,6 @@ local function radioPlaying(car)
     pcall(function()
         local r = car:getPartById("Radio")
         if r ~= nil then
-            -- Stock car radios expose device data on the part without an inventory item.
             local dd = r:getDeviceData()
             if dd ~= nil then on = dd:getIsTurnedOn() == true end
         end
@@ -209,7 +207,6 @@ local function nightNow()
     return n
 end
 
--- Cold/Hot are moodles: HYPOTHERMIA / HYPERTHERMIA (B42), Hypothermia / Hyperthermia (B41).
 local COLD_MOODLE, HOT_MOODLE = nil, nil
 pcall(function() COLD_MOODLE = MoodleType.HYPOTHERMIA end)
 if COLD_MOODLE == nil then pcall(function() COLD_MOODLE = MoodleType.Hypothermia end) end
@@ -236,7 +233,6 @@ BridgeDrive.STATES = {
     { key = "Pain",    test = function(red) return statOf(red, "PAIN") > 0.45 end },
 }
 
--- Boredom is quiet: In/Drive/Out are all non-urgent (unlike BridgeDrive.STATES).
 BridgeDrive.QUIET_STATES = {
     { key = "Bored",   test = function(red) return statOf(red, "BOREDOM") > 0.6 end },
 }
@@ -285,7 +281,6 @@ BridgeDrive.EVENTS = {
     EvCarSmell16      = { slot = "DriveSmell16",      cooldown = 300,  urgent = false, cat = "SMELL" },
     EvCarCorpseSick   = { slot = "DriveCorpseSick",   cooldown = 300,  urgent = true,  cat = "SICK" },
 
-    -- Fuel / engine / lights / radio / health (added).
     EvCarLowFuel      = { slot = "DriveLowFuel",      cooldown = 600,  urgent = true,  cat = "FUEL" },
     EvCarOutOfFuel    = { slot = "DriveOutOfFuel",    cooldown = 900,  urgent = true,  cat = "FUEL" },
     EvCarNoStart      = { slot = "DriveNoStart",      cooldown = 300,  urgent = true,  cat = "ENGINE" },
@@ -406,7 +401,6 @@ local function sayState(red, phase)
             return say("EvCar" .. s.key .. phase)
         end
     end
-    -- Cold/Hot follow the player's body moodles; a recent cold line suppresses freezing.
     if moodle(red, COLD_MOODLE) >= 1 and (Bridge.time - (BridgeDrive.lastColdAt or -99999)) >= 600 then
         if say("EvCarFreezing") then return true end
     end
@@ -529,7 +523,6 @@ end
 
 
 
--- Only the "vehicle ahead" scan remains; zombie detection is unified in BridgeHorde.
 local function scanAhead(car)
     local C = BridgeCar.frame(car)
     if C == nil then return false end
@@ -735,7 +728,6 @@ function BridgeDrive.onExit()
     if BridgeDrive.ON.EXIT ~= 1 then return end
     local red = BridgeData.owner()
     if red == nil then return end
-    -- Engine still running as they get out: that takes the exit line's place.
     if BridgeDrive.ON.ENGINE == 1 then
         local car = BridgeCar ~= nil and BridgeCar.car or nil
         if car ~= nil and engineOn(car) and say("EvCarEngineLeftOn") then return end
@@ -856,10 +848,6 @@ function BridgeDrive.tick()
     end
 
 
-    -- Health tiers: cross below 50 / 30 / 15 (rearm 10 above the step).
-    -- The step is only committed once the line actually speaks: if say() is
-    -- blocked by the 12 s global gap, the crossing stays pending and retries
-    -- next tick instead of being consumed silently.
     if hp ~= nil then
         while BridgeDrive.healthStep > 0
             and hp >= BridgeDrive.HP_STEPS[BridgeDrive.healthStep] + BridgeDrive.HP_BACK do
@@ -905,12 +893,9 @@ function BridgeDrive.tick()
             local cx, cy, cz = nil, nil, nil
             pcall(function() cx, cy, cz = car:getX(), car:getY(), car:getZ() end)
             if cx ~= nil then
-                -- Unified horde radius around the car (any direction) so a horde
-                -- right beside/around the car is caught, not only one dead ahead.
                 hordeTier = BridgeHorde.tier(BridgeHorde.count(cx, cy, cz, BridgeHorde.RADIUS))
             end
         end
-        -- Hordes outrank single-zombie callouts.
         if hordeTier ~= nil and say("EvCarHorde" .. hordeTier) then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
@@ -926,10 +911,6 @@ function BridgeDrive.tick()
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
-        -- Generic "spotted one" while driving: any single zombie seen ahead of the
-        -- car in the road-scan range (6-22 tiles), beyond the close range above.
-        -- Only when no horde tier spoke, so hordes keep priority. Reuses the
-        -- existing EvCarZombie (DriveZombie) lines; non-urgent, 40 s cooldown.
         if hordeTier == nil and BridgeHorde ~= nil
             and BridgeHorde.countCone(car, BridgeDrive.SCAN_MIN, BridgeDrive.SCAN_MAX, nil, true, red) > 0
             and say("EvCarZombie") then
@@ -969,7 +950,6 @@ function BridgeDrive.tick()
     end
 
 
-    -- Fuel / engine / lights / radio / idle chatter (all after the arrival greeting).
     if BridgeDrive.greetDone and Bridge.every(30) then
         local ratio = nil
         pcall(function() ratio = fuelRatio(car) end)
@@ -997,10 +977,6 @@ function BridgeDrive.tick()
         end
 
         if not on and speed < 1 then
-            -- Only a failed attempt deserves "won't start": the keys must be in
-            -- the ignition (or it is hotwired) and the engine not cranking right
-            -- now. Without this, a car that is merely switched off reports a
-            -- failed start whenever its battery is low or its engine is worn.
             local trying = false
             pcall(function()
                 trying = (car:isKeysInIgnition() == true or car:isHotwired() == true)
@@ -1028,7 +1004,6 @@ function BridgeDrive.tick()
         if not ron then
             BridgeDrive.radioWas = false
         elseif not BridgeDrive.radioWas then
-            -- Rising edge; keep retrying until the line actually speaks.
             if say("EvCarRadio") then
                 BridgeDrive.radioWas = true
                 BridgeDrive.hpBase = hp or BridgeDrive.hpBase
@@ -1036,7 +1011,6 @@ function BridgeDrive.tick()
             end
         end
 
-        -- Idle chatter while driving (reuses the on-foot remark pools, car-aware).
         local calmFight = BridgeFight == nil or BridgeFight.state == "idle"
         if BridgeSocial ~= nil and type(BridgeSocial.idleRemark) == "function" and calmFight then
             local danger = 0
