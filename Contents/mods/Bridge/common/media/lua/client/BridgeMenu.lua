@@ -138,8 +138,7 @@ function BridgeMenu.statusParts(short)
 end
 
 function BridgeMenu.status(short)
-    local left, right = BridgeMenu.statusParts(short)
-    if right ~= nil and right ~= "" then return left .. " (" .. right .. ")" end
+    local left = BridgeMenu.statusParts(short)
     return left
 end
 
@@ -286,6 +285,9 @@ end
 
 local function buildActions(context, playerNum, env)
     local actions = actionsMenu(context)
+    if BridgeMenu.addWashTo ~= nil then
+        pcall(function() BridgeMenu.addWashTo(actions, BridgeMenu.clickObjects) end)
+    end
     if env.mode == "rest" then
         actions:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)
     elseif env.inRange then
@@ -432,7 +434,6 @@ BridgeMenu.ORDERABLE = {
     { id = "torch", label = "OptTorch", build = buildTorch },
     { id = "jobs", label = "Jobs", build = buildJobs },
     { id = "keep", label = "Keep", build = buildKeep },
-    { id = "home", label = "Home", build = buildHome },
     { id = "cancel", label = "CancelTask", build = buildCancel },
 }
 
@@ -702,6 +703,7 @@ function BridgeMenu.onWorldMenu(playerNum, context, worldobjects, test)
     if playerNum ~= nil and playerNum ~= 0 then return end
     local ok, yes = pcall(bodyNear, worldobjects, playerNum)
     if not ok or not yes then return end
+    BridgeMenu.clickObjects = worldobjects
     local option = context:addOptionOnTop(name())
     local sub = ISContextMenu:getNew(context)
     context:addSubMenu(option, sub)
@@ -1404,7 +1406,7 @@ local function addFillActions(menu, sink)
     pcall(function()
         if BridgeWash ~= nil and BridgeWash.fillables ~= nil then list = BridgeWash.fillables(Bridge.body) end
     end)
-    local fillOpt = menu:addOption(getText("ContextMenu_Fill"), nil, nil)
+    local fillOpt = menu:addOption(tr("FillHer"), nil, nil)
     log("fill menu containers=" .. tostring(#list) .. (busy and " (busy)" or ""))
     if busy or #list == 0 then
         fillOpt.notAvailable = true
@@ -1552,14 +1554,10 @@ function BridgeMenu.onWashSinkMenu(playerNum, context, worldobjects, test)
     if rinMenu == nil then
         local existing = nil
         pcall(function() existing = context:getOptionFromName(name()) end)
-        if existing ~= nil then
-            pcall(function() rinMenu = context:getSubMenu(existing.subOption) end)
-            if rinMenu == nil then return end
-        else
-            local rinOpt = context:addOption(name())
-            rinMenu = ISContextMenu:getNew(context)
-            context:addSubMenu(rinOpt, rinMenu)
-        end
+        if existing ~= nil then return end
+        local rinOpt = context:addOption(name())
+        rinMenu = ISContextMenu:getNew(context)
+        context:addSubMenu(rinOpt, rinMenu)
     end
 
     local dupe = nil
@@ -1568,6 +1566,16 @@ function BridgeMenu.onWashSinkMenu(playerNum, context, worldobjects, test)
 
     BridgeMenu.addRinActions(rinMenu, sink)
     log("wash sink menu obj=" .. tostring(objName))
+end
+
+function BridgeMenu.addWashTo(menu, worldobjects)
+    if menu == nil then return end
+    local sink = waterUnder(worldobjects)
+    if sink == nil then return end
+    local dupe = nil
+    pcall(function() dupe = menu:getOptionFromName(tr("WashSelf")) end)
+    if dupe ~= nil then return end
+    BridgeMenu.addRinActions(menu, sink)
 end
 
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWorldMenu)

@@ -192,6 +192,7 @@
     "IGUI_NotAlone_Say_NotEnoughWater": "Not enough water in there to wash.",
     "IGUI_NotAlone_WashSelf": "Wash self",
     "IGUI_NotAlone_WashInventory": "Wash inventory",
+    "IGUI_NotAlone_FillHer": "Fill",
     "IGUI_NotAlone_ShowerTake": "Take a shower",
     "IGUI_NotAlone_GetDressed": "Get dressed",
     "IGUI_NotAlone_Soc_JobWashSelf_Near_1": "I'll wash up. Won't be a minute.",
