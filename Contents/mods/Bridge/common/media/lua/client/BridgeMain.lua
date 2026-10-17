@@ -3019,6 +3019,68 @@ function Bridge.onZombieDead(zombie)
         zombie:removeFromSquare()
     end)
     log("body died, corpse removed")
+    Bridge.notePoseFail("died")
+end
+
+
+-- Fail-safe: if she keeps dying, or keeps falling over while seated/lying, put her
+-- back at the player as if she had just respawned. Singleplayer only.
+local FAILSAFE_LIMIT, FAILSAFE_WINDOW, FAILSAFE_COOLDOWN = 3, 3600, 600
+
+-- Count one failure (a death, or a fall while posed). Returns true when the count
+-- reached the limit and she was reset. The counter clears after FAILSAFE_WINDOW with
+-- no further failure, so unrelated one-off deaths never accumulate.
+function Bridge.notePoseFail(why)
+    if Bridge.mp then return false end
+    local fs = Bridge.failSafe
+    if fs == nil then
+        fs = { count = 0, at = nil, tripAt = nil }
+        Bridge.failSafe = fs
+    end
+    if Bridge.time - (fs.at or -1e18) > FAILSAFE_WINDOW then fs.count = 0 end
+    fs.at = Bridge.time
+    fs.count = fs.count + 1
+    if fs.count < FAILSAFE_LIMIT then return false end
+    fs.count = 0
+    if fs.tripAt ~= nil and Bridge.time - fs.tripAt < FAILSAFE_COOLDOWN then return false end
+    fs.tripAt = Bridge.time
+    Bridge.failSafeRespawn(why)
+    return true
+end
+
+function Bridge.failSafeRespawn(why)
+    log("fail-safe: " .. tostring(why) .. " " .. tostring(FAILSAFE_LIMIT) .. "x, putting her back at the player")
+    Bridge.result = "fail-safe respawn: " .. tostring(why)
+    local body = Bridge.body
+    pcall(function() if BridgeTask ~= nil then BridgeTask.cancel("fail-safe") end end)
+    pcall(function() if BridgeMove ~= nil and BridgeMove.sitFlagOff ~= nil then BridgeMove.sitFlagOff(body) end end)
+    if body ~= nil then
+        pcall(function() body:setBumpType("") end)
+        pcall(function() Bridge.unhumanize(body) end)
+        pcall(function() body:removeFromSquare() end)
+        pcall(function() body:removeFromWorld() end)
+    end
+    if body ~= nil and BridgeBandits ~= nil then
+        pcall(function() BridgeBandits.forgetCorpse(body:getX(), body:getY(), body:getZ()) end)
+    end
+    Bridge.body = nil
+    Bridge.kind = nil
+    Bridge.hiddenSince = nil
+    Bridge.holdPos = nil
+    Bridge.walkTypeSet = nil
+    Bridge.pose = nil
+    Bridge.target = nil
+    Bridge.hitRestore = nil
+    Bridge.groundTicks = 0
+    pcall(function() BridgeMove.reset(nil) end)
+    pcall(function() BridgeFight.reset(nil) end)
+    pcall(function() BridgeHeal.stop("fail-safe") end)
+    pcall(function() BridgeWash.stop("fail-safe") end)
+    pcall(function() Bridge.restoreRed() end)
+    Bridge.leaveAt = nil
+    Bridge.stash = nil
+    if Bridge.store ~= nil then Bridge.store.want = true end
+    Bridge.respawnAt = Bridge.time
 end
 
 
@@ -3443,6 +3505,18 @@ local function updateZombieBody(body)
         or string.sub(asn, 1, 11) == "knockeddown" or string.sub(asn, 1, 5) == "getup")
     if asn ~= Bridge.lastAsn and fallen then
         log("body state " .. tostring(asn) .. " after " .. tostring(Bridge.lastAsn))
+        if string.sub(asn, 1, 8) == "falldown" or string.sub(asn, 1, 8) == "onground" then
+            local posed = false
+            if BridgeTask ~= nil then
+                if BridgeTask.isSeated ~= nil and BridgeTask.isSeated(body) then posed = true end
+                if BridgeTask.isLying ~= nil and BridgeTask.isLying(body) then posed = true end
+            end
+            if posed then
+                local where = "while seated"
+                if BridgeTask.isLying ~= nil and BridgeTask.isLying(body) then where = "while lying" end
+                if Bridge.notePoseFail("fell " .. where) then return end
+            end
+        end
     end
     Bridge.lastAsn = asn
     if asn ~= nil and (string.sub(asn, 1, 8) == "onground" or string.find(asn, "ragdoll", 1, true) ~= nil) then

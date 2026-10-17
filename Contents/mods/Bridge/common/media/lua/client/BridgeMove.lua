@@ -1791,6 +1791,19 @@ function BridgeMove.sitFlagTick(body)
     if mp then BridgeMove.sitFlagOff(body) return end
     if BridgeFastForward ~= nil and BridgeFastForward.flagged ~= nil then return end
     if BridgeMove.isOnChair(body) then
+        -- Seated pose only exists in the bumped state. If the body was knocked
+        -- out of it (unpause, respawn, a forced idle), put it straight back in,
+        -- instead of letting idle+SitChair fall her over.
+        if BridgeTask ~= nil and BridgeTask.isSeated ~= nil and BridgeTask.isSeated(body) then
+            local asn, bump = "", ""
+            pcall(function() asn = tostring(body:getActionStateName()) end)
+            pcall(function() bump = tostring(body:getBumpType()) end)
+            if asn ~= "bumped" or bump ~= "SitChair" then
+                pcall(function() body:setVariable("BumpAnimFinished", false) end)
+                pcall(function() body:setBumpType("") end)
+                pcall(function() body:setBumpType("SitChair") end)
+            end
+        end
         local on = false
         pcall(function() on = body:isReanimatedForGrappleOnly() == true end)
         if not on then
@@ -1800,6 +1813,20 @@ function BridgeMove.sitFlagTick(body)
         BridgeMove.sitFlag, BridgeMove.sitFlagBody = true, body
     else
         BridgeMove.sitFlagOff(body)
+    end
+    -- Hold the lying pose (bed / sleeping) in the bumped state the same way: a
+    -- LayAwake/LayAsleep bump in any other action state falls her over too.
+    if BridgeTask ~= nil and BridgeTask.isLying ~= nil and BridgeTask.isLying(body) then
+        local asn, bump = "", ""
+        pcall(function() asn = tostring(body:getActionStateName()) end)
+        pcall(function() bump = tostring(body:getBumpType()) end)
+        local anim = bump
+        if anim ~= "LayAwake" and anim ~= "LayAsleep" then anim = BridgeTask.layAnim end
+        if (anim == "LayAwake" or anim == "LayAsleep") and (asn ~= "bumped" or bump ~= anim) then
+            pcall(function() body:setVariable("BumpAnimFinished", false) end)
+            pcall(function() body:setBumpType("") end)
+            pcall(function() body:setBumpType(anim) end)
+        end
     end
 end
 

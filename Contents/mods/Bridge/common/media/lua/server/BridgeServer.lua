@@ -1760,7 +1760,20 @@ BridgeServer.Commands.water = function(player, args)
         for i = 0, objects:size() - 1 do
             local o = objects:get(i)
             local wet = false
-            pcall(function() wet = (o:hasWater() or o:hasFluid()) and o:getFluidAmount() > 0 end)
+            -- Flagged water objects: validate the fluid is actually water, not just any fluid
+            -- (a barrel of petrol is hasFluid() but must never be consumed as washing water).
+            pcall(function()
+                local flagged = o:hasWater() == true or o:hasFluid() == true
+                if flagged then
+                    local fc = o:getFluidContainer()
+                    if fc ~= nil then
+                        wet = fc:getAmount() > 0 and (fc:isWaterSource() or fc:contains(Fluid.Water)
+                            or (Fluid.TaintedWater ~= nil and fc:contains(Fluid.TaintedWater)))
+                    else
+                        wet = o:hasWater() == true and o:getFluidAmount() > 0
+                    end
+                end
+            end)
             if wet then
                 if o:useFluid(math.min(amount, o:getFluidAmount())) > 0 then
                     pcall(function() o:transmitModData() end)

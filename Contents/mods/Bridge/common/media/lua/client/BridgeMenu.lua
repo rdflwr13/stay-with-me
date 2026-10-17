@@ -58,6 +58,11 @@ local function name() return Bridge.companionName() end
 
 BridgeMenu.TALK_RANGE = 12
 
+-- Set false to keep the read-only status line ("With you" / "Resting" / "Waiting where you parted")
+-- out of the Rin context menus. BridgeMenu.statusParts/status themselves are left intact (the
+-- sidebar icon tooltip and the companion window header still use them).
+BridgeMenu.SHOW_STATUS = false
+
 
 local function present()
     if Bridge.alive() then return true end
@@ -103,6 +108,69 @@ function BridgeMenu.inTalkRange()
         if info.who == BridgeData.me() and close(z) then return true end
     end
     return false
+end
+
+
+-- The grid square under the mouse (the same screenToIso conversion BridgeHome uses), so a click can
+-- be resolved to the exact tile that was clicked.
+local function cursorSquare(playerNum)
+    local sq = nil
+    pcall(function()
+        local pn = playerNum or 0
+        local z = 0
+        local red = (BridgeData ~= nil and BridgeData.owner ~= nil) and BridgeData.owner() or nil
+        if red ~= nil then z = math.floor(red:getZ() + 0.01) end
+        local mx, my = getMouseX(), getMouseY()
+        local x = math.floor(screenToIsoX(pn, mx, my, z))
+        local y = math.floor(screenToIsoY(pn, mx, my, z))
+        sq = getCell():getGridSquare(x, y, z)
+    end)
+    return sq
+end
+
+local function clickedSquare(worldobjects, playerNum)
+    local sq = cursorSquare(playerNum)
+    if sq ~= nil then return sq end
+    for _, o in ipairs(worldobjects or {}) do
+        local s = nil
+        pcall(function() s = o:getSquare() end)
+        if s ~= nil then return s end
+    end
+    return nil
+end
+
+-- True when the clicked tile is bare ground: nothing on it but the floor (no tile objects such as
+-- walls, fences, furniture, containers or trees, and no items lying on the ground). Used to keep
+-- the compact Rin > Work menu off objects.
+local function emptySpaceUnder(worldobjects, playerNum)
+    local sq = clickedSquare(worldobjects, playerNum)
+    if sq == nil then return false end
+    local clear = true
+    pcall(function()
+        local floor = nil
+        pcall(function() floor = sq:getFloor() end)
+        local objects = sq:getObjects()
+        if objects ~= nil then
+            for i = 0, objects:size() - 1 do
+                local o = objects:get(i)
+                if o ~= nil and o ~= floor then
+                    local isFloor = false
+                    pcall(function() isFloor = o:hasProperty(IsoFlagType.solidfloor) == true end)
+                    if not isFloor then
+                        local live = true
+                        pcall(function() live = o:getObjectIndex() >= 0 end)
+                        if live then clear = false break end
+                    end
+                end
+            end
+        end
+        if clear then
+            local wobs = nil
+            pcall(function() wobs = sq:getWorldObjects() end)
+            if wobs ~= nil and wobs:size() > 0 then clear = false end
+        end
+    end)
+    return clear
 end
 
 
@@ -286,7 +354,7 @@ end
 local function buildActions(context, playerNum, env)
     local actions = actionsMenu(context)
     if BridgeMenu.addWashTo ~= nil then
-        pcall(function() BridgeMenu.addWashTo(actions, BridgeMenu.clickObjects) end)
+        pcall(function() BridgeMenu.addWashTo(actions, BridgeMenu.clickObjects, playerNum) end)
     end
     if env.mode == "rest" then
         actions:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)
@@ -445,13 +513,13 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
     if Bridge == nil or Bridge.store == nil then return end
     local st = Bridge.store
     local mode = BridgeData.modeOf(st)
-    if fromIcon then
+    if fromIcon and BridgeMenu.SHOW_STATUS then
         local status = context:addOption(BridgeMenu.status(true))
         status.isDisabled = true
     end
 
     if BridgeCar ~= nil and BridgeCar.inCarForMenu() then
-        if not fromIcon then
+        if not fromIcon and BridgeMenu.SHOW_STATUS then
             local status = context:addOption(BridgeMenu.status(false))
             status.isDisabled = true
         end
@@ -833,12 +901,15 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     if playerNum ~= nil and playerNum ~= 0 then return end
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
     if not present() then return end
+    if not emptySpaceUnder(worldobjects, playerNum) then return end
     if context:getOptionFromName(name()) ~= nil then return end
     local option = context:addOptionOnTop(name())
     local sub = ISContextMenu:getNew(context)
     context:addSubMenu(option, sub)
-    local status = sub:addOption(BridgeMenu.status(true))
-    status.isDisabled = true
+    if BridgeMenu.SHOW_STATUS then
+        local status = sub:addOption(BridgeMenu.status(true))
+        status.isDisabled = true
+    end
     local jobsOption = sub:addOption(tr("Jobs"))
     local jobs = ISContextMenu:getNew(sub)
     sub:addSubMenu(jobsOption, jobs)
@@ -891,8 +962,10 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
     local option = context:addOptionOnTop(name())
     local sub = ISContextMenu:getNew(context)
     context:addSubMenu(option, sub)
-    local status = sub:addOption(BridgeMenu.status(true))
-    status.isDisabled = true
+    if BridgeMenu.SHOW_STATUS then
+        local status = sub:addOption(BridgeMenu.status(true))
+        status.isDisabled = true
+    end
     local ok = false
     pcall(function() ok = BridgeTask.kinds.chopTree.available(Bridge.body) end)
     local cut = sub:addOption(tr("CutTree"), tree, BridgeMenu.onCutTree)
@@ -1263,30 +1336,15 @@ function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
     end
 end
 
-local function waterUnder(worldobjects)
+-- Resolve a water source for the companion Wash/Fill menu. Water counts only when it is the object
+-- under the cursor or a water source on the clicked tile (including the natural-water proxy). It is
+-- deliberately NOT resolved from the player's surroundings, so the option no longer appears on
+-- unrelated objects (a forge, a wall, ...) merely because the player stands near water.
+local function waterUnder(worldobjects, playerNum)
     for _, o in ipairs(worldobjects or {}) do
-        if o ~= nil then
-            local wet = false
-            pcall(function()
-                wet = BridgeWash ~= nil and BridgeWash.isWaterObject ~= nil and BridgeWash.isWaterObject(o)
-            end)
-            if not wet then
-                local isWI = false
-                if instanceof ~= nil then pcall(function() isWI = instanceof(o, "IsoWorldInventoryObject") end) end
-                if not isWI then
-                    local call = BridgeWash ~= nil and BridgeWash.safeCall or nil
-                    if call ~= nil then
-                        wet = call(o, "hasWater") == true or call(o, "hasFluid") == true
-                        if wet then wet = (tonumber(call(o, "getFluidAmount")) or 0) > 0 end
-                    end
-                end
-            end
-            if wet then
-                if BridgeWash ~= nil and BridgeWash.objInfo ~= nil then
-                    pcall(function() log("waterUnder " .. BridgeWash.objInfo(o)) end)
-                end
-                return o
-            end
+        if o ~= nil and BridgeWash ~= nil and BridgeWash.isWaterObject ~= nil and BridgeWash.isWaterObject(o) then
+            if BridgeWash.objInfo ~= nil then pcall(function() log("waterUnder " .. BridgeWash.objInfo(o)) end) end
+            return o
         end
     end
     for _, o in ipairs(worldobjects or {}) do
@@ -1296,9 +1354,7 @@ local function waterUnder(worldobjects)
             if sq ~= nil then
                 local found = nil
                 pcall(function()
-                    if BridgeWash ~= nil and BridgeWash.waterOn ~= nil then
-                        found = BridgeWash.waterOn(sq)
-                    end
+                    if BridgeWash ~= nil and BridgeWash.waterOn ~= nil then found = BridgeWash.waterOn(sq) end
                 end)
                 if found ~= nil then
                     if BridgeWash ~= nil and BridgeWash.objInfo ~= nil then
@@ -1309,29 +1365,16 @@ local function waterUnder(worldobjects)
             end
         end
     end
-    if BridgeWash ~= nil and BridgeWash.waterOn ~= nil and BridgeWash.waterSquare ~= nil then
-        local found = nil
-        pcall(function()
-            local red = (BridgeData ~= nil and BridgeData.owner ~= nil) and BridgeData.owner() or nil
-            local cur = red ~= nil and red:getCurrentSquare() or nil
-            if cur == nil then return end
-            local x, y, z = cur:getX(), cur:getY(), cur:getZ()
-            local cell = getCell()
-            for dy = -1, 1 do
-                for dx = -1, 1 do
-                    if found == nil then
-                        local sq = (dx == 0 and dy == 0) and cur or cell:getGridSquare(x + dx, y + dy, z)
-                        if sq ~= nil and BridgeWash.waterSquare(sq) then
-                            found = BridgeWash.waterOn(sq)
-                        end
-                    end
-                end
-            end
-        end)
-        if found ~= nil then
-            log("waterUnder (natural) near the player")
-            return found
+    local found = nil
+    pcall(function()
+        if BridgeWash ~= nil and BridgeWash.waterOn ~= nil then
+            local sq = cursorSquare(playerNum)
+            if sq ~= nil then found = BridgeWash.waterOn(sq) end
         end
+    end)
+    if found ~= nil then
+        log("waterUnder (clicked tile)")
+        return found
     end
     return nil
 end
@@ -1529,7 +1572,7 @@ function BridgeMenu.onWashSinkMenu(playerNum, context, worldobjects, test)
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
     if not present() then return end
     if not BridgeMenu.inTalkRange() then return end
-    local sink = waterUnder(worldobjects)
+    local sink = waterUnder(worldobjects, playerNum)
     if sink == nil then return end
 
     local rinMenu = nil
@@ -1568,9 +1611,9 @@ function BridgeMenu.onWashSinkMenu(playerNum, context, worldobjects, test)
     log("wash sink menu obj=" .. tostring(objName))
 end
 
-function BridgeMenu.addWashTo(menu, worldobjects)
+function BridgeMenu.addWashTo(menu, worldobjects, playerNum)
     if menu == nil then return end
-    local sink = waterUnder(worldobjects)
+    local sink = waterUnder(worldobjects, playerNum)
     if sink == nil then return end
     local dupe = nil
     pcall(function() dupe = menu:getOptionFromName(tr("WashSelf")) end)

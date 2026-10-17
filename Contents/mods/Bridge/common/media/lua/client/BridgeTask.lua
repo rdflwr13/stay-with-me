@@ -162,17 +162,17 @@ BridgeTask.WASH_PASSES = 12
 BridgeTask.FILL_REACH = BridgeTask.WASH_REACH
 BridgeTask.BATH_REACH = 1.5
 BridgeTask.FILL_ANIM = "fillBottle"
-BridgeTask.FILL_UNIT_MS = 100
-BridgeTask.FILL_BASE_MS = 30
+-- Vanilla ISTakeWaterAction:getDuration() = waterUnit * 100 + 30, in 1/60s ticks (the PZ maxTime unit).
+BridgeTask.FILL_UNIT_TICKS = 100
+BridgeTask.FILL_BASE_TICKS = 30
 BridgeTask.FILL_SOUND_EVERY = 120
 BridgeTask.FILL_MIN_TICKS = 60
 
 
 BridgeTask.EMPTY_ANIM = "pourFluid"
-BridgeTask.EMPTY_UNIT_MS = 100
-BridgeTask.EMPTY_BASE_MS = 30
+BridgeTask.EMPTY_UNIT_TICKS = 100
+BridgeTask.EMPTY_BASE_TICKS = 30
 BridgeTask.EMPTY_MIN_TICKS = 60
-BridgeTask.FILL_TICKS_PER_MS = 0.06
 
 
 BridgeTask.LOOT_LOW = "LootLow"
@@ -3518,8 +3518,9 @@ local function fillSay(pool, fallbackKey)
 end
 
 local function fillTicksFor(amount)
-    local ms = (amount or 0) * (BridgeTask.FILL_UNIT_MS or 100) + (BridgeTask.FILL_BASE_MS or 30)
-    local ticks = math.floor(ms * (BridgeTask.FILL_TICKS_PER_MS or 0.06))
+    -- Matches vanilla ISTakeWaterAction:getDuration() exactly: the value is already in 1/60s
+    -- ticks, the same unit as Bridge.time, so there is no ms -> ticks conversion.
+    local ticks = math.floor((amount or 0) * (BridgeTask.FILL_UNIT_TICKS or 100) + (BridgeTask.FILL_BASE_TICKS or 30))
     local minTicks = BridgeTask.FILL_MIN_TICKS or 60
     if ticks < minTicks then ticks = minTicks end
     return ticks
@@ -3800,9 +3801,11 @@ local function emptyTicksFor(amount, item)
         if type(minTime) == "number" and (ms == nil or ms < minTime) then ms = minTime end
     end)
     if type(ms) ~= "number" then
-        ms = (amount or 0) * (BridgeTask.EMPTY_UNIT_MS or 100) + (BridgeTask.EMPTY_BASE_MS or 30)
+        ms = (amount or 0) * (BridgeTask.EMPTY_UNIT_TICKS or 100) + (BridgeTask.EMPTY_BASE_TICKS or 30)
     end
-    local ticks = math.floor(ms * (BridgeTask.FILL_TICKS_PER_MS or 0.06))
+    -- ms here is vanilla ISFluidEmptyAction's maxTime (amount * transfer time per liter, / transfer
+    -- rate), already in 1/60s ticks, so no ms -> ticks conversion is applied.
+    local ticks = math.floor(ms)
     if ticks < (BridgeTask.EMPTY_MIN_TICKS or 60) then ticks = BridgeTask.EMPTY_MIN_TICKS or 60 end
     return ticks
 end
@@ -5736,6 +5739,14 @@ Events.OnTickEvenPaused.Add(function()
     if BridgeTask.kind == "exercise" then
         BridgeTask.exerciseRepMark = Bridge.time
         return
+    end
+    -- A seated or lying pose task must not be re-pathed: forcing idle here leaves
+    -- the body in idle with the sit/lay bump, and the engine plays falldown from there.
+    if BridgeTask.kind == "sit" or BridgeTask.kind == "lay" then
+        local posed = false
+        if BridgeMove ~= nil and BridgeMove.isOnChair ~= nil and BridgeMove.isOnChair(body) then posed = true end
+        if BridgeTask.isLying ~= nil and BridgeTask.isLying(body) then posed = true end
+        if posed then return end
     end
     pcall(function() BridgeMove.stopPath(body) end)
     pcall(function() BridgeTask.clearChop(body) end)

@@ -289,26 +289,42 @@ function BridgeWash.objInfo(o)
         tostring(o), table.concat(flags, "|"), tostring(hw), tostring(hf), tostring(amt), fcws)
 end
 
+-- Canonical "does this fluid container hold usable water?" test. Same rule already used by
+-- isFillable (below) and by the server water command: a defined water source, or a container that
+-- actually holds (tainted) water. Petrol/bleach/any other fluid is rejected, so a barrel of
+-- gasoline is never treated as water.
+function BridgeWash.isWaterFluid(fc)
+    if fc == nil then return false end
+    if BridgeWash.safeCall(fc, "isWaterSource") == true then return true end
+    local water = false
+    pcall(function()
+        water = BridgeWash.safeCall(fc, "contains", Fluid.Water) == true
+            or (Fluid.TaintedWater ~= nil and BridgeWash.safeCall(fc, "contains", Fluid.TaintedWater) == true)
+    end)
+    return water
+end
+
+-- True when the object is a usable water source. Amount is deliberately NOT required here (an
+-- empty water barrel is still a water fixture, and the wash task reports the shortage); what is
+-- required is that any fluid it holds is water, so fluid containers are validated by type rather
+-- than by hasFluid() alone.
 function BridgeWash.isWaterObject(o)
     if o == nil then return false end
-    local isWorldItem = false
-    if instanceof ~= nil then pcall(function() isWorldItem = instanceof(o, "IsoWorldInventoryObject") end) end
+    -- Dispenser-style entities expose water through a named entity, not a useful fluid container.
+    local custom = nil
+    local props = BridgeWash.safeCall(o, "getProperties")
+    if props ~= nil then custom = BridgeWash.safeCall(props, "get", "CustomName") end
+    if custom == "Dispenser" then return true end
     local fc = BridgeWash.safeCall(o, "getFluidContainer")
-    if isWorldItem then
-        return fc ~= nil and BridgeWash.safeCall(fc, "isWaterSource") == true
-            and (BridgeWash.safeCall(fc, "getFluidAmount") or 0) > 0
+    if fc ~= nil then
+        if BridgeWash.isWaterFluid(fc) then return true end
+        -- A flagged water fixture whose container is not a recognised water source (a piped
+        -- sink with an empty/generic container) still counts; a fluid container that only holds
+        -- petrol/bleach has hasWater() == false, so it is rejected.
+        if BridgeWash.safeCall(o, "hasWater") == true then return true end
+        return false
     end
     if BridgeWash.safeCall(o, "hasWater") == true then return true end
-    if BridgeWash.safeCall(o, "hasFluid") == true then return true end
-    if fc ~= nil then
-        if BridgeWash.safeCall(fc, "isWaterSource") == true then return true end
-        local custom = nil
-        local props = BridgeWash.safeCall(o, "getProperties")
-        if props ~= nil then custom = BridgeWash.safeCall(props, "get", "CustomName") end
-        local water = BridgeWash.safeCall(fc, "contains", Fluid.Water) == true
-            or (Fluid.TaintedWater ~= nil and BridgeWash.safeCall(fc, "contains", Fluid.TaintedWater) == true)
-        if custom == "Dispenser" or water then return true end
-    end
     return false
 end
 
@@ -625,6 +641,12 @@ end
 
 
 local function clean(body, sink, scope)
+    if sink == nil then return 0, 0 end
+    -- Defensive: never spend a fluid that isn't water (protects against a stale menu selection or
+    -- an MP client requesting a non-water source). Proxies (natural water / TABAS) are trusted.
+    if type(sink) ~= "table" and not (BridgeWash.isWaterObject ~= nil and BridgeWash.isWaterObject(sink)) then
+        return 0, 0
+    end
     local water, washed = 0, 0
     local left = 0
     pcall(function() left = sink:getFluidAmount() end)
