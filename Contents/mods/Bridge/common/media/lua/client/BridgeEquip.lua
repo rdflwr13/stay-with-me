@@ -133,7 +133,65 @@ BridgeEquip.REGIONS = {
         "UNDERWEAR_EXTRA2", "THIGH_LEFT", "THIGH_RIGHT", "KNEE_LEFT", "KNEE_RIGHT" } },
     { id = "feet", x = 44, y = 272, locs = { "ANKLE_HOLSTER", "SHOES", "SOCKS", "CALF_LEFT", "CALF_RIGHT",
         "CALF_LEFT_TEXTURE", "CALF_RIGHT_TEXTURE", "GAITER_LEFT", "GAITER_RIGHT" } },
+    { id = "fur", x = 106, y = 128, locs = { "FUR" } },
 }
+
+-- The Furry mod creates its "Fur" body location at runtime, so it is not in
+-- ItemBodyLocation. Pre-seed the region's value cache from the live body
+-- location group (best-effort; falls back to a worn fur item, else unmapped row).
+local function furRegionOf()
+    for _, r in ipairs(BridgeEquip.REGIONS) do
+        if r.id == "fur" then return r end
+    end
+    return nil
+end
+
+function BridgeEquip.primeFurRegion()
+    local region = furRegionOf()
+    if region == nil or region._vals ~= nil then return end
+    local vals = {}
+    -- Newer (B42) Furry exposes the body location(s); include both the
+    -- ItemBodyLocation and the BodyLocation so either comparison matches.
+    pcall(function()
+        if type(FurManager) == "table" then
+            if FurManager.furItemBodyLocation ~= nil then vals[#vals + 1] = FurManager.furItemBodyLocation end
+            if FurManager.furBodyLocation ~= nil then vals[#vals + 1] = FurManager.furBodyLocation end
+        end
+    end)
+    if #vals == 0 then
+        pcall(function()
+            if BodyLocations ~= nil and type(BodyLocations.getGroup) == "function" then
+                local group = BodyLocations.getGroup("Human")
+                if group ~= nil and type(group.getLocation) == "function" then
+                    local loc = nil
+                    pcall(function() loc = group:getLocation("Fur") end)
+                    if loc ~= nil then vals[#vals + 1] = loc end
+                end
+            end
+        end)
+    end
+    if #vals == 0 then
+        pcall(function()
+            local b = her()
+            if b ~= nil then
+                local worn = b:getWornItems()
+                for i = 0, worn:size() - 1 do
+                    local it = worn:getItemByIndex(i)
+                    if it ~= nil then
+                        local t = ""
+                        pcall(function() t = tostring(it:getType() or "") end)
+                        if string.sub(t, 1, 6) == "Furry_" then
+                            local loc = nil
+                            pcall(function() loc = it:getBodyLocation() end)
+                            if loc ~= nil then vals[#vals + 1] = loc break end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    if #vals > 0 then region._vals = vals end
+end
 
 local function enumOf(name)
     local v = nil
@@ -143,6 +201,7 @@ local function enumOf(name)
 end
 
 local function regionValues(region)
+    if region.id == "fur" then BridgeEquip.primeFurRegion() end
     if region._vals ~= nil then return region._vals end
     local vals = {}
     for _, name in ipairs(region.locs) do
@@ -254,8 +313,7 @@ BridgeEquip.wornItems = wornItems
 local function regionItems(b, region)
     local out = {}
     local worn = wornItems(b)
-    for _, name in ipairs(region.locs) do
-        local v = enumOf(name)
+    for _, v in ipairs(regionValues(region)) do
         if v ~= nil then
             for _, w in ipairs(worn) do
                 local hit = false
@@ -293,8 +351,7 @@ BridgeEquip.mountsOf = providerMounts
 local function regionLayers(b, region)
     local out = {}
     local worn = wornItems(b)
-    for _, name in ipairs(region.locs) do
-        local v = enumOf(name)
+    for _, v in ipairs(regionValues(region)) do
         if v ~= nil then
             for _, w in ipairs(worn) do
                 local hit = false
@@ -1298,6 +1355,7 @@ function BridgeEquipWindow:relayout()
     local L = BridgeEquip.L
     local S = L.S
     local b = her()
+    BridgeEquip.primeFurRegion()
     local th = self:titleBarHeight()
 
     self.canvas:setX(0)

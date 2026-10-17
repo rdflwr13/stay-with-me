@@ -1103,6 +1103,7 @@ local function dressBody(body)
         pcall(function() BridgeInventory.redress(body) end)
         if BridgeInventory.customKeys ~= nil then BridgeInventory.customKeys[body] = nil end
         pcall(function() BridgeInventory.custom(body, outfitStore()) end)
+        pcall(function() if BridgeAppearance ~= nil and BridgeAppearance.fixFurVariant ~= nil then BridgeAppearance.fixFurVariant() end end)
         return "dressed from save: " .. restored .. extra
     end
     BridgeWeapon.assignedId = nil
@@ -1184,6 +1185,7 @@ local function dressBody(body)
     pcall(function() BridgeInventory.redress(body) end)
     if BridgeInventory.customKeys ~= nil then BridgeInventory.customKeys[body] = nil end
     pcall(function() BridgeInventory.custom(body, outfitStore()) end)
+    pcall(function() if BridgeAppearance ~= nil and BridgeAppearance.fixFurVariant ~= nil then BridgeAppearance.fixFurVariant() end end)
     return "dressed " .. tostring(worn)
 end
 

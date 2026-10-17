@@ -128,7 +128,7 @@ end
 
 
 
-function BridgeWindow.makeDesc(st)
+function BridgeWindow.makeDesc(st, furSpecies)
     local desc = SurvivorFactory.CreateSurvivor()
     desc:setFemale(BridgeData.isFemale(st))
     pcall(function() desc:getWornItems():clear() end)
@@ -142,10 +142,18 @@ function BridgeWindow.makeDesc(st)
     local bc = BridgeData.beardColorOf(st)
     pcall(function() hv:setBeardColor(ImmutableColor.new(bc.r, bc.g, bc.b)) end)
     pcall(function() hv:setNaturalBeardColor(ImmutableColor.new(bc.r, bc.g, bc.b)) end)
+    -- When a species is given (Appearance preview) the staged fur replaces the
+    -- fur recorded in the saved outfit; other callers omit it and keep the worn fur.
+    local overrideFur = furSpecies ~= nil
     for _, rec in ipairs(BridgeWindow.wornRecords(st ~= nil and st.items or "")) do
         pcall(function()
             local item = instanceItem(rec.t)
             if item == nil then return end
+            if overrideFur then
+                local t = nil
+                pcall(function() t = item:getType() end)
+                if type(t) == "string" and string.sub(t, 1, 6) == "Furry_" then return end
+            end
             BridgeItems.apply(item, rec)
             local loc = nil
             if item:IsClothing() then loc = item:getBodyLocation() end
@@ -154,6 +162,17 @@ function BridgeWindow.makeDesc(st)
         end)
     end
     BridgeWindow.addCustomDesc(desc, st)
+    if overrideFur and furSpecies ~= "Hooman" and type(FurManager) == "table"
+        and type(FurManager.determineFurClothingName) == "function" then
+        pcall(function()
+            local id = FurManager.determineFurClothingName(BridgeData.isFemale(st), furSpecies)
+            local item = instanceItem(id)
+            if item ~= nil then
+                local loc = item:getBodyLocation()
+                if loc ~= nil then desc:setWornItem(loc, item) end
+            end
+        end)
+    end
     return desc
 end
 

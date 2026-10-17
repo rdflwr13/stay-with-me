@@ -89,6 +89,44 @@ end
 
 BridgeAppearance.Catalog = BridgeAppearance.Catalog or {}
 
+
+-- Species (Anthro Survivors / "Furry Mod") support. Runtime-only detection:
+-- FurManager and its species register on Furry's Events.OnGameBoot, so it must
+-- never be referenced at file scope.
+function BridgeAppearance.furMod()
+    if type(FurManager) ~= "table" then return nil end
+    if type(FurManager.speciesGroups) ~= "table" then return nil end
+    return FurManager
+end
+
+function BridgeAppearance.furOn()
+    return BridgeAppearance.furMod() ~= nil
+end
+
+-- True when a non-human species is currently selected (staged in candidate.fur).
+function BridgeAppearance.furrySelected()
+    if not BridgeAppearance.furOn() then return false end
+    local c = BridgeAppearance.candidate
+    local f = c ~= nil and c.fur or nil
+    return f ~= nil and f ~= "" and f ~= "Hooman"
+end
+
+function BridgeAppearance.Catalog.furEntries()
+    local out = {}
+    local fm = BridgeAppearance.furMod()
+    if fm == nil then return out end
+    for _, group in ipairs(fm.speciesGroups) do
+        local gd = tostring(group.display or group.name or "")
+        for _, species in ipairs(group.species or {}) do
+            local sd = tostring(species.display or species.name or "")
+            local label = sd
+            if gd ~= "" and sd ~= "" then label = gd .. " " .. sd elseif sd == "" then label = gd end
+            out[#out + 1] = { name = species.name, label = label }
+        end
+    end
+    return out
+end
+
 function BridgeAppearance.Catalog.bodyEntries()
     local out = {}
     local skins = BridgeData.skinsFor(BridgeData.genderOf(Bridge.store))
@@ -154,7 +192,162 @@ end
 
 
 
-BridgeAppearance.candidate = { skin = nil, hair = nil, hairColor = nil, face = nil, details = {}, muscle = 0, makeup = {}, beard = "", beardColor = nil }
+-- Item tag for the Furry fur. Newer (B42) Furry registers a namespaced tag
+-- (furrymod:FurB42); older (B41) used plain "Fur". Item tags must be passed as
+-- ItemTag objects here: hasTag(String) is not implemented for Clothing in B42.
+local FUR_TAG_RLS = { "furrymod:FurB42", "Fur" }
+
+local furTagCache
+local function furTag()
+    if furTagCache ~= nil then return furTagCache end
+    local tag = nil
+    pcall(function()
+        if ResourceLocation == nil or ItemTag == nil then return end
+        for _, rl in ipairs(FUR_TAG_RLS) do
+            local t = nil
+            pcall(function() t = ItemTag.get(ResourceLocation.of(rl)) end)
+            if t ~= nil then tag = t break end
+        end
+    end)
+    furTagCache = tag or false
+    return furTagCache
+end
+local function isFurItem(it, tag)
+    if it == nil then return false end
+    if tag ~= nil and tag ~= false then
+        local yes = false
+        pcall(function() yes = it:hasTag(tag) == true end)
+        if yes then return true end
+    end
+    local t = ""
+    pcall(function() t = tostring(it:getType() or "") end)
+    if string.sub(t, 1, 6) == "Furry_" then return true end
+    local loc = ""
+    pcall(function() loc = tostring(it:getBodyLocation() or "") end)
+    if loc ~= "" and string.find(loc, "Fur", 1, true) ~= nil then return true end
+    return false
+end
+
+-- "FurryModB42.Furry_MaleCat" / "Base.Furry_MaleCat" -> "Furry_MaleCat"
+local function typeShort(id)
+    if type(id) ~= "string" or id == "" then return nil end
+    return string.match(id, "%.([^%.]+)$") or id
+end
+
+-- First worn fur item on b, or nil.
+local function wornFur(b)
+    if b == nil then return nil end
+    local fm = BridgeAppearance.furMod()
+    if fm ~= nil and type(fm.getPlayerWornFur) == "function" then
+        local ok, item = pcall(function() return fm.getPlayerWornFur(b) end)
+        if ok and item ~= nil then return item end
+    end
+    local tag = furTag()
+    local found = nil
+    pcall(function()
+        local worn = b:getWornItems()
+        for i = 0, worn:size() - 1 do
+            local it = worn:getItemByIndex(i)
+            if isFurItem(it, tag) then found = it break end
+        end
+    end)
+    return found
+end
+
+-- Map the worn fur item's type back to a species name; "Hooman" when human.
+function BridgeAppearance.furSpeciesOf(b)
+    local item = wornFur(b)
+    if item == nil then return "Hooman" end
+    local t, ft = nil, nil
+    pcall(function() t = item:getType() end)
+    pcall(function() ft = item:getFullType() end)
+    if t == "Furry_HoomanPlaceholder" then return "Hooman" end
+    local fm = BridgeAppearance.furMod()
+    if fm ~= nil then
+        for _, group in ipairs(fm.speciesGroups) do
+            for _, species in ipairs(group.species or {}) do
+                for _, id in ipairs({ species.maleClothing, species.femaleClothing }) do
+                    if id ~= nil and id ~= "" and (id == t or id == ft or typeShort(id) == t) then
+                        return species.name
+                    end
+                end
+            end
+        end
+    end
+    return "Hooman"
+end
+
+-- Swap the companion's worn fur. "Hooman" removes the fur item entirely.
+function BridgeAppearance.setFur(speciesName)
+    if Bridge == nil then return end
+    local b = Bridge.body
+    if b == nil then return end
+    local fm = BridgeAppearance.furMod()
+    if fm == nil then return end
+    if speciesName == nil or speciesName == "" then speciesName = "Hooman" end
+    local tag = furTag()
+
+    -- Drop any worn fur (worn items live in the inventory container).
+    pcall(function()
+        local worn = b:getWornItems()
+        for i = worn:size() - 1, 0, -1 do
+            local it = worn:getItemByIndex(i)
+            if isFurItem(it, tag) then
+                local loc = nil
+                pcall(function() loc = it:getBodyLocation() end)
+                if loc ~= nil then pcall(function() b:setWornItem(loc, nil) end) end
+                pcall(function() b:getInventory():Remove(it) end)
+            end
+        end
+    end)
+    -- Drop any spare fur still loose in her inventory (matches Furry's own swap).
+    pcall(function()
+        local items = b:getInventory():getItems()
+        for i = items:size() - 1, 0, -1 do
+            if isFurItem(items:get(i), tag) then b:getInventory():Remove(items:get(i)) end
+        end
+    end)
+
+    if speciesName ~= "Hooman" and type(fm.determineFurClothingName) == "function" then
+        local isFemale = BridgeData.genderOf(Bridge.store) ~= "male"
+        local id = nil
+        pcall(function() id = fm.determineFurClothingName(isFemale, speciesName) end)
+        if type(id) == "string" and id ~= "" then
+            local it = nil
+            pcall(function() it = b:getInventory():AddItem(id) end)
+            if it ~= nil and BridgeInventory ~= nil and type(BridgeInventory.putOn) == "function" then
+                pcall(function() BridgeInventory.putOn(b, it) end)
+            end
+        end
+    end
+
+    pcall(function() if BridgeInventory ~= nil and type(BridgeInventory.redress) == "function" then BridgeInventory.redress(b, true) end end)
+    -- Multiplayer: no sendClothing here (it targets player characters; the
+    -- companion is replicated through Bridge's own outfit sync in saveOutfit).
+    pcall(function() if Bridge.saveOutfit then Bridge.saveOutfit() end end)
+end
+
+-- If a fur is worn but is the wrong gender's variant, re-wear the right one.
+function BridgeAppearance.fixFurVariant()
+    if Bridge == nil then return end
+    local b = Bridge.body
+    if b == nil then return end
+    local fm = BridgeAppearance.furMod()
+    if fm == nil then return end
+    if type(fm.determineFurClothingName) ~= "function" then return end
+    local species = BridgeAppearance.furSpeciesOf(b)
+    if species == "Hooman" then return end
+    local isFemale = BridgeData.genderOf(Bridge.store) ~= "male"
+    local id = nil
+    pcall(function() id = fm.determineFurClothingName(isFemale, species) end)
+    if type(id) ~= "string" or id == "" then return end
+    local item = wornFur(b)
+    local t = nil
+    if item ~= nil then pcall(function() t = item:getType() end) end
+    if t ~= typeShort(id) then BridgeAppearance.setFur(species) end
+end
+
+BridgeAppearance.candidate = { skin = nil, hair = nil, hairColor = nil, face = nil, details = {}, muscle = 0, makeup = {}, beard = "", beardColor = nil, fur = nil }
 
 function BridgeAppearance.makePreviewDesc()
     local st = Bridge.store or {}
@@ -177,7 +370,8 @@ function BridgeAppearance.makePreviewDesc()
     target.makeup = c.makeup
     target.beard = c.beard
     target.beardColor = c.beardColor
-    return BridgeWindow.makeDesc(tmp)
+    -- Stage the species in the 3D preview (candidate.fur is the staged species).
+    return BridgeWindow.makeDesc(tmp, c.fur)
 end
 
 function BridgeAppearance.refreshPreview()
@@ -363,40 +557,85 @@ function BridgeAppearanceBody:createChildren()
         self.muscleCombo:addOptionWithData(tr("Muscle_2"), 2)
         self:addChild(self.muscleCombo)
     end
+
+    self.furLabelY = nil
+    self.furCombo = nil
+    if BridgeAppearance.furOn() then
+        self.furCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceBody.onFur)
+        self.furCombo:initialise()
+        self.furCombo:addOptionWithData("Human", "Hooman")
+        for _, e in ipairs(BridgeAppearance.Catalog.furEntries()) do
+            self.furCombo:addOptionWithData(tostring(e.label), e.name)
+        end
+        self:addChild(self.furCombo)
+    end
     self:layout()
 end
 
 function BridgeAppearanceBody:layout()
     local cw = math.min(260, self.width - PAD * 2)
     if cw < 60 then cw = 60 end
+    local furry = BridgeAppearance.furrySelected()
     local y = PAD
-    self.skinLabelY = y
-    y = y + FONT_S + 4
-    self.skinCombo:setX(PAD)
-    self.skinCombo:setY(y)
-    self.skinCombo:setWidth(cw)
-    self.skinCombo:setHeight(BTN_H)
-    y = y + BTN_H + PAD
-    if self.muscleCombo ~= nil then
-        self.muscleLabelY = y
+    self.skinLabelY = nil
+    self.muscleLabelY = nil
+    self.furLabelY = nil
+    if not furry then
+        self.skinLabelY = y
         y = y + FONT_S + 4
-        self.muscleCombo:setX(PAD)
-        self.muscleCombo:setY(y)
-        self.muscleCombo:setWidth(cw)
-        self.muscleCombo:setHeight(BTN_H)
+        self.skinCombo:setVisible(true)
+        self.skinCombo:setX(PAD)
+        self.skinCombo:setY(y)
+        self.skinCombo:setWidth(cw)
+        self.skinCombo:setHeight(BTN_H)
+        y = y + BTN_H + PAD
+        if self.muscleCombo ~= nil then
+            self.muscleLabelY = y
+            y = y + FONT_S + 4
+            self.muscleCombo:setVisible(true)
+            self.muscleCombo:setX(PAD)
+            self.muscleCombo:setY(y)
+            self.muscleCombo:setWidth(cw)
+            self.muscleCombo:setHeight(BTN_H)
+            y = y + BTN_H + PAD
+        end
+    else
+        -- Fur masks skin tone and muscle, so hide those rows while furry.
+        self.skinCombo:setVisible(false)
+        if self.muscleCombo ~= nil then self.muscleCombo:setVisible(false) end
+    end
+    if self.furCombo ~= nil then
+        self.furLabelY = y
+        y = y + FONT_S + 4
+        self.furCombo:setVisible(true)
+        self.furCombo:setX(PAD)
+        self.furCombo:setY(y)
+        self.furCombo:setWidth(cw)
+        self.furCombo:setHeight(BTN_H)
         y = y + BTN_H + PAD
     end
 end
 
 function BridgeAppearanceBody:minHeight()
-    local rows = self.muscleCombo ~= nil and 2 or 1
+    local rows = 0
+    if not BridgeAppearance.furrySelected() then
+        rows = 1
+        if self.muscleCombo ~= nil then rows = rows + 1 end
+    end
+    if self.furCombo ~= nil then rows = rows + 1 end
+    if rows < 1 then rows = 1 end
     return PAD + rows * (FONT_S + 4 + BTN_H + PAD)
 end
 
 function BridgeAppearanceBody:render()
-    self:drawText(tr("AppearanceSkin"), PAD, self.skinLabelY, 1, 1, 1, 1, UIFont.Small)
+    if self.skinLabelY ~= nil then
+        self:drawText(tr("AppearanceSkin"), PAD, self.skinLabelY, 1, 1, 1, 1, UIFont.Small)
+    end
     if self.muscleLabelY ~= nil then
         self:drawText(tr("AppearanceBody"), PAD, self.muscleLabelY, 1, 1, 1, 1, UIFont.Small)
+    end
+    if self.furLabelY ~= nil then
+        self:drawText(gameText("IGUI_NotAlone_AppearanceFur", "Species"), PAD, self.furLabelY, 1, 1, 1, 1, UIFont.Small)
     end
 end
 
@@ -408,10 +647,24 @@ function BridgeAppearanceBody:onMuscle(combo)
     BridgeAppearance.setMuscle(combo:getSelectedData())
 end
 
+function BridgeAppearanceBody:onFur(combo)
+    -- Staged: only the candidate changes here; applied by the Apply button.
+    BridgeAppearance.candidate.fur = combo:getSelectedData()
+    local w = BridgeAppearance.instance
+    if w ~= nil and w.applyTabVisibility ~= nil then pcall(function() w:applyTabVisibility() end) end
+    BridgeAppearance.refreshPreview()
+    BridgeAppearance.refreshViews()
+end
+
 function BridgeAppearanceBody:refresh()
     self.skinCombo:selectData(BridgeAppearance.candidate.skin)
     if self.muscleCombo ~= nil then
         self.muscleCombo:selectData(BridgeAppearance.candidate.muscle)
+    end
+    if self.furCombo ~= nil then
+        local fur = BridgeAppearance.candidate.fur
+        if fur == nil then fur = BridgeAppearance.furSpeciesOf(Bridge.body) end
+        self.furCombo:selectData(fur)
     end
 end
 
@@ -1081,6 +1334,7 @@ function BridgeAppearance.Window:createChildren()
     if self.width < mw then self:setWidth(mw) end
     if self.height < mh then self:setHeight(mh) end
     self:layout()
+    self:applyTabVisibility()
 end
 
 local PREVIEW_MIN_H = 120
@@ -1431,6 +1685,50 @@ function BridgeAppearance.Window:onDeleteDone(button)
     self:syncLook()
 end
 
+-- Rebuild the tab set: while a non-human species is selected, show only Body
+-- (which holds the Species control); fur masks the human-only tabs.
+function BridgeAppearance.Window:applyTabVisibility()
+    if self.panel == nil or self.bodyView == nil then return end
+    local furry = BridgeAppearance.furrySelected()
+    local activeKey = nil
+    pcall(function()
+        local v = self.panel:getActiveView()
+        if v ~= nil then activeKey = v.tabKey end
+    end)
+    local wanted = {}
+    wanted[#wanted + 1] = { key = "body", name = self:tabName("body"), view = self.bodyView }
+    if not furry then
+        if self.faceView ~= nil then
+            wanted[#wanted + 1] = { key = "face", name = self:tabName("face"), view = self.faceView }
+        end
+        if self.hairView ~= nil then
+            wanted[#wanted + 1] = { key = "hair", name = self:tabName("hair"), view = self.hairView }
+        end
+        if self.beardView ~= nil then
+            wanted[#wanted + 1] = { key = "beard", name = self:tabName("beard"), view = self.beardView }
+        end
+        if self.detailView ~= nil then
+            wanted[#wanted + 1] = { key = "details", name = self:tabName("details"), view = self.detailView }
+        end
+        if self.makeupView ~= nil then
+            wanted[#wanted + 1] = { key = "makeup", name = self:tabName("makeup"), view = self.makeupView }
+        end
+    end
+    pcall(function()
+        local current = {}
+        for _, vo in ipairs(self.panel.viewList or {}) do current[#current + 1] = vo.view end
+        for _, v in ipairs(current) do self.panel:removeView(v) end
+        for _, e in ipairs(wanted) do self.panel:addView(e.name, e.view) end
+    end)
+    local target = nil
+    for _, e in ipairs(wanted) do
+        if e.key == activeKey then target = e.name break end
+    end
+    if target == nil then target = self:tabName("body") end
+    pcall(function() self.panel:activateView(target) end)
+    pcall(function() self:layout() end)
+end
+
 function BridgeAppearance.Window:onApply()
     local c = BridgeAppearance.candidate
     if c.skin ~= nil then pcall(function() Bridge.setSkin(c.skin) end) end
@@ -1455,6 +1753,11 @@ function BridgeAppearance.Window:onApply()
         if c.beardColor ~= nil then
             pcall(function() Bridge.setBeardColor(c.beardColor.r, c.beardColor.g, c.beardColor.b) end)
         end
+    end
+    -- Species is a clothing swap (not a SurvivorDesc field): apply it now.
+    if BridgeAppearance.furOn() and c.fur ~= nil then
+        local worn = BridgeAppearance.furSpeciesOf(Bridge.body)
+        if c.fur ~= worn then pcall(function() BridgeAppearance.setFur(c.fur) end) end
     end
     if BridgeLooks ~= nil then BridgeLooks.remember(self:selectedLook()) end
 end
@@ -1549,6 +1852,7 @@ function BridgeAppearance.open(tab)
     c.makeup = BridgeData.makeupOf(Bridge.store)
     c.beard = BridgeData.beardOf(Bridge.store)
     c.beardColor = BridgeData.beardColorOf(Bridge.store)
+    c.fur = BridgeAppearance.furOn() and BridgeAppearance.furSpeciesOf(Bridge.body) or nil
 
     local sw, sh = 800, 600
     pcall(function() sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight() end)
