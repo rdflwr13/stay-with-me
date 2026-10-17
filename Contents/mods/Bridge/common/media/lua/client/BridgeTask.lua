@@ -6246,6 +6246,17 @@ function BridgeTask.kinds.shower.update(body)
             BridgeTask.showerPhase = "mount"
             BridgeTask.showerSince = Bridge.time
             BridgeTask.showerSeen = false
+            BridgeTask.showerBesideSince = nil
+            BridgeTask.showerWalkIn = nil
+            pcall(function()
+                -- A bathtub is a TABAS bath object: its tile is only entered by hopping the tub edge,
+                -- so it must keep the tiny mount reach. A stand-in/wall shower tile is walked into
+                -- normally. BridgeBath hands us the shower object itself, or a tub part object.
+                local iso = require("TABAS_Iso")
+                if BridgeTask.showerObj ~= nil then
+                    BridgeTask.showerWalkIn = iso.isBathObject(BridgeTask.showerObj) ~= true
+                end
+            end)
             BridgeTask.info = "shower: stepping in"
         end
         return true
@@ -6254,14 +6265,37 @@ function BridgeTask.kinds.shower.update(body)
     -- step onto the shower tile, face the water source, then turn it on
     if phase == "mount" then
         local t = BridgeTask.showerSq
-        local res = BridgeTask.walkTo(body, t, BridgeTask.SHOWER_MOUNT_REACH, false, true)
+        -- The movement code stops the companion at ~STOP_DIST from the walk target, so a stand-in
+        -- shower must accept that arrival distance: requiring the bathtub's tiny reach here never
+        -- reported arrival, so she stalled at the tile edge, detoured sideways and looped until the
+        -- snap. Bathtubs keep the tiny reach and mount via onTile/parked/unreachable below.
+        local reach = BridgeTask.SHOWER_MOUNT_REACH
+        if BridgeTask.showerWalkIn == true then reach = BridgeTask.STOP_DIST end
+        local res = BridgeTask.walkTo(body, t, reach, false, true)
         -- Arrival is "her square IS the fixture square" (a bathtub climb can leave her just short of
         -- centre, and distance-based arrival both fires too early from an adjacent tile and never
         -- fires once she is on the edge -- which made her walk in and out).
         local onTile = false
         pcall(function() onTile = math.floor(body:getX()) == t.x and math.floor(body:getY()) == t.y end)
+        -- A bathtub square can only be entered by hopping its TABAS edge, and which side is hoppable
+        -- depends on the tub's facing (see TABAS_TubEdge.createTubEdge). When she is beside the
+        -- fixture but the engine is not putting her onto it, mount now instead of pacing back and
+        -- forth: distance to the fixture centre keeps it independent of the tub's orientation.
+        local beside = false
+        pcall(function()
+            local dx, dy = body:getX() - (t.x + 0.5), body:getY() - (t.y + 0.5)
+            beside = (dx * dx + dy * dy) <= (1.2 * 1.2)
+        end)
+        if beside and not onTile then
+            BridgeTask.showerBesideSince = BridgeTask.showerBesideSince or Bridge.time
+        else
+            BridgeTask.showerBesideSince = nil
+        end
+        local parked = BridgeTask.showerBesideSince ~= nil
+            and (Bridge.time - BridgeTask.showerBesideSince) > (2 * SECOND)
         local stalled = (Bridge.time - (BridgeTask.showerSince or Bridge.time)) > (20 * SECOND)
-        if res == "arrived" or onTile or res == "unreachable" or stalled then
+        if res == "arrived" or onTile or parked or res == "unreachable" or stalled then
+            BridgeTask.showerBesideSince = nil
             pcall(function() BridgeMove.stopPath(body) end)
             Bridge.target = nil
             showerSnap(body, t.x + 0.5, t.y + 0.5, t.z)
@@ -6274,7 +6308,8 @@ function BridgeTask.kinds.shower.update(body)
             Bridge.speak("ShowerStart")
             BridgeTask.showerWashSaid = nil
             BridgeTask.info = "shower: turning on"
-            log("shower: on the tile, turning on (" .. tostring(res) .. ", onTile=" .. tostring(onTile) .. ")")
+            log("shower: on the tile, turning on (" .. tostring(res) .. ", onTile=" .. tostring(onTile)
+                .. ", parked=" .. tostring(parked) .. ", walkIn=" .. tostring(BridgeTask.showerWalkIn) .. ")")
             return true
         end
         BridgeTask.info = "shower: stepping under the water"
@@ -6511,6 +6546,7 @@ function BridgeTask.kinds.shower.leave(body)
     BridgeTask.showerSeen = nil
     BridgeTask.showerSq = nil
     BridgeTask.showerStand = nil
+    BridgeTask.showerWalkIn = nil
     BridgeTask.showerObj = nil
     BridgeTask.showerFacing = nil
     BridgeTask.showerWaterOn = nil
