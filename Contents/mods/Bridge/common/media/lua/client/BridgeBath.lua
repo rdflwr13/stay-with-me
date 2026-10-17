@@ -148,7 +148,7 @@ function BridgeBath.sinkFor(worldobjects)
     end
     if sourceObj == nil then return nil end
 
-    return BridgeBath.sinkProxy(sourceObj), sourceObj
+    return BridgeBath.sinkProxy(sourceObj), sourceObj, btype
 end
 
 function BridgeBath.onWashSinkMenu(playerNum, context, worldobjects, test)
@@ -161,7 +161,7 @@ function BridgeBath.onWashSinkMenu(playerNum, context, worldobjects, test)
     if not BridgeMenu.inTalkRange() then return end
     if BridgeMenu.addRinActions == nil then return end
 
-    local sink, faucetObj = BridgeBath.sinkFor(worldobjects)
+    local sink, faucetObj, btype = BridgeBath.sinkFor(worldobjects)
     if sink == nil or faucetObj == nil then return end
 
     local rootName = displayName(faucetObj)
@@ -197,7 +197,12 @@ function BridgeBath.onWashSinkMenu(playerNum, context, worldobjects, test)
     if dupe ~= nil then return end
 
     BridgeMenu.addRinActions(rinMenu, sink)
-    log("tabas bath sink menu obj=" .. tostring(rootName))
+    -- Showers use the shower object; bathtubs resolve to their faucet, which TABAS also treats as a
+    -- valid shower source (getShowerObjectOnSquare(sq, true)). Both support the shower routine.
+    if (btype == "Shower" or btype == "Bathtub") and BridgeMenu.addShowerAction ~= nil then
+        BridgeMenu.addShowerAction(rinMenu, faucetObj)
+    end
+    log("tabas bath sink menu obj=" .. tostring(rootName) .. " type=" .. tostring(btype))
 end
 
 -- TABAS registers its context handler at file load; registering ours on OnGameStart keeps it

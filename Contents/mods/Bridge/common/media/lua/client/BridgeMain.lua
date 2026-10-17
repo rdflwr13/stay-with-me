@@ -1077,6 +1077,12 @@ local function dressBody(body)
 
 
     local restored = wearSaved(body)
+    -- If a shower was interrupted by a save/reload, put her pre-shower outfit back on.
+    if BridgeShower ~= nil and BridgeShower.restorePersisted ~= nil then
+        pcall(function()
+            if BridgeShower.restorePersisted(body) and restored == nil then restored = "shower resume" end
+        end)
+    end
     if restored ~= nil then
         local extra = migrateLook(body, outfitStore())
 
@@ -3305,7 +3311,10 @@ local function updateZombieBody(body)
 
 
         local okSnap, list = pcall(function() return BridgeInventory.snapshot(body) end)
-        if okSnap then
+        -- While she is in the shower her clothes are un-worn on purpose: don't persist that as the
+        -- canonical outfit, so a save/reload re-dresses her from the last dressed state.
+        local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
+        if okSnap and not showering then
             local sign = BridgeItems.signature(list)
             if sign ~= Bridge.itemsSign then
                 Bridge.itemsSign = sign
@@ -4481,7 +4490,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
-    exercise = true, endurance = true, skills = true, task = true }
+    exercise = true, endurance = true, skills = true, task = true, shower = true }
 
 
 
@@ -4888,6 +4897,28 @@ function Bridge.run(line)
         local red = BridgeData.owner()
         if red == nil then return "no player" end
         return BridgeHeal.describe(BridgeHeal.scan(red))
+    end
+
+    if cmd == "shower" then
+        if BridgeShower == nil then return "no shower module" end
+        local sub = parts[3]
+        if sub == "reset" or sub == "clear" then
+            BridgeShower.resetCooldown()
+            return "shower cooldown cleared"
+        end
+        if sub == "stop" or sub == "off" or sub == "cancel" then
+            return "shower " .. tostring(BridgeShower.stop())
+        end
+        if sub == "start" then
+            return "shower " .. tostring(BridgeShower.startAtNearest())
+        end
+        local cd = 0
+        pcall(function() cd = BridgeShower.cooldownLeft(nil) end)
+        local active = BridgeShower.showing() and "yes" or "no"
+        local phase = "-"
+        if BridgeTask ~= nil and BridgeTask.kind == "shower" then phase = tostring(BridgeTask.showerPhase) end
+        return string.format("showering=%s phase=%s cooldown_h=%.1f tabas=%s", active, phase, cd or 0,
+            tostring(BridgeShower.isTabas()))
     end
 
     if cmd == "exercise" then

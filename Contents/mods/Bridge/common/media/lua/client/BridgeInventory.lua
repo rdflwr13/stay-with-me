@@ -4547,6 +4547,13 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeStay
     local isValid = ISInventoryTransferAction.isValid
     if isValid ~= nil then
         ISInventoryTransferAction.isValid = function(self, ...)
+            -- While she is showering her clothes are un-worn on purpose and the outfit snapshot is
+            -- frozen, so block moving items into/out of her containers -- otherwise an item could be
+            -- taken during the shower and then be re-created by the resume restore (a duplication).
+            if BridgeShower ~= nil and BridgeShower.showing ~= nil and BridgeShower.showing()
+                    and (BridgeInventory.isHers(self.srcContainer) or BridgeInventory.isHers(self.destContainer)) then
+                return false
+            end
             if BridgeInventory.goneAction(self) and not BridgeInventory.takingFromHer(self) then return false end
             if self.bridgeStays then BridgeInventory.keepFloorItem(self) end
             if BridgeParked ~= nil and BridgeParked.active and not isClient()

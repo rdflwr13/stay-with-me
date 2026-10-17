@@ -470,6 +470,12 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
         local entry = BridgeMenu.ORDERABLE_BY_ID[id]
         if entry ~= nil and BridgeData.menuShown(st, id) then entry.build(context, playerNum, env) end
     end
+    if BridgeShower ~= nil and BridgeShower.hasPreShower ~= nil and BridgeShower.hasPreShower()
+            and not (BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "shower") then
+        local label = getText("IGUI_NotAlone_GetDressed")
+        if label == nil or label == "" or label == "IGUI_NotAlone_GetDressed" then label = "Get dressed" end
+        context:addOption(label, nil, BridgeMenu.onGetDressed)
+    end
 end
 
 
@@ -798,7 +804,12 @@ function BridgeMenu.addCancelTask(context)
     local task = BridgeTask.active == true
     local transfers = BridgeQueue ~= nil and BridgeQueue.jobs ~= nil and #BridgeQueue.jobs > 0
     if not task and not transfers then return end
-    local key = (task and BridgeTask.kind == "exercise") and "CancelExercise" or "CancelTask"
+    local key = "CancelTask"
+    if task and BridgeTask.kind == "exercise" then
+        key = "CancelExercise"
+    elseif task and BridgeTask.kind == "shower" then
+        key = "CancelShower"
+    end
     context:addOption(tr(key), nil, BridgeMenu.onCancelTask)
 end
 
@@ -1435,6 +1446,55 @@ local function addFillActions(menu, sink)
         end
     end
 end
+
+local function showerLabel()
+    local text = getText("IGUI_NotAlone_ShowerTake")
+    if text == nil or text == "" or text == "IGUI_NotAlone_ShowerTake" then text = "Take a shower" end
+    return text
+end
+
+
+function BridgeMenu.onShowerThis(showerObj)
+    if BridgeTask == nil or BridgeShower == nil then return end
+    local res = nil
+    pcall(function() res = BridgeShower.start(showerObj) end)
+    log("shower from menu: " .. tostring(res))
+end
+
+
+function BridgeMenu.addShowerAction(menu, showerObj)
+    if menu == nil or showerObj == nil then return end
+    local opt = menu:addOption(showerLabel(), showerObj, BridgeMenu.onShowerThis)
+    if BridgeTask ~= nil and BridgeTask.active then
+        opt.notAvailable = true
+    else
+        local cd = 0
+        pcall(function() cd = BridgeShower.cooldownLeft(nil) end)
+        if cd ~= nil and cd > 0 then
+            opt.notAvailable = true
+            tip(opt, string.format("She only showers once a day (%.0fh left).", cd))
+        elseif BridgeShower ~= nil and BridgeShower.occupied ~= nil and BridgeShower.occupied(showerObj) then
+            opt.notAvailable = true
+            tip(opt, "The shower is already in use.")
+        elseif BridgeShower ~= nil and BridgeShower.waterSink ~= nil then
+            local sink = nil
+            pcall(function() sink = BridgeShower.waterSink(showerObj) end)
+            if sink ~= nil and BridgeShower.waterAvailable(sink) < 1 then
+                opt.notAvailable = true
+                tip(opt, "The shower has no water.")
+            end
+        end
+    end
+end
+
+
+function BridgeMenu.onGetDressed()
+    if BridgeShower == nil then return end
+    local res = nil
+    pcall(function() res = BridgeShower.redressNow() end)
+    log("get dressed from menu: " .. tostring(res))
+end
+
 
 function BridgeMenu.addRinActions(menu, sink)
     local busy = BridgeTask ~= nil and BridgeTask.active

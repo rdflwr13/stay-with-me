@@ -1660,6 +1660,10 @@ function BridgeEquip.withinRange(playerNum)
 end
 
 function BridgeEquip.open(playerNum)
+    if BridgeShower ~= nil and BridgeShower.showing ~= nil and BridgeShower.showing() then
+        log("open refused: she is showering")
+        return nil
+    end
     if Bridge == nil or Bridge.store == nil then return nil end
     local b = her()
     if b == nil then log("open refused: no body") return nil end
@@ -1694,6 +1698,10 @@ end
 
 function BridgeEquip.toggle(playerNum)
     if BridgeEquip.instance ~= nil then BridgeEquip.close() return nil end
+    if BridgeShower ~= nil and BridgeShower.showing ~= nil and BridgeShower.showing() then
+        log("toggle refused: she is showering")
+        return nil
+    end
     return BridgeEquip.open(playerNum)
 end
 

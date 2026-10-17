@@ -1314,6 +1314,23 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.showerUntil ~= nil then
+        local v = tonumber(args.showerUntil)
+        if v ~= nil and v >= 0 and (rec.showerUntil == nil or math.abs(rec.showerUntil - v) > 0.001) then
+            if v > 0 then rec.showerUntil = v else rec.showerUntil = nil end
+            changed = true
+        end
+    end
+    if args.showerProgress ~= nil then
+        local v = tonumber(args.showerProgress)
+        if v ~= nil and v >= 0 then
+            if v > 1 then v = 1 end
+            if rec.showerProgress == nil or math.abs(rec.showerProgress - v) > 0.001 then
+                if v > 0 then rec.showerProgress = v else rec.showerProgress = nil end
+                changed = true
+            end
+        end
+    end
     if args.exerciseBank ~= nil then
         local v = tonumber(args.exerciseBank)
         if v ~= nil and v >= 0 then

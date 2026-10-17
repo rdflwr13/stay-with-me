@@ -1890,7 +1890,9 @@ function BridgeSocial.update(body)
     local quiet = false
     pcall(function() quiet = Bridge.quiet() end)
     local chatter = not (BridgeTask ~= nil and BridgeTask.idleChatBlocked ~= nil and BridgeTask.idleChatBlocked())
-    if calm and not justSpoke and not chatter and Bridge.time >= BridgeSocial.nextRemark then
+    -- Shower-only suppression: no idle remarks/gifts while she is in the shower routine.
+    local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
+    if calm and not justSpoke and not chatter and not showering and Bridge.time >= BridgeSocial.nextRemark then
         BridgeSocial.nextRemark = Bridge.time + 5400 + ZombRand(9000)
 
         if not quiet then
@@ -1902,7 +1904,7 @@ function BridgeSocial.update(body)
 
 
 
-    if calm and not quiet and not chatter and r.f >= 35 and now >= r.giftAt and BridgeData.optionOf(Bridge.store, "gifts")
+    if calm and not quiet and not chatter and not showering and r.f >= 35 and now >= r.giftAt and BridgeData.optionOf(Bridge.store, "gifts")
         and ZombRand(900) == 0 then
         BridgeSocial.give(BridgeSocial.pickGift(red), false)
     end
