@@ -546,7 +546,7 @@ function BridgeAppearanceBody:createChildren()
     if BridgeAppearance.furOn() then
         self.furCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceBody.onFur)
         self.furCombo:initialise()
-        self.furCombo:addOptionWithData("Human", "Hooman")
+        self.furCombo:addOptionWithData(gameText("IGUI_NotAlone_AppearanceHuman", "Human"), "Hooman")
         for _, e in ipairs(BridgeAppearance.Catalog.furEntries()) do
             self.furCombo:addOptionWithData(tostring(e.label), e.name)
         end
