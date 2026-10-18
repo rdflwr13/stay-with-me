@@ -1995,6 +1995,7 @@
     "IGUI_NotAlone_Soc_EvDraggingCorpse_Close_2": "Los arrastro al montón. Casi termino.",
     "IGUI_NotAlone_LootThis": "Saquea esto",
     "IGUI_NotAlone_LootAll": "Saquea todo",
+    "IGUI_NotAlone_LootContainer": "Saquea esto",
     "IGUI_NotAlone_Sit": "Siéntate",
     "IGUI_NotAlone_StandUp": "Levántate",
     "IGUI_NotAlone_Kills": "Zombis asesinados",

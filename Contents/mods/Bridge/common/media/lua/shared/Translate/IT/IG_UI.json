@@ -1995,6 +1995,7 @@
     "IGUI_NotAlone_Soc_EvDraggingCorpse_Close_2": "Li trascino verso il mucchio. Ci sono quasi.",
     "IGUI_NotAlone_LootThis": "Saccheggia questo",
     "IGUI_NotAlone_LootAll": "Saccheggia tutto",
+    "IGUI_NotAlone_LootContainer": "Saccheggia questo",
     "IGUI_NotAlone_Sit": "Siediti",
     "IGUI_NotAlone_StandUp": "Alzati",
     "IGUI_NotAlone_Kills": "Zombie uccisi",

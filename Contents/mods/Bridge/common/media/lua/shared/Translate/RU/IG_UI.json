@@ -2298,6 +2298,7 @@
     "IGUI_NotAlone_SocM_EvDraggingCorpse_Close_2": "Тащу к куче. Почти на месте.",
     "IGUI_NotAlone_LootThis": "Забери это",
     "IGUI_NotAlone_LootAll": "Забери всё",
+    "IGUI_NotAlone_LootContainer": "Забери всё",
     "IGUI_NotAlone_Say_JobNoPlants": "Здесь нечего расчищать.",
     "IGUI_NotAlone_Say_JobNoLoot": "Здесь нечего обыскивать.",
     "IGUI_NotAlone_Say_JobLootFull": "Больше не унесу.",

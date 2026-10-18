@@ -1125,7 +1125,7 @@ function BridgeMenu.onLootMenu(playerNum, context, worldobjects, test)
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.LOOTING_ENABLED ~= 1 then return end
     if not present() then return end
     if BridgeWorkSelect == nil or BridgeWorkSelect.lootTargetFor == nil then return end
-    local label = name() .. ": " .. tr("LootThis")
+    local label = name() .. ": " .. tr("LootContainer")
     if context:getOptionFromName(label) ~= nil then return end
     local targets = lootTargetsUnder(worldobjects)
     if targets == nil then return end
