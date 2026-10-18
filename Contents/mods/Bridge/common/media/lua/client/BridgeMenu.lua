@@ -964,9 +964,8 @@ local function moveableName(obj)
     return nm
 end
 
-local function rinInObject(context, obj)
-    local nm = moveableName(obj)
-    if nm == nil or context == nil then return nil end
+local function rinMenuForName(context, nm)
+    if context == nil or nm == nil or nm == "" then return nil end
     local parentOpt = nil
     pcall(function() parentOpt = context:getOptionFromName(nm) end)
     if parentOpt == nil or parentOpt.subOption == nil then return nil end
@@ -987,6 +986,67 @@ local function rinInObject(context, obj)
     return rinMenu
 end
 
+local function doorPartObjects(door)
+    local parts = {}
+    if door == nil then return parts end
+    parts[#parts + 1] = door
+    pcall(function()
+        if IsoDoor == nil then return end
+        if IsoDoor.getDoubleDoorIndex ~= nil and IsoDoor.getDoubleDoorIndex(door) ~= -1 and IsoDoor.getDoubleDoorObject ~= nil then
+            for i = 1, 4 do
+                local p = IsoDoor.getDoubleDoorObject(door, i)
+                if p ~= nil and p ~= door then parts[#parts + 1] = p end
+            end
+        end
+        if IsoDoor.getGarageDoorIndex ~= nil and IsoDoor.getGarageDoorIndex(door) ~= -1 then
+            local p = IsoDoor.getGarageDoorPrev ~= nil and IsoDoor.getGarageDoorPrev(door) or nil
+            while p ~= nil and #parts < 12 do parts[#parts + 1] = p; p = IsoDoor.getGarageDoorPrev(p) end
+            p = IsoDoor.getGarageDoorNext ~= nil and IsoDoor.getGarageDoorNext(door) or nil
+            while p ~= nil and #parts < 24 do parts[#parts + 1] = p; p = IsoDoor.getGarageDoorNext(p) end
+        end
+    end)
+    return parts
+end
+
+local function doorLabels()
+    local out = {}
+    for _, key in ipairs({ "ContextMenu_Door_option", "ContextMenu_Door", "ContextMenu_Door_Frame",
+        "ContextMenu_Wooden_Door", "ContextMenu_Double_Wooden_Door", "ContextMenu_Double_Metal_Door",
+        "ContextMenu_BigMetalDoubleDoor", "ContextMenu_Wooden_Fence_Door" }) do
+        local t = nil
+        pcall(function() t = getText(key) end)
+        if type(t) == "string" and t ~= "" and t ~= key then out[#out + 1] = t end
+    end
+    return out
+end
+
+local function isDoorObject(obj)
+    local ok = false
+    pcall(function()
+        ok = instanceof ~= nil and obj ~= nil and (instanceof(obj, "IsoDoor")
+            or (instanceof(obj, "IsoThumpable") and obj:isDoor()))
+    end)
+    return ok
+end
+
+local function rinInObject(context, obj)
+    local menu = rinMenuForName(context, moveableName(obj))
+    if menu ~= nil then return menu end
+    if obj == nil then return nil end
+    if not isDoorObject(obj) then return nil end
+    local parts = doorPartObjects(obj)
+    for i = 2, #parts do
+        menu = rinMenuForName(context, moveableName(parts[i]))
+        if menu ~= nil then return menu end
+    end
+    local labels = doorLabels()
+    for i = 1, #labels do
+        menu = rinMenuForName(context, labels[i])
+        if menu ~= nil then return menu end
+    end
+    return nil
+end
+
 local function addInObject(context, obj, label, target, fn)
     local menu = rinInObject(context, obj)
     if menu == nil then return nil end
@@ -996,6 +1056,22 @@ local function addInObject(context, obj, label, target, fn)
     return menu:addOption(label, target, fn)
 end
 
+local function collapsed()
+    if BridgeData == nil or type(BridgeData.collapseActions) ~= "function" then return false end
+    return BridgeData.collapseActions(Bridge.store)
+end
+
+local function addFlat(context, label, target, fn)
+    local full = name() .. ": " .. label
+    if context:getOptionFromName(full) ~= nil then return nil end
+    return context:addOptionOnTop(full, target, fn)
+end
+
+local function addCompanion(context, obj, label, target, fn)
+    if collapsed() then return addInObject(context, obj, label, target, fn) end
+    return addFlat(context, label, target, fn)
+end
+
 function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -1003,7 +1079,15 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
     if not present() then return end
     local tree = treeUnder(worldobjects)
     if tree == nil then return end
-    local sub = rinInObject(context, tree)
+    local sub = nil
+    if collapsed() then
+        sub = rinInObject(context, tree)
+    else
+        if context:getOptionFromName(name()) ~= nil then return end
+        local option = context:addOptionOnTop(name())
+        sub = ISContextMenu:getNew(context)
+        context:addSubMenu(option, sub)
+    end
     if sub == nil then return end
     if sub:getOptionFromName(tr("CutTree")) ~= nil then return end
     local ok = false
@@ -1127,7 +1211,7 @@ function BridgeMenu.onPryMenu(playerNum, context, worldobjects, test)
     pcall(function() sq = door:getSquare() end)
     if sq == nil then return end
     local target = { x = sq:getX(), y = sq:getY(), z = sq:getZ() }
-    local opt = addInObject(context, door, tr("PryOpen"), target, BridgeMenu.onPryOpen)
+    local opt = addCompanion(context, door, tr("PryOpen"), target, BridgeMenu.onPryOpen)
     if opt == nil then return end
     local hasTool = false
     pcall(function() hasTool = BridgeTask.findCrowbar(Bridge.body) ~= nil end)
@@ -1266,12 +1350,12 @@ function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
     if seat == nil then return end
 
     if BridgeTask.isSeated ~= nil and BridgeTask.isSeated() then
-        addInObject(context, seat, tr("StandUp"), nil, BridgeMenu.onSitStandUp)
+        addCompanion(context, seat, tr("StandUp"), nil, BridgeMenu.onSitStandUp)
         return
     end
 
     if BridgeTask.active and BridgeTask.kind == "sit" then
-        addInObject(context, seat, tr("CancelTask"), nil, BridgeMenu.onCancelTask)
+        addCompanion(context, seat, tr("CancelTask"), nil, BridgeMenu.onCancelTask)
         return
     end
 
@@ -1282,7 +1366,7 @@ function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
         local sq = seat:getSquare()
         if sq ~= nil then targets[1].x, targets[1].y, targets[1].z = sq:getX(), sq:getY(), sq:getZ() end
     end)
-    local opt = addInObject(context, seat, tr("Sit"), targets, BridgeMenu.onSitThis)
+    local opt = addCompanion(context, seat, tr("Sit"), targets, BridgeMenu.onSitThis)
     if opt == nil then return end
     if not ok or BridgeTask.active then opt.notAvailable = true end
     pcall(function()
@@ -1313,15 +1397,15 @@ function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
     if bed == nil then return end
 
     if BridgeTask.isLying ~= nil and BridgeTask.isLying() then
-        addInObject(context, bed, tr("GetUp"), nil, BridgeMenu.onLayGetUp)
+        addCompanion(context, bed, tr("GetUp"), nil, BridgeMenu.onLayGetUp)
         local asleep = false
         pcall(function() asleep = BridgeTask.laySleep == true end)
-        addInObject(context, bed, tr(asleep and "Wake" or "Sleep"), nil, BridgeMenu.onLaySleep)
+        addCompanion(context, bed, tr(asleep and "Wake" or "Sleep"), nil, BridgeMenu.onLaySleep)
         return
     end
 
     if BridgeTask.active and BridgeTask.kind == "lay" then
-        addInObject(context, bed, tr("CancelTask"), nil, BridgeMenu.onCancelTask)
+        addCompanion(context, bed, tr("CancelTask"), nil, BridgeMenu.onCancelTask)
         return
     end
 
@@ -1332,7 +1416,7 @@ function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
         local sq = bed:getSquare()
         if sq ~= nil then targets[1].x, targets[1].y, targets[1].z = sq:getX(), sq:getY(), sq:getZ() end
     end)
-    local opt = addInObject(context, bed, tr("Lay"), targets, BridgeMenu.onLayThis)
+    local opt = addCompanion(context, bed, tr("Lay"), targets, BridgeMenu.onLayThis)
     if opt == nil then return end
     if not ok or BridgeTask.active then opt.notAvailable = true end
     local occupied = false

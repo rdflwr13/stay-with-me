@@ -1,6 +1,7 @@
 require "ISUI/ISScrollingListBox"
 require "ISUI/ISPanel"
 require "ISUI/ISButton"
+require "ISUI/ISTickBox"
 
 local PAD = 10
 
@@ -203,13 +204,17 @@ function BridgeOrder.heightFor(width)
         n = #BridgeData.menuOrder(Bridge.store)
     end
     if n < 1 then n = 1 end
-    return PAD + hintH + n * rowH + PAD + btnH + PAD
+    local gap = PAD / 2
+    return PAD + hintH + n * rowH + PAD + btnH + gap + btnH + PAD
 end
 
 function BridgeOrder:applyHeight(h)
     self:setHeight(h)
     if self.list == nil or self.upBtn == nil then return end
-    local rowY = h - PAD - self.btnH
+    local gap = PAD / 2
+    local tickY = h - PAD - self.btnH
+    if tickY < 0 then tickY = 0 end
+    local rowY = tickY - gap - self.btnH
     if rowY < 0 then rowY = 0 end
     local listY = PAD + (self.hintH or 0)
     local listH = rowY - listY - PAD
@@ -219,6 +224,11 @@ function BridgeOrder:applyHeight(h)
     self.upBtn:setY(rowY)
     self.downBtn:setY(rowY)
     self.resetBtn:setY(rowY)
+    if self.collapseTick ~= nil then
+        self.collapseTick:setX(PAD)
+        self.collapseTick:setWidth(self.width - PAD * 2)
+        self.collapseTick:setY(tickY)
+    end
 end
 
 function BridgeOrder:createChildren()
@@ -230,7 +240,10 @@ function BridgeOrder:createChildren()
     self.hintH = #self.hintLines * (fontS + 2) + 4
 
     local listY = PAD + self.hintH
-    local rowY = self.height - PAD - btnH
+    local gap = PAD / 2
+    local tickY = self.height - PAD - btnH
+    local rowY = tickY - gap - btnH
+    if rowY < listY then rowY = listY end
     local listH = math.max(btnH, rowY - listY - PAD)
     self.list = BridgeOrderList:new(PAD, listY, self.width - PAD * 2, listH)
     self.list:initialise()
@@ -239,8 +252,8 @@ function BridgeOrder:createChildren()
     self.list.onToggle = function(item) self:onToggle(item) end
     self:addChild(self.list)
 
-    local gap = PAD / 2
-    local bw = (self.width - PAD * 2 - gap * 2) / 3
+    local labelW = getTextManager():MeasureStringX(UIFont.Small, tr("MenuReset")) + PAD * 2
+    local bw = math.max(labelW, btnH * 2)
     self.upBtn = ISButton:new(PAD, rowY, bw, btnH, "^", self, BridgeOrder.onUp)
     self.upBtn:initialise()
     self.upBtn:instantiate()
@@ -258,6 +271,13 @@ function BridgeOrder:createChildren()
     self.resetBtn:instantiate()
     self.resetBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.resetBtn)
+
+    self.collapseTick = ISTickBox:new(PAD, tickY, self.width - PAD * 2, btnH, "", self, BridgeOrder.onCollapseTick, "collapseActions")
+    self.collapseTick:initialise()
+    self.collapseTick:instantiate()
+    self.collapseTick:addOption(tr("OptCollapseActions"))
+    self.collapseTick.tooltip = tr("OptCollapseActionsTip")
+    self:addChild(self.collapseTick)
 
     self.key = nil
     self:refresh()
@@ -295,6 +315,10 @@ function BridgeOrder:prerender()
     if Bridge == nil or Bridge.store == nil then return end
     if self.list == nil or self.list.dragItem ~= nil then return end
     if self:orderKey() ~= self.key then self:refresh() end
+    if self.collapseTick ~= nil then
+        local want = BridgeData.optionOf(Bridge.store, "collapseActions")
+        if self.collapseTick:isSelected(1) ~= want then self.collapseTick:setSelected(1, want) end
+    end
 end
 
 function BridgeOrder:render()
@@ -325,6 +349,10 @@ function BridgeOrder:onReset()
     if Bridge ~= nil and type(Bridge.resetMenuOrder) == "function" then Bridge.resetMenuOrder() end
     self.key = nil
     self:refresh()
+end
+
+function BridgeOrder:onCollapseTick(index, selected, key)
+    if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption(key, selected == true) end
 end
 
 function BridgeOrder:move(delta)

@@ -365,7 +365,8 @@ end
 
 
 BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
-    relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true }
+    relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true,
+    collapseActions = false }
 BridgeData.HAIR_MAX = 40
 
 function BridgeData.optionOf(rec, key)
@@ -378,6 +379,11 @@ end
 
 function BridgeData.homeResources(rec)
     return BridgeData.optionOf(rec, "homeResources")
+end
+
+
+function BridgeData.collapseActions(rec)
+    return BridgeData.optionOf(rec, "collapseActions")
 end
 
 
