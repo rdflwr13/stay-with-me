@@ -220,11 +220,41 @@ local function moodle(red, m)
     return tonumber(lv) or 0
 end
 
+local DRUNK_MOODLE = nil
+pcall(function() DRUNK_MOODLE = MoodleType.DRUNK end)
+if DRUNK_MOODLE == nil then pcall(function() DRUNK_MOODLE = MoodleType.Drunk end) end
+
+local INTOX_STAT = nil
+pcall(function() INTOX_STAT = CharacterStat.INTOXICATION end)
+
+local function intox(red)
+    if INTOX_STAT == nil then return 0 end
+    local v = 0
+    pcall(function() v = red:getStats():get(INTOX_STAT) end)
+    return tonumber(v) or 0
+end
+
+local function drinkingNow(red)
+    local act = nil
+    pcall(function()
+        local q = ISTimedActionQueue.getTimedActionQueue(red)
+        if q ~= nil then act = q.current end
+    end)
+    if act == nil or act.isEating ~= true then return false end
+    local it = act.item
+    if it == nil then return false end
+    local alc = false
+    pcall(function() alc = it:isAlcoholic() == true end)
+    if not alc then pcall(function() alc = BridgeCare ~= nil and BridgeCare.fluidAlcohol(it) ~= nil end) end
+    return alc
+end
+
 
 BridgeDrive.STATES = {
     { key = "Hurt",    test = function(red) return bleeding(red) end },
     { key = "Panic",   test = function(red) return statOf(red, "PANIC") > 0.5 end },
     { key = "Sick",    test = function(red) return statOf(red, "SICKNESS") > 0.3 or statOf(red, "FOOD_SICKNESS") > 0.3 end },
+    { key = "Drunk",   test = function(red) return moodle(red, DRUNK_MOODLE) >= 1 or intox(red) >= 15 end },
     { key = "Tired",   test = function(red) return statOf(red, "FATIGUE") > 0.6 end },
     { key = "Thirsty", test = function(red) return statOf(red, "THIRST") > 0.35 end },
     { key = "Hungry",  test = function(red) return statOf(red, "HUNGER") > 0.35 end },
@@ -276,6 +306,7 @@ BridgeDrive.EVENTS = {
     EvCarColdWet      = { slot = "DriveColdWet",     cooldown = 600,  urgent = true,  cat = "STATE" },
     EvCarTiredNight   = { slot = "DriveTiredNight",  cooldown = 600,  urgent = true,  cat = "STATE" },
     EvCarEating       = { slot = "DriveEating",      cooldown = 120,  urgent = true,  cat = "STATE" },
+    EvCarDrinking     = { slot = "DriveDrinking",    cooldown = 120,  urgent = true,  cat = "STATE" },
     EvCarSmell4       = { slot = "DriveSmell4",       cooldown = 300,  urgent = false, cat = "SMELL" },
     EvCarSmell8       = { slot = "DriveSmell8",       cooldown = 300,  urgent = false, cat = "SMELL" },
     EvCarSmell16      = { slot = "DriveSmell16",      cooldown = 300,  urgent = false, cat = "SMELL" },
@@ -341,6 +372,7 @@ local function reset()
     BridgeDrive.prevWeather = nil
     BridgeDrive.curWeather = nil
     BridgeDrive.eatSaid = false
+    BridgeDrive.drinkSaid = false
     BridgeDrive.fuelArmed = true
     BridgeDrive.radioWas = false
     BridgeDrive.healthStep = 0
@@ -1051,16 +1083,32 @@ function BridgeDrive.tick()
 
 
     if BridgeDrive.greetDone and Bridge.every(BridgeDrive.EAT_EVERY) then
-        local eating = false
-        pcall(function() eating = eatingNow(red) end)
-        if eating and not BridgeDrive.eatSaid then
-            BridgeDrive.eatSaid = true
-            if say("EvCarEating") then
-                BridgeDrive.hpBase = hp or BridgeDrive.hpBase
-                return
-            end
-        elseif not eating then
+        local eating, drinking = false, false
+        pcall(function()
+            eating = eatingNow(red)
+            if eating then drinking = drinkingNow(red) end
+        end)
+        if drinking then
             BridgeDrive.eatSaid = false
+            if not BridgeDrive.drinkSaid then
+                BridgeDrive.drinkSaid = true
+                if say("EvCarDrinking") then
+                    BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                    return
+                end
+            end
+        elseif eating then
+            BridgeDrive.drinkSaid = false
+            if not BridgeDrive.eatSaid then
+                BridgeDrive.eatSaid = true
+                if say("EvCarEating") then
+                    BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                    return
+                end
+            end
+        else
+            BridgeDrive.eatSaid = false
+            BridgeDrive.drinkSaid = false
         end
     end
 

@@ -2489,5 +2489,6 @@
     "IGUI_NotAlone_TooltipGift": "Geschenk",
     "IGUI_NotAlone_TooltipGiftGiven": "schon angerechnet",
     "IGUI_NotAlone_TooltipGiftFull": "für heute genug",
-    "IGUI_NotAlone_InvGift": "Als Geschenk geben"
+    "IGUI_NotAlone_InvGift": "Als Geschenk geben",
+    "IGUI_NotAlone_InvGiftTooFar": "Zu weit weg. Komm näher, um ein Geschenk zu geben."
 }

@@ -3106,6 +3106,7 @@
     "IGUI_NotAlone_TooltipGiftGiven": "уже засчитано",
     "IGUI_NotAlone_TooltipGiftFull": "на сегодня хватит",
     "IGUI_NotAlone_InvGift": "Отдай в подарок",
+    "IGUI_NotAlone_InvGiftTooFar": "Слишком далеко. Подойди ближе, чтобы отдать подарок.",
     "IGUI_NotAlone_Soc_EvHorde4_Far_1": "Движение. Много.",
     "IGUI_NotAlone_Soc_EvHorde4_Far_2": "Смотри.",
     "IGUI_NotAlone_Soc_EvHorde4_Far_3": "К нам идут.",

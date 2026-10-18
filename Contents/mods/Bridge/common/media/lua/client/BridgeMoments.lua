@@ -26,6 +26,8 @@ local HEALTH_STEPS = { 50, 30, 15 }
 local HEALTH_EVENTS = { "EvHealthHalf", "EvDying", "EvDyingLast" }
 local HEALTH_BACK = 10
 BridgeMoments.healthStep = 0
+BridgeMoments.drunkStep = 0
+BridgeMoments.soberAt = nil
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeMoments] " .. tostring(text)) end end
 local function warn(text) print("[BridgeMoments] " .. tostring(text)) end
@@ -179,6 +181,9 @@ pcall(function() COLD_MOODLE = MoodleType.HYPOTHERMIA end)
 if COLD_MOODLE == nil then pcall(function() COLD_MOODLE = MoodleType.Hypothermia end) end
 pcall(function() HOT_MOODLE = MoodleType.HYPERTHERMIA end)
 if HOT_MOODLE == nil then pcall(function() HOT_MOODLE = MoodleType.Hyperthermia end) end
+local DRUNK_MOODLE = nil
+pcall(function() DRUNK_MOODLE = MoodleType.DRUNK end)
+if DRUNK_MOODLE == nil then pcall(function() DRUNK_MOODLE = MoodleType.Drunk end) end
 
 local function moodle(red, m)
     if m == nil then return 0 end
@@ -217,6 +222,33 @@ local function eatingNow(red)
         if q ~= nil and q.current ~= nil and q.current.isEating == true then eating = true end
     end)
     return eating
+end
+
+local DRUNK_EVENTS = { "EvTipsy", "EvDrunk", "EvWasted" }
+
+local INTOX_STAT = nil
+pcall(function() INTOX_STAT = CharacterStat.INTOXICATION end)
+
+local function intox(red)
+    if INTOX_STAT == nil then return 0 end
+    local v = 0
+    pcall(function() v = red:getStats():get(INTOX_STAT) end)
+    return tonumber(v) or 0
+end
+
+local function drinkingNow(red)
+    local act = nil
+    pcall(function()
+        local q = ISTimedActionQueue.getTimedActionQueue(red)
+        if q ~= nil then act = q.current end
+    end)
+    if act == nil or act.isEating ~= true then return false end
+    local it = act.item
+    if it == nil then return false end
+    local alc = false
+    pcall(function() alc = it:isAlcoholic() == true end)
+    if not alc then pcall(function() alc = BridgeCare ~= nil and BridgeCare.fluidAlcohol(it) ~= nil end) end
+    return alc
 end
 
 local SMELL_RADIUS = 8
@@ -474,8 +506,38 @@ function BridgeMoments.update(body)
     if moodle(red, HOT_MOODLE) >= 1 then
         if momentSay("EvOverheat", 20 * MINUTE) then return end
     end
-    if eatingNow(red) then
-        if momentSay("EvEating", 20 * MINUTE) then return end
+    local inCar = false
+    pcall(function() inCar = red:getVehicle() ~= nil end)
+    if not inCar then
+        local drunkMoodle = 0
+        pcall(function() drunkMoodle = red:getMoodles():getMoodleLevel(DRUNK_MOODLE) end)
+        drunkMoodle = tonumber(drunkMoodle) or 0
+        local drunkLevel = intox(red)
+        local drunkTier = 0
+        if drunkMoodle >= 3 or drunkLevel >= 70 then
+            drunkTier = 3
+        elseif drunkMoodle >= 2 or drunkLevel >= 40 then
+            drunkTier = 2
+        elseif drunkMoodle >= 1 or drunkLevel >= 15 then
+            drunkTier = 1
+        end
+        if drunkTier > (BridgeMoments.drunkStep or 0) then
+            BridgeMoments.soberAt = nil
+            if momentSay(DRUNK_EVENTS[drunkTier], 25 * MINUTE, false, "Drunk" .. drunkTier) then
+                BridgeMoments.drunkStep = drunkTier
+                return
+            end
+        elseif drunkTier == 0 then
+            if BridgeMoments.soberAt == nil then BridgeMoments.soberAt = Bridge.time end
+            if Bridge.time - BridgeMoments.soberAt > 5 * MINUTE then BridgeMoments.drunkStep = 0 end
+        else
+            BridgeMoments.soberAt = nil
+        end
+        if drinkingNow(red) then
+            if momentSay("EvDrinking", 20 * MINUTE, false, "Drink") then return end
+        elseif eatingNow(red) then
+            if momentSay("EvEating", 20 * MINUTE) then return end
+        end
     end
     local smell = smellTierOf(bodiesNear(red, SMELL_RADIUS))
     if smell ~= nil then

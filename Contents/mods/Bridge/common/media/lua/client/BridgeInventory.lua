@@ -9,6 +9,8 @@ BridgeInventory.keep = 4.5
 BridgeInventory.keepOpen = 8.0
 BridgeInventory.shown = false
 BridgeInventory.capacity = 15
+BridgeInventory.giftReach = 2.0
+BridgeInventory.giftTime = 45
 
 
 
@@ -2506,13 +2508,17 @@ end
 function BridgeInventory.handed(item)
     if item == nil or BridgeSocial == nil or BridgeSocial.received == nil then return end
     local b = body()
-    if b == nil then return end
+    local parked = false
+    pcall(function() parked = BridgeInventory.giftCar() ~= nil end)
+    if b == nil and not parked then return end
     local id = nil
     pcall(function() id = item:getID() end)
     if id ~= nil and (BridgeInventory.toWear[id] ~= nil or BridgeInventory.pending[id] ~= nil) then return end
-    local worn = false
-    pcall(function() worn = b:isEquippedClothing(item) end)
-    if worn then return end
+    if b ~= nil then
+        local worn = false
+        pcall(function() worn = b:isEquippedClothing(item) end)
+        if worn then return end
+    end
     pcall(BridgeSocial.received, item)
 end
 
@@ -3103,16 +3109,66 @@ function BridgeInventory.splitOne(item)
 end
 
 
-function BridgeInventory.giftOption(context, b, player, list)
+function BridgeInventory.giftNear(player, b)
+    if player == nil or b == nil then return false end
+    local near = false
+    pcall(function()
+        local dx, dy = player:getX() - b:getX(), player:getY() - b:getY()
+        near = dx * dx + dy * dy <= BridgeInventory.giftReach * BridgeInventory.giftReach
+            and math.abs(player:getZ() - b:getZ()) < 1
+    end)
+    return near
+end
+
+
+function BridgeInventory.giftCar()
+    if Bridge == nil or Bridge.mp then return nil end
+    if BridgeParked == nil or not BridgeParked.active or BridgeParked.main == nil then return nil end
+    local riding = false
+    pcall(function() riding = BridgeParked.inSameCar() == true end)
+    if not riding then return nil end
+    return BridgeParked.main
+end
+
+
+function BridgeInventory.giftHanded(b, id)
+    if b == nil then return end
+    pcall(function()
+        local red = BridgeData.owner()
+        if red ~= nil then b:faceLocationF(red:getX(), red:getY()) end
+    end)
+    pcall(function() BridgeSocial.emote("Yes", false, true) end)
+end
+
+
+function BridgeInventory.giftOption(context, b, player, list, dest)
     if BridgeSocial == nil or BridgeSocial.giftPreview == nil then return end
-    if context == nil or b == nil or list == nil or #list ~= 1 then return end
+    if context == nil or list == nil or #list == 0 then return end
     local item = list[1]
     if item == nil then return end
+    if dest == nil then
+        if b == nil then return end
+        pcall(function() dest = b:getInventory() end)
+    end
+    if dest == nil then return end
+    local full = nil
+    pcall(function() full = item:getFullType() end)
+    if full == nil then return end
+    for i = 1, #list do
+        local other = nil
+        pcall(function() other = list[i]:getFullType() end)
+        if other ~= full then return end
+    end
     local info = nil
     pcall(function() info = BridgeSocial.giftPreview(item) end)
     if info == nil then return end
     local hers = false
     pcall(function() hers = BridgeInventory.inBody(item:getContainer()) end)
+    local function inRange()
+        if b ~= nil then return BridgeInventory.giftNear(player, b) end
+        return BridgeInventory.giftCar() ~= nil
+    end
+    local close = inRange()
     local shortText, fullText = "+0", "+0"
     pcall(function()
         if BridgeGiftTooltip ~= nil then
@@ -3121,6 +3177,7 @@ function BridgeInventory.giftOption(context, b, player, list)
         end
     end)
     local opt = context:addOption(label("InvGift") .. " (" .. shortText .. ")", nil, function()
+        if not inRange() then return end
         local unit = item
         local count = 1
         pcall(function() count = tonumber(item:getCount()) or 1 end)
@@ -3132,21 +3189,54 @@ function BridgeInventory.giftOption(context, b, player, list)
         if unit == nil then return end
         if hers then
             pcall(BridgeSocial.received, unit)
+            if b ~= nil then pcall(BridgeInventory.giftHanded, b) end
         else
             pcall(function()
-                local dest = b:getInventory()
                 if unit:getContainer() ~= dest then
-                    ISTimedActionQueue.add(ISInventoryTransferAction:new(player, unit, unit:getContainer(), dest))
+                    local act = ISInventoryTransferAction:new(player, unit, unit:getContainer(), dest)
+                    if act ~= nil then
+                        act.stopOnWalk = true
+                        act.stopOnRun = true
+                        local time = tonumber(act.maxTime) or 0
+                        if time < BridgeInventory.giftTime then act.maxTime = BridgeInventory.giftTime end
+                        if b ~= nil then
+                            local id = nil
+                            pcall(function() id = unit:getID() end)
+                            act:setOnComplete(BridgeInventory.giftHanded, b, id)
+                            pcall(function() player:faceLocationF(b:getX(), b:getY()) end)
+                        end
+                        ISTimedActionQueue.add(act)
+                    end
                 end
             end)
         end
     end)
     pcall(function()
         local tip = ISInventoryPaneContextMenu.addToolTip()
-        tip.description = getText("IGUI_NotAlone_TooltipGift") .. ": " .. fullText
+        if close then
+            tip.description = getText("IGUI_NotAlone_TooltipGift") .. ": " .. fullText
+        else
+            tip.description = label("InvGiftTooFar")
+        end
         opt.toolTip = tip
     end)
-    if info.given or info.capped then opt.notAvailable = true end
+    if not close or info.given or info.capped then opt.notAvailable = true end
+end
+
+
+function BridgeInventory.giftCarMenu(playerNum, context, items)
+    if BridgeInventory.giftCar() == nil then return end
+    if context == nil then return end
+    local list = actualItems(items)
+    if #list == 0 then return end
+    local parentName = companionName()
+    if context:getOptionFromName(parentName) ~= nil then return end
+    local player = getSpecificPlayer(playerNum or 0)
+    local rin = context:getNew(context)
+    pcall(BridgeInventory.giftOption, rin, nil, player, list, BridgeParked.main)
+    if rin.numOptions <= 0 then return end
+    local opt = context:addOptionOnTop(parentName)
+    context:addSubMenu(opt, rin)
 end
 
 
@@ -3155,7 +3245,10 @@ function BridgeInventory.onFill(playerNum, context, items)
     if playerNum ~= nil and playerNum ~= 0 then return end
     local b = body()
     if b == nil then
-        if BridgeParked ~= nil and BridgeParked.active then pcall(BridgeParked.onFill, playerNum, context, items) end
+        if BridgeParked ~= nil and BridgeParked.active then
+            pcall(BridgeParked.onFill, playerNum, context, items)
+            pcall(BridgeInventory.giftCarMenu, playerNum, context, items)
+        end
         return
     end
     local inv = b:getInventory()
