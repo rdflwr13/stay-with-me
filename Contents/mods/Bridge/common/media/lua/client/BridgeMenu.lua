@@ -950,6 +950,52 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     BridgeMenu.addCancelTask(sub)
 end
 
+local function moveableName(obj)
+    if obj == nil then return nil end
+    local nm = nil
+    if ISWorldObjectContextMenu ~= nil and ISWorldObjectContextMenu.getMoveableDisplayName ~= nil then
+        pcall(function()
+            local shown = ISWorldObjectContextMenu.getMoveableDisplayName(obj)
+            if shown ~= nil and tostring(shown) ~= "" and tostring(shown) ~= "nil" then
+                nm = tostring(shown)
+            end
+        end)
+    end
+    return nm
+end
+
+local function rinInObject(context, obj)
+    local nm = moveableName(obj)
+    if nm == nil or context == nil then return nil end
+    local parentOpt = nil
+    pcall(function() parentOpt = context:getOptionFromName(nm) end)
+    if parentOpt == nil or parentOpt.subOption == nil then return nil end
+    local sub = nil
+    pcall(function() sub = context:getSubMenu(parentOpt.subOption) end)
+    if sub == nil then return nil end
+    local exists = nil
+    pcall(function() exists = sub:getOptionFromName(name()) end)
+    if exists ~= nil and exists.subOption ~= nil then
+        local rin = nil
+        pcall(function() rin = sub:getSubMenu(exists.subOption) end)
+        if rin ~= nil then return rin end
+    end
+    if exists ~= nil then return nil end
+    local rinOpt = sub:addOption(name())
+    local rinMenu = ISContextMenu:getNew(sub)
+    sub:addSubMenu(rinOpt, rinMenu)
+    return rinMenu
+end
+
+local function addInObject(context, obj, label, target, fn)
+    local menu = rinInObject(context, obj)
+    if menu == nil then return nil end
+    local existing = nil
+    pcall(function() existing = menu:getOptionFromName(label) end)
+    if existing ~= nil then return existing end
+    return menu:addOption(label, target, fn)
+end
+
 function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -957,14 +1003,9 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
     if not present() then return end
     local tree = treeUnder(worldobjects)
     if tree == nil then return end
-    if context:getOptionFromName(name()) ~= nil then return end
-    local option = context:addOptionOnTop(name())
-    local sub = ISContextMenu:getNew(context)
-    context:addSubMenu(option, sub)
-    if BridgeMenu.SHOW_STATUS then
-        local status = sub:addOption(BridgeMenu.status(true))
-        status.isDisabled = true
-    end
+    local sub = rinInObject(context, tree)
+    if sub == nil then return end
+    if sub:getOptionFromName(tr("CutTree")) ~= nil then return end
     local ok = false
     pcall(function() ok = BridgeTask.kinds.chopTree.available(Bridge.body) end)
     local cut = sub:addOption(tr("CutTree"), tree, BridgeMenu.onCutTree)
@@ -1085,10 +1126,9 @@ function BridgeMenu.onPryMenu(playerNum, context, worldobjects, test)
     local sq = nil
     pcall(function() sq = door:getSquare() end)
     if sq == nil then return end
-    local label = name() .. ": " .. tr("PryOpen")
-    if context:getOptionFromName(label) ~= nil then return end
     local target = { x = sq:getX(), y = sq:getY(), z = sq:getZ() }
-    local opt = context:addOptionOnTop(label, target, BridgeMenu.onPryOpen)
+    local opt = addInObject(context, door, tr("PryOpen"), target, BridgeMenu.onPryOpen)
+    if opt == nil then return end
     local hasTool = false
     pcall(function() hasTool = BridgeTask.findCrowbar(Bridge.body) ~= nil end)
     if not hasTool or BridgeTask.active then opt.notAvailable = true end
@@ -1226,23 +1266,15 @@ function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
     if seat == nil then return end
 
     if BridgeTask.isSeated ~= nil and BridgeTask.isSeated() then
-        local upLabel = name() .. ": " .. tr("StandUp")
-        if context:getOptionFromName(upLabel) == nil then
-            context:addOptionOnTop(upLabel, nil, BridgeMenu.onSitStandUp)
-        end
+        addInObject(context, seat, tr("StandUp"), nil, BridgeMenu.onSitStandUp)
         return
     end
 
     if BridgeTask.active and BridgeTask.kind == "sit" then
-        local cancelLabel = name() .. ": " .. tr("CancelTask")
-        if context:getOptionFromName(cancelLabel) == nil then
-            context:addOptionOnTop(cancelLabel, nil, BridgeMenu.onCancelTask)
-        end
+        addInObject(context, seat, tr("CancelTask"), nil, BridgeMenu.onCancelTask)
         return
     end
 
-    local label = name() .. ": " .. tr("Sit")
-    if context:getOptionFromName(label) ~= nil then return end
     local ok = false
     pcall(function() ok = BridgeTask.kinds.sit.available(Bridge.body) end)
     local targets = { { obj = seat, x = 0, y = 0, z = 0 } }
@@ -1250,7 +1282,8 @@ function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
         local sq = seat:getSquare()
         if sq ~= nil then targets[1].x, targets[1].y, targets[1].z = sq:getX(), sq:getY(), sq:getZ() end
     end)
-    local opt = context:addOptionOnTop(label, targets, BridgeMenu.onSitThis)
+    local opt = addInObject(context, seat, tr("Sit"), targets, BridgeMenu.onSitThis)
+    if opt == nil then return end
     if not ok or BridgeTask.active then opt.notAvailable = true end
     pcall(function()
         if BridgeTask.seatTaken({ obj = seat }, Bridge.body) then opt.notAvailable = true end
@@ -1280,29 +1313,18 @@ function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
     if bed == nil then return end
 
     if BridgeTask.isLying ~= nil and BridgeTask.isLying() then
-        local upLabel = name() .. ": " .. tr("GetUp")
-        if context:getOptionFromName(upLabel) == nil then
-            context:addOptionOnTop(upLabel, nil, BridgeMenu.onLayGetUp)
-        end
+        addInObject(context, bed, tr("GetUp"), nil, BridgeMenu.onLayGetUp)
         local asleep = false
         pcall(function() asleep = BridgeTask.laySleep == true end)
-        local togLabel = name() .. ": " .. tr(asleep and "Wake" or "Sleep")
-        if context:getOptionFromName(togLabel) == nil then
-            context:addOptionOnTop(togLabel, nil, BridgeMenu.onLaySleep)
-        end
+        addInObject(context, bed, tr(asleep and "Wake" or "Sleep"), nil, BridgeMenu.onLaySleep)
         return
     end
 
     if BridgeTask.active and BridgeTask.kind == "lay" then
-        local cancelLabel = name() .. ": " .. tr("CancelTask")
-        if context:getOptionFromName(cancelLabel) == nil then
-            context:addOptionOnTop(cancelLabel, nil, BridgeMenu.onCancelTask)
-        end
+        addInObject(context, bed, tr("CancelTask"), nil, BridgeMenu.onCancelTask)
         return
     end
 
-    local label = name() .. ": " .. tr("Lay")
-    if context:getOptionFromName(label) ~= nil then return end
     local ok = false
     pcall(function() ok = BridgeTask.kinds.lay.available(Bridge.body) end)
     local targets = { { obj = bed, x = 0, y = 0, z = 0 } }
@@ -1310,7 +1332,8 @@ function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
         local sq = bed:getSquare()
         if sq ~= nil then targets[1].x, targets[1].y, targets[1].z = sq:getX(), sq:getY(), sq:getZ() end
     end)
-    local opt = context:addOptionOnTop(label, targets, BridgeMenu.onLayThis)
+    local opt = addInObject(context, bed, tr("Lay"), targets, BridgeMenu.onLayThis)
+    if opt == nil then return end
     if not ok or BridgeTask.active then opt.notAvailable = true end
     local occupied = false
     pcall(function()
@@ -1581,14 +1604,7 @@ function BridgeMenu.onWashSinkMenu(playerNum, context, worldobjects, test)
             end
         end
     end
-    if rinMenu == nil then
-        local existing = nil
-        pcall(function() existing = context:getOptionFromName(name()) end)
-        if existing ~= nil then return end
-        local rinOpt = context:addOption(name())
-        rinMenu = ISContextMenu:getNew(context)
-        context:addSubMenu(rinOpt, rinMenu)
-    end
+    if rinMenu == nil then return end
 
     local dupe = nil
     pcall(function() dupe = rinMenu:getOptionFromName(tr("WashSelf")) end)
