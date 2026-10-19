@@ -368,6 +368,8 @@ BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit
     relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true,
     collapseActions = true }
 BridgeData.HAIR_MAX = 40
+BridgeData.GENDER_SWAP_COOLDOWN = 60
+BridgeData.GENDER_COMBAT_GRACE = 15
 
 function BridgeData.optionOf(rec, key)
     if BridgeData.OPTIONS[key] == nil then return false end

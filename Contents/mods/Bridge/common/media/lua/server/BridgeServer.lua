@@ -68,6 +68,7 @@ local ISSUED_MAX = 1000
 local PANIC_RADIUS = 10
 local PANIC_BODY_RADIUS = 12
 local PANIC_EVERY = 5
+local GENDER_SWAP_COOLDOWN = BridgeData.GENDER_SWAP_COOLDOWN or 60
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeServer] " .. tostring(text)) end end
 local function warn(text) print("[BridgeServer] " .. tostring(text)) end
@@ -536,6 +537,13 @@ end
 BridgeServer.Commands.despawn = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
+    local function storeItems()
+        if type(args.items) == "string" and #args.items <= BridgeItems.MAX_LENGTH and rec.items ~= args.items then
+            rec.items = args.items
+            rec.saved = 1
+            transmit()
+        end
+    end
     if args.byCommand then rec.want = false end
 
     if args.id ~= nil and rec.bodyId ~= nil and args.id ~= rec.bodyId then
@@ -543,6 +551,7 @@ BridgeServer.Commands.despawn = function(player, args)
         sendServerCommand(player, "Bridge", "despawned", { found = false })
         return
     end
+    storeItems()
     if rec.bodyId == nil then
 
         if args.byCommand then transmit() end
@@ -987,6 +996,7 @@ end
 BridgeServer.Commands.state = function(player, args)
     local rec = record(player:getUsername())
     local changed = false
+    local genderDenied = nil
     local genderBefore = BridgeData.genderOf(rec)
     if args.mode ~= nil and BridgeData.MODES[args.mode] and rec.mode ~= args.mode then
         rec.mode = args.mode
@@ -1006,7 +1016,23 @@ BridgeServer.Commands.state = function(player, args)
     if args.gender ~= nil then
         local g = BridgeData.cleanGender(args.gender)
         if BridgeData.genderOf(rec) ~= g then
-            rec.gender = g
+            local now = os.time()
+            local last = tonumber(rec.genderAt) or 0
+            local wait = 0
+            if last > 0 then wait = GENDER_SWAP_COOLDOWN - (now - last) end
+            if wait > 0 then
+                genderDenied = math.ceil(wait)
+            else
+                rec.gender = g
+                rec.genderAt = now
+                changed = true
+            end
+        end
+    end
+    if type(args.items) == "string" and #args.items <= BridgeItems.MAX_LENGTH then
+        if rec.items ~= args.items then
+            rec.items = args.items
+            rec.saved = 1
             changed = true
         end
     end
@@ -1413,7 +1439,15 @@ BridgeServer.Commands.state = function(player, args)
         rec.home = nil
         changed = true
     end
-    if changed then transmit() end
+    if genderDenied ~= nil then
+        pcall(function()
+            sendServerCommand(player, "Bridge", "genderDenied",
+                { wait = genderDenied, gender = BridgeData.genderOf(rec) })
+        end)
+        transmit()
+    elseif changed then
+        transmit()
+    end
 end
 
 

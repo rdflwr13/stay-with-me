@@ -924,6 +924,34 @@ function BridgeInventory.actionQueued(act)
 end
 
 
+function BridgeInventory.herTransferBusy()
+    local busy = false
+    pcall(function()
+        local b = body()
+        if b == nil then return end
+        local q = ISTimedActionQueue.getTimedActionQueue(getSpecificPlayer(0))
+        for _, a in ipairs(q.queue or {}) do
+            local src = a.srcContainer
+            local dest = a.destContainer or a.finalDest
+            if (src ~= nil and BridgeInventory.inBody(src))
+                or (dest ~= nil and BridgeInventory.inBody(dest)) then
+                busy = true
+                return
+            end
+            local item = a.item
+            if item ~= nil then
+                local c = item:getContainer()
+                if c ~= nil and BridgeInventory.inBody(c) then
+                    busy = true
+                    return
+                end
+            end
+        end
+    end)
+    return busy
+end
+
+
 
 
 
@@ -4934,6 +4962,11 @@ if ISInventoryTransferAction ~= nil and ISInventoryTransferAction.perform ~= nil
 
 
         if hers and Bridge ~= nil and not Bridge.mp then
+            pcall(function()
+                if Bridge.alive() and Bridge.kind == "zombie" then
+                    BridgeInventory.dropGone(Bridge.body)
+                end
+            end)
             pcall(function() Bridge.saveOutfit() end)
             if BridgeParked ~= nil then pcall(BridgeParked.save) end
             pcall(function() if BridgeBackup ~= nil and BridgeBackup.flushNow ~= nil then BridgeBackup.flushNow() end end)
