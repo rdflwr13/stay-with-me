@@ -2101,6 +2101,8 @@
     "IGUI_NotAlone_OptHomeResourcesMale": "Usa le scorte di casa",
     "IGUI_NotAlone_OptHomeResourcesTip": "Attivato: nella zona di casa, quando inizia un lavoro o le serve una benda, un disinfettante o una batteria che non ha, la prende da un contenitore nella zona. Disattivato: mai.",
     "IGUI_NotAlone_OptHomeResourcesTipMale": "Attivato: nella zona di casa, quando inizia un lavoro o gli serve una benda, un disinfettante o una batteria che non ha, la prende da un contenitore nella zona. Disattivato: mai.",
+    "IGUI_NotAlone_OptCollapseActions": "Azioni nel menu dell'oggetto",
+    "IGUI_NotAlone_OptCollapseActionsTip": "Attivato: sedersi, sdraiarsi, forzare la porta e abbattere l'albero compaiono nel menu della sedia, del letto, della porta o dell'albero. Disattivato: compaiono al primo livello del menu del tasto destro.",
     "IGUI_NotAlone_Lay": "Sdraiarsi sul letto",
     "IGUI_NotAlone_GetUp": "Alzarsi",
     "IGUI_NotAlone_Sleep": "Dormire",

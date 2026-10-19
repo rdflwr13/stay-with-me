@@ -2101,6 +2101,8 @@
     "IGUI_NotAlone_OptHomeResourcesMale": "Usa los suministros de casa",
     "IGUI_NotAlone_OptHomeResourcesTip": "Activado: en la zona de casa, cuando empieza un trabajo o necesita una venda, desinfectante o pila que no tiene, la coge directamente de un contenedor de la zona. Desactivado: nunca.",
     "IGUI_NotAlone_OptHomeResourcesTipMale": "Activado: en la zona de casa, cuando empieza un trabajo o necesita una venda, desinfectante o pila que no tiene, lo coge directamente de un contenedor de la zona. Desactivado: nunca.",
+    "IGUI_NotAlone_OptCollapseActions": "Acciones en el menú del objeto",
+    "IGUI_NotAlone_OptCollapseActionsTip": "Activado: sentarse, tumbarse, forzar la puerta y talar el árbol aparecen dentro del menú de la silla, la cama, la puerta o el árbol. Desactivado: aparecen en el primer nivel del menú del clic derecho.",
     "IGUI_NotAlone_Lay": "Tumbarse en la cama",
     "IGUI_NotAlone_GetUp": "Levantarse",
     "IGUI_NotAlone_Sleep": "Dormir",
