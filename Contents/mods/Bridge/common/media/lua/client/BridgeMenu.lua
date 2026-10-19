@@ -345,9 +345,6 @@ end
 
 local function buildActions(context, playerNum, env)
     local actions = actionsMenu(context)
-    if BridgeMenu.addWashTo ~= nil then
-        pcall(function() BridgeMenu.addWashTo(actions, BridgeMenu.clickObjects, playerNum) end)
-    end
     if env.mode == "rest" then
         actions:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)
     elseif env.inRange then

@@ -67,6 +67,7 @@ BridgeMove.runReplan = 1.8
 BridgeMove.runEvery = 30
 BridgeMove.lastRestart = -9999
 BridgeMove.steerMode = true
+BridgeMove.navEnabled = true
 BridgeMove.steering = false
 BridgeMove.trail = {}
 BridgeMove.redSpeed = 0
@@ -537,6 +538,13 @@ local NO_LINE_FRAMES = 20
 local AHEAD_PIVOT_DEG = 45
 local STUCK_LEAVE = 1.5
 local STUCK_LEAVE_AGAIN = 3.0
+local NAV_STALL_TICKS = 90
+local NAV_STALL_MOVE = 0.3
+local NAV_PATH_FAIL_LIMIT = 2
+local NAV_DETOUR_TICKS = 150
+local NAV_DETOUR_STEP = 1.6
+local NAV_OPENING_GIVE_UP = 360
+local NAV_FOLLOW_HOLD = 120
 local DOORWAY_STOP = 1.0
 local DOORWAY_ROOM = 1.2
 local DOORWAY_CLEAR = 0.3
@@ -2637,6 +2645,35 @@ local function followTrailStep(body)
     end
 
 
+    if F.navHoldUntil ~= nil then
+        if Bridge.time < F.navHoldUntil then
+            F.kind = "nav-hold"
+            BridgeMove.setCollide(body, true)
+            BridgeMove.endFollowBump(body, "")
+            BridgeMove.moving = false
+            if BridgeMove.onPath() then BridgeMove.stopPath(body) end
+            if BridgeMove.steering then
+                BridgeMove.steering = false
+                BridgeMove.pathing = false
+            end
+            if Bridge.tick % 30 == 0 then
+                pcall(function() body:faceLocationF(red:getX(), red:getY()) end)
+            end
+            if Bridge.verbose and F.navHoldLog ~= F.navHoldUntil then
+                F.navHoldLog = F.navHoldUntil
+                log(sformat("nav hold: %s%s", tostring(F.navStatus or "hold"),
+                    F.navReason ~= nil and (", " .. tostring(F.navReason)) or ""))
+            end
+            return true
+        end
+        F.navHoldUntil = nil
+        F.navReason = nil
+        F.navHoldLog = nil
+        F.navStatus = "ok"
+        if F.nav ~= nil then F.nav.pathFails = 0 end
+    end
+
+
     if Bridge.time < (F.awayUntil or 0) then
         F.kind = "path-away"
         return false
@@ -3115,6 +3152,52 @@ local function followTrailStep(body)
     if narrow then
         px, py = nx, ny
         kind = kind .. "-narrow"
+    end
+
+    local navKind = tostring(kind)
+    if navKind:sub(-7) == "-narrow" then navKind = navKind:sub(1, -8) end
+    local pursuing = navKind == "player" or navKind == "rope" or navKind == "trail"
+        or navKind == "stuck-path" or navKind:sub(1, 4) == "path"
+    local nav = BridgeMove.navState()
+    if nav ~= nil then
+        if nav.detour ~= nil and Bridge.time > (nav.detour.expires or 0) then nav.detour = nil end
+        if not pursuing then
+            nav.checkX, nav.checkY = nil, nil
+            nav.still = 0
+        end
+    end
+    if nav ~= nil and pursuing and BridgeMove.moving
+            and BridgeMove.cross == nil and BridgeMove.pendingClimb == nil
+            and BridgeMove.doorAct == nil and BridgeMove.window == nil then
+        if BridgeNav.stall(body, nav, { ticks = NAV_STALL_TICKS, move = NAV_STALL_MOVE }) == "stalled" then
+            local point = BridgeNav.detour(body, math.floor(px), math.floor(py), tz, nav,
+                { step = NAV_DETOUR_STEP, ticks = NAV_DETOUR_TICKS })
+            if point ~= nil then
+                px, py = point.x, point.y
+                kind = "detour"
+                nav.status = "detour"
+                if Bridge.verbose and Bridge.time - (F.navLogAt or -9999) >= 120 then
+                    F.navLogAt = Bridge.time
+                    log(sformat("nav: stalled, detour to %.1f %.1f", px, py))
+                end
+            else
+                local bx2, by2 = body:getX(), body:getY()
+                F.stuckAt = { x = bx2, y = by2, tick = Bridge.time, leave = STUCK_LEAVE }
+                F.pathMin = Bridge.time + 60
+                F.pathUntil = Bridge.time + 240
+                nav.status = "path"
+                nav.still = 0
+                nav.checkX, nav.checkY = nil, nil
+                BridgeMove.steering = false
+                BridgeMove.setCollide(body, true)
+                BridgeMove.endFollowBump(body, "")
+                if Bridge.verbose and Bridge.time - (F.navLogAt or -9999) >= 120 then
+                    F.navLogAt = Bridge.time
+                    log(sformat("nav: stalled at %.2f %.2f, engine path", bx2, by2))
+                end
+                return false
+            end
+        end
     end
     return drive(body, red, F, pf, bx, by, px, py, want, kind, running, d, err)
 end
@@ -6061,6 +6144,31 @@ function BridgeMove.update(body)
             if px ~= nil then gx, gy, gz = px, py, pz end
         end
     end
+    if Bridge.follow and gx ~= nil then
+        local nav = BridgeMove.navState()
+        if nav ~= nil then
+            if BridgeMove.openingWay == nil then
+                nav.openingKey, nav.openingSince = nil, nil
+            else
+                local openStatus, openReason = BridgeNav.opening(nav, {
+                    giveUp = NAV_OPENING_GIVE_UP, target = { x = gx, y = gy, z = gz } })
+                if openStatus == "stale" then
+                    BridgeMove.follow.navHoldUntil = Bridge.time + NAV_FOLLOW_HOLD
+                    BridgeMove.follow.navReason = openReason
+                    BridgeMove.follow.navStatus = "stale"
+                    nav.status = "stale"
+                    nav.reason = openReason
+                    if BridgeMove.onPath() then BridgeMove.stopPath(body) end
+                    BridgeMove.moving = false
+                    if Bridge.verbose then
+                        log(sformat("nav: opening stale%s, holding",
+                            openReason ~= nil and (", " .. tostring(openReason)) or ""))
+                    end
+                    return
+                end
+            end
+        end
+    end
     if gx == nil then
         BridgeMove.wasWalking = false
         if BridgeMove.onPath() then BridgeMove.stopPath(body) end
@@ -6191,6 +6299,10 @@ function BridgeMove.update(body)
 
 
         BridgeMove.pathing = false
+        if res == BehaviorResult.Succeeded and Bridge.follow then
+            local nav = BridgeMove.navState()
+            if nav ~= nil then nav.pathFails = 0 end
+        end
         if res == BehaviorResult.Failed then BridgeMove.lastFailed = Bridge.tick BridgeMove.lastFailedAt = Bridge.time end
         if Bridge.follow and BridgeMove.redMoving and res == BehaviorResult.Succeeded then
 
@@ -6201,6 +6313,23 @@ function BridgeMove.update(body)
             pcall(function() pf:update() end)
         elseif Bridge.follow then
             BridgeMove.moving = false
+        end
+    end
+    if Bridge.follow then
+        local nav = BridgeMove.navState()
+        if nav ~= nil and BridgeNav.notePathFail(nav, { limit = NAV_PATH_FAIL_LIMIT }) == "failed" then
+            local reason = BridgeNav.blockedReason(Bridge.target)
+            BridgeMove.follow.navHoldUntil = Bridge.time + NAV_FOLLOW_HOLD
+            BridgeMove.follow.navReason = reason
+            BridgeMove.follow.navStatus = "failed"
+            nav.status = "failed"
+            nav.reason = reason
+            BridgeMove.stopPath(body)
+            BridgeMove.moving = false
+            if Bridge.verbose then
+                log(sformat("nav: path failed %d times%s, holding", nav.pathFails or 0,
+                    reason ~= nil and (", " .. tostring(reason)) or ""))
+            end
         end
     end
     BridgeMove.wasWalking = BridgeMove.pathing
@@ -6232,6 +6361,10 @@ function BridgeMove.set(name, value)
     elseif name == "steer" then
         BridgeMove.steerMode = value ~= "off"
         return "steer " .. (BridgeMove.steerMode and "on" or "off")
+    elseif name == "nav" then
+        BridgeMove.navEnabled = value ~= "off"
+        BridgeMove.navReset()
+        return "nav " .. (BridgeMove.navEnabled and "on" or "off")
     elseif name == "runreplan" then
         BridgeMove.runReplan = tonumber(value) or BridgeMove.runReplan
         return "runreplan " .. tostring(BridgeMove.runReplan)
@@ -6319,6 +6452,45 @@ function BridgeMove.goToward(body, x, y, z, way)
     trackStep(body)
 end
 
+function BridgeMove.navOn()
+    return BridgeMove.navEnabled ~= false and BridgeNav ~= nil and BridgeNav.newState ~= nil
+end
+
+function BridgeMove.navState()
+    local F = BridgeMove.follow
+    if F == nil or not BridgeMove.navOn() then return nil end
+    if F.nav == nil then F.nav = BridgeNav.newState() end
+    return F.nav
+end
+
+function BridgeMove.navReset()
+    local F = BridgeMove.follow
+    if F == nil then return end
+    F.nav = BridgeMove.navOn() and BridgeNav.newState() or nil
+    F.navHoldUntil = nil
+    F.navReason = nil
+    F.navStatus = "ok"
+    F.navHoldLog = nil
+    F.navLogAt = nil
+end
+
+function BridgeMove.navInfo()
+    local F = BridgeMove.follow or {}
+    local nav = F.nav
+    local hold = 0
+    if F.navHoldUntil ~= nil and Bridge.time < F.navHoldUntil then
+        hold = math.floor(F.navHoldUntil - Bridge.time)
+    end
+    local detour = nav ~= nil and nav.detour or nil
+    return sformat("nav=%s kind=%s status=%s reason=%s fails=%d detour=%s hold=%d holdUntil=%d",
+        BridgeMove.navEnabled and "on" or "off", tostring(F.kind or "-"),
+        tostring((nav ~= nil and nav.status) or F.navStatus or "-"),
+        tostring(F.navReason or (nav ~= nil and nav.reason) or "-"),
+        (nav ~= nil and nav.pathFails) or 0,
+        detour ~= nil and sformat("%.1f,%.1f", detour.x, detour.y) or "-", hold,
+        F.navHoldUntil or 0)
+end
+
 function BridgeMove.reset(body)
     if body ~= nil then
         BridgeMove.setCollide(body, true)
@@ -6369,6 +6541,7 @@ function BridgeMove.reset(body)
     if BridgeMove.seatFlag or BridgeMove.seatBound ~= nil then chairFlagsOff(body) end
     BridgeMove.sitFlagOff(body)
     BridgeMove.nearReset()
+    BridgeMove.navReset()
 
     BridgeMove.stride = nil
     if body ~= nil then setStride(body, false) end
@@ -6393,6 +6566,7 @@ end
 function BridgeMove.enterCar(body, vehicle)
     local seat = freeSeat(vehicle)
     if seat == nil then return "no free seat" end
+    BridgeMove.navReset()
     BridgeMove.stopPath(body)
     local ok, err = pcall(function()
         if not vehicle:enter(seat, body) then return "enter returned false" end

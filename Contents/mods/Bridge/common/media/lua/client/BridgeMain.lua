@@ -1940,6 +1940,7 @@ function Bridge.setMode(mode)
     Bridge.follow = (mode == "follow")
     Bridge.target = nil
     BridgeMove.moving = false
+    if BridgeMove.navReset ~= nil then BridgeMove.navReset() end
     BridgeFight.guardOnly = (mode ~= "follow")
     if Bridge.alive() then BridgeMove.stopPath(Bridge.body) end
     local wx, wy, wz = nil, nil, nil
@@ -5861,6 +5862,7 @@ function Bridge.diagLines()
             add("body_pathing", tostring(BridgeMove.pathing))
             add("body_moving", tostring(BridgeMove.moving))
             add("path_result", BridgeMove.pathResult)
+            pcall(function() add("nav", BridgeMove.navInfo()) end)
             add("obstacle", BridgeMove.obstacle)
             pcall(function() add("doors", BridgeMove.doorInfo()) end)
             add("fight", tostring(BridgeFight.enabled) .. " " .. BridgeFight.state .. " " .. BridgeFight.info)
