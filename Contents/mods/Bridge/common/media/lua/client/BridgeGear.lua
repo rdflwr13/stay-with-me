@@ -490,7 +490,7 @@ function BridgeGear.menu(context, b, player, list)
     if item == nil or #list ~= 1 then return end
 
     if inHer(b, item) and BridgeGear.locationOf(b, item) ~= nil then
-        local label = herName() .. ": " .. tr("ContextMenu_Unequip", "Unequip")
+        local label = tr("ContextMenu_Unequip", "Unequip")
         context:addOption(label, b, BridgeGear.detach, item)
         return
     end
@@ -511,7 +511,7 @@ function BridgeGear.menu(context, b, player, list)
     local slots = BridgeGear.slotsFor(b, item)
     if #slots == 0 then return end
 
-    local rootLabel = herName() .. ": " .. tr("ContextMenu_Equip", "Equip")
+    local rootLabel = tr("ContextMenu_Equip", "Equip")
     local root = context:addOption(rootLabel)
     local sub = context:getNew(context)
     context:addSubMenu(root, sub)

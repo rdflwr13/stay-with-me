@@ -35,6 +35,7 @@ BridgeServer.diedCheck = {}
 BridgeServer.deadFor = {}
 BridgeServer.undriven = {}
 BridgeServer.online = {}
+BridgeServer.corpseCarry = {}
 BridgeServer.panicSaved = {}
 BridgeServer.panicKeep = {}
 BridgeServer.panicWatch = {}
@@ -508,6 +509,7 @@ BridgeServer.Commands.spawn = function(player, args)
         pcall(function() body:setTarget(player) end)
         companionFlags(body)
         applyCarry(body, rec)
+        rec.parked = nil
         rec.bodyId = body:getPersistentOutfitID()
         issue(rec.bodyId, who)
         BridgeServer.touched[body] = rec.bodyId
@@ -970,7 +972,7 @@ BridgeServer.Commands.outfit = function(player, args)
     local rec = record(player:getUsername())
 
 
-    if type(args.items) ~= "string" or #args.items > 60000 then return end
+    if type(args.items) ~= "string" or #args.items > BridgeItems.MAX_LENGTH then return end
 
 
     if type(args.iseq) == "number" and type(rec.iseq) == "number" and args.iseq < rec.iseq then return end
@@ -1038,6 +1040,13 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.aimSense ~= nil then
+        local sense = BridgeData.cleanAimSense(args.aimSense)
+        if sense ~= nil and rec.aimSense ~= sense then
+            rec.aimSense = sense
+            changed = true
+        end
+    end
     if args.menuOrder ~= nil then
         local order = BridgeData.cleanMenuOrder(args.menuOrder)
         if order ~= nil then
@@ -1050,6 +1059,22 @@ BridgeServer.Commands.state = function(player, args)
             end
             if not same then
                 rec.menuOrder = order
+                changed = true
+            end
+        end
+    end
+    if args.menuHidden ~= nil then
+        local hidden = BridgeData.cleanMenuHidden(args.menuHidden)
+        if hidden ~= nil then
+            local old = BridgeData.cleanMenuHidden(rec.menuHidden) or {}
+            local same = #old == #hidden
+            if same then
+                for i = 1, #hidden do
+                    if old[i] ~= hidden[i] then same = false break end
+                end
+            end
+            if not same then
+                rec.menuHidden = hidden
                 changed = true
             end
         end
@@ -1215,7 +1240,8 @@ BridgeServer.Commands.state = function(player, args)
     end
 
     if args.sit ~= nil then
-        local sit = (args.sit == "chair" or args.sit == "floor") and args.sit or nil
+        local sit = (args.sit == "chair" or args.sit == "floor"
+            or args.sit == "bedawake" or args.sit == "bedasleep") and args.sit or nil
         if rec.sit ~= sit then
             rec.sit = sit
             changed = true
@@ -1243,12 +1269,27 @@ BridgeServer.Commands.state = function(player, args)
         local rel = BridgeData.cleanRel(args.rel)
         if rel ~= nil then
 
+            local tier = BridgeData.relTier(rel)
+            local bonus = (tier == "Close" and 3) or (tier == "Friend" and 2) or (tier == "Pal" and 1) or 0
+            rel.gainF = math.min(rel.gainF, BridgeData.sandboxNumber("DailyFriendCap", 6, 0, 50) + bonus)
+            rel.gainR = math.min(rel.gainR, BridgeData.sandboxNumber("DailyRomanceCap", 3, 0, 50) + bonus)
+            rel.giftF = math.min(rel.giftF, BridgeData.sandboxNumber("DailyGiftCapFriend", 3, 0, 50) + bonus)
+            rel.giftR = math.min(rel.giftR, BridgeData.sandboxNumber("DailyGiftCapRomance", 1, 0, 50) + bonus)
+
             local old = BridgeData.relOf(rec)
             rel.giftAt = math.max(rel.giftAt or 0, old.giftAt or 0)
             rec.rel = rel
 
 
         end
+    end
+    if args.visited ~= nil then
+        local visited = BridgeData.cleanVisited(args.visited)
+        if visited ~= nil then rec.visited = visited end
+    end
+    if args.cities ~= nil then
+        local cities = BridgeData.cleanCities(args.cities)
+        if cities ~= nil then rec.cities = cities end
     end
     if args.skills ~= nil then
         local skills = BridgeData.cleanSkills(args.skills)
@@ -1276,6 +1317,101 @@ BridgeServer.Commands.state = function(player, args)
             rec.kills = k
             changed = true
         end
+    end
+    if args.exerciseUntil ~= nil then
+        local v = tonumber(args.exerciseUntil)
+        if v ~= nil and v >= 0 and (rec.exerciseUntil == nil or math.abs(rec.exerciseUntil - v) > 0.001) then
+            if v > 0 then rec.exerciseUntil = v else rec.exerciseUntil = nil end
+            changed = true
+        end
+    end
+    if args.showerUntil ~= nil then
+        local v = tonumber(args.showerUntil)
+        if v ~= nil and v >= 0 and (rec.showerUntil == nil or math.abs(rec.showerUntil - v) > 0.001) then
+            if v > 0 then rec.showerUntil = v else rec.showerUntil = nil end
+            changed = true
+        end
+    end
+    if args.showerProgress ~= nil then
+        local v = tonumber(args.showerProgress)
+        if v ~= nil and v >= 0 then
+            if v > 1 then v = 1 end
+            if rec.showerProgress == nil or math.abs(rec.showerProgress - v) > 0.001 then
+                if v > 0 then rec.showerProgress = v else rec.showerProgress = nil end
+                changed = true
+            end
+        end
+    end
+    if args.exerciseBank ~= nil then
+        local v = tonumber(args.exerciseBank)
+        if v ~= nil and v >= 0 then
+            if v > 1 then v = 1 end
+            if rec.exerciseBank == nil or math.abs((tonumber(rec.exerciseBank) or 0) - v) > 0.001 then
+                rec.exerciseBank = v
+                changed = true
+            end
+        end
+    end
+    if args.exerciseBankDay ~= nil then
+        local v = tonumber(args.exerciseBankDay)
+        if v ~= nil then
+            v = math.floor(v)
+            if (tonumber(rec.exerciseBankDay) or -1) ~= v then
+                rec.exerciseBankDay = v
+                changed = true
+            end
+        end
+    end
+    if args.exerciseTold ~= nil then
+        local v = args.exerciseTold == true
+        if (rec.exerciseTold == true) ~= v then
+            rec.exerciseTold = v or nil
+            changed = true
+        end
+    end
+    if args.exerciseCount ~= nil then
+        local v = tonumber(args.exerciseCount)
+        if v ~= nil and v >= 0 then
+            v = math.floor(v)
+            if v > (tonumber(rec.exerciseCount) or 0) then
+                rec.exerciseCount = v
+                changed = true
+            end
+        end
+    end
+    if args.exerciseLast ~= nil then
+        local v = tonumber(args.exerciseLast)
+        if v ~= nil and v > (tonumber(rec.exerciseLast) or 0) then
+            rec.exerciseLast = v
+            changed = true
+        end
+    end
+    if args.fatigue ~= nil then
+        local v = tonumber(args.fatigue)
+        if v ~= nil then
+            v = math.max(0, math.min(1, v))
+            if rec.fatigue == nil or math.abs(rec.fatigue - v) > 0.001 then
+                rec.fatigue = v
+                changed = true
+            end
+        end
+    end
+    if args.fatigueAt ~= nil then
+        local v = tonumber(args.fatigueAt)
+        if v ~= nil and v >= 0 and v > (tonumber(rec.fatigueAt) or 0) then
+            rec.fatigueAt = v
+            changed = true
+        end
+    end
+    if args.home ~= nil then
+        local h = BridgeData.cleanHome(args.home)
+        if h ~= nil then
+            rec.home = h
+            changed = true
+        end
+    elseif args.clearHome then
+        rec.home = nil
+        changed = true
     end
     if changed then transmit() end
 end
@@ -1631,9 +1767,36 @@ BridgeServer.Commands.water = function(player, args)
         for i = 0, objects:size() - 1 do
             local o = objects:get(i)
             local wet = false
-            pcall(function() wet = o:hasWater() and o:getFluidAmount() > 0 end)
+            pcall(function()
+                local flagged = o:hasWater() == true or o:hasFluid() == true
+                if flagged then
+                    local fc = o:getFluidContainer()
+                    if fc ~= nil then
+                        wet = fc:getAmount() > 0 and (fc:isWaterSource() or fc:contains(Fluid.Water)
+                            or (Fluid.TaintedWater ~= nil and fc:contains(Fluid.TaintedWater)))
+                    else
+                        wet = o:hasWater() == true and o:getFluidAmount() > 0
+                    end
+                end
+            end)
             if wet then
                 if o:useFluid(math.min(amount, o:getFluidAmount())) > 0 then
+                    pcall(function() o:transmitModData() end)
+                end
+                return
+            end
+            local fc = nil
+            pcall(function()
+                fc = o:getFluidContainer()
+                wet = fc ~= nil and fc:getAmount() > 0
+                    and (fc:isWaterSource() or fc:contains(Fluid.Water)
+                        or (Fluid.TaintedWater ~= nil and fc:contains(Fluid.TaintedWater)))
+            end)
+            if wet and fc ~= nil then
+                local spent = math.min(amount, fc:getAmount())
+                if spent > 0 then
+                    fc:adjustAmount(fc:getAmount() - spent)
+                    pcall(function() if o.syncModData ~= nil then o:syncModData() end end)
                     pcall(function() o:transmitModData() end)
                 end
                 return
@@ -1785,6 +1948,75 @@ BridgeServer.Commands.chopHit = function(player, args)
     end)
 end
 
+BridgeServer.Commands.pryDoor = function(player, args)
+    local _body, sq = companionAtRelaxed(player, args, 6)
+    if sq == nil then
+        log("pryDoor: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+    local door = nil
+    pcall(function()
+        local objs = sq:getObjects()
+        for i = 0, objs:size() - 1 do
+            local o = objs:get(i)
+            if o ~= nil then
+                local isDoor = false
+                pcall(function()
+                    isDoor = instanceof(o, "IsoDoor")
+                        or (instanceof(o, "IsoThumpable") and o:isDoor())
+                end)
+                if isDoor then
+                    local closed, locked, bar = false, false, false
+                    pcall(function() closed = not o:IsOpen() end)
+                    pcall(function() locked = o:isLocked() or o:isLockedByKey() end)
+                    pcall(function() bar = o:isBarricaded() end)
+                    if closed and locked and not bar then door = o break end
+                end
+            end
+        end
+    end)
+    if door == nil then
+        log("pryDoor: no locked door at " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+    pcall(function()
+        door:setLocked(false)
+        door:setLockedByKey(false)
+    end)
+    local open = false
+    pcall(function() open = door:IsOpen() == true end)
+    if not open then
+        local kind = "single"
+        pcall(function()
+            if instanceof(door, "IsoDoor") and IsoDoor ~= nil then
+                if IsoDoor.getDoubleDoorIndex(door) ~= -1 then kind = "double"
+                elseif IsoDoor.getGarageDoorIndex(door) ~= -1 then kind = "garage" end
+            end
+        end)
+        if kind == "double" then
+            pcall(function() IsoDoor.toggleDoubleDoor(door, true) end)
+        elseif kind == "garage" then
+            pcall(function() IsoDoor.toggleGarageDoor(door, true) end)
+        else
+            pcall(function() door:ToggleDoorSilent() end)
+        end
+    end
+    pcall(function()
+        door:DirtySlice()
+        door:syncIsoObject(false, 1, nil, nil)
+    end)
+    pcall(function() door:transmitUpdatedSpriteToClients() end)
+    pcall(function()
+        local dsq = door:getSquare()
+        if dsq ~= nil then
+            dsq:InvalidateSpecialObjectPaths()
+            dsq:RecalcProperties()
+        end
+    end)
+end
+
 BridgeServer.Commands.cleanSquare = function(player, args)
     local _body, sq = companionAtRelaxed(player, args, 6)
     if sq == nil then
@@ -1827,6 +2059,90 @@ BridgeServer.Commands.clearPlants = function(player, args)
     end
     local ok, err = pcall(function() BridgePlants.applyPlant(sq, kind, body) end)
     if not ok then log("clearPlants: applyPlant failed: " .. tostring(err)) end
+end
+
+
+local function serverCorpseOn(sq, cx, cy)
+    local best, bestD = nil, nil
+    if sq == nil then return nil end
+    pcall(function()
+        local mv = sq:getStaticMovingObjects()
+        if mv == nil then return end
+        for i = 0, mv:size() - 1 do
+            local c = mv:get(i)
+            if c ~= nil and instanceof(c, "IsoDeadBody") and not c:isAnimal() then
+                local d = 0
+                if cx ~= nil and cy ~= nil then d = (c:getX() - cx) ^ 2 + (c:getY() - cy) ^ 2 end
+                if bestD == nil or d < bestD then best, bestD = c, d end
+            end
+        end
+    end)
+    return best
+end
+
+BridgeServer.Commands.corpseGrab = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("corpseGrab: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+
+    if BridgeServer.corpseCarry[who] ~= nil then
+        BridgeServer.Commands.corpseDrop(player,
+            { x = math.floor(body:getX()), y = math.floor(body:getY()), z = math.floor(body:getZ()) })
+    end
+    local corpse = serverCorpseOn(sq, tonumber(args.cx), tonumber(args.cy))
+    if corpse == nil then
+        log("corpseGrab: no corpse at " .. tostring(args.x) .. "," .. tostring(args.y) .. "," .. tostring(args.z))
+        return
+    end
+    local item = nil
+    pcall(function() item = corpse:getItem() end)
+    BridgeServer.corpseCarry[who] = { corpse = corpse, item = item,
+        x = sq:getX(), y = sq:getY(), z = sq:getZ() }
+    pcall(function() sq:removeCorpse(corpse, false) end)
+    log("corpseGrab: " .. tostring(who) .. " took a body at " .. tostring(args.x) .. "," .. tostring(args.y))
+end
+
+BridgeServer.Commands.corpseDrop = function(player, args)
+    local who = player:getUsername()
+    local carry = BridgeServer.corpseCarry[who]
+    if carry == nil then return end
+    local _body, sq = companionAtRelaxed(player, args, 6)
+    if sq == nil then
+
+        log("corpseDrop: no square for " .. tostring(args.x) .. "," .. tostring(args.y))
+        return
+    end
+    BridgeServer.corpseCarry[who] = nil
+    local x, y, z = sq:getX(), sq:getY(), sq:getZ()
+    local placed = false
+    if carry.corpse ~= nil then
+        pcall(function()
+            local c = carry.corpse
+            c:setX(x + 0.5)
+            c:setY(y + 0.5)
+            c:setZ(z)
+            if c.setSquare ~= nil then c:setSquare(sq) end
+            if c.setCurrent ~= nil then c:setCurrent(sq) end
+            sq:addCorpse(c, false)
+            placed = true
+        end)
+        if placed then
+            pcall(function()
+                if carry.corpse.transmitUpdatedSpriteToClients ~= nil then
+                    carry.corpse:transmitUpdatedSpriteToClients()
+                end
+            end)
+        end
+    end
+    if not placed and carry.item ~= nil then
+        pcall(function() sq:tryAddCorpseToWorld(carry.item, 0.5, 0.5) placed = true end)
+    end
+    log("corpseDrop: " .. tostring(who) .. " placed a body at " .. tostring(x) .. "," .. tostring(y)
+        .. (placed and "" or " (failed)"))
 end
 
 
@@ -1893,6 +2209,18 @@ end
 
 
 
+BridgeServer.Commands.parked = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    local on = args.on == true
+    if rec.parked ~= on then
+        rec.parked = on or nil
+        transmit()
+    end
+    log("parked " .. tostring(who) .. "=" .. tostring(on))
+end
+
+
 BridgeServer.Commands.give = function(player, args)
     local ids = args.ids
     if type(ids) ~= "table" then ids = (args.id ~= nil) and { args.id } or {} end
@@ -1900,7 +2228,7 @@ BridgeServer.Commands.give = function(player, args)
         sendServerCommand(player, "Bridge", "giveFailed", { id = id or args.id, ids = ids, token = args.token, why = why })
     end
     local rec = record(player:getUsername())
-    if rec.bodyId == nil then return fail("no body") end
+    if rec.bodyId == nil and not rec.parked then return fail("no body") end
     if #ids == 0 then return fail("no item") end
     local srcC = nil
     if type(args.srcRef) == "table" then
@@ -1975,6 +2303,131 @@ end
 
 
 
+local FETCH_MARGIN = 6
+
+
+local function homeRectOf(rec)
+    local h = rec ~= nil and rec.home or nil
+    if type(h) ~= "table" then return nil end
+    if type(h.x) ~= "number" or type(h.y) ~= "number" or type(h.z) ~= "number"
+        or type(h.w) ~= "number" or type(h.h) ~= "number" then return nil end
+    return h.x, h.y, h.x + h.w - 1, h.y + h.h - 1, h.z
+end
+
+
+local function findHomeItem(rec, body, player, wantId)
+    local x1, y1, x2, y2, z = homeRectOf(rec)
+    if x1 == nil or wantId == nil then return nil, nil end
+    local found, foundC = nil, nil
+    local seen = {}
+    for x = x1, x2 do
+        if found ~= nil then break end
+        for y = y1, y2 do
+            if found ~= nil then break end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+            if sq ~= nil then
+                local function scan(objs)
+                    if objs == nil or found ~= nil then return end
+                    for i = 0, objs:size() - 1 do
+                        if found ~= nil then return end
+                        local o = objs:get(i)
+                        if o ~= nil then
+                            local n = 0
+                            pcall(function() n = o:getContainerCount() end)
+                            for j = 0, n - 1 do
+                                if found ~= nil then return end
+                                local c = nil
+                                pcall(function() c = o:getContainerByIndex(j) end)
+                                if c ~= nil and not seen[c] then
+                                    seen[c] = true
+                                    local skip = false
+                                    pcall(function() skip = body ~= nil and c == body:getInventory() end)
+                                    if not skip then
+                                        pcall(function()
+                                            if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
+                                        end)
+                                    end
+                                    if not skip then
+                                        local list = nil
+                                        pcall(function() list = c:getItems() end)
+                                        if list ~= nil then
+                                            for k = 0, list:size() - 1 do
+                                                local it = list:get(k)
+                                                local id = nil
+                                                pcall(function() if it ~= nil then id = it:getID() end end)
+                                                if id ~= nil and id == wantId then
+                                                    found, foundC = it, c
+                                                    return
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                pcall(function() scan(sq:getObjects()) end)
+                pcall(function() scan(sq:getSpecialObjects()) end)
+                pcall(function() scan(sq:getStaticMovingObjects()) end)
+            end
+        end
+    end
+    return found, foundC
+end
+
+
+BridgeServer.Commands.fetchSupply = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    local wantId = args.id
+    local function fail(why)
+        log("fetchSupply failed for " .. tostring(who) .. ": " .. tostring(why))
+        sendServerCommand(player, "Bridge", "giveFailed",
+            { id = wantId, ids = (wantId ~= nil) and { wantId } or {}, token = args.token, why = why })
+    end
+    if rec.bodyId == nil then return fail("no body") end
+    if wantId == nil then return fail("no item") end
+    local x1, y1, x2, y2, z = homeRectOf(rec)
+    if x1 == nil then return fail("no home") end
+    local body = BridgeServer.bodies[who] or currentBody(who, rec)
+    if body == nil then return fail("no body") end
+    local bx, by, bz = nil, nil, nil
+    pcall(function() bx, by, bz = math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()) end)
+    if bx == nil then return fail("no position") end
+    if math.abs((bz or 0) - z) >= 1
+            or bx < x1 - FETCH_MARGIN or bx > x2 + FETCH_MARGIN
+            or by < y1 - FETCH_MARGIN or by > y2 + FETCH_MARGIN then
+        return fail("not at home")
+    end
+    local item, container = findHomeItem(rec, body, player, wantId)
+    if item == nil or container == nil then return fail("not in home storage") end
+
+    local list = BridgeItems.decode(rec.items or "")
+    local r = BridgeItems.record(item, true)
+    flatten(r, nil, list)
+    local items = BridgeItems.encode(list)
+    if #BridgeItems.decode(items) ~= #list then return fail("snapshot full") end
+    local ok, err = pcall(function()
+        container:Remove(item)
+        sendRemoveItemFromContainer(container, item)
+    end)
+    if not ok then return fail("remove failed: " .. tostring(err)) end
+    rec.items = items
+    rec.saved = 1
+    rec.iseq = (rec.iseq or 0) + 1
+    local outIds = { item:getID() }
+    local added = {}
+    flatten(r, nil, added)
+    journalNote("G", who, rec, item:getID(), added)
+    transmit()
+    sendServerCommand(player, "Bridge", "gave", { ids = outIds, recs = { r }, token = args.token, iseq = rec.iseq })
+    log("fetch " .. tostring(r.t) .. " from home storage for " .. tostring(who))
+end
+
+
+
 BridgeServer.Commands.take = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
@@ -1987,7 +2440,7 @@ BridgeServer.Commands.take = function(player, args)
         end
     end
     if #recs == 0 or type(recs[1]) ~= "table" or type(recs[1].t) ~= "string" then return answer(false, nil, "no record") end
-    if rec.bodyId == nil and args.returnId == nil then return answer(false, nil, "no body") end
+    if rec.bodyId == nil and args.returnId == nil and not rec.parked then return answer(false, nil, "no body") end
     local list = BridgeItems.decode(rec.items or "")
     local flags = { w = args.w == true, h = tonumber(args.h), top = args.top == true }
     local out = list
@@ -2631,6 +3084,21 @@ local function onTick()
         end
         BridgeServer.onlineCount = count
         refreshOnline()
+    end
+
+    if BridgeServer.tick > 200 and BridgeServer.newSecond and sec % 5 == 0 then
+        for who, carry in pairs(BridgeServer.corpseCarry) do
+            if BridgeServer.online[who] == nil and carry ~= nil then
+                BridgeServer.corpseCarry[who] = nil
+                if carry.item ~= nil then
+                    pcall(function()
+                        local sq = getCell():getGridSquare(carry.x, carry.y, carry.z)
+                        if sq ~= nil then sq:tryAddCorpseToWorld(carry.item, 0.5, 0.5) end
+                    end)
+                end
+                log("corpseDrop: returned an orphaned body for offline " .. tostring(who))
+            end
+        end
     end
     if BridgeServer.newSecond and sec % 10 == 0 then
         for _, b in pairs(BridgeServer.bodies) do

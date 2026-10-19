@@ -70,6 +70,15 @@ BridgeTorch.DEBUG = false
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeTorch] " .. tostring(text)) end end
 local function warn(text) print("[BridgeTorch] " .. tostring(text)) end
 
+
+local function ensureBattery(body)
+    if BridgeFetch == nil or type(BridgeFetch.available) ~= "function"
+            or type(BridgeFetch.pull) ~= "function" then return end
+    if body == nil or BridgeTorchShared.findBattery(body) ~= nil then return end
+    if not BridgeFetch.available() then return end
+    pcall(function() BridgeFetch.pull("battery") end)
+end
+
 local lastTraceMs = 0
 
 
@@ -507,7 +516,7 @@ function BridgeTorch.update(body)
                 feedback(body)
                 if not BridgeTorchShared.inCombat(body) then
                     local ok, swapped = pcall(function() return BridgeTorchShared.swapBattery(body) end)
-                    if ok and swapped then feedbackReload(body) end
+                    if ok and swapped then feedbackReload(body) else ensureBattery(body) end
                 end
             end
         end
@@ -519,6 +528,7 @@ function BridgeTorch.update(body)
             local it = BridgeTorchShared.findTorch(body)
             if it ~= nil and BridgeTorchShared.charge(it) <= 0.0001
                 and not BridgeTorchShared.inCombat(body) then
+                ensureBattery(body)
                 local ok, swapped = pcall(function() return BridgeTorchShared.swapBattery(body) end)
                 if ok and swapped then
                     BridgeTorch.info = "reloaded"
@@ -535,6 +545,7 @@ function BridgeTorch.update(body)
         local it = BridgeTorchShared.findTorch(body)
         if it ~= nil and BridgeTorchShared.charge(it) <= 0.0001
             and not BridgeTorchShared.inCombat(body) then
+            ensureBattery(body)
             local now = getTimestampMs()
             if now - (BridgeTorch.reloadSent[key] or 0) > 3000 then
                 BridgeTorch.reloadSent[key] = now

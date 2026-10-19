@@ -1,0 +1,78 @@
+VERSION = 1,
+
+option StayWithMe.RelationshipGainMultiplier
+{
+    type = double, min = 0, max = 5, default = 1.0,
+    page = StayWithMe,
+    translation = StayWithMe_RelationshipGainMultiplier,
+}
+
+option StayWithMe.DailyFriendCap
+{
+    type = integer, min = 0, max = 50, default = 6,
+    page = StayWithMe,
+    translation = StayWithMe_DailyFriendCap,
+}
+
+option StayWithMe.DailyRomanceCap
+{
+    type = integer, min = 0, max = 50, default = 3,
+    page = StayWithMe,
+    translation = StayWithMe_DailyRomanceCap,
+}
+
+option StayWithMe.GiftAffectionMultiplier
+{
+    type = double, min = 0, max = 5, default = 1.0,
+    page = StayWithMe,
+    translation = StayWithMe_GiftAffectionMultiplier,
+}
+
+option StayWithMe.DailyGiftCapFriend
+{
+    type = integer, min = 0, max = 50, default = 3,
+    page = StayWithMe,
+    translation = StayWithMe_DailyGiftCapFriend,
+}
+
+option StayWithMe.DailyGiftCapRomance
+{
+    type = integer, min = 0, max = 50, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_DailyGiftCapRomance,
+}
+
+option StayWithMe.RomanceRequirementFriend
+{
+    type = integer, min = 0, max = 100, default = 30,
+    page = StayWithMe,
+    translation = StayWithMe_RomanceRequirementFriend,
+}
+
+option StayWithMe.RomanceRequirementDays
+{
+    type = integer, min = 0, max = 30, default = 2,
+    page = StayWithMe,
+    translation = StayWithMe_RomanceRequirementDays,
+}
+
+option StayWithMe.RelationshipLossOnHit
+{
+    type = integer, min = 0, max = 50, default = 8,
+    page = StayWithMe,
+    translation = StayWithMe_RelationshipLossOnHit,
+}
+
+option StayWithMe.CarryCapacityBonus
+{
+    type = integer, min = 0, max = 20, default = 0,
+    page = StayWithMe,
+    translation = StayWithMe_CarryCapacityBonus,
+}
+
+option StayWithMe.MoodEffectMultiplier
+{
+    type = double, min = 0, max = 3, default = 1.0,
+    page = StayWithMe,
+    translation = StayWithMe_MoodEffectMultiplier,
+}

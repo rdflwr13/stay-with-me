@@ -111,6 +111,7 @@ Bug Fixes:
 - Rin's spawning is now atomic: her body is claimed/marked before everything else is rendered.
 - Fixed LUA errors from Maintenance gains caused by meleeing with a non-melee weapon.
 - Fixed flashlight darkness false-positive calls.
+- Flashlight no longer switches on in a lit interior during the day.
 
 Known Issues:
 - Rin may struggle to loot containers in corners.
@@ -119,5 +120,45 @@ Known Issues:
 Bug Reports:
 - The new procedure for reporting issues is to open the Bug Reports menu, turn on Detailed Logging, record the issue, click Generate Report, paste that into pastebin.com, open the workshop page, and then paste that pastebin report link plus your console log (on another pastebin) into it.
 - Do not just post "X is broken" on the workshop page. Please provide the reports so we can debug the issues quickly & efficiently.
+
+[ ------ ]
+
+[ v0.4.3 ]
+New Features:
+- Added new sandbox settings.
+- New home system: you draw a grid and Rin will recognize it as home, then automatically withdraw items from storage into her inventory.
+- New POI call-out system: Rin will recognize and call out when she visits towns and non-residential buildings.
+- Gifts: more gift options have been added. Gifts now show how many points they give in their item descriptions and explicitly state when you have hit the daily limit. Items only count once, and daily limits grow as you get closer to the cap. There is also a new right-click > Give Gift option, which works alongside the inventory system, so you can gift her items already in her inventory.
+- Chat: talking frequency and rewards now scale with your relationship. You get more points and shorter cooldowns when you are relaxed at home, new lines as you grow closer, and no penalties for talking twice in a row, because options grey out when she is not in the mood to chat. More dialogue lines have been added as well.
+- New job: Move Corpses.
+- Rin can now use water sources to fill water containers and wash herself and her inventory. Wash Self and Do Laundry have been removed and replaced by this new system.
+- New menu options for Rin on items and containers: Wear This, Loot This (for individual items), and Loot All (loots the whole container).
+- Rin can now pry open doors with a crowbar (the failure rate decreases with strength).
+- Rin can now take showers with the [B42:SP/MP] Take A Bath And Shower mod enabled.
+- Rin can now exercise once a day, either by right-clicking or through the settings menu. Rin can exercise with you if you enable a setting in the settings menu.
+- Rin's inventory now shows while she is in a car with you. You cannot change her equipment yet.
+- You can talk to Rin in a car using the vehicle radial dial.
+- Rin can now lie on beds by right-clicking, the same as chairs.
+- Added a new setting to adjust Rin's sensitivity to your aim cone with guns. You can also disable it.
+- Improved the settings menu display (done by Albrecht).
+- 50+ new idle and chatter triggers.
+
+Compatibility:
+- Added appearance support for Anthro Survivors Furry mod
+- Rin no longer triggers A-Life NPC companions' fear (needs verification).
+- Rin should not be targeted by Division Gadgets mod.
+- You now get a warning if you try to start the game with zombies disabled, since that prevents the NPC from spawning.
+
+Bug Fixes:
+- Fixed an issue with inventory stacks that caused Rin's inventory to hit the 60,000 character limit and made items despawn.
+- Fixed the flashlight triggering indoors when it is not dark.
+- Fixed food being restored in full on inventory transfers.
+- Fixed an MP server issue where deleting a torch battery caused anti-cheat triggers.
+- Added SP fast-forward support to most jobs, including sitting.
+- Fixed fast forward causing Rin to suffer a tragic chair death.
+
+Known Issues:
+- Rin clips into the top of beds. If I increase her z-height too high, she falls from the sky.
+- Rin can't sit on picnic benches.
 
 [ ------ ]

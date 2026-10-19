@@ -981,6 +981,7 @@ local function setInside(car, why)
     BridgeCar.car = car
     BridgeCar.exit = nil
     Bridge.parked = true
+    if BridgeParked ~= nil then pcall(BridgeParked.enter, car, why) end
     BridgeCar.reserve(true)
     BridgeCar.info = "inside: " .. tostring(why)
     log(sformat("inside seat=%s%s: %s", tostring(BridgeCar.seat), BridgeCar.lap and " (lap)" or "", tostring(why)))

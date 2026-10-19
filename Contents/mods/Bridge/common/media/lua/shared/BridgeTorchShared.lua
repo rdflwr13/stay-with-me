@@ -58,6 +58,9 @@ BridgeTorchShared.CFG = {
     DARK_HI = 0.55,
 
 
+    INDOOR_DAY = 0.35,
+
+
 
 
 
@@ -394,9 +397,11 @@ function BridgeTorchShared.darkAt(body)
         lvl = sq:getLightLevel(pnum)
 
         if lvl > 0.8 then lvl = 1 end
+        local c = getClimateManager()
         if sq:isOutside() then
-            local c = getClimateManager()
             if c ~= nil then lvl = math.max(c:getDayLightStrength(), lvl) end
+        else
+            if c ~= nil then lvl = lvl + (tonumber(c:getDayLightStrength()) or 0) * BridgeTorchShared.CFG.INDOOR_DAY end
         end
     end)
     lvl = tonumber(lvl)
@@ -625,7 +630,7 @@ function BridgeTorchShared.swapBattery(body)
 
 
     pcall(function()
-        if sendRemoveItemFromContainer ~= nil and removedFrom ~= nil then
+        if isServer() and sendRemoveItemFromContainer ~= nil and removedFrom ~= nil then
             sendRemoveItemFromContainer(removedFrom, battery)
         end
     end)

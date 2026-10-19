@@ -22,6 +22,24 @@ BridgeData.NAME_MAX = 20
 BridgeData.MODES = { follow = true, wait = true, rest = true }
 
 
+BridgeData.SANDBOX_PAGE = "StayWithMe"
+
+function BridgeData.sandbox()
+    local t = nil
+    pcall(function() t = (SandboxVars ~= nil) and SandboxVars[BridgeData.SANDBOX_PAGE] or nil end)
+    return t
+end
+
+function BridgeData.sandboxNumber(key, default, min, max)
+    local t = BridgeData.sandbox()
+    local v = (t ~= nil) and tonumber(t[key]) or nil
+    if v == nil or v ~= v then v = default end
+    if min ~= nil and v < min then v = min end
+    if max ~= nil and v > max then v = max end
+    return v
+end
+
+
 
 
 
@@ -347,7 +365,8 @@ end
 
 
 BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
-    relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1 }
+    relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true,
+    collapseActions = true }
 BridgeData.HAIR_MAX = 40
 
 function BridgeData.optionOf(rec, key)
@@ -355,6 +374,16 @@ function BridgeData.optionOf(rec, key)
     if rec ~= nil and rec[key] ~= nil then return rec[key] == true end
     if key == "romance" then return not BridgeData.sameSex(rec) end
     return BridgeData.OPTIONS[key] == true
+end
+
+
+function BridgeData.homeResources(rec)
+    return BridgeData.optionOf(rec, "homeResources")
+end
+
+
+function BridgeData.collapseActions(rec)
+    return BridgeData.optionOf(rec, "collapseActions")
 end
 
 
@@ -397,6 +426,34 @@ function BridgeData.equipScale(rec)
     end
     local def = BridgeData.cleanEquipScale(BridgeData.OPTIONS.equipScale)
     return def or BridgeData.DEFAULT_EQUIP_SCALE
+end
+
+
+BridgeData.AIM_LEVELS = {
+    { value = 0, label = "AimSensOff", tip = "AimSensOffTip" },
+    { value = 0.5, label = "AimSensLow", tip = "AimSensLowTip" },
+    { value = 1, label = "AimSensNormal", tip = "AimSensNormalTip" },
+    { value = 2, label = "AimSensHigh", tip = "AimSensHighTip" },
+}
+BridgeData.AIM_SENSES = {}
+for _, lvl in ipairs(BridgeData.AIM_LEVELS) do BridgeData.AIM_SENSES[#BridgeData.AIM_SENSES + 1] = lvl.value end
+BridgeData.DEFAULT_AIM_SENSE = 1
+
+function BridgeData.cleanAimSense(value)
+    local n = tonumber(value)
+    if n == nil or n ~= n then return nil end
+    for _, v in ipairs(BridgeData.AIM_SENSES) do
+        if math.abs(v - n) < 0.001 then return v end
+    end
+    return nil
+end
+
+function BridgeData.aimSense(rec)
+    if rec ~= nil then
+        local v = BridgeData.cleanAimSense(rec.aimSense)
+        if v ~= nil then return v end
+    end
+    return BridgeData.DEFAULT_AIM_SENSE
 end
 
 
@@ -546,6 +603,37 @@ function BridgeData.cleanMenuOrder(value)
     return out
 end
 
+function BridgeData.cleanMenuHidden(value)
+    if type(value) ~= "table" then return nil end
+    local seen = {}
+    for _, id in ipairs(value) do
+        if type(id) == "string" and BridgeData.MENU_ORDER_SET[id] then seen[id] = true end
+    end
+    local out = {}
+    for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do
+        if seen[id] then out[#out + 1] = id end
+    end
+    return out
+end
+
+
+function BridgeData.menuHidden(rec)
+    if type(rec) ~= "table" then return {} end
+    local clean = BridgeData.cleanMenuHidden(rec.menuHidden)
+    if clean == nil then return {} end
+    return clean
+end
+
+
+function BridgeData.menuShown(rec, id)
+    local hidden = BridgeData.menuHidden(rec)
+    for i = 1, #hidden do
+        if hidden[i] == id then return false end
+    end
+    return true
+end
+
+
 function BridgeData.menuOrder(rec)
     local out, seen = {}, {}
     local clean = nil
@@ -559,6 +647,30 @@ function BridgeData.menuOrder(rec)
         if not seen[id] then seen[id] = true out[#out + 1] = id end
     end
     return out
+end
+
+
+BridgeData.HOME_MIN = 4
+BridgeData.HOME_MAX = 40
+
+
+function BridgeData.cleanHome(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    for _, k in ipairs({ "x", "y", "z", "w", "h" }) do
+        local v = tonumber(t[k])
+        if v == nil or v ~= v then return nil end
+        out[k] = math.floor(v)
+    end
+    if out.w < BridgeData.HOME_MIN or out.w > BridgeData.HOME_MAX then return nil end
+    if out.h < BridgeData.HOME_MIN or out.h > BridgeData.HOME_MAX then return nil end
+    return out
+end
+
+
+function BridgeData.homeOf(rec)
+    if type(rec) ~= "table" then return nil end
+    return rec.home
 end
 
 
@@ -606,11 +718,15 @@ end
 BridgeData.GENDERED_KEYS = {
     Need_Axe = true, Need_CleanImplement = true, Need_Cleaner = true, Need_CleanSupplies = true,
     Talk_Thanks = true, Talk_Comfort = true, Rel_Crush = true, InvAssign = true, LookDefault = true,
+    TalkCantBusy = true, TalkCantRepeat = true, TalkCantFull = true, TalkCantAfterFight = true,
     CombatAggressive = true, CombatAggressiveTip = true, CombatGuardTip = true,
     OptAutoHeal = true, OptAutoHealTip = true, OptHitMatters = true, OptGifts = true,
     OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRelPopupsTip = true, OptRomanceTip = true,
     OptFatigueBar = true, OptFatigueBarTip = true,
     OptSitWithRed = true, OptSitWithRedTip = true,
+    OptExerciseWithMe = true, OptExerciseWithMeTip = true,
+    ExerciseCombatTip = true, ExerciseTiredTip = true, ExerciseNotice = true,
+    OptHomeResources = true, OptHomeResourcesTip = true,
     OptTorchTip = true,
     OptEquipScale = true, OptEquipScaleTip = true,
 }
@@ -1185,7 +1301,8 @@ BridgeData.REL_KEYS = { f = { -100, 100 }, r = { 0, 100 }, days = { 0, 100000 },
     day = { 0, 1000000 }, gainF = { -100, 100 }, gainR = { -100, 100 }, giftAt = { 0, 100000000 },
     seen = { 0, 100000000 }, askAt = { 0, 100000000 }, healAt = { 0, 100000000 },
     valuedAt = { 0, 100000000 },
-    dressF = { 0, 100 }, dressR = { 0, 100 } }
+    dressF = { 0, 100 }, dressR = { 0, 100 },
+    giftF = { 0, 100 }, giftR = { 0, 100 } }
 
 
 function BridgeData.relOf(rec)
@@ -1212,6 +1329,69 @@ function BridgeData.cleanRel(t)
         else
             out[k] = 0
         end
+    end
+    return out
+end
+
+
+BridgeData.VISITED_MAX = 200
+BridgeData.VISITED_KEY_MAX = 32
+BridgeData.VISITED_NAME_MAX = 32
+
+BridgeData.CITIES_MAX = 32
+BridgeData.CITY_KEY_MAX = 32
+
+
+function BridgeData.cleanCities(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    local n = 0
+    for k, e in pairs(t) do
+        if type(k) == "string" and #k > 0 and #k <= BridgeData.CITY_KEY_MAX and type(e) == "table" then
+            local rec = {}
+            if e.seen == true then rec.seen = true end
+            local a = tonumber(e.lastAge)
+            if a ~= nil and a == a and a >= 0 then rec.lastAge = a end
+            out[k] = rec
+            n = n + 1
+        end
+    end
+    while n > BridgeData.CITIES_MAX do
+        local drop = nil
+        for k in pairs(out) do drop = k break end
+        if drop == nil then break end
+        out[drop] = nil
+        n = n - 1
+    end
+    return out
+end
+
+
+function BridgeData.cleanVisited(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    local n = 0
+    for k, e in pairs(t) do
+        if type(k) == "string" and #k > 0 and #k <= BridgeData.VISITED_KEY_MAX and type(e) == "table" then
+            local s = tonumber(e.s)
+            if s ~= nil and s == s and s >= 0 then
+                local rec = { s = s }
+                if e.t == true then rec.t = true end
+                if type(e.n) == "string" and #e.n > 0 and #e.n <= BridgeData.VISITED_NAME_MAX then rec.n = e.n end
+                out[k] = rec
+                n = n + 1
+            end
+        end
+    end
+    while n > BridgeData.VISITED_MAX do
+        local oldestKey, oldestS = nil, nil
+        for k, e in pairs(out) do
+            local s = tonumber(e.s) or 0
+            if oldestS == nil or s < oldestS then oldestKey, oldestS = k, s end
+        end
+        if oldestKey == nil then break end
+        out[oldestKey] = nil
+        n = n - 1
     end
     return out
 end
@@ -1286,7 +1466,8 @@ BridgeData.STRENGTH_CARRY = { 15, 16, 17, 18, 20, 21, 23, 24, 25, 27, 29 }
 
 function BridgeData.carryForStrengthLevel(level)
     level = math.max(0, math.min(10, math.floor(tonumber(level) or 0)))
-    return BridgeData.STRENGTH_CARRY[level + 1]
+    local bonus = BridgeData.sandboxNumber("CarryCapacityBonus", 0, 0, 20)
+    return BridgeData.STRENGTH_CARRY[level + 1] + bonus
 end
 
 

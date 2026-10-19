@@ -1,6 +1,7 @@
 
 require "ISUI/ISCollapsableWindow"
 require "ISUI/ISPanel"
+require "ISUI/ISComboBox"
 require "ISUI/ISUI3DModel"
 require "ISUI/ISToolTipInv"
 require "ISUI/ISMouseDrag"
@@ -132,7 +133,60 @@ BridgeEquip.REGIONS = {
         "UNDERWEAR_EXTRA2", "THIGH_LEFT", "THIGH_RIGHT", "KNEE_LEFT", "KNEE_RIGHT" } },
     { id = "feet", x = 44, y = 272, locs = { "ANKLE_HOLSTER", "SHOES", "SOCKS", "CALF_LEFT", "CALF_RIGHT",
         "CALF_LEFT_TEXTURE", "CALF_RIGHT_TEXTURE", "GAITER_LEFT", "GAITER_RIGHT" } },
+    { id = "fur", x = 106, y = 128, locs = { "FUR" } },
 }
+
+local function furRegionOf()
+    for _, r in ipairs(BridgeEquip.REGIONS) do
+        if r.id == "fur" then return r end
+    end
+    return nil
+end
+
+function BridgeEquip.primeFurRegion()
+    local region = furRegionOf()
+    if region == nil or region._vals ~= nil then return end
+    local vals = {}
+    pcall(function()
+        if type(FurManager) == "table" then
+            if FurManager.furItemBodyLocation ~= nil then vals[#vals + 1] = FurManager.furItemBodyLocation end
+            if FurManager.furBodyLocation ~= nil then vals[#vals + 1] = FurManager.furBodyLocation end
+        end
+    end)
+    if #vals == 0 then
+        pcall(function()
+            if BodyLocations ~= nil and type(BodyLocations.getGroup) == "function" then
+                local group = BodyLocations.getGroup("Human")
+                if group ~= nil and type(group.getLocation) == "function" then
+                    local loc = nil
+                    pcall(function() loc = group:getLocation("Fur") end)
+                    if loc ~= nil then vals[#vals + 1] = loc end
+                end
+            end
+        end)
+    end
+    if #vals == 0 then
+        pcall(function()
+            local b = her()
+            if b ~= nil then
+                local worn = b:getWornItems()
+                for i = 0, worn:size() - 1 do
+                    local it = worn:getItemByIndex(i)
+                    if it ~= nil then
+                        local t = ""
+                        pcall(function() t = tostring(it:getType() or "") end)
+                        if string.sub(t, 1, 6) == "Furry_" then
+                            local loc = nil
+                            pcall(function() loc = it:getBodyLocation() end)
+                            if loc ~= nil then vals[#vals + 1] = loc break end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    if #vals > 0 then region._vals = vals end
+end
 
 local function enumOf(name)
     local v = nil
@@ -142,6 +196,7 @@ local function enumOf(name)
 end
 
 local function regionValues(region)
+    if region.id == "fur" then BridgeEquip.primeFurRegion() end
     if region._vals ~= nil then return region._vals end
     local vals = {}
     for _, name in ipairs(region.locs) do
@@ -253,8 +308,7 @@ BridgeEquip.wornItems = wornItems
 local function regionItems(b, region)
     local out = {}
     local worn = wornItems(b)
-    for _, name in ipairs(region.locs) do
-        local v = enumOf(name)
+    for _, v in ipairs(regionValues(region)) do
         if v ~= nil then
             for _, w in ipairs(worn) do
                 local hit = false
@@ -292,8 +346,7 @@ BridgeEquip.mountsOf = providerMounts
 local function regionLayers(b, region)
     local out = {}
     local worn = wornItems(b)
-    for _, name in ipairs(region.locs) do
-        local v = enumOf(name)
+    for _, v in ipairs(regionValues(region)) do
         if v ~= nil then
             for _, w in ipairs(worn) do
                 local hit = false
@@ -1276,14 +1329,29 @@ function BridgeEquipWindow:createChildren()
     self.popup:initialise()
     self.popup:setVisible(false)
     self:addChild(self.popup)
+
+    self.scaleCombo = ISComboBox:new(0, 0, 10, 18, self, BridgeEquipWindow.onScale)
+    self.scaleCombo:initialise()
+    if BridgeData ~= nil and BridgeData.EQUIP_SCALES ~= nil then
+        for _, entry in ipairs(BridgeData.EQUIP_SCALES) do
+            self.scaleCombo:addOptionWithData(string.format("%gx", entry), entry)
+        end
+    end
+    self:addChild(self.scaleCombo)
+end
+
+function BridgeEquipWindow:onScale(combo)
+    if combo == nil then return end
+    local s = combo:getSelectedData()
+    if s ~= nil and Bridge ~= nil and type(Bridge.setEquipScale) == "function" then Bridge.setEquipScale(s) end
 end
 
 function BridgeEquipWindow:relayout()
     local L = BridgeEquip.L
     local S = L.S
     local b = her()
+    BridgeEquip.primeFurRegion()
     local th = self:titleBarHeight()
-    local rw = self:resizeWidgetHeight()
 
     self.canvas:setX(0)
     self.canvas:setY(th)
@@ -1365,14 +1433,51 @@ function BridgeEquipWindow:relayout()
     end
 
     local gearH = gearRows * (L.SUPER_SLOT_SIZE + L.HOTBAR_MARGIN)
-    local contentH = self.yGearTop + gearH + L.BOTTOM_PADDING
+    local fontH = 14
+    pcall(function() fontH = getTextManager():getFontHeight(UIFont.Small) end)
+    local btnH = fontH + 6
+    local inset = math.max(8, math.floor(10 * S))
+    local gap = math.max(8, math.floor(10 * S))
+    local inner = math.max(40, L.PANEL_WIDTH - inset * 2)
+    local lineY = self.yGearTop + gearH + gap
+    self.scaleLineY = lineY
+    self.scaleInset = inset
+    self.scaleFontH = fontH
+    local lines = {}
+    local line, maxW = "", inner
+    local function fits(s)
+        local w = 0
+        pcall(function() w = getTextManager():MeasureStringX(UIFont.Small, s) end)
+        return w <= maxW
+    end
+    for word in string.gmatch(tostring(tr("OptEquipScale") or ""), "%S+") do
+        if line ~= "" and fits(line .. " " .. word) then line = line .. " " .. word
+        else
+            if line ~= "" then lines[#lines + 1] = line end
+            line = word
+        end
+    end
+    if line ~= "" then lines[#lines + 1] = line end
+    if #lines == 0 then lines[1] = tr("OptEquipScale") end
+    self.scaleLines = lines
+    local labelY = lineY + gap
+    self.scaleLabelY = labelY
+    local comboY = labelY + #lines * fontH + 4
+    if self.scaleCombo ~= nil then
+        self.scaleCombo:setX(inset)
+        self.scaleCombo:setWidth(inner)
+        self.scaleCombo:setHeight(btnH)
+        self.scaleCombo:setY(th + comboY)
+        self.scaleCombo:setVisible(self.isCollapsed ~= true)
+    end
+    local contentH = comboY + btnH + gap
     self.contentH = contentH
     self.canvas:setHeight(contentH)
-    self:setWidth(L.PANEL_WIDTH + rw)
+    self:setWidth(L.PANEL_WIDTH)
     if self.isCollapsed then
         self:setMaxDrawHeight(self:titleBarHeight())
     else
-        self:setHeight(th + contentH + rw)
+        self:setHeight(th + contentH)
     end
     if self.popup ~= nil and self.popup:isVisible() then self:hidePopup() end
 end
@@ -1458,10 +1563,12 @@ function BridgeEquipWindow:setCollapsed(on)
         if self.collapseButton ~= nil then self.collapseButton:setVisible(false) end
         if self.pinButton ~= nil then self.pinButton:setVisible(true) self.pinButton:bringToTop() end
         self:hidePopup()
+        if self.scaleCombo ~= nil then self.scaleCombo:setVisible(false) end
     else
         self:clearMaxDrawHeight()
         if self.collapseButton ~= nil then self.collapseButton:setVisible(true) end
         if self.pinButton ~= nil then self.pinButton:setVisible(false) end
+        if self.scaleCombo ~= nil then self.scaleCombo:setVisible(true) end
     end
 end
 
@@ -1475,7 +1582,11 @@ function BridgeEquipWindow:onMouseDown(x, y)
 end
 
 function BridgeEquipWindow:prerender()
-    self.title = herName() .. " - " .. tr("WindowEquip")
+    self.title = herName()
+    if self.scaleCombo ~= nil and Bridge ~= nil and BridgeData ~= nil then
+        local s = BridgeData.equipScale(Bridge.store)
+        if self.scaleCombo:getSelectedData() ~= s then self.scaleCombo:selectData(s) end
+    end
     ISCollapsableWindow.prerender(self)
 end
 
@@ -1489,6 +1600,17 @@ function BridgeEquipWindow:render()
         self:drawTextCentre(tr("EquipWorn"), cx, th + self.yDynHeader, 0.85, 0.85, 0.85, 1, UIFont.Small)
     end
     self:drawTextCentre(tr("EquipHotbar"), cx, th + self.yHotbarHeader, 1, 1, 1, 1, UIFont.Small)
+    if self.scaleLineY ~= nil and self.isCollapsed ~= true then
+        local inset = self.scaleInset or 8
+        local lineW = (L.PANEL_WIDTH or self:getWidth()) - inset * 2
+        self:drawRect(inset, th + self.scaleLineY, lineW, 1, 1, 0.4, 0.4, 0.4)
+        local fontH = self.scaleFontH or 14
+        local y = th + (self.scaleLabelY or (self.scaleLineY + 8))
+        for _, line in ipairs(self.scaleLines or {}) do
+            self:drawText(line, inset, y, 1, 1, 1, 1, UIFont.Small)
+            y = y + fontH
+        end
+    end
 
     if BridgeEquip.drag ~= nil and ISMouseDrag ~= nil and ISMouseDrag.dragging ~= nil then
         local mx, my = getMouseX(), getMouseY()
@@ -1515,7 +1637,7 @@ function BridgeEquipWindow:new(x, y, w, h)
     self.__index = self
     o.backgroundColor.a = 0.9
     o:setResizable(false)
-    o.title = herName() .. " - " .. tr("WindowEquip")
+    o.title = herName()
     return o
 end
 
@@ -1591,6 +1713,10 @@ function BridgeEquip.withinRange(playerNum)
 end
 
 function BridgeEquip.open(playerNum)
+    if BridgeShower ~= nil and BridgeShower.showing ~= nil and BridgeShower.showing() then
+        log("open refused: she is showering")
+        return nil
+    end
     if Bridge == nil or Bridge.store == nil then return nil end
     local b = her()
     if b == nil then log("open refused: no body") return nil end
@@ -1625,6 +1751,10 @@ end
 
 function BridgeEquip.toggle(playerNum)
     if BridgeEquip.instance ~= nil then BridgeEquip.close() return nil end
+    if BridgeShower ~= nil and BridgeShower.showing ~= nil and BridgeShower.showing() then
+        log("toggle refused: she is showering")
+        return nil
+    end
     return BridgeEquip.open(playerNum)
 end
 

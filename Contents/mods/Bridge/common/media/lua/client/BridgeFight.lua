@@ -993,6 +993,50 @@ function BridgeFight.resetFatigue()
     BridgeFight.saidTired = false
 end
 
+
+local FATIGUE_FULL_HOURS = 3
+
+
+local function staminaHours()
+    local h = nil
+    pcall(function() h = getGameTime():getWorldAgeHours() end)
+    return h
+end
+
+
+function BridgeFight.persistStamina(rec)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    if rec == nil then return end
+    local cur = math.max(0, math.min(1, tonumber(BridgeFight.fatigue) or 0))
+    rec.fatigue = cur
+    rec.fatigueAt = staminaHours()
+    if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { fatigue = cur, fatigueAt = rec.fatigueAt }) end)
+    end
+end
+
+
+function BridgeFight.applyStamina(rec)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    local saved = 0
+    if rec ~= nil then saved = tonumber(rec.fatigue) or 0 end
+    if saved <= 0 then
+        BridgeFight.resetFatigue()
+        return
+    end
+    local now = staminaHours()
+    local at = rec ~= nil and tonumber(rec.fatigueAt) or nil
+    local elapsed = 0
+    if now ~= nil and at ~= nil and now > at then elapsed = now - at end
+    local left = saved - elapsed / FATIGUE_FULL_HOURS
+    if left < 0 then left = 0 end
+    BridgeFight.fatigue = left
+    BridgeFight.saidTired = false
+    if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { fatigue = left }) end)
+    end
+end
+
 function BridgeFight.reset(body)
     BridgeFight.target = nil
     BridgeFight.state = "idle"
@@ -1668,5 +1712,11 @@ function BridgeFight.staleEnd(body)
 end
 
 Events.OnTickEvenPaused.Add(function() pcall(BridgeFight.staleEnd, Bridge ~= nil and Bridge.body or nil) end)
+
+if type(Events) == "table" and Events.OnSave ~= nil then
+    Events.OnSave.Add(function()
+        if Bridge ~= nil and Bridge.alive() then pcall(function() BridgeFight.persistStamina(Bridge.store) end) end
+    end)
+end
 
 log("loaded")

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Companion sleeps on a bed. Mirrors Bandits ZSSleepBed / ALife alife_bed_asleep:
+    bumped state, Bob_Asleep, no deferred bone. The clip's own pose raises the body to
+    the mattress; the code only places the body on the bed tile (no z lift).
+-->
+<animNode>
+	<m_Name>NA_LayAsleep</m_Name>
+	<m_AnimName>Bob_Asleep</m_AnimName>
+	<m_DeferredBoneName></m_DeferredBoneName>
+	<m_Looped>true</m_Looped>
+	<m_SpeedScale>0.80</m_SpeedScale>
+	<m_BlendTime>0.20</m_BlendTime>
+	<m_ConditionPriority>15</m_ConditionPriority>
+	<m_Conditions>
+		<m_Name>NotAloneBody</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_BoolValue>true</m_BoolValue>
+	</m_Conditions>
+	<m_Conditions>
+		<m_Name>BumpType</m_Name>
+		<m_Type>STRING</m_Type>
+		<m_StringValue>LayAsleep</m_StringValue>
+	</m_Conditions>
+</animNode>

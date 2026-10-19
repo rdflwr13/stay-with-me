@@ -112,6 +112,7 @@ end
 
 local function blocked(red, body)
     if not BridgeAmbient.on() then return true end
+    if BridgeTask ~= nil and BridgeTask.idleChatBlocked ~= nil and BridgeTask.idleChatBlocked() then return true end
     if Bridge.mode == "rest" then return true end
     if Bridge.quiet ~= nil and Bridge.quiet() then return true end
     if red == nil then return true end

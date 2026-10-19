@@ -16,6 +16,7 @@ BridgeWorkSelect.MAX_TREES = 80
 BridgeWorkSelect.MAX_STAINS = 80
 BridgeWorkSelect.MAX_PLANTS = 80
 BridgeWorkSelect.MAX_LOOT_ITEMS = 80
+BridgeWorkSelect.MAX_CORPSES = 40
 
 local function acquireLock()
     if BridgeWorkSelect.lockCount == 0 then
@@ -106,7 +107,29 @@ function UI:start(b)
     log("area job " .. tostring(res) .. " kind=" .. tostring(self.kind) .. " targets=" .. tostring(#targets))
 end
 
+function UI:startMove(sq)
+    local targets = self.pendingTargets or {}
+    self:close()
+    if #targets == 0 then
+        if Bridge ~= nil then Bridge.speak("JobNoCorpses") end
+        return
+    end
+    local dest = { x = sq:getX(), y = sq:getY(), z = sq:getZ() }
+    local res = BridgeTask.start("moveCorpses", targets, dest)
+    log("corpse job " .. tostring(res) .. " targets=" .. tostring(#targets))
+end
+
 function UI:onMouseDownOutside(x, y)
+    if self.awaitDest then
+        local sq = self:pickSquare()
+        if sq == nil then return true end
+        if not BridgeWorkSelect.isDestinationValid(sq) then
+            if Bridge ~= nil then Bridge.speak("JobBadSpot") end
+            return true
+        end
+        self:startMove(sq)
+        return true
+    end
     local sq, wx, wy = self:pickSquare()
     if sq == nil or not sq:getFloor() then return true end
     self.startX, self.startY = wx, wy
@@ -124,13 +147,14 @@ function UI:onMouseMoveOutside(dx, dy)
 end
 
 function UI:onMouseUpOutside(x, y)
+    if self.awaitDest then return true end
     if not self.dragging then return true end
     self.dragging = false
     local b = self:bounds()
     self.startX, self.startY, self.endX, self.endY = nil, nil, nil, nil
+    local def = BridgeWorkSelect.kinds[self.kind] or BridgeWorkSelect.kinds.chopTree
     if not self:valid(b) then
         if Bridge ~= nil then
-            local def = BridgeWorkSelect.kinds[self.kind] or BridgeWorkSelect.kinds.chopTree
             local w = b.x2 - b.x1 + 1
             local h = b.y2 - b.y1 + 1
             local side = def.maxSide or BridgeWorkSelect.MAX_SIDE
@@ -139,6 +163,24 @@ function UI:onMouseUpOutside(x, y)
             if tooBig then Bridge.speak("JobTooBig") else Bridge.speak(def.noneSay) end
         end
         self:close()
+        return true
+    end
+    if def.destination == true then
+        local targets = def.collect(b)
+        if #targets == 0 then
+            if Bridge ~= nil then Bridge.speak(def.noneSay) end
+            self:close()
+            return true
+        end
+        if #targets > def.max then
+            if Bridge ~= nil then Bridge.speak("JobTooBig") end
+            self:close()
+            return true
+        end
+        BridgeWorkSelect.sortTargets(targets)
+        self.pendingTargets = targets
+        self.awaitDest = true
+        if Bridge ~= nil then Bridge.speak("JobPickSpot") end
         return true
     end
     self:start(b)
@@ -153,6 +195,15 @@ end
 function UI:prerender()
     if self.closed then return end
     local sq, wx, wy = self:pickSquare()
+    if self.awaitDest then
+        local ok = BridgeWorkSelect.isDestinationValid(sq)
+        if ok then
+            addAreaHighlightForPlayer(self.playerNum, wx, wy, wx + 1, wy + 1, self.level, 0.1, 1.0, 0.1, 0.55)
+        else
+            addAreaHighlightForPlayer(self.playerNum, wx, wy, wx + 1, wy + 1, self.level, 1.0, 0.1, 0.1, 0.55)
+        end
+        return
+    end
     local b = self:bounds()
     if b ~= nil then
         local ok = self:valid(b)
@@ -173,6 +224,8 @@ function UI:new(playerObj, kind)
     o.closed = false
     o.background = false
     o.border = false
+    o.awaitDest = false
+    o.pendingTargets = nil
     return o
 end
 
@@ -389,6 +442,48 @@ function BridgeWorkSelect.lootTargetFor(c, o, kind)
     return { x = x, y = y, z = z, kind = kind or "obj", cont = c, ref = lootRef(c), items = n }
 end
 
+function BridgeWorkSelect.outerWorldContainer(c)
+    if c == nil then return nil end
+    local outer = nil
+    pcall(function() outer = c:getOutermostContainer() end)
+    return outer or c
+end
+
+function BridgeWorkSelect.lootTargetForContainer(c, only)
+    if c == nil then return nil end
+    if not lootAllowedContainer(c, nil) then return nil end
+    local outer = BridgeWorkSelect.outerWorldContainer(c)
+    local ref = nil
+    pcall(function() ref = lootRef(outer) end)
+    if ref == nil then pcall(function() ref = lootRef(c) end) end
+    local x, y, z, kind = nil, nil, nil, "obj"
+    if type(ref) == "table" then
+        kind = ref.kind or "obj"
+        x, y, z = ref.x, ref.y, ref.z
+    end
+    if x == nil then
+        pcall(function()
+            local p = c:getParent()
+            local sq = nil
+            if p ~= nil then pcall(function() sq = p:getSquare() end) end
+            if sq == nil then pcall(function() sq = c:getSourceGrid() end) end
+            if sq == nil and outer ~= c then
+                local po = outer:getParent()
+                if po ~= nil then pcall(function() sq = po:getSquare() end) end
+            end
+            if sq ~= nil then x, y, z = sq:getX(), sq:getY(), sq:getZ() end
+        end)
+    end
+    if x == nil then return nil end
+    if type(only) == "table" and #only > 0 then
+        return { x = x, y = y, z = z, kind = kind, cont = c, ref = ref, items = #only, only = only }
+    end
+    local n = 0
+    pcall(function() n = c:getItems():size() end)
+    if n <= 0 then return nil end
+    return { x = x, y = y, z = z, kind = kind, cont = c, ref = ref, items = n }
+end
+
 function BridgeWorkSelect.lootTargetsForObject(o)
     local list = {}
     if o == nil then return list end
@@ -434,6 +529,59 @@ function BridgeWorkSelect.lootTargetsForObject(o)
     return list
 end
 
+function BridgeWorkSelect.corpsesIn(b)
+    local list = {}
+    if b == nil then return list end
+    local seen = {}
+    for x = b.x1, b.x2 do
+        for y = b.y1, b.y2 do
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
+            if sq ~= nil then
+                pcall(function()
+                    local burn = false
+                    pcall(function() burn = sq:has(IsoFlagType.burning) == true end)
+                    if burn then return end
+                    local mv = sq:getStaticMovingObjects()
+                    local n = (mv and mv:size() or 0)
+                    for i = 0, n - 1 do
+                        local c = mv:get(i)
+                        if c ~= nil and instanceof(c, "IsoDeadBody") and not c:isAnimal() then
+                            local id = nil
+                            pcall(function() id = c:getObjectIDAsLong() end)
+                            if type(id) ~= "number" or id == 0 then
+                                id = nil
+                                pcall(function()
+                                    local v = c:getObjectID()
+                                    if type(v) == "number" and v ~= 0 then id = v end
+                                end)
+                            end
+                            if id == nil then id = x .. ":" .. y .. ":" .. i end
+                            local key = tostring(id)
+                            if not seen[key] then
+                                seen[key] = true
+                                list[#list + 1] = { x = x, y = y, z = b.z }
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+    end
+    return list
+end
+
+function BridgeWorkSelect.isDestinationValid(sq)
+    if sq == nil then return false end
+    local floor = nil
+    pcall(function() floor = sq:getFloor() end)
+    if floor == nil then return false end
+    local burn = false
+    pcall(function() burn = sq:has(IsoFlagType.burning) == true end)
+    if burn then return false end
+    return true
+end
+
 BridgeWorkSelect.kinds = {
     chopTree = {
         collect = function(b) return BridgeWorkSelect.treesIn(b) end,
@@ -456,6 +604,13 @@ BridgeWorkSelect.kinds = {
         maxSide = 8,
         min = 1,
         noneSay = "JobNoLoot",
+    },
+    moveCorpses = {
+        collect = function(b) return BridgeWorkSelect.corpsesIn(b) end,
+        max = BridgeWorkSelect.MAX_CORPSES,
+        maxSide = 10,
+        destination = true,
+        noneSay = "JobNoCorpses",
     },
 }
 
@@ -505,6 +660,7 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "cleanUp" and BridgeTask.CLEANING_ENABLED ~= 1 then return nil end
     if kind == "clearPlants" and BridgeTask.CLEARING_ENABLED ~= 1 then return nil end
     if kind == "lootArea" and BridgeTask.LOOTING_ENABLED ~= 1 then return nil end
+    if kind == "moveCorpses" and BridgeTask.MOVE_CORPSES_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)
     BridgeWorkSelect.active = ui

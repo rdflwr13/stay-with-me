@@ -1451,6 +1451,7 @@ local CHAIR_ANIM_MAX = 240
 local SIT_DIRS = { "N", "S", "W", "E" }
 BridgeMove.CHAIR_POSES = { SitChairDown = true, SitChair = true, SitChairUp = true }
 BridgeMove.seatFlag = false
+BridgeMove.seatBound = nil
 
 
 
@@ -1539,18 +1540,40 @@ function BridgeMove.sendSit(value)
 end
 
 
-local function chairFlags(body)
+local function chairFlags(body, plan)
     pcall(function() body:setCollidable(false) end)
-    if not BridgeMove.seatFlag then
-        pcall(function() body:setSittingOnFurniture(true) end)
-        BridgeMove.seatFlag = true
+    local obj = plan and plan.obj or nil
+    local dir = plan and plan.dir or nil
+    if BridgeMove.seatFlag and BridgeMove.seatBound == obj then return end
+    if BridgeMove.seatBound ~= nil and BridgeMove.seatBound ~= obj then
+        pcall(function() BridgeMove.seatBound:setSatChair(false) end)
     end
+    BridgeMove.seatFlag = true
+    BridgeMove.seatBound = obj
+    pcall(function() body:setSittingOnFurniture(true) end)
+    if obj ~= nil then
+        pcall(function() body:setSitOnFurnitureObject(obj) end)
+        pcall(function() obj:setSatChair(true) end)
+    end
+    if dir ~= nil then
+        pcall(function() body:setSitOnFurnitureDirection(IsoDirections.fromString(dir)) end)
+    end
+    pcall(function() body:setVariable("SitOnFurnitureDirection", "Front") end)
+    pcall(function() body:setVariable("SitOnFurnitureStarted", true) end)
 end
 
 local function chairFlagsOff(body)
-    if not BridgeMove.seatFlag then return end
+    if not BridgeMove.seatFlag and BridgeMove.seatBound == nil then return end
     BridgeMove.seatFlag = false
+    if BridgeMove.seatBound ~= nil then
+        local obj = BridgeMove.seatBound
+        BridgeMove.seatBound = nil
+        pcall(function() obj:setSatChair(false) end)
+    end
     pcall(function() body:setSittingOnFurniture(false) end)
+    pcall(function() body:setSitOnFurnitureObject(nil) end)
+    pcall(function() body:clearVariable("SitOnFurnitureDirection") end)
+    pcall(function() body:clearVariable("SitOnFurnitureStarted") end)
     pcall(function() body:setCollidable(true) end)
 end
 
@@ -1608,7 +1631,7 @@ function BridgeMove.seatPose(body)
     local up = zones == nil or zones.why ~= "sits"
     local danger = BridgeTask ~= nil and BridgeTask.dangerNear(body)
     if S.phase == "down" then
-        chairFlags(body)
+        chairFlags(body, S.chair)
         if animDone(body, S) then
             S.phase, S.phaseSince = "sit", Bridge.time
             startPose(body, S, "SitChair", false)
@@ -1618,7 +1641,7 @@ function BridgeMove.seatPose(body)
                 math.max(math.abs(math.floor(body:getX()) - math.floor(red:getX())), math.abs(math.floor(body:getY()) - math.floor(red:getY())))))
         end
     elseif S.phase == "sit" then
-        chairFlags(body)
+        chairFlags(body, S.chair)
         if up then
             S.phase, S.phaseSince = "up", Bridge.time
             startPose(body, S, "SitChairUp", true)
@@ -1626,7 +1649,7 @@ function BridgeMove.seatPose(body)
             log(sformat("seat: player is up, standing up from %d,%d", S.chair.x, S.chair.y))
         end
     elseif S.phase == "up" then
-        chairFlags(body)
+        chairFlags(body, S.chair)
         if animDone(body, S) then
             Bridge.pose = nil
             chairFlagsOff(body)
@@ -1687,6 +1710,55 @@ end
 
 
 
+BridgeMove.STAY_SIT = 3
+BridgeMove.STAY_SIT_OUT = 5
+
+function BridgeMove.staySitTick(body)
+    if body == nil then return false end
+    local pose = Bridge.pose
+    local ours = pose ~= nil and pose.staySit == true
+    if Bridge.mode == "wait" and (pose == nil or ours)
+            and BridgeData.optionOf(Bridge.store, "sitWithRed") then
+        local red = BridgeData.owner()
+        local busy = false
+        pcall(function()
+            busy = (BridgeTask ~= nil and BridgeTask.active)
+                or (BridgeFight ~= nil and BridgeFight.state ~= "idle")
+                or (BridgeHeal ~= nil and BridgeHeal.active)
+                or (BridgeWash ~= nil and BridgeWash.state ~= "idle")
+        end)
+        local danger = false
+        pcall(function() danger = BridgeTask ~= nil and BridgeTask.dangerNear ~= nil and BridgeTask.dangerNear(body) end)
+        local ground, sameZ, d = false, false, 99
+        if red ~= nil then
+            pcall(function()
+                ground = red:isSitOnGround() == true
+                local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
+                d = math.sqrt(dx * dx + dy * dy)
+                sameZ = math.abs(red:getZ() - body:getZ()) < 0.9
+            end)
+        end
+        local limit = ours and BridgeMove.STAY_SIT_OUT or BridgeMove.STAY_SIT
+        if ground and sameZ and d <= limit and not busy and not danger then
+            if pose == nil then
+                Bridge.pose = { anim = "Sit", staySit = true }
+                pcall(function() body:setBumpType("Sit") end)
+                pcall(function() body:faceLocationF(red:getX(), red:getY()) end)
+                pcall(function() BridgeMove.sendSit("floor") end)
+                log("stay-sit: sitting with the player while waiting")
+            end
+            return true
+        end
+    end
+    if ours then
+        Bridge.pose = nil
+        pcall(function() BridgeMove.sendSit(nil) end)
+        log("stay-sit: standing (player up, out of range, busy or danger)")
+    end
+    return false
+end
+
+
 BridgeMove.sitFlag = false
 BridgeMove.sitFlagBody = nil
 
@@ -1719,6 +1791,16 @@ function BridgeMove.sitFlagTick(body)
     if mp then BridgeMove.sitFlagOff(body) return end
     if BridgeFastForward ~= nil and BridgeFastForward.flagged ~= nil then return end
     if BridgeMove.isOnChair(body) then
+        if BridgeTask ~= nil and BridgeTask.isSeated ~= nil and BridgeTask.isSeated(body) then
+            local asn, bump = "", ""
+            pcall(function() asn = tostring(body:getActionStateName()) end)
+            pcall(function() bump = tostring(body:getBumpType()) end)
+            if asn ~= "bumped" or bump ~= "SitChair" then
+                pcall(function() body:setVariable("BumpAnimFinished", false) end)
+                pcall(function() body:setBumpType("") end)
+                pcall(function() body:setBumpType("SitChair") end)
+            end
+        end
         local on = false
         pcall(function() on = body:isReanimatedForGrappleOnly() == true end)
         if not on then
@@ -1728,6 +1810,18 @@ function BridgeMove.sitFlagTick(body)
         BridgeMove.sitFlag, BridgeMove.sitFlagBody = true, body
     else
         BridgeMove.sitFlagOff(body)
+    end
+    if BridgeTask ~= nil and BridgeTask.isLying ~= nil and BridgeTask.isLying(body) then
+        local asn, bump = "", ""
+        pcall(function() asn = tostring(body:getActionStateName()) end)
+        pcall(function() bump = tostring(body:getBumpType()) end)
+        local anim = bump
+        if anim ~= "LayAwake" and anim ~= "LayAsleep" then anim = BridgeTask.layAnim end
+        if (anim == "LayAwake" or anim == "LayAsleep") and (asn ~= "bumped" or bump ~= anim) then
+            pcall(function() body:setVariable("BumpAnimFinished", false) end)
+            pcall(function() body:setBumpType("") end)
+            pcall(function() body:setBumpType(anim) end)
+        end
     end
 end
 
@@ -1789,7 +1883,7 @@ function BridgeMove.sitDownNear(body, red, zones, S, d, inside)
             if sq ~= nil then pcall(function() body:setCurrent(sq) end) end
             pcall(function() body:faceDirection(IsoDirections.fromString(S.chair.dir)) end)
             S.phase, S.phaseSince = "down", Bridge.time
-            chairFlags(body)
+            chairFlags(body, S.chair)
             startPose(body, S, "SitChairDown", true)
             log(sformat("seat: sitting down on %d,%d facing %s from %.2f,%.2f (snapped %.2f)",
                 S.chair.x, S.chair.y, S.chair.dir, gx, gy, toGoal))
@@ -4791,6 +4885,7 @@ function BridgeMove.shouldCross(body, kind, from, to)
         local yes, why = BridgeMove.trailCrosses(body, from, to)
         return yes, why
     end
+    if Bridge.time < BridgeMove.noGapUntil then return true, "gap suppressed" end
     local g = BridgeMove.goal
     if g == nil then return true, "no goal" end
     local bx, by = body:getX(), body:getY()
@@ -4815,7 +4910,19 @@ end
 
 BridgeMove.gapWay = nil
 BridgeMove.noGapUntil = 0
+BridgeMove.passFirst = 0
+BridgeMove.passCount = 0
 function BridgeMove.setGapWay(a, b)
+    if (Bridge.time - (BridgeMove.passFirst or 0)) > 120 then
+        BridgeMove.passFirst, BridgeMove.passCount = Bridge.time, 0
+    end
+    BridgeMove.passCount = (BridgeMove.passCount or 0) + 1
+    if BridgeMove.passCount > 2 then
+        BridgeMove.gapWay = nil
+        BridgeMove.noGapUntil = Bridge.time + 600
+        log("pass looped " .. BridgeMove.passCount .. "x, climbing")
+        return
+    end
     BridgeMove.gapWay = { ax = a:getX() + 0.5, ay = a:getY() + 0.5, bx = b:getX() + 0.5, by = b:getY() + 0.5,
         z = a:getZ(), stage = 1, best = math.huge, bestAt = Bridge.time, tick = Bridge.tick }
     log(sformat("pass instead of climbing: via %d,%d > %d,%d", a:getX(), a:getY(), b:getX(), b:getY()))
@@ -6259,10 +6366,7 @@ function BridgeMove.reset(body)
     BridgeMove.openingWay = nil
     BridgeMove.openingBlocked = nil
     BridgeMove.seat = nil
-    if BridgeMove.seatFlag and body ~= nil then
-        pcall(function() body:setSittingOnFurniture(false) end)
-    end
-    BridgeMove.seatFlag = false
+    if BridgeMove.seatFlag or BridgeMove.seatBound ~= nil then chairFlagsOff(body) end
     BridgeMove.sitFlagOff(body)
     BridgeMove.nearReset()
 

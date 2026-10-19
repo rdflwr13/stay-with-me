@@ -15,7 +15,7 @@ BridgeDrive.ON = {
     FAST   = 1,
     ZOMBIE = 1,
     GREET  = 1,
-    ANIMAL = 1,
+    ANIMAL = 0,
     EXIT   = 1,
     STATE  = 1,
     ROADKILL = 1,
@@ -23,6 +23,11 @@ BridgeDrive.ON = {
     DARK    = 1,
     SMELL   = 1,
     SICK    = 1,
+    FUEL    = 1,
+    ENGINE  = 1,
+    LIGHT   = 1,
+    RADIO   = 1,
+    HEALTH  = 1,
 }
 
 
@@ -74,6 +79,14 @@ BridgeDrive.ROADKILL_MIN_KMH = 15
 BridgeDrive.EAT_EVERY        = 60
 
 
+BridgeDrive.HP_STEPS  = { 50, 30, 15 }
+BridgeDrive.HP_BACK   = 10
+BridgeDrive.HP_EVENTS = { "EvCarHealthHalf", "EvCarHealthDying", "EvCarHealthLast" }
+BridgeDrive.CHAT_EVERY = 60
+BridgeDrive.CHAT_MIN   = 5400
+BridgeDrive.CHAT_SPAN  = 9000
+
+
 BridgeDrive.WEATHER_CHECK = 30
 BridgeDrive.RAIN_ON    = 0.05
 BridgeDrive.RAIN_OFF   = 0.02
@@ -86,10 +99,12 @@ BridgeDrive.WIND       = 0.5
 
 BridgeDrive.SMELL_EVERY  = 60
 BridgeDrive.SMELL_RADIUS = 4
+BridgeDrive.SMELL_TIERS  = { 4, 8, 16 }
 
 
 BridgeDrive.CORPSE_SICK_MIN    = 0.3
 BridgeDrive.CORPSE_SICK_RADIUS = 8
+BridgeDrive.CORPSE_MIN         = 4
 BridgeDrive.CORPSE_EMOTE_GAP   = 600
 
 
@@ -109,8 +124,9 @@ pcall(function()
     STAT_OF.UNHAPPINESS   = CharacterStat.UNHAPPINESS
     STAT_OF.STRESS        = CharacterStat.STRESS
     STAT_OF.WETNESS       = CharacterStat.WETNESS
+    STAT_OF.BOREDOM       = CharacterStat.BOREDOM
 end)
-local HUNDRED = { PAIN = true, PANIC = true, UNHAPPINESS = true, WETNESS = true, FOOD_SICKNESS = true }
+local HUNDRED = { PAIN = true, PANIC = true, UNHAPPINESS = true, WETNESS = true, FOOD_SICKNESS = true, BOREDOM = true }
 
 local function statOf(red, name)
     local st = STAT_OF[name]
@@ -131,15 +147,124 @@ local function bleeding(red)
 end
 
 
+local function engineOn(car)
+    local on = false
+    pcall(function() on = car:isEngineStarted() == true or car:isEngineRunning() == true end)
+    return on
+end
+
+local function fuelRatio(car)
+    local ratio = nil
+    pcall(function()
+        local tank = car:getPartById("GasTank")
+        if tank ~= nil then
+            local cap = tank:getContainerCapacity()
+            if type(cap) == "number" and cap > 0 then
+                ratio = (tonumber(tank:getContainerContentAmount()) or 0) / cap
+            end
+        end
+    end)
+    return ratio
+end
+
+local function engineCondition(car)
+    local c = nil
+    pcall(function()
+        local p = car:getPartById("Engine")
+        if p ~= nil then c = tonumber(p:getCondition()) end
+    end)
+    return c
+end
+
+local function batteryCharge(car)
+    local c = nil
+    pcall(function() c = tonumber(car:getBatteryCharge()) end)
+    return c
+end
+
+local function headlightState(car)
+    local on, canEmit = false, true
+    pcall(function() on = car:getHeadlightsOn() == true end)
+    pcall(function() canEmit = car:getHeadlightCanEmmitLight() ~= false end)
+    return on, canEmit
+end
+
+local function radioPlaying(car)
+    local on = false
+    pcall(function()
+        local r = car:getPartById("Radio")
+        if r ~= nil then
+            local dd = r:getDeviceData()
+            if dd ~= nil then on = dd:getIsTurnedOn() == true end
+        end
+    end)
+    return on
+end
+
+local function nightNow()
+    local n = false
+    pcall(function() n = getGameTime():isNight() == true end)
+    return n
+end
+
+local COLD_MOODLE, HOT_MOODLE = nil, nil
+pcall(function() COLD_MOODLE = MoodleType.HYPOTHERMIA end)
+if COLD_MOODLE == nil then pcall(function() COLD_MOODLE = MoodleType.Hypothermia end) end
+pcall(function() HOT_MOODLE = MoodleType.HYPERTHERMIA end)
+if HOT_MOODLE == nil then pcall(function() HOT_MOODLE = MoodleType.Hyperthermia end) end
+
+local function moodle(red, m)
+    if m == nil then return 0 end
+    local lv = 0
+    pcall(function() lv = red:getMoodles():getMoodleLevel(m) end)
+    return tonumber(lv) or 0
+end
+
+local DRUNK_MOODLE = nil
+pcall(function() DRUNK_MOODLE = MoodleType.DRUNK end)
+if DRUNK_MOODLE == nil then pcall(function() DRUNK_MOODLE = MoodleType.Drunk end) end
+
+local INTOX_STAT = nil
+pcall(function() INTOX_STAT = CharacterStat.INTOXICATION end)
+
+local function intox(red)
+    if INTOX_STAT == nil then return 0 end
+    local v = 0
+    pcall(function() v = red:getStats():get(INTOX_STAT) end)
+    return tonumber(v) or 0
+end
+
+local function drinkingNow(red)
+    local act = nil
+    pcall(function()
+        local q = ISTimedActionQueue.getTimedActionQueue(red)
+        if q ~= nil then act = q.current end
+    end)
+    if act == nil or act.isEating ~= true then return false end
+    local it = act.item
+    if it == nil then return false end
+    local alc = false
+    pcall(function() alc = it:isAlcoholic() == true end)
+    if not alc then pcall(function() alc = BridgeCare ~= nil and BridgeCare.fluidAlcohol(it) ~= nil end) end
+    return alc
+end
+
+
 BridgeDrive.STATES = {
     { key = "Hurt",    test = function(red) return bleeding(red) end },
     { key = "Panic",   test = function(red) return statOf(red, "PANIC") > 0.5 end },
     { key = "Sick",    test = function(red) return statOf(red, "SICKNESS") > 0.3 or statOf(red, "FOOD_SICKNESS") > 0.3 end },
+    { key = "Drunk",   test = function(red) return moodle(red, DRUNK_MOODLE) >= 1 or intox(red) >= 15 end },
     { key = "Tired",   test = function(red) return statOf(red, "FATIGUE") > 0.6 end },
     { key = "Thirsty", test = function(red) return statOf(red, "THIRST") > 0.35 end },
     { key = "Hungry",  test = function(red) return statOf(red, "HUNGER") > 0.35 end },
     { key = "Cold",    test = function(red) return statOf(red, "WETNESS") > 0.6 end },
     { key = "Sad",     test = function(red) return statOf(red, "UNHAPPINESS") > 0.4 or statOf(red, "STRESS") > 0.55 end },
+    { key = "Pain",    test = function(red) return statOf(red, "PAIN") > 0.45 end },
+}
+
+BridgeDrive.QUIET_STATES = {
+    { key = "Bored",   test = function(red) return statOf(red, "BOREDOM") > 0.6 end },
 }
 
 
@@ -153,7 +278,11 @@ BridgeDrive.EVENTS = {
     EvCarHurt      = { slot = "DriveHurt",      cooldown = 120, urgent = true,  cat = "HURT" },
     EvCarAhead     = { slot = "DriveAhead",     cooldown = 45,  urgent = true,  cat = "AHEAD" },
     EvCarZombie    = { slot = "DriveZombie",    cooldown = 40,  urgent = false, cat = "ZOMBIE" },
-    EvCarHorde     = { slot = "DriveHorde",     cooldown = 90,  urgent = false, cat = "ZOMBIE" },
+    EvCarZombieClose = { slot = "DriveZombieClose", cooldown = 60, urgent = true, cat = "ZOMBIE" },
+    EvCarHorde4    = { slot = "DriveHorde4",    cooldown = 90,  urgent = true, cat = "ZOMBIE" },
+    EvCarHorde8    = { slot = "DriveHorde8",    cooldown = 90,  urgent = true, cat = "ZOMBIE" },
+    EvCarHorde16   = { slot = "DriveHorde16",   cooldown = 120, urgent = true, cat = "ZOMBIE" },
+    EvCarHorde32   = { slot = "DriveHorde32",   cooldown = 150, urgent = true, cat = "ZOMBIE" },
     EvCarFast      = { slot = "DriveFast",      cooldown = 120, urgent = false, cat = "FAST" },
     EvCarReckless  = { slot = "DriveReckless",  cooldown = 120, urgent = false, cat = "FAST" },
     EvCarGreetClear   = { slot = "DriveGreetClear",   cooldown = 300, urgent = true, cat = "GREET" },
@@ -177,8 +306,24 @@ BridgeDrive.EVENTS = {
     EvCarColdWet      = { slot = "DriveColdWet",     cooldown = 600,  urgent = true,  cat = "STATE" },
     EvCarTiredNight   = { slot = "DriveTiredNight",  cooldown = 600,  urgent = true,  cat = "STATE" },
     EvCarEating       = { slot = "DriveEating",      cooldown = 120,  urgent = true,  cat = "STATE" },
-    EvCarSmell        = { slot = "DriveSmell",        cooldown = 300,  urgent = false, cat = "SMELL" },
+    EvCarDrinking     = { slot = "DriveDrinking",    cooldown = 120,  urgent = true,  cat = "STATE" },
+    EvCarSmell4       = { slot = "DriveSmell4",       cooldown = 300,  urgent = false, cat = "SMELL" },
+    EvCarSmell8       = { slot = "DriveSmell8",       cooldown = 300,  urgent = false, cat = "SMELL" },
+    EvCarSmell16      = { slot = "DriveSmell16",      cooldown = 300,  urgent = false, cat = "SMELL" },
     EvCarCorpseSick   = { slot = "DriveCorpseSick",   cooldown = 300,  urgent = true,  cat = "SICK" },
+
+    EvCarLowFuel      = { slot = "DriveLowFuel",      cooldown = 600,  urgent = true,  cat = "FUEL" },
+    EvCarOutOfFuel    = { slot = "DriveOutOfFuel",    cooldown = 900,  urgent = true,  cat = "FUEL" },
+    EvCarNoStart      = { slot = "DriveNoStart",      cooldown = 300,  urgent = true,  cat = "ENGINE" },
+    EvCarEngineDamage = { slot = "DriveEngineDamage", cooldown = 900,  urgent = false, cat = "ENGINE" },
+    EvCarEngineLeftOn = { slot = "DriveEngineLeftOn", cooldown = 900,  urgent = false, cat = "ENGINE" },
+    EvCarLight        = { slot = "DriveLight",        cooldown = 600,  urgent = true,  cat = "LIGHT" },
+    EvCarRadio        = { slot = "DriveRadio",        cooldown = 300,  urgent = false, cat = "RADIO" },
+    EvCarFreezing     = { slot = "EvCarFreezing",     cooldown = 600,  urgent = true,  cat = "STATE" },
+    EvCarOverheat     = { slot = "EvCarOverheat",     cooldown = 600,  urgent = true,  cat = "STATE" },
+    EvCarHealthHalf   = { slot = "DriveHealth1",      cooldown = 0,    urgent = true,  cat = "HEALTH" },
+    EvCarHealthDying  = { slot = "DriveHealth2",      cooldown = 0,    urgent = true,  cat = "HEALTH" },
+    EvCarHealthLast   = { slot = "DriveHealth3",      cooldown = 0,    urgent = true,  cat = "HEALTH" },
 }
 
 
@@ -187,6 +332,13 @@ for _, s in ipairs(BridgeDrive.STATES) do
     BridgeDrive.EVENTS["EvCar" .. k .. "In"]    = { slot = "DriveState" .. k .. "In",    cooldown = 600, urgent = true,  cat = "STATE" }
     BridgeDrive.EVENTS["EvCar" .. k .. "Drive"] = { slot = "DriveState" .. k .. "Drive", cooldown = 600, urgent = false, cat = "STATE" }
     BridgeDrive.EVENTS["EvCar" .. k .. "Out"]   = { slot = "DriveState" .. k .. "Out",   cooldown = 600, urgent = true,  cat = "STATE" }
+end
+
+for _, s in ipairs(BridgeDrive.QUIET_STATES) do
+    local k = s.key
+    BridgeDrive.EVENTS["EvCar" .. k .. "In"]    = { slot = "DriveState" .. k .. "In",    cooldown = 600, urgent = false, cat = "STATE" }
+    BridgeDrive.EVENTS["EvCar" .. k .. "Drive"] = { slot = "DriveState" .. k .. "Drive", cooldown = 600, urgent = false, cat = "STATE" }
+    BridgeDrive.EVENTS["EvCar" .. k .. "Out"]   = { slot = "DriveState" .. k .. "Out",   cooldown = 600, urgent = false, cat = "STATE" }
 end
 
 BridgeDrive.lastAny = -99999
@@ -199,6 +351,11 @@ BridgeDrive.recklessSaid = false
 BridgeDrive.greetAt = nil
 BridgeDrive.greetDone = false
 BridgeDrive.info = "none"
+BridgeDrive.fuelArmed = true
+BridgeDrive.radioWas = false
+BridgeDrive.healthStep = 0
+BridgeDrive.lastColdAt = -99999
+BridgeDrive.nextChat = 0
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeDrive] " .. tostring(text)) end end
 
@@ -215,6 +372,12 @@ local function reset()
     BridgeDrive.prevWeather = nil
     BridgeDrive.curWeather = nil
     BridgeDrive.eatSaid = false
+    BridgeDrive.drinkSaid = false
+    BridgeDrive.fuelArmed = true
+    BridgeDrive.radioWas = false
+    BridgeDrive.healthStep = 0
+    BridgeDrive.lastColdAt = -99999
+    BridgeDrive.nextChat = 0
 end
 
 
@@ -233,6 +396,7 @@ local function say(event)
     if said then
         BridgeDrive.lastAny = Bridge.time
         BridgeDrive.info = event
+        if string.find(event, "Cold", 1, true) ~= nil then BridgeDrive.lastColdAt = Bridge.time end
         log(event)
     else
         BridgeDrive.info = "blocked " .. event
@@ -261,6 +425,19 @@ local function sayState(red, phase)
         if hit then
             return say("EvCar" .. s.key .. phase)
         end
+    end
+    for _, s in ipairs(BridgeDrive.QUIET_STATES or {}) do
+        local hit = false
+        pcall(function() hit = s.test(red) end)
+        if hit then
+            return say("EvCar" .. s.key .. phase)
+        end
+    end
+    if moodle(red, COLD_MOODLE) >= 1 and (Bridge.time - (BridgeDrive.lastColdAt or -99999)) >= 600 then
+        if say("EvCarFreezing") then return true end
+    end
+    if moodle(red, HOT_MOODLE) >= 1 then
+        if say("EvCarOverheat") then return true end
     end
     return false
 end
@@ -378,27 +555,10 @@ end
 
 
 
-local function scanAhead(car, red)
+local function scanAhead(car)
     local C = BridgeCar.frame(car)
-    if C == nil then return 0, false end
-    local zombies, carAhead = 0, false
-    pcall(function()
-        local list = getCell():getZombieList()
-        for i = 0, list:size() - 1 do
-            local z = list:get(i)
-            if threat(z) then
-                local rx, ry = z:getX() - C.cx, z:getY() - C.cy
-                local along = rx * C.fx + ry * C.fy
-                local side = ry * C.fx - rx * C.fy
-                if along >= BridgeDrive.SCAN_MIN and along <= BridgeDrive.SCAN_MAX
-                    and math.abs(side) <= C.hw + BridgeDrive.SCAN_HALF then
-                    local seen = false
-                    pcall(function() seen = red:CanSee(z) end)
-                    if seen then zombies = zombies + 1 end
-                end
-            end
-        end
-    end)
+    if C == nil then return false end
+    local carAhead = false
     pcall(function()
         local cell = getCell()
         local z = 0
@@ -410,7 +570,7 @@ local function scanAhead(car, red)
             d = d + 1.5
         end
     end)
-    return zombies, carAhead
+    return carAhead
 end
 
 
@@ -594,10 +754,16 @@ end
 
 
 function BridgeDrive.onExit()
+    if BridgeCallout ~= nil and type(BridgeCallout.homeReturnOnExit) == "function"
+        and BridgeCallout.homeReturnOnExit() then return end
     if BridgeDrive.ENABLED == 0 then return end
     if BridgeDrive.ON.EXIT ~= 1 then return end
     local red = BridgeData.owner()
     if red == nil then return end
+    if BridgeDrive.ON.ENGINE == 1 then
+        local car = BridgeCar ~= nil and BridgeCar.car or nil
+        if car ~= nil and engineOn(car) and say("EvCarEngineLeftOn") then return end
+    end
     local fight = false
     pcall(function() fight = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state == "swing") end)
     local n = zombiesNear(red, BridgeDrive.EXIT_RADIUS)
@@ -714,6 +880,26 @@ function BridgeDrive.tick()
     end
 
 
+    if hp ~= nil then
+        while BridgeDrive.healthStep > 0
+            and hp >= BridgeDrive.HP_STEPS[BridgeDrive.healthStep] + BridgeDrive.HP_BACK do
+            BridgeDrive.healthStep = BridgeDrive.healthStep - 1
+        end
+        local step = 0
+        for i, limit in ipairs(BridgeDrive.HP_STEPS) do
+            if hp < limit then step = i end
+        end
+        if step > BridgeDrive.healthStep then
+            local ev = BridgeDrive.HP_EVENTS[step]
+            if ev ~= nil and say(ev) then
+                BridgeDrive.healthStep = step
+                BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                return
+            end
+        end
+    end
+
+
 
     if not BridgeDrive.greetDone and BridgeDrive.greetAt ~= nil
         and Bridge.time - BridgeDrive.greetAt >= BridgeDrive.GREET_DELAY then
@@ -734,16 +920,34 @@ function BridgeDrive.tick()
 
 
     if Bridge.every(BridgeDrive.SCAN_EVERY) then
-        local zombies, carAhead = scanAhead(car, red)
+        local hordeTier = nil
+        if BridgeHorde ~= nil then
+            local cx, cy, cz = nil, nil, nil
+            pcall(function() cx, cy, cz = car:getX(), car:getY(), car:getZ() end)
+            if cx ~= nil then
+                hordeTier = BridgeHorde.tier(BridgeHorde.count(cx, cy, cz, BridgeHorde.RADIUS))
+            end
+        end
+        if hordeTier ~= nil and say("EvCarHorde" .. hordeTier) then
+            BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+            return
+        end
+        local carAhead = scanAhead(car)
         if carAhead and say("EvCarAhead") then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
-        if zombies > 0 then
-            if say(zombies >= BridgeDrive.HORDE_COUNT and "EvCarHorde" or "EvCarZombie") then
-                BridgeDrive.hpBase = hp or BridgeDrive.hpBase
-                return
-            end
+        if hordeTier == nil and BridgeHorde ~= nil
+            and BridgeHorde.countCone(car, 0, 6, nil, true, red) > 0
+            and say("EvCarZombieClose") then
+            BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+            return
+        end
+        if hordeTier == nil and BridgeHorde ~= nil
+            and BridgeHorde.countCone(car, BridgeDrive.SCAN_MIN, BridgeDrive.SCAN_MAX, nil, true, red) > 0
+            and say("EvCarZombie") then
+            BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+            return
         end
     end
 
@@ -754,7 +958,7 @@ function BridgeDrive.tick()
         if sick > BridgeDrive.CORPSE_SICK_MIN then
             local n = 0
             pcall(function() n = corpsesNear(red, BridgeDrive.CORPSE_SICK_RADIUS) end)
-            if n > 0 then
+            if n >= BridgeDrive.CORPSE_MIN then
                 if Bridge.time - (BridgeDrive.corpseEmoteAt or -99999) > BridgeDrive.CORPSE_EMOTE_GAP then
                     BridgeDrive.corpseEmoteAt = Bridge.time
                     if BridgeSocial ~= nil and BridgeSocial.emote ~= nil then
@@ -774,6 +978,79 @@ function BridgeDrive.tick()
         if sayState(red, "Drive") then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
+        end
+    end
+
+
+    if BridgeDrive.greetDone and Bridge.every(30) then
+        local ratio = nil
+        pcall(function() ratio = fuelRatio(car) end)
+        local econd = nil
+        pcall(function() econd = engineCondition(car) end)
+        local batt = nil
+        pcall(function() batt = batteryCharge(car) end)
+        local on = engineOn(car)
+
+        if ratio ~= nil then
+            if ratio > 0.25 then BridgeDrive.fuelArmed = true end
+            if ratio <= 0.02 then
+                if say("EvCarOutOfFuel") then BridgeDrive.hpBase = hp or BridgeDrive.hpBase return end
+            elseif ratio < 0.20 and BridgeDrive.fuelArmed and on then
+                if say("EvCarLowFuel") then
+                    BridgeDrive.fuelArmed = false
+                    BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                    return
+                end
+            end
+        end
+
+        if econd ~= nil and econd < 25 then
+            if say("EvCarEngineDamage") then BridgeDrive.hpBase = hp or BridgeDrive.hpBase return end
+        end
+
+        if not on and speed < 1 then
+            local trying = false
+            pcall(function()
+                trying = (car:isKeysInIgnition() == true or car:isHotwired() == true)
+                    and car:isStarting() ~= true
+            end)
+            local critical = (econd ~= nil and econd < 25)
+                or (batt ~= nil and batt <= 0.1)
+                or (ratio ~= nil and ratio <= 0.02)
+            if trying and critical and say("EvCarNoStart") then
+                BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                return
+            end
+        end
+
+        if nightNow() then
+            local lightsOn, canEmit = headlightState(car)
+            local unable = (lightsOn and not canEmit) or (batt ~= nil and batt <= 0.0)
+            if (not lightsOn or unable) and say("EvCarLight") then
+                BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                return
+            end
+        end
+
+        local ron = radioPlaying(car)
+        if not ron then
+            BridgeDrive.radioWas = false
+        elseif not BridgeDrive.radioWas then
+            if say("EvCarRadio") then
+                BridgeDrive.radioWas = true
+                BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                return
+            end
+        end
+
+        local calmFight = BridgeFight == nil or BridgeFight.state == "idle"
+        if BridgeSocial ~= nil and type(BridgeSocial.idleRemark) == "function" and calmFight then
+            local danger = 0
+            if BridgeHorde ~= nil then danger = BridgeHorde.countCone(car, 0, 8, nil, true, red) end
+            if danger == 0 and BridgeSocial.idleRemark(red, true) then
+                BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                return
+            end
         end
     end
 
@@ -806,16 +1083,32 @@ function BridgeDrive.tick()
 
 
     if BridgeDrive.greetDone and Bridge.every(BridgeDrive.EAT_EVERY) then
-        local eating = false
-        pcall(function() eating = eatingNow(red) end)
-        if eating and not BridgeDrive.eatSaid then
-            BridgeDrive.eatSaid = true
-            if say("EvCarEating") then
-                BridgeDrive.hpBase = hp or BridgeDrive.hpBase
-                return
-            end
-        elseif not eating then
+        local eating, drinking = false, false
+        pcall(function()
+            eating = eatingNow(red)
+            if eating then drinking = drinkingNow(red) end
+        end)
+        if drinking then
             BridgeDrive.eatSaid = false
+            if not BridgeDrive.drinkSaid then
+                BridgeDrive.drinkSaid = true
+                if say("EvCarDrinking") then
+                    BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                    return
+                end
+            end
+        elseif eating then
+            BridgeDrive.drinkSaid = false
+            if not BridgeDrive.eatSaid then
+                BridgeDrive.eatSaid = true
+                if say("EvCarEating") then
+                    BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                    return
+                end
+            end
+        else
+            BridgeDrive.eatSaid = false
+            BridgeDrive.drinkSaid = false
         end
     end
 
@@ -823,14 +1116,18 @@ function BridgeDrive.tick()
     if Bridge.every(BridgeDrive.SMELL_EVERY) then
         local n = 0
         pcall(function() n = corpsesNear(red, BridgeDrive.SMELL_RADIUS) end)
-        if n > 0 and say("EvCarSmell") then
+        local tier = nil
+        for i = 1, #BridgeDrive.SMELL_TIERS do
+            if n >= BridgeDrive.SMELL_TIERS[i] then tier = BridgeDrive.SMELL_TIERS[i] end
+        end
+        if tier ~= nil and say("EvCarSmell" .. tier) then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
     end
 
 
-    if Bridge.every(BridgeDrive.ANIMAL_EVERY) then
+    if BridgeDrive.ON.ANIMAL == 1 and Bridge.every(BridgeDrive.ANIMAL_EVERY) then
         local animal = nil
         pcall(function() animal = scanAnimal(car, red) end)
         if animal ~= nil and say("EvCarAnimal") then
