@@ -143,25 +143,73 @@ local function furRegionOf()
     return nil
 end
 
+local function furLocationId(v)
+    if v == nil then return nil end
+    local s = nil
+    pcall(function() s = tostring(v) end)
+    if type(s) ~= "string" then return nil end
+    s = string.lower(s)
+    local colon = string.find(s, ":", 1, true)
+    if colon ~= nil then s = string.sub(s, colon + 1) end
+    if string.find(s, "fur", 1, true) == nil then return nil end
+    return v
+end
+
+local function asItemBodyLocation(v)
+    if v == nil then return nil end
+    if type(v) ~= "string" then return furLocationId(v) end
+    local out = nil
+    pcall(function()
+        if type(ItemBodyLocation) == "table" and type(ResourceLocation) == "table"
+            and type(ItemBodyLocation.get) == "function" and type(ResourceLocation.of) == "function" then
+            out = ItemBodyLocation.get(ResourceLocation.of(v))
+        end
+        if out == nil then out = ItemBodyLocation[string.upper(v)] end
+    end)
+    return furLocationId(out)
+end
+
+local function addFurVal(vals, seen, v)
+    v = asItemBodyLocation(v)
+    if v == nil then return end
+    local key = nil
+    pcall(function() key = tostring(v) end)
+    if type(key) ~= "string" then return end
+    if seen[key] then return end
+    seen[key] = true
+    vals[#vals + 1] = v
+end
+
+local function furLocFromGroup(group)
+    if group == nil then return nil end
+    local n = nil
+    pcall(function() n = group:size() end)
+    if type(n) ~= "number" then return nil end
+    for i = 0, n - 1 do
+        local bl = nil
+        pcall(function() bl = group:getLocationByIndex(i) end)
+        if bl ~= nil then
+            local id = nil
+            pcall(function() id = bl:getId() end)
+            if furLocationId(id) ~= nil then return id end
+        end
+    end
+    return nil
+end
+
 function BridgeEquip.primeFurRegion()
     local region = furRegionOf()
     if region == nil or region._vals ~= nil then return end
-    local vals = {}
+    local vals, seen = {}, {}
     pcall(function()
         if type(FurManager) == "table" then
-            if FurManager.furItemBodyLocation ~= nil then vals[#vals + 1] = FurManager.furItemBodyLocation end
-            if FurManager.furBodyLocation ~= nil then vals[#vals + 1] = FurManager.furBodyLocation end
+            addFurVal(vals, seen, FurManager.furItemBodyLocation)
         end
     end)
     if #vals == 0 then
         pcall(function()
             if BodyLocations ~= nil and type(BodyLocations.getGroup) == "function" then
-                local group = BodyLocations.getGroup("Human")
-                if group ~= nil and type(group.getLocation) == "function" then
-                    local loc = nil
-                    pcall(function() loc = group:getLocation("Fur") end)
-                    if loc ~= nil then vals[#vals + 1] = loc end
-                end
+                addFurVal(vals, seen, furLocFromGroup(BodyLocations.getGroup("Human")))
             end
         end)
     end
@@ -170,15 +218,13 @@ function BridgeEquip.primeFurRegion()
             local b = her()
             if b ~= nil then
                 local worn = b:getWornItems()
-                for i = 0, worn:size() - 1 do
-                    local it = worn:getItemByIndex(i)
-                    if it ~= nil then
-                        local t = ""
-                        pcall(function() t = tostring(it:getType() or "") end)
-                        if string.sub(t, 1, 6) == "Furry_" then
+                if worn ~= nil then
+                    for i = 0, worn:size() - 1 do
+                        local it = worn:getItemByIndex(i)
+                        if it ~= nil then
                             local loc = nil
                             pcall(function() loc = it:getBodyLocation() end)
-                            if loc ~= nil then vals[#vals + 1] = loc break end
+                            addFurVal(vals, seen, loc)
                         end
                     end
                 end
@@ -267,6 +313,25 @@ local function isAppearance(item)
 end
 BridgeEquip.isAppearance = isAppearance
 
+local function isFurAppearance(item)
+    if item == nil then return false end
+    local loc = nil
+    pcall(function() loc = item:getBodyLocation() end)
+    if loc ~= nil then
+        local s = nil
+        pcall(function() s = tostring(loc) end)
+        if type(s) == "string" and string.find(string.lower(s), "fur", 1, true) ~= nil then return true end
+    end
+    local t = nil
+    pcall(function() t = item:getType() end)
+    if type(t) == "string" and string.find(string.lower(t), "furry", 1, true) ~= nil then return true end
+    local ft = nil
+    pcall(function() ft = item:getFullType() end)
+    if type(ft) == "string" and string.find(string.lower(ft), "furry", 1, true) ~= nil then return true end
+    return false
+end
+BridgeEquip.isFurAppearance = isFurAppearance
+
 local function itemLocs(item)
     local set = {}
     if item == nil then return set end
@@ -305,9 +370,17 @@ local function wornItems(b)
 end
 BridgeEquip.wornItems = wornItems
 
+local function displayWorn(b)
+    local out = {}
+    for _, w in ipairs(wornItems(b)) do
+        if not isFurAppearance(w.item) then out[#out + 1] = w end
+    end
+    return out
+end
+
 local function regionItems(b, region)
     local out = {}
-    local worn = wornItems(b)
+    local worn = displayWorn(b)
     for _, v in ipairs(regionValues(region)) do
         if v ~= nil then
             for _, w in ipairs(worn) do
@@ -345,7 +418,7 @@ BridgeEquip.mountsOf = providerMounts
 
 local function regionLayers(b, region)
     local out = {}
-    local worn = wornItems(b)
+    local worn = displayWorn(b)
     for _, v in ipairs(regionValues(region)) do
         if v ~= nil then
             for _, w in ipairs(worn) do
@@ -365,7 +438,7 @@ BridgeEquip.regionLayers = regionLayers
 
 local function unmappedWorn(b)
     local out = {}
-    for _, w in ipairs(wornItems(b)) do
+    for _, w in ipairs(displayWorn(b)) do
         local mapped = false
         for _, region in ipairs(BridgeEquip.REGIONS) do
             if anyLocInRegion(region, w.locs) then mapped = true break end
