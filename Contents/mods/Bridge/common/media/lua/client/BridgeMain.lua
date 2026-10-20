@@ -1907,6 +1907,12 @@ function Bridge.teleportToRed(prefer)
     if red == nil then return "no player" end
     if not Bridge.drivable() then return "no body or driven by another client" end
     Bridge.pose = nil
+    pcall(function()
+        if BridgeGunfight ~= nil and type(BridgeGunfight.hasGun) == "function" and BridgeGunfight.hasGun()
+            and type(BridgeGunfight.stow) == "function" then
+            BridgeGunfight.stow(Bridge.body)
+        end
+    end)
 
 
 
@@ -6123,6 +6129,7 @@ function Bridge.diagLines()
             add("obstacle", BridgeMove.obstacle)
             pcall(function() add("doors", BridgeMove.doorInfo()) end)
             add("fight", tostring(BridgeFight.enabled) .. " " .. BridgeFight.state .. " " .. BridgeFight.info)
+            pcall(function() add("gun", tostring(BridgeGunfight.assignedId ~= nil) .. " " .. tostring(BridgeGunfight.info)) end)
             add("task", tostring(BridgeTask ~= nil and BridgeTask.active) .. " " .. tostring(BridgeTask ~= nil and BridgeTask.kind)
                 .. " " .. tostring(BridgeTask ~= nil and BridgeTask.phase) .. " " .. tostring(BridgeTask ~= nil and BridgeTask.info or "none"))
             add("fight_target", BridgeFight.targetInfo)
@@ -6802,6 +6809,10 @@ function Bridge.onTick()
 
                     local fightingNow = false
                     pcall(function() fightingNow = BridgeFight.target ~= nil or BridgeFight.state == "swing" end)
+                    if BridgeGunfight ~= nil
+                        and (BridgeGunfight.target ~= nil or BridgeGunfight.drawn == true) then
+                        fightingNow = true
+                    end
                     if fightingNow then Bridge.stuckCount = 0 end
 
 
@@ -7325,6 +7336,10 @@ function Bridge.onServerCommand(module, command, args)
         Bridge.result = "took: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
     elseif command == "look" then
         pcall(function() Bridge.lookSwing(args) end)
+    elseif command == "gunResult" then
+        pcall(function() BridgeGunfight.onResult(args) end)
+    elseif command == "gunFx" then
+        pcall(function() BridgeGunfight.onFx(args) end)
     elseif command == "torch" then
         if BridgeTorch ~= nil then pcall(function() BridgeTorch.onServerState(args) end) end
     elseif command == "carSeat" then

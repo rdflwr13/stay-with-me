@@ -61,6 +61,8 @@ local BASE = {
     SUB_SLOT_THING = 5,
     WEAPON_PRIMARY_X = -18,
     WEAPON_PRIMARY_Y = 142,
+    WEAPON_GUN_RIGHT = 12,
+    WEAPON_GUN_TOP = 10,
 }
 
 BridgeEquip.BASE = BASE
@@ -853,6 +855,24 @@ local function acceptWeapon(b, player, item)
 end
 BridgeEquip.acceptWeapon = acceptWeapon
 
+local function acceptGun(b, player, item)
+    if b == nil or item == nil or BridgeGunfight == nil or BridgeInventory == nil then return false end
+    if not BridgeInventory.isGun(item) then return false end
+    if not canHandOver(b, player, item) then return false end
+    if BridgeGunfight.assignedItem(b) == item then return false end
+    local top = false
+    pcall(function() top = item:getContainer() == b:getInventory() end)
+    local ok = false
+    if top then
+        ok = BridgeInventory.handsGun(b, item)
+    else
+        ok = BridgeInventory.assignOnHer(player, item, "gun")
+    end
+    if ok then refreshOutfit() end
+    return ok == true
+end
+BridgeEquip.acceptGun = acceptGun
+
 local function itemColor(item)
     local r, g, bb = 1, 1, 1
     pcall(function()
@@ -910,6 +930,9 @@ function BridgeEquipSlot:getItem()
         return it
     elseif self.kind == "weapon" then
         return weaponItem(her())
+    elseif self.kind == "gun" then
+        if BridgeGunfight == nil then return nil end
+        return BridgeGunfight.assignedItem(her())
     elseif self.kind == "popup" or self.kind == "dynamic" then
         return self.dynItem
     end
@@ -920,7 +943,8 @@ function BridgeEquipSlot:acceptItem(item)
     local b, player = her(), playerOf(0)
     if b == nil or item == nil then return end
     if self.kind == "gear" then acceptGear(b, player, item, self.cell)
-    elseif self.kind == "weapon" then acceptWeapon(b, player, item) end
+    elseif self.kind == "weapon" then acceptWeapon(b, player, item)
+    elseif self.kind == "gun" then acceptGun(b, player, item) end
 end
 
 function BridgeEquipSlot:canAccept(item)
@@ -932,6 +956,10 @@ function BridgeEquipSlot:canAccept(item)
     elseif self.kind == "weapon" then
         local cur = self:getItem()
         return cur ~= item and BridgeWeapon ~= nil and BridgeWeapon.isMelee(item)
+    elseif self.kind == "gun" then
+        local cur = self:getItem()
+        return cur ~= item and BridgeInventory ~= nil and BridgeInventory.isGun(item)
+            and BridgeGunfight ~= nil
     end
     return false
 end
@@ -1025,10 +1053,16 @@ end
 local function addOffMenu(context, item)
     local b = her()
     if context == nil or item == nil or b == nil then return end
-    local isGear, isWeapon = false, false
+    local isGear, isWeapon, isGun = false, false, false
     pcall(function() isGear = BridgeGear ~= nil and type(BridgeGear.isGear) == "function" and BridgeGear.isGear(b, item) == true end)
     pcall(function() isWeapon = BridgeWeapon ~= nil and type(BridgeWeapon.isAssigned) == "function" and BridgeWeapon.isAssigned(b, item) == true end)
-    if isWeapon and not isGear then
+    pcall(function()
+        isGun = BridgeGunfight ~= nil and BridgeGunfight.assignedItem(b) == item
+    end)
+    if isGun then
+        menuAction(context, tr("MenuUnassignGun"), item,
+            function(t) if BridgeInventory ~= nil then BridgeInventory.dropGun(b, t) end refreshOutfit() end)
+    elseif isWeapon and not isGear then
         menuAction(context, tr("InvUnassign", herName()), item,
             function(t) if BridgeInventory ~= nil then BridgeInventory.drop(b, t) end end)
     elseif isGear then
@@ -1395,6 +1429,11 @@ function BridgeEquipWindow:createChildren()
     self.weaponSlot:initialise()
     self.canvas:addChild(self.weaponSlot)
 
+    self.gunSlot = BridgeEquipSlot:new(L.PANEL_WIDTH - L.WEAPON_SLOT_SIZE - BASE.WEAPON_GUN_RIGHT * L.S,
+        L.Y_OFFSET + BASE.WEAPON_GUN_TOP * L.S, L.WEAPON_SLOT_SIZE, L.WEAPON_SLOT_SIZE, "gun")
+    self.gunSlot:initialise()
+    self.canvas:addChild(self.gunSlot)
+
     self.dynamicSlots = {}
     self.gearSlots = {}
 
@@ -1446,6 +1485,13 @@ function BridgeEquipWindow:relayout()
     self.weaponSlot:setY(L.Y_OFFSET + BASE.WEAPON_PRIMARY_Y * S)
     self.weaponSlot:setWidth(L.WEAPON_SLOT_SIZE)
     self.weaponSlot:setHeight(L.WEAPON_SLOT_SIZE)
+
+    if self.gunSlot ~= nil then
+        self.gunSlot:setX(L.PANEL_WIDTH - L.WEAPON_SLOT_SIZE - BASE.WEAPON_GUN_RIGHT * S)
+        self.gunSlot:setY(L.Y_OFFSET + BASE.WEAPON_GUN_TOP * S)
+        self.gunSlot:setWidth(L.WEAPON_SLOT_SIZE)
+        self.gunSlot:setHeight(L.WEAPON_SLOT_SIZE)
+    end
 
     self.headerH = L.clearance
     self.yHeader = 2
@@ -1852,6 +1898,7 @@ local function findHoverItem(win)
             if slot:isVisible() and slot:isMouseOver() then item = slot.dynItem end
         end
         if win.weaponSlot:isMouseOver() then item = win.weaponSlot:getItem() end
+    if win.gunSlot ~= nil and win.gunSlot:isMouseOver() then item = win.gunSlot:getItem() end
         for _, slot in ipairs(win.superSlots) do
             if slot:isMouseOver() then
                 local it = slot:hoverItem()

@@ -1048,6 +1048,7 @@ function BridgeFight.reset(body)
     BridgeFight.playerFightUntil = 0
     BridgeFight.lastHitChar = nil
     BridgeFight.lastHitHealth = nil
+    if BridgeGunfight ~= nil and BridgeGunfight.reset ~= nil then pcall(BridgeGunfight.reset) end
 end
 
 
@@ -1380,6 +1381,15 @@ function BridgeFight.update(body)
             and BridgeAim.step(body, red) then
             return true
         end
+    end
+    if BridgeGunfight ~= nil and BridgeGunfight.hasGun ~= nil and BridgeGunfight.hasGun() then
+        local ok, busy = pcall(function() return BridgeGunfight.update(body) end)
+        if not ok then
+            BridgeFight.info = "gun error: " .. tostring(busy)
+            Bridge.logError("gun", busy)
+            return false
+        end
+        return busy == true
     end
     local mode = BridgeFight.mode()
     watchCrawlers(body, red)

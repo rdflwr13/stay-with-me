@@ -1039,6 +1039,23 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.gunType ~= nil then
+        local gt = args.gunType
+        if gt == "" then
+            if rec.gunType ~= nil or rec.gunId ~= nil then
+                rec.gunType, rec.gunId = nil, nil
+                changed = true
+            end
+        elseif type(gt) == "string" and #gt <= 64 and BridgeGunRules ~= nil and BridgeGunRules.validType(gt) then
+            local gid = tonumber(args.gunId)
+            if rec.gunType ~= gt or rec.gunId ~= gid then
+                rec.gunType, rec.gunId = gt, gid
+                changed = true
+            end
+        else
+            log("state: rejected primary gun type " .. tostring(gt))
+        end
+    end
     if args.name ~= nil then
         local nm = BridgeData.cleanName(args.name)
         if BridgeData.isMale(rec) then rec.maleName = nm else rec.name = nm end
@@ -1704,6 +1721,138 @@ BridgeServer.Commands.look = function(player, args)
         end
     end
 end
+
+
+BridgeServer.gunAt = BridgeServer.gunAt or {}
+
+local function gunTarget(args)
+    local target = nil
+    local tid = tonumber(args and args.targetId)
+    pcall(function()
+        local list = getCell():getZombieList()
+        for i = 0, list:size() - 1 do
+            local z = list:get(i)
+            if z ~= nil and tid ~= nil then
+                local oid = nil
+                pcall(function() oid = z:getOnlineID() end)
+                if oid == tid then target = z break end
+            end
+        end
+        if target == nil then
+            local x, y, zz = tonumber(args.x), tonumber(args.y), tonumber(args.z)
+            if x == nil or y == nil or zz == nil then return end
+            for i = 0, list:size() - 1 do
+                local z = list:get(i)
+                if z ~= nil and math.abs(z:getZ() - zz) < 0.5 and dist(z, x, y) <= 1.0 then
+                    target = z
+                    break
+                end
+            end
+        end
+    end)
+    return target
+end
+
+
+BridgeServer.Commands.gunShot = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    local function reject(why)
+        sendServerCommand(player, "Bridge", "gunResult", { ok = false, why = why })
+        log("gunShot rejected for " .. tostring(who) .. ": " .. tostring(why))
+    end
+    if rec.bodyId == nil then return reject("no companion") end
+    local body = currentBody(who, rec)
+    if body == nil then return reject("no companion body") end
+    if rec.gunType == nil then return reject("no primary gun") end
+
+    local gun = nil
+    pcall(function() gun = instanceItem(rec.gunType) end)
+    if gun == nil or not BridgeGunRules.valid(gun) then return reject("invalid gun") end
+
+    local target = gunTarget(args)
+    if target == nil then return reject("no target") end
+    if target == body or BridgeServer.isCompanionBody(target) then return reject("companion target") end
+    if BridgeGunRules.isForeignNpc(target) ~= nil then return reject("friendly npc") end
+
+    local alive = false
+    pcall(function() alive = target:isAlive() and target:getHealth() > 0 and not target:isOnKillDone() end)
+    if not alive then return reject("target dead") end
+    if math.abs(target:getZ() - body:getZ()) >= 0.8 then return reject("target on another floor") end
+
+    local desc = BridgeGunRules.describe(gun)
+    local d = dist(body, target:getX(), target:getY())
+    if d > desc.range + 1 then return reject("target out of range") end
+    if not BridgeGunRules.lineClear(getCell(), body:getX(), body:getY(), body:getZ(),
+        target:getX(), target:getY(), target:getZ()) then
+        return reject("no line")
+    end
+
+    local now = getTimestampMs()
+    local interval = math.max(20, desc.recoilDelay) * 1000 / 60
+    local last = BridgeServer.gunAt[who] or -1000000
+    if now - last < interval then return reject("rate limited") end
+    BridgeServer.gunAt[who] = now
+
+    local chance = BridgeGunRules.hitChance(desc, d, false)
+    local hit = ZombRand(100) < chance
+    local crit = false
+    local reaction = nil
+    local damage = 0
+    local hpBefore, hpAfter = 0, 0
+    pcall(function() hpBefore = target:getHealth() end)
+    if hit then
+        crit = ZombRand(100) < (desc.critChance or 0)
+        damage = BridgeGunRules.rollDamage(desc)
+        if crit then damage = damage * math.max(1, math.min(5, desc.critMult or 2)) end
+        local fake = nil
+        pcall(function() fake = getCell():getFakeZombieForHit() end)
+        local attacker = fake or body
+        reaction = BridgeGunRules.shotReaction(body, target, crit)
+        pcall(function() attacker:setVariable("ZombieHitReaction", reaction) end)
+        pcall(function() body:setVariable("ZombieHitReaction", reaction) end)
+        pcall(function() target:setHitFromBehind(body:isBehind(target)) end)
+        pcall(function() target:setAttackedBy(attacker) end)
+        pcall(function() target:setPlayerAttackPosition(target:testDotSide(body)) end)
+        pcall(function() target:setHitHeadWhileOnFloor(0) end)
+        pcall(function() target:setHitLegsWhileOnFloor(false) end)
+        pcall(function() body:setCriticalHit(crit) end)
+        local ok, err = pcall(function() target:Hit(gun, attacker, damage, false, 1, false) end)
+        pcall(function() body:setCriticalHit(false) end)
+        if not ok then log("gunShot Hit failed: " .. tostring(err)) end
+    end
+    hpAfter = hpBefore
+    pcall(function() hpAfter = target:getHealth() end)
+
+    pcall(function()
+        local radius = (desc.soundRadius or 20) * BridgeGunRules.noiseMultiplier()
+        local outside = true
+        pcall(function() outside = body:isOutside() ~= false end)
+        if not outside then radius = radius * 0.5 end
+        local ok = pcall(function() body:addWorldSoundUnlessInvisible(radius, desc.soundVolume, true) end)
+        if not ok then
+            addSound(body, body:getX(), body:getY(), body:getZ(), radius, desc.soundVolume)
+        end
+    end)
+
+    sendServerCommand(player, "Bridge", "gunResult",
+        { ok = true, hit = hit, crit = crit, reaction = reaction, damage = damage, hpBefore = hpBefore,
+            hpAfter = hpAfter, distance = d, chance = chance })
+
+    local fx = { owner = who, id = rec.bodyId, kind = desc.kind, sound = desc.sound,
+        radius = desc.soundRadius, volume = desc.soundVolume }
+    for _, p in pairs(BridgeServer.online) do
+        if p ~= nil then
+            local near = true
+            pcall(function() near = dist(p, body:getX(), body:getY()) <= LOOK_NEAR end)
+            if near then sendServerCommand(p, "Bridge", "gunFx", fx) end
+        end
+    end
+
+    log(string.format("gunShot %s d=%.1f chance=%.0f hit=%s dmg=%.2f hp=%.2f->%.2f",
+        tostring(rec.gunType), d, chance, tostring(hit), damage, hpBefore, hpAfter))
+end
+
 
 
 

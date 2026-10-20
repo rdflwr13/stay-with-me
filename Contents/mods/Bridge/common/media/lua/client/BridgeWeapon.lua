@@ -417,7 +417,7 @@ end
 
 function BridgeWeapon.ownChoice(body)
 
-
+    if BridgeGunfight ~= nil and BridgeGunfight.hasGun ~= nil and BridgeGunfight.hasGun() then return nil end
     if Bridge.mp and not Bridge.drivable() then return nil end
     local cur = BridgeWeapon.assigned(body)
 
@@ -1032,6 +1032,11 @@ end
 
 function BridgeWeapon.drawMoved(body, inFight, stuck)
     if BridgeWeapon.move ~= nil then return true end
+    if BridgeGunfight ~= nil and BridgeGunfight.hasGun ~= nil and BridgeGunfight.hasGun() then
+        local held = nil
+        pcall(function() held = body:getPrimaryHandItem() end)
+        if held ~= nil and BridgeGunRules ~= nil and BridgeGunRules.isGun(held) then return true end
+    end
     local item = BridgeWeapon.assigned(body)
     if item == nil then return false end
     if BridgeWeapon.drawPaused(item) then return false, "paused" end
@@ -1198,6 +1203,8 @@ end
 
 
 function BridgeWeapon.update(body)
+
+    if BridgeGunfight ~= nil and BridgeGunfight.hasGun ~= nil and BridgeGunfight.hasGun() then return end
     if Bridge.zombieTicks % 10 ~= 0 then return end
     if BridgeWeapon.body ~= body then
         BridgeWeapon.reset()
