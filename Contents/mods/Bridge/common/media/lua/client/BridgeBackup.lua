@@ -92,9 +92,11 @@ end
 
 
 local function countRecords(enc)
+    enc = BridgeItems.text(enc)
     if enc == nil or enc == "" then return 0 end
-    local _, commas = string.gsub(enc, ",", ",")
-    return commas + 1
+    local ok, list = pcall(BridgeItems.decode, enc)
+    if ok and type(list) == "table" then return #list end
+    return 0
 end
 
 
@@ -224,6 +226,7 @@ function BridgeBackup.noteItems(body, encoded)
     if not active() or BridgeBackup.key == nil or body == nil then return end
     local who = BridgeData.me()
     if who == nil then return end
+    encoded = BridgeItems.text(encoded) or ""
     local ids = BridgeBackup.idsOf(body)
 
 
@@ -320,8 +323,8 @@ local function signature(md)
 
 
             local cur = BridgeBackup.items[who]
-            local items = tostring(rec.items or "")
-            if cur ~= nil and cur.enc == rec.items and cur.sig ~= nil then items = cur.sig .. "\n" .. joinIds(cur.ids) end
+            local items = BridgeItems.get(rec) or ""
+            if cur ~= nil and cur.enc == items and cur.sig ~= nil then items = cur.sig .. "\n" .. joinIds(cur.ids) end
             parts[#parts + 1] = who .. "\n" .. fields(rec, true) .. "\n" .. items
             for _, g in ipairs(BridgeBackup.held[who] or {}) do parts[#parts + 1] = "h" .. tostring(g.ids[1]) end
         end
@@ -335,7 +338,7 @@ function BridgeBackup.fullState(md)
     local parts = {}
     for _, who in ipairs(sortedWho(md.players)) do
         local rec = md.players[who]
-        if type(rec) == "table" then parts[#parts + 1] = fields(rec, false) .. "\n" .. tostring(rec.items or "") end
+        if type(rec) == "table" then parts[#parts + 1] = fields(rec, false) .. "\n" .. (BridgeItems.get(rec) or "") end
     end
     return table.concat(parts, "\n")
 end
@@ -353,11 +356,12 @@ function BridgeBackup.write(md, sig)
         if type(rec) == "table" then
             local w = escWho(who)
             lines[#lines + 1] = "P " .. w .. " " .. fields(rec, false)
-            if rec.items ~= nil and rec.items ~= "" then
-                lines[#lines + 1] = "I " .. w .. " " .. tostring(rec.items)
+            local items = BridgeItems.get(rec)
+            if items ~= nil and items ~= "" then
+                lines[#lines + 1] = "I " .. w .. " " .. items
                 local cur = BridgeBackup.items[who]
-                if cur ~= nil and cur.enc == rec.items and cur.ids ~= nil then
-                    lines[#lines + 1] = "D " .. w .. " " .. joinIds(cur.ids, math.min(#cur.ids, countRecords(rec.items)))
+                if cur ~= nil and cur.enc == items and cur.ids ~= nil then
+                    lines[#lines + 1] = "D " .. w .. " " .. joinIds(cur.ids, math.min(#cur.ids, countRecords(items)))
                 elseif rec.bkIds ~= nil then
 
 
@@ -500,7 +504,7 @@ function BridgeBackup.check(md)
                 back = back + #recs
             end
             if #list > 0 then
-                rec.items = BridgeItems.encode(list)
+                BridgeItems.set(rec, BridgeItems.encode(list))
                 rec.saved = 1
 
 
@@ -508,7 +512,7 @@ function BridgeBackup.check(md)
             elseif rec.saved == 1 then
 
 
-                rec.items = ""
+                BridgeItems.set(rec, "")
             else
                 rec.items = nil
             end
@@ -589,7 +593,7 @@ function BridgeBackup.dedupe(rec)
             map[i] = #out
         end
     end
-    rec.items = BridgeItems.encode(out)
+    BridgeItems.set(rec, BridgeItems.encode(out))
     rec.saved = 1
     pcall(function() red:getModData()[TAKEN_KEY] = nil end)
     if freed > 0 then log("checked with player: " .. tostring(freed) .. " of her items were in a bag he holds, back to her") end
@@ -636,13 +640,14 @@ function BridgeBackup.tick()
             local who = BridgeData.me()
             local rec = who and md.players[who]
             local cur = who and BridgeBackup.items[who]
-            if type(rec) == "table" and rec.items ~= nil and (cur == nil or cur.enc == rec.items) then
+            local items = BridgeItems.get(rec)
+            if type(rec) == "table" and items ~= nil and (cur == nil or cur.enc == items) then
                 local ids = BridgeBackup.idsOf(Bridge.body)
-                if #ids == countRecords(rec.items) and (cur == nil or joinIds(ids) ~= joinIds(cur.ids)) then
+                if #ids == countRecords(items) and (cur == nil or joinIds(ids) ~= joinIds(cur.ids)) then
                     if cur ~= nil then holdTaken(who, cur, ids) end
                     local sig = cur and cur.sig or nil
-                    if sig == nil then pcall(function() sig = BridgeItems.signature(BridgeItems.decode(rec.items)) end) end
-                    BridgeBackup.items[who] = { enc = rec.items, ids = ids, sig = sig }
+                    if sig == nil then pcall(function() sig = BridgeItems.signature(BridgeItems.decode(items)) end) end
+                    BridgeBackup.items[who] = { enc = items, ids = ids, sig = sig }
                 end
             end
         end

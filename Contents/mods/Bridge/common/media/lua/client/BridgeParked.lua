@@ -95,7 +95,7 @@ end
 function BridgeParked.rebuild()
     local md = store()
     local text = ""
-    if md ~= nil and type(md.items) == "string" then text = md.items end
+    if md ~= nil then text = BridgeItems.get(md) or "" end
     local list = {}
     pcall(function() list = BridgeItems.decode(text) end)
 
@@ -189,7 +189,7 @@ function BridgeParked.save()
     end
     local saved = false
     pcall(function()
-        md.items = text
+        BridgeItems.set(md, text)
         md.saved = 1
         md.cut = nil
         saved = true

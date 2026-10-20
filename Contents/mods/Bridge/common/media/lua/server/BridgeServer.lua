@@ -538,8 +538,9 @@ BridgeServer.Commands.despawn = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
     local function storeItems()
-        if type(args.items) == "string" and #args.items <= BridgeItems.MAX_LENGTH and rec.items ~= args.items then
-            rec.items = args.items
+        local items = BridgeItems.text(args.items)
+        if type(items) == "string" and #items <= BridgeItems.MAX_LENGTH and BridgeItems.text(rec.items) ~= items then
+            BridgeItems.set(rec, items)
             rec.saved = 1
             transmit()
         end
@@ -899,7 +900,7 @@ local function journalStart(md)
                     if ep ~= tostring(prev) or (tonumber(iseq) or 0) > saved then
                         keep[#keep + 1] = line
                         pending[who] = pending[who] or {}
-                        pending[who][#pending[who] + 1] = { kind = kind, id = tonumber(id), items = items }
+                        pending[who][#pending[who] + 1] = { kind = kind, id = tonumber(id), items = BridgeItems.store(items) }
                     end
                 end
             end
@@ -967,7 +968,7 @@ local function journalReconcile(who, player)
         local text = BridgeItems.encode(items)
         local fit = #BridgeItems.decode(text)
         if fit < #items then log("journal: " .. tostring(who) .. " snapshot full, " .. tostring(#items - fit) .. " records cut") end
-        rec.items = text
+        BridgeItems.set(rec, text)
         rec.saved = 1
         rec.iseq = (rec.iseq or 0) + 1
         transmit()
@@ -981,12 +982,13 @@ BridgeServer.Commands.outfit = function(player, args)
     local rec = record(player:getUsername())
 
 
-    if type(args.items) ~= "string" or #args.items > BridgeItems.MAX_LENGTH then return end
+    local items = BridgeItems.text(args.items)
+    if type(items) ~= "string" or #items > BridgeItems.MAX_LENGTH then return end
 
 
     if type(args.iseq) == "number" and type(rec.iseq) == "number" and args.iseq < rec.iseq then return end
-    if args.items ~= rec.items then
-        rec.items = args.items
+    if items ~= BridgeItems.text(rec.items) then
+        BridgeItems.set(rec, items)
         rec.saved = 1
         transmit()
     end
@@ -1029,9 +1031,10 @@ BridgeServer.Commands.state = function(player, args)
             end
         end
     end
-    if type(args.items) == "string" and #args.items <= BridgeItems.MAX_LENGTH then
-        if rec.items ~= args.items then
-            rec.items = args.items
+    local items = BridgeItems.text(args.items)
+    if type(items) == "string" and #items <= BridgeItems.MAX_LENGTH then
+        if BridgeItems.text(rec.items) ~= items then
+            BridgeItems.set(rec, items)
             rec.saved = 1
             changed = true
         end
@@ -2310,6 +2313,7 @@ BridgeServer.Commands.give = function(player, args)
         flatten(recs[i], nil, list)
     end
     local items = BridgeItems.encode(list)
+    if BridgeItems.overBlock() then return fail("carrying too much") end
     if #BridgeItems.decode(items) ~= #list then return fail("snapshot full") end
     local ok, err = pcall(function()
         for i = 1, #found do
@@ -2320,7 +2324,7 @@ BridgeServer.Commands.give = function(player, args)
         end
     end)
     if not ok then return fail("remove failed: " .. tostring(err)) end
-    rec.items = items
+    BridgeItems.set(rec, items)
     rec.saved = 1
     rec.iseq = (rec.iseq or 0) + 1
     local outIds = {}
@@ -2442,13 +2446,14 @@ BridgeServer.Commands.fetchSupply = function(player, args)
     local r = BridgeItems.record(item, true)
     flatten(r, nil, list)
     local items = BridgeItems.encode(list)
+    if BridgeItems.overBlock() then return fail("carrying too much") end
     if #BridgeItems.decode(items) ~= #list then return fail("snapshot full") end
     local ok, err = pcall(function()
         container:Remove(item)
         sendRemoveItemFromContainer(container, item)
     end)
     if not ok then return fail("remove failed: " .. tostring(err)) end
-    rec.items = items
+    BridgeItems.set(rec, items)
     rec.saved = 1
     rec.iseq = (rec.iseq or 0) + 1
     local outIds = { item:getID() }
@@ -2559,7 +2564,7 @@ BridgeServer.Commands.take = function(player, args)
         end
         usedDirect = (destC ~= nil and directCount == #made and #made > 0)
     end
-    rec.items = BridgeItems.encode(out)
+    BridgeItems.set(rec, BridgeItems.encode(out))
     rec.saved = 1
     rec.iseq = (rec.iseq or 0) + 1
     local outIds = {}

@@ -4107,6 +4107,9 @@ end
 
 function BridgeTask.lootDestFor(body, item, dests)
     if item == nil or dests == nil then return nil end
+    if BridgeInventory ~= nil and type(BridgeInventory.capBlocked) == "function" and BridgeInventory.capBlocked() then
+        return nil
+    end
     for i = 1, #dests do
         local ok = nil
         pcall(function() ok = BridgeInventory.roomVerdict(dests[i], item) end)
@@ -4126,6 +4129,14 @@ function BridgeTask.lootWeight(item)
     return w
 end
 
+local lootTraceSeen = {}
+local function lootTrace(key, text)
+    if Bridge == nil or not Bridge.verbose then return end
+    if lootTraceSeen[key] then return end
+    lootTraceSeen[key] = true
+    log(text)
+end
+
 function BridgeTask.lootFilter(item, kind)
     if item == nil or BridgeData == nil then return false end
     local rec = Bridge ~= nil and Bridge.store or nil
@@ -4133,7 +4144,9 @@ function BridgeTask.lootFilter(item, kind)
     local w = BridgeTask.lootWeight(item)
     if maxW > 0 and w > maxW then
         if Bridge ~= nil and Bridge.verbose then
-            log(string.format("loot skip heavy %s w=%.2f > %.2f", tostring(item:getType()), w, maxW))
+            local t = tostring(item:getType())
+            lootTrace("heavy|" .. t .. "|" .. tostring(maxW),
+                string.format("loot skip heavy %s w=%.2f > %.2f", t, w, maxW))
         end
         return true
     end
@@ -4145,14 +4158,18 @@ function BridgeTask.lootFilter(item, kind)
         if Bridge ~= nil and Bridge.verbose then
             local disp = nil
             pcall(function() disp = item:getDisplayCategory() end)
-            log(string.format("loot skip cat %s pool=%s disp=%s", tostring(item:getType()), tostring(pool), tostring(disp)))
+            local t = tostring(item:getType())
+            lootTrace("cat|" .. t .. "|" .. tostring(pool),
+                string.format("loot skip cat %s pool=%s disp=%s", t, tostring(pool), tostring(disp)))
         end
         return true
     end
     if Bridge ~= nil and Bridge.verbose then
         local disp = nil
         pcall(function() disp = item:getDisplayCategory() end)
-        log(string.format("loot take %s pool=%s disp=%s", tostring(item:getType()), tostring(pool), tostring(disp)))
+        local t = tostring(item:getType())
+        lootTrace("take|" .. t .. "|" .. tostring(pool),
+            string.format("loot take %s pool=%s disp=%s", t, tostring(pool), tostring(disp)))
     end
     return false
 end

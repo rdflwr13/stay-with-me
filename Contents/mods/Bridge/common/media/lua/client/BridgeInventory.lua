@@ -46,6 +46,19 @@ function BridgeInventory.sayFull()
 end
 
 
+function BridgeInventory.capBlocked()
+    return BridgeItems ~= nil and type(BridgeItems.overBlock) == "function" and BridgeItems.overBlock() == true
+end
+
+
+function BridgeInventory.notifyCapBlocked()
+    pcall(BridgeInventory.sayFull)
+    if BridgeInventoryWarn ~= nil and type(BridgeInventoryWarn.check) == "function" then
+        pcall(BridgeInventoryWarn.check, BridgeItems.lastLength, BridgeItems.MAX_LENGTH, BridgeItems.truncated == true)
+    end
+end
+
+
 local function codes(...)
     local t = { ... }
     local out = {}
@@ -1941,6 +1954,12 @@ function BridgeInventory.roomVerdict(container, a, b2)
     end
     if item == nil and w == nil then return nil end
     if item ~= nil then
+        local srcInternal = false
+        pcall(function()
+            local src = item:getContainer()
+            srcInternal = src ~= nil and (BridgeInventory.inBody(src) or BridgeInventory.isHers(src))
+        end)
+        if not srcInternal and BridgeInventory.capBlocked() then return false end
         if not container:isItemAllowed(item) then return false end
         local heavy = false
         pcall(function() heavy = chr ~= nil and chr:getVehicle() ~= nil and item:hasTag(ItemTag.HEAVY_ITEM) end)
@@ -2001,6 +2020,15 @@ end
 
 function BridgeInventory.overflowDest(b, player, item, exclude)
     if b == nil or item == nil then return nil end
+    local internal = false
+    pcall(function()
+        local src = item:getContainer()
+        internal = src ~= nil and (BridgeInventory.inBody(src) or BridgeInventory.isHers(src))
+    end)
+    if not internal and BridgeInventory.capBlocked() then
+        pcall(BridgeInventory.notifyCapBlocked)
+        return nil
+    end
     local found = nil
     for _, bag in ipairs(BridgeInventory.wornBags(b)) do
         if found == nil then
@@ -3857,7 +3885,14 @@ function BridgeInventory.giveFailed(args)
         if ids[i] ~= nil then BridgeInventory.pending[ids[i]] = nil end
     end
     if args.token ~= nil then BridgeInventory.answers[args.token] = { ok = false, why = args.why } end
-    log("give failed: " .. tostring(args.why))
+    if args.why == "carrying too much" or args.why == "snapshot full" then
+        pcall(BridgeInventory.notifyCapBlocked)
+    end
+    BridgeInventory.giveFailSeen = BridgeInventory.giveFailSeen or {}
+    if not BridgeInventory.giveFailSeen[args.why] then
+        BridgeInventory.giveFailSeen[args.why] = true
+        log("give failed: " .. tostring(args.why))
+    end
 end
 
 
@@ -4078,6 +4113,12 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
         if self.bridgeDir == "give" then
             if BridgeInventory.pending[self.item:getID()] ~= nil then return false end
             if self.bridgeSrc == nil and self.srcContainer:getOutermostContainer() ~= inv then return false end
+            local srcHers = false
+            pcall(function() srcHers = BridgeInventory.inBody(self.srcContainer) or BridgeInventory.isHers(self.srcContainer) end)
+            if not srcHers and BridgeInventory.capBlocked() then
+                pcall(BridgeInventory.notifyCapBlocked)
+                return false
+            end
             if not room() then
                 pcall(BridgeInventory.sayFull)
                 return false
@@ -4515,6 +4556,19 @@ BridgeInventory.wrapGiveRoom = function()
     if inner == nil then return end
     ISInventoryTransferAction.bridgeGiveRoomWrapped = true
     ISInventoryTransferAction.isValid = function(self, ...)
+        if BridgeInventory.capBlocked() then
+            local srcHers, destHers = false, false
+            pcall(function()
+                srcHers = self ~= nil and self.srcContainer ~= nil
+                    and (BridgeInventory.inBody(self.srcContainer) or BridgeInventory.isHers(self.srcContainer))
+                destHers = self ~= nil and self.destContainer ~= nil
+                    and (BridgeInventory.inBody(self.destContainer) or BridgeInventory.isHers(self.destContainer))
+            end)
+            if destHers and not srcHers then
+                pcall(BridgeInventory.notifyCapBlocked)
+                return false
+            end
+        end
         local ok = inner(self, ...)
         if ok then return ok end
         local good = false

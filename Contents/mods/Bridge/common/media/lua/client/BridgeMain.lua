@@ -776,13 +776,28 @@ end
 
 
 
+local function checkInventoryWarning()
+    if BridgeInventoryWarn ~= nil and type(BridgeInventoryWarn.check) == "function" then
+        pcall(BridgeInventoryWarn.check, BridgeItems.lastLength, BridgeItems.MAX_LENGTH, BridgeItems.truncated == true)
+    end
+end
+
+
+local function logSnapshotState(key, text)
+    Bridge.snapshotLogSeen = Bridge.snapshotLogSeen or {}
+    if Bridge.snapshotLogSeen[key] then return end
+    Bridge.snapshotLogSeen[key] = true
+    log(text)
+end
+
+
 function Bridge.saveOutfit(encoded, force)
     if not Bridge.alive() or Bridge.kind ~= "zombie" then return false end
     local md = outfitStore()
     if md == nil then return false end
 
     if not force and Bridge.redressedByGame(Bridge.body) then
-        log("snapshot skipped: body re-dressed by the game")
+        logSnapshotState("redressed", "snapshot skipped: body re-dressed by the game")
         return false
     end
     if encoded == nil then
@@ -793,23 +808,25 @@ function Bridge.saveOutfit(encoded, force)
         end
         encoded = snap
     end
-    if not force and type(md.items) == "string" and md.items ~= "" and md.saved == 1 then
+    checkInventoryWarning()
+    local saved = BridgeItems.get(md)
+    if not force and type(saved) == "string" and saved ~= "" and md.saved == 1 then
         if encoded == "" then
-            log("snapshot refused: empty while a save exists (kept last)")
+            logSnapshotState("empty", "snapshot refused: empty while a save exists (kept last)")
             return false
         end
         if BridgeItems.truncated == true then
-            log("snapshot refused: truncated while a save exists (kept last)")
+            logSnapshotState("truncated", "snapshot refused: truncated while a save exists (kept last)")
             return false
         end
     end
     local ok = pcall(function()
-        md.items = encoded
+        BridgeItems.set(md, encoded)
         md.saved = 1
         md.cut = (BridgeItems.truncated == true) and 1 or nil
 
 
-        if Bridge.mp and not force then sendClientCommand(BridgeData.owner(), "Bridge", "outfit", { items = encoded, iseq = Bridge.iseq }) end
+        if Bridge.mp and not force then sendClientCommand(BridgeData.owner(), "Bridge", "outfit", { items = BridgeItems.store(encoded), iseq = Bridge.iseq }) end
     end)
     if ok then
         Bridge.itemsSeen = encoded
@@ -1690,7 +1707,7 @@ function Bridge.despawn(skipSave)
         local items = Bridge.rebuildSnap
         pcall(function()
             sendClientCommand(BridgeData.owner(), "Bridge", "despawn",
-                { byCommand = Bridge.despawnByCommand == true, id = id, items = items })
+                { byCommand = Bridge.despawnByCommand == true, id = id, items = BridgeItems.store(items) })
         end)
         Bridge.rebuildSnap = nil
 
@@ -2677,9 +2694,11 @@ function Bridge.liveOutfitSnapshot()
     local ok, snap = pcall(function()
         return BridgeInventory.encode(BridgeInventory.snapshot(Bridge.body))
     end)
+    checkInventoryWarning()
     if not ok or BridgeItems.truncated == true then return nil, "outfit" end
     local st = Bridge.store
-    if snap == "" and st ~= nil and type(st.items) == "string" and st.items ~= "" then
+    local saved = BridgeItems.get(st)
+    if snap == "" and st ~= nil and type(saved) == "string" and saved ~= "" then
         return nil, "outfit not ready"
     end
     return snap
@@ -4823,18 +4842,21 @@ local function itemselftest()
     local N = 250
     local flat = {}
     for i = 1, N do flat[i] = { t = "Base.Axe", h = 4, c = 2, w = false } end
-    local text1 = BridgeItems.encode(flat)
+    local text1 = BridgeItems.encodeOriginal(flat)
     check("flat: one coalesced part", select(2, string.gsub(text1, ",", "")) == 0)
     check("flat: q=" .. N .. " present", string.find(text1, ";q=" .. N, 1, true) ~= nil)
     local got1 = BridgeItems.decode(text1)
     check("flat: decode length " .. #got1, #got1 == N)
     check("flat: re-encode stable", BridgeItems.encode(got1) == BridgeItems.encode(flat))
+    local compact1 = BridgeItems.encode(flat)
+    check("compact: prefix", string.sub(compact1, 1, 2) == "B2")
+    check("compact: roundtrip", #BridgeItems.decode(compact1) == N)
 
     local mixed = {}
     for _ = 1, 3 do mixed[#mixed + 1] = { t = "Base.Axe", h = 4, c = 2 } end
     mixed[#mixed + 1] = { t = "Base.Hammer", h = 2, c = 3 }
     for _ = 1, 2 do mixed[#mixed + 1] = { t = "Base.Axe", h = 4, c = 2 } end
-    local text2 = BridgeItems.encode(mixed)
+    local text2 = BridgeItems.encodeOriginal(mixed)
     check("mixed: two runs separated", select(2, string.gsub(text2, ",", "")) == 2)
     local got2 = BridgeItems.decode(text2)
     check("mixed: length", #got2 == #mixed)
@@ -4869,6 +4891,20 @@ local function itemselftest()
 
     check("empty: encode", BridgeItems.encode({}) == "")
     check("empty: decode", #BridgeItems.decode("") == 0)
+
+    local shortText = "short inventory"
+    check("chunk: short unchanged", BridgeItems.store(shortText) == shortText)
+    check("chunk: nil", BridgeItems.store(nil) == nil and BridgeItems.text(nil) == nil)
+    local longText = string.rep("a", BridgeItems.CHUNK * 3 + 17)
+    local stored = BridgeItems.store(longText)
+    check("chunk: long is table", type(stored) == "table" and #stored >= 4)
+    check("chunk: roundtrip", BridgeItems.text(stored) == longText)
+    local rec = {}
+    BridgeItems.set(rec, longText)
+    check("chunk: set long", type(rec.items) == "table" and BridgeItems.get(rec) == longText)
+    BridgeItems.set(rec, shortText)
+    check("chunk: set short", rec.items == shortText)
+    check("chunk: decode table", #BridgeItems.decode(stored) == 1)
 
     local foodRec = { t = "Base.GranolaBar", h = 4, a = 12.5, fp = 0.5 }
     local got5 = BridgeItems.decode(BridgeItems.encode({ foodRec }))
@@ -6118,7 +6154,7 @@ function Bridge.diagLines()
             pcall(function()
                 local md = Bridge.store
                 if md == nil then add("saved_items", "no store")
-                else add("saved_items", tostring(md.items or "")) end
+                else add("saved_items", tostring(BridgeItems.get(md) or "")) end
                 if md == nil then add("items_cut", "0")
                 else add("items_cut", tostring(md.cut or 0)) end
             end)

@@ -1268,7 +1268,7 @@ function BridgeData.world(owner)
             if who == nil then return end
             local rec = md.players[who] or {}
             if rec.items == nil and old.items ~= nil then
-                rec.items = old.items
+                BridgeItems.set(rec, old.items)
                 rec.saved = old.saved
             end
             if rec.want == nil and old.want ~= nil then rec.want = old.want end
