@@ -4296,12 +4296,22 @@ function BridgeTask.lootAbortAct()
     BridgeTask.lootAct = nil
     BridgeTask.lootSrc = nil
     if act == nil then return end
+    local started = act.started == true
+    if not started and act.action ~= nil and BridgeQueue ~= nil
+            and getmetatable(act.action) == BridgeQueue.Fake then
+        started = act.action.started == true
+    end
+    if not started and act.loopSound ~= nil then started = true end
     pcall(function()
         if BridgeQueue ~= nil and BridgeQueue.indexOf ~= nil then
             local i = BridgeQueue.indexOf(act)
             if i ~= nil then table.remove(BridgeQueue.jobs, i) end
         end
-        act:forceCancel()
+        if started then
+            act:stop()
+        else
+            act:forceCancel()
+        end
     end)
 end
 
@@ -6117,7 +6127,12 @@ function BridgeTask.kinds.shower.update(body)
 
         pcall(function() if BridgeEquip ~= nil and BridgeEquip.close ~= nil then BridgeEquip.close() end end)
 
-        pcall(function() BridgeShower.snapshotOutfit(body) end)
+        local snapOk = false
+        pcall(function() snapOk = BridgeShower.snapshotOutfit(body) end)
+        if not snapOk then
+            log("shower: outfit snapshot failed, not undressing")
+            return BridgeTask.finish()
+        end
         pcall(function() BridgeShower.strip(body) end)
         BridgeTask.showerPhase = "undress"
         BridgeTask.showerSince = Bridge.time
