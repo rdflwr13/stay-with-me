@@ -545,16 +545,62 @@ local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "fp", "r", "g", "
                 "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp" }
 local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", fa = "%.3f", sh = "%.3f", fp = "%.4f" }
 BridgeItems.MAX_LENGTH = 60000
+BridgeItems.BLOCK_RATIO = 0.92
+BridgeItems.CHUNK = 8000
+
+
+function BridgeItems.text(value)
+    if value == nil then return nil end
+    if type(value) ~= "table" then return value end
+    return table.concat(value)
+end
+
+
+function BridgeItems.store(value)
+    if value == nil then return nil end
+    if type(value) == "table" then return value end
+    if #value <= BridgeItems.CHUNK then return value end
+
+    local out, i, n = {}, 1, #value
+    while i <= n do
+        local j = math.min(i + BridgeItems.CHUNK - 1, n)
+        local b = string.byte(value, j)
+        if j < n and b >= 0xD800 and b <= 0xDBFF then j = j - 1 end
+        if j < i then j = i end
+        out[#out + 1] = string.sub(value, i, j)
+        i = j + 1
+    end
+    return out
+end
+
+
+function BridgeItems.get(rec)
+    return BridgeItems.text(rec and rec.items)
+end
+
+
+function BridgeItems.set(rec, value)
+    if rec ~= nil then rec.items = BridgeItems.store(value) end
+end
+
+
+function BridgeItems.overBlock()
+    local cap = tonumber(BridgeItems.MAX_LENGTH) or 0
+    local used = tonumber(BridgeItems.lastLength) or 0
+    if BridgeItems.truncated == true then return true end
+    return cap > 0 and used >= cap * (tonumber(BridgeItems.BLOCK_RATIO) or 0.92)
+end
 
 local function clean(s)
     return (string.gsub(tostring(s), "[;,=]", "_"))
 end
 
 
-function BridgeItems.encode(list, skip)
+function BridgeItems.encodeOriginal(list, skip)
     local parts = {}
     local length = 0
     BridgeItems.truncated = false
+    if skip == nil then BridgeItems.lastLength = 0 end
 
     local last, run = nil, 0
     local function flush()
@@ -562,11 +608,18 @@ function BridgeItems.encode(list, skip)
         local part = (run > 1) and (last .. ";q=" .. run) or last
         if length + #part + 1 > BridgeItems.MAX_LENGTH then
             BridgeItems.truncated = true
-            warn("snapshot truncated at " .. tostring(#parts) .. " of " .. tostring(#list) .. " records")
+            if skip == nil then
+                BridgeItems.lastLength = math.min(BridgeItems.MAX_LENGTH, length + #part + 1)
+            end
+            if not BridgeItems.truncatedLogged then
+                BridgeItems.truncatedLogged = true
+                warn("snapshot truncated: " .. tostring(#parts) .. " encoded parts, " .. tostring(#list) .. " item records in memory")
+            end
             return false
         end
         parts[#parts + 1] = part
         length = length + #part + 1
+        if skip == nil then BridgeItems.lastLength = length end
         return true
     end
 
@@ -613,6 +666,93 @@ end
 
 
 
+
+
+local function putPart(out, s)
+    out[#out + 1] = #s .. ":" .. s
+end
+
+
+local function readPart(text, pos)
+    local colon = string.find(text, ":", pos, true)
+    if colon == nil then return nil, pos end
+    local n = tonumber(string.sub(text, pos, colon - 1))
+    if n == nil then return nil, pos end
+    local start = colon + 1
+    return string.sub(text, start, start + n - 1), start + n
+end
+
+
+function BridgeItems.encodeCompact(list, skip)
+    local original = BridgeItems.encodeOriginal(list, skip)
+    if original == "" then return "" end
+
+    local types, typeIds = {}, {}
+    local tokens, tokenIds = {}, {}
+    local values, valueIds = {}, {}
+    local blocks, blockIds = {}, {}
+    local records = {}
+
+    local function intern(tbl, ids, value)
+        local id = ids[value]
+        if id == nil then
+            tbl[#tbl + 1] = value
+            id = #tbl
+            ids[value] = id
+        end
+        return id
+    end
+
+    for record in string.gmatch(original, "[^,]+") do
+        local outFields = {}
+        for field in string.gmatch(record .. ";", "([^;]*);") do
+            if field ~= "" then
+                local key, value = string.match(field, "^([%a]+)=(.*)$")
+                if key == "t" then
+                    outFields[#outFields + 1] = "t=" .. intern(types, typeIds, value)
+                elseif key == "md" then
+                    local packed = BridgeItems.unesc(value)
+                    local pairsOut = {}
+                    for part in string.gmatch(packed .. "|", "([^|]*)|") do
+                        if part ~= "" then
+                            local mk, kind, mv = string.match(part, "^([^~]*)~(%a)~(.*)$")
+                            if mk ~= nil then
+                                local token = mk .. "~" .. kind
+                                local tid = intern(tokens, tokenIds, token)
+                                local vid = intern(values, valueIds, mv)
+                                pairsOut[#pairsOut + 1] = tostring(tid) .. "," .. tostring(vid)
+                            end
+                        end
+                    end
+                    local block = table.concat(pairsOut, ";")
+                    local bid = blockIds[block]
+                    if bid == nil then
+                        blocks[#blocks + 1] = block
+                        bid = #blocks
+                        blockIds[block] = bid
+                    end
+                    outFields[#outFields + 1] = "md=" .. bid
+                else
+                    outFields[#outFields + 1] = field
+                end
+            end
+        end
+        records[#records + 1] = table.concat(outFields, ";")
+    end
+
+    local out = { "B2" }
+    putPart(out, tostring(#types)); for i = 1, #types do putPart(out, types[i]) end
+    putPart(out, tostring(#tokens)); for i = 1, #tokens do putPart(out, tokens[i]) end
+    putPart(out, tostring(#values)); for i = 1, #values do putPart(out, values[i]) end
+    putPart(out, tostring(#blocks)); for i = 1, #blocks do putPart(out, blocks[i]) end
+    putPart(out, tostring(#records)); for i = 1, #records do putPart(out, records[i]) end
+    return table.concat(out)
+end
+
+
+function BridgeItems.encode(list, skip)
+    return BridgeItems.encodeCompact(list, skip)
+end
 
 
 local VOLATILE = { a = true, u = true, fa = true, md = true, bl = true, di = true }
@@ -663,10 +803,11 @@ local function pushRec(list, rec)
     end
 end
 
-function BridgeItems.decode(text)
+function BridgeItems.decodeOriginal(value)
+    local text = BridgeItems.text(value)
     local list = {}
-    if text == nil or text == "" then return list end
-    for part in string.gmatch(tostring(text), "[^,]+") do
+    if type(text) ~= "string" or text == "" then return list end
+    for part in string.gmatch(text, "[^,]+") do
         local f = {}
         for v in string.gmatch(part .. ";", "([^;]*);") do f[#f + 1] = v end
         if f[1] ~= nil and f[1] ~= "" then
@@ -689,6 +830,62 @@ function BridgeItems.decode(text)
         end
     end
     return list
+end
+
+
+function BridgeItems.decodeCompact(text)
+    local pos = 3
+    local function readCount()
+        local s
+        s, pos = readPart(text, pos)
+        return tonumber(s) or 0
+    end
+
+    local types, tokens, values, blocks, records = {}, {}, {}, {}, {}
+    local n = readCount(); for i = 1, n do types[i], pos = readPart(text, pos) end
+    n = readCount(); for i = 1, n do tokens[i], pos = readPart(text, pos) end
+    n = readCount(); for i = 1, n do values[i], pos = readPart(text, pos) end
+    n = readCount(); for i = 1, n do blocks[i], pos = readPart(text, pos) end
+    n = readCount(); for i = 1, n do records[i], pos = readPart(text, pos) end
+
+    local outRecords = {}
+    for _, record in ipairs(records) do
+        local outFields = {}
+        for field in string.gmatch(record .. ";", "([^;]*);") do
+            if field ~= "" then
+                local key, value = string.match(field, "^([%a]+)=(.*)$")
+                if key == "t" then
+                    outFields[#outFields + 1] = "t=" .. (types[tonumber(value)] or "")
+                elseif key == "md" then
+                    local block = blocks[tonumber(value)] or ""
+                    local pairsOut = {}
+                    for pair in string.gmatch(block .. ";", "([^;]*);") do
+                        if pair ~= "" then
+                            local tid, vid = string.match(pair, "^(%d+),(%d+)$")
+                            if tid ~= nil then
+                                local token = tokens[tonumber(tid)] or ""
+                                local mv = values[tonumber(vid)] or ""
+                                pairsOut[#pairsOut + 1] = token .. "~" .. mv
+                            end
+                        end
+                    end
+                    outFields[#outFields + 1] = "md=" .. BridgeItems.esc(table.concat(pairsOut, "|"))
+                else
+                    outFields[#outFields + 1] = field
+                end
+            end
+        end
+        outRecords[#outRecords + 1] = table.concat(outFields, ";")
+    end
+    return BridgeItems.decodeOriginal(table.concat(outRecords, ","))
+end
+
+
+function BridgeItems.decode(value)
+    local text = BridgeItems.text(value)
+    if type(text) ~= "string" or text == "" then return {} end
+    if string.sub(text, 1, 2) == "B2" then return BridgeItems.decodeCompact(text) end
+    return BridgeItems.decodeOriginal(text)
 end
 
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeItems] loaded") end

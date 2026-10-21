@@ -989,13 +989,14 @@ end
 
 
 local function goInside(body, why)
-    pcall(function() Bridge.saveOutfit() end)
+    local saved = false
+    pcall(function() saved = Bridge.saveOutfitForRebuild() end)
     Bridge.hideBody(body, true)
     standUp(body)
     local car = BridgeCar.car
     setInside(car, why)
     if BridgeCar.opened ~= nil then BridgeCar.closeAt = Bridge.time + CLOSE_AFTER end
-    pcall(function() Bridge.despawn() end)
+    pcall(function() Bridge.despawn(saved == true) end)
     Bridge.result = "body parked: in car (" .. tostring(why) .. ")"
 end
 
@@ -1727,10 +1728,11 @@ function BridgeCar.tick()
         local v = nil
         pcall(function() v = red:getVehicle() end)
         if v ~= nil and not redEntering(red) and not redSwitching(red) and not redExiting(red) then
-            pcall(function() Bridge.saveOutfit() end)
+            local saved = false
+            pcall(function() saved = Bridge.saveOutfitForRebuild() end)
             Bridge.parked = true
             Bridge.hideBody(Bridge.body, true)
-            pcall(function() Bridge.despawn() end)
+            pcall(function() Bridge.despawn(saved == true) end)
             BridgeCar.markInside(red, "body driven by another client")
             return
         end

@@ -671,6 +671,18 @@ function BridgeWindowSettings:render()
     if self.aimLabelY ~= nil then
         self:drawText(fitText(UIFont.Small, tr("OptAimSense"), self.width - PAD * 2), PAD, self.aimLabelY, 1, 1, 1, 1, UIFont.Small)
     end
+    if Bridge.genderNoticeText ~= nil and (Bridge.time or 0) < (Bridge.genderNoticeUntil or 0) then
+        local x = PAD
+        local w = self.width - PAD * 2
+        if self.newsBtn ~= nil then
+            x = self.newsBtn:getX() + self.newsBtn:getWidth() + PAD
+            w = self.width - x - PAD
+        end
+        if w > 20 then
+            self:drawText(fitText(UIFont.Small, Bridge.genderNoticeText, w), x,
+                self.newsY + math.floor((BTN_H - FONT_S) / 2), 1, 0.9, 0.45, 1, UIFont.Small)
+        end
+    end
 end
 
 function BridgeWindowSettings:onTick(index, selected, key)
@@ -680,7 +692,11 @@ end
 function BridgeWindowSettings:onGender(combo)
     if combo == nil then return end
     local g = combo:getSelectedData()
-    if g ~= nil and Bridge ~= nil and type(Bridge.setGender) == "function" then Bridge.setGender(g) end
+    if g == nil or Bridge == nil or type(Bridge.setGender) ~= "function" then return end
+    local res = Bridge.setGender(g)
+    if res ~= "gender=" .. tostring(g) and Bridge.store ~= nil then
+        combo:selectData(BridgeData.genderOf(Bridge.store))
+    end
 end
 
 function BridgeWindowSettings:onAimSense(combo)

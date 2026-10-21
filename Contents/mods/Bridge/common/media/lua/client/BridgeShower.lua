@@ -151,15 +151,27 @@ end
 function BridgeShower.snapshotOutfit(b)
     b = b or body()
     if b == nil then return false end
+    BridgeShower.preShower = nil
     local list = nil
     pcall(function() list = BridgeInventory.snapshot(b) end)
     if list == nil then return false end
-    local enc = ""
-    pcall(function() enc = BridgeInventory.encode(list) end)
-    BridgeShower.preShower = { enc = enc }
+
+    BridgeItems.truncated = false
+    local enc = nil
+    local ok = pcall(function() enc = BridgeInventory.encode(list) end)
+    if not ok or type(enc) ~= "string" then return false end
+    if enc == "" and #list > 0 then return false end
+
+
+    if BridgeItems.truncated == true then
+        warn("shower snapshot truncated, refusing to undress")
+        return false
+    end
+
+    BridgeShower.preShower = { enc = enc, list = list }
     pcall(function()
-        if Bridge ~= nil and Bridge.store ~= nil and type(enc) == "string" and enc ~= "" then
-            Bridge.store.showerOutfit = enc
+        if Bridge ~= nil and Bridge.store ~= nil and enc ~= "" then
+            Bridge.store.showerOutfit = BridgeItems.store(enc)
         end
     end)
     log("outfit snapshot taken (" .. tostring(#list) .. " records)")
@@ -221,10 +233,13 @@ function BridgeShower.restorePreShower(b)
     if snap == nil then return false end
     b = b or body()
     if b == nil then return false end
-    local list = nil
-    pcall(function() list = BridgeInventory.decode(snap.enc or "") end)
+    local list = snap.list
+    if list == nil then
+        pcall(function() list = BridgeInventory.decode(snap.enc or "") end)
+    end
     if list == nil then
         BridgeShower.preShower = nil
+        pcall(function() if Bridge ~= nil and Bridge.store ~= nil then Bridge.store.showerOutfit = nil end end)
         return false
     end
     local ok = true
@@ -240,12 +255,12 @@ end
 function BridgeShower.restorePersisted(b)
     b = b or body()
     if b == nil then return false end
-    local enc = nil
-    pcall(function() enc = Bridge ~= nil and Bridge.store ~= nil and Bridge.store.showerOutfit or nil end)
+    local store = (Bridge ~= nil) and Bridge.store or nil
+    local enc = BridgeItems.text(store and store.showerOutfit)
+    if store ~= nil then store.showerOutfit = nil end
     if type(enc) ~= "string" or enc == "" then return false end
     local list = nil
     pcall(function() list = BridgeInventory.decode(enc) end)
-    pcall(function() if Bridge ~= nil and Bridge.store ~= nil then Bridge.store.showerOutfit = nil end end)
     if list == nil then return false end
     pcall(function() BridgeInventory.restore(b, list) end)
     pcall(function() if BridgeInventory.redress ~= nil then BridgeInventory.redress(b, true) end end)

@@ -105,6 +105,13 @@ Bridge.sleepParked = nil
 Bridge.claimParked = nil
 Bridge.gotData = false
 Bridge.leaveAt = nil
+Bridge.leaveTries = nil
+Bridge.rebuildSnap = nil
+Bridge.GENDER_SWAP_COOLDOWN = BridgeData.GENDER_SWAP_COOLDOWN or 60
+Bridge.GENDER_COMBAT_GRACE = BridgeData.GENDER_COMBAT_GRACE or 15
+Bridge.genderCooldownUntil = 0
+Bridge.genderNoticeText = nil
+Bridge.genderNoticeUntil = 0
 
 local IN_FILE = "bridge/in.txt"
 local OUT_FILE = "bridge/out.txt"
@@ -769,13 +776,28 @@ end
 
 
 
-function Bridge.saveOutfit(encoded)
+local function checkInventoryWarning()
+    if BridgeInventoryWarn ~= nil and type(BridgeInventoryWarn.check) == "function" then
+        pcall(BridgeInventoryWarn.check, BridgeItems.lastLength, BridgeItems.MAX_LENGTH, BridgeItems.truncated == true)
+    end
+end
+
+
+local function logSnapshotState(key, text)
+    Bridge.snapshotLogSeen = Bridge.snapshotLogSeen or {}
+    if Bridge.snapshotLogSeen[key] then return end
+    Bridge.snapshotLogSeen[key] = true
+    log(text)
+end
+
+
+function Bridge.saveOutfit(encoded, force)
     if not Bridge.alive() or Bridge.kind ~= "zombie" then return false end
     local md = outfitStore()
     if md == nil then return false end
 
-    if Bridge.redressedByGame(Bridge.body) then
-        log("snapshot skipped: body re-dressed by the game")
+    if not force and Bridge.redressedByGame(Bridge.body) then
+        logSnapshotState("redressed", "snapshot skipped: body re-dressed by the game")
         return false
     end
     if encoded == nil then
@@ -786,23 +808,25 @@ function Bridge.saveOutfit(encoded)
         end
         encoded = snap
     end
-    if type(md.items) == "string" and md.items ~= "" and md.saved == 1 then
+    checkInventoryWarning()
+    local saved = BridgeItems.get(md)
+    if not force and type(saved) == "string" and saved ~= "" and md.saved == 1 then
         if encoded == "" then
-            log("snapshot refused: empty while a save exists (kept last)")
+            logSnapshotState("empty", "snapshot refused: empty while a save exists (kept last)")
             return false
         end
         if BridgeItems.truncated == true then
-            log("snapshot refused: truncated while a save exists (kept last)")
+            logSnapshotState("truncated", "snapshot refused: truncated while a save exists (kept last)")
             return false
         end
     end
     local ok = pcall(function()
-        md.items = encoded
+        BridgeItems.set(md, encoded)
         md.saved = 1
         md.cut = (BridgeItems.truncated == true) and 1 or nil
 
 
-        if Bridge.mp then sendClientCommand(BridgeData.owner(), "Bridge", "outfit", { items = encoded, iseq = Bridge.iseq }) end
+        if Bridge.mp and not force then sendClientCommand(BridgeData.owner(), "Bridge", "outfit", { items = BridgeItems.store(encoded), iseq = Bridge.iseq }) end
     end)
     if ok then
         Bridge.itemsSeen = encoded
@@ -1670,13 +1694,22 @@ function Bridge.spawnPlayer()
     return string.format("spawned player at %.1f %.1f %.0f", x, y, z)
 end
 
-function Bridge.despawn()
+function Bridge.despawn(skipSave)
     pcall(function() BridgeWash.stop("despawn") end)
     if Bridge.alive() then pcall(function() BridgeFight.persistStamina(Bridge.store) end) end
+    if not skipSave and Bridge.alive() and Bridge.kind == "zombie"
+            and type(Bridge.saveOutfitForRebuild) == "function" then
+        pcall(function() Bridge.saveOutfitForRebuild() end)
+    end
     if Bridge.mp then
         Bridge.restoreRed()
         local id = Bridge.store and Bridge.store.bodyId or nil
-        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "despawn", { byCommand = Bridge.despawnByCommand == true, id = id }) end)
+        local items = Bridge.rebuildSnap
+        pcall(function()
+            sendClientCommand(BridgeData.owner(), "Bridge", "despawn",
+                { byCommand = Bridge.despawnByCommand == true, id = id, items = BridgeItems.store(items) })
+        end)
+        Bridge.rebuildSnap = nil
 
 
         Bridge.released = Bridge.store and Bridge.store.bodyId or nil
@@ -1940,6 +1973,7 @@ function Bridge.setMode(mode)
     Bridge.follow = (mode == "follow")
     Bridge.target = nil
     BridgeMove.moving = false
+    if BridgeMove.navReset ~= nil then BridgeMove.navReset() end
     BridgeFight.guardOnly = (mode ~= "follow")
     if Bridge.alive() then BridgeMove.stopPath(Bridge.body) end
     local wx, wy, wz = nil, nil, nil
@@ -2492,6 +2526,8 @@ function Bridge.call()
     if BridgeCallout ~= nil and type(BridgeCallout.homeReset) == "function" then pcall(BridgeCallout.homeReset) end
     setWant(true)
     Bridge.leaveAt = nil
+    Bridge.leaveTries = nil
+    Bridge.rebuildSnap = nil
     Bridge.homeParked = false
     Bridge.respawnAt = nil
     Bridge.setMode("follow")
@@ -2518,6 +2554,8 @@ function Bridge.goodbye()
     Bridge.homeParked = false
     if not Bridge.alive() then return "not here" end
     Bridge.speak("Goodbye")
+    Bridge.leaveTries = nil
+    Bridge.rebuildSnap = nil
     Bridge.leaveAt = Bridge.time + 120
     return "leaving"
 end
@@ -2527,22 +2565,220 @@ end
 
 
 
+function Bridge.genderNotice(text, ticks)
+    Bridge.genderNoticeText = text
+    Bridge.genderNoticeUntil = (Bridge.time or 0) + (ticks or 600)
+end
+
+
+function Bridge.genderCooldownLeft()
+    local st = Bridge.store
+    local now = os.time()
+    local left = 0
+    if st ~= nil then
+        local at = tonumber(st.genderAt)
+        if at ~= nil and at > 0 then
+            left = Bridge.GENDER_SWAP_COOLDOWN - (now - at)
+        end
+    end
+    local localLeft = (Bridge.genderCooldownUntil or 0) - now
+    if localLeft > left then left = localLeft end
+    if left < 0 then left = 0 end
+    if left > Bridge.GENDER_SWAP_COOLDOWN then left = Bridge.GENDER_SWAP_COOLDOWN end
+    return math.ceil(left)
+end
+
+
+function Bridge.genderInVehicle()
+    local red = BridgeData.owner()
+    local body = Bridge.body
+    local inCar = false
+    pcall(function()
+        inCar = (red ~= nil and red:getVehicle() ~= nil) or (body ~= nil and body:getVehicle() ~= nil)
+    end)
+    if inCar then return true end
+    if Bridge.parked == true then return true end
+    if BridgeCar ~= nil then
+        if type(BridgeCar.busy) == "function" and BridgeCar.busy() then return true end
+        if type(BridgeCar.inCarForMenu) == "function" and BridgeCar.inCarForMenu() then return true end
+        if BridgeCar.state ~= nil and BridgeCar.state ~= "idle" then return true end
+    end
+    return false
+end
+
+
+function Bridge.genderTaskBusy()
+    if BridgeTask ~= nil and BridgeTask.active == true then
+        if BridgeTask.kind == "shower" then return true, "shower" end
+        return true, "job"
+    end
+    if BridgeWash ~= nil and BridgeWash.state ~= nil and BridgeWash.state ~= "idle" then return true, "shower" end
+    if BridgeHeal ~= nil and BridgeHeal.active == true then return true, "heal" end
+    return false
+end
+
+
+function Bridge.genderInCombat()
+    local fighting = false
+    pcall(function()
+        if BridgeFight ~= nil then
+            fighting = (BridgeFight.state == "swing")
+                or (type(BridgeFight.playerFightUntil) == "number" and BridgeFight.playerFightUntil > (Bridge.time or 0))
+        end
+    end)
+    if fighting then return true end
+    local red = BridgeData.owner()
+    local body = Bridge.body
+    pcall(function()
+        fighting = (red ~= nil and red:isAttacking() == true) or (body ~= nil and body:isAttacking() == true)
+    end)
+    if fighting then return true end
+    local last = nil
+    if BridgeCallout ~= nil then last = tonumber(BridgeCallout.lastCombatAt) end
+    local weaponLast = nil
+    if BridgeWeapon ~= nil then weaponLast = tonumber(BridgeWeapon.lastFight) end
+    local sec = 60
+    if BridgeCallout ~= nil and type(BridgeCallout.SEC) == "number" then sec = BridgeCallout.SEC end
+    local grace = Bridge.GENDER_COMBAT_GRACE * sec
+    if last ~= nil and last > 0 and (Bridge.time or 0) - last < grace then return true end
+    if weaponLast ~= nil and weaponLast > 0 and (Bridge.time or 0) - weaponLast < grace then return true end
+    return false
+end
+
+
+function Bridge.genderGate()
+    local left = Bridge.genderCooldownLeft()
+    if left > 0 then return "block", "cooldown", left end
+    if Bridge.genderInVehicle() then return "block", "vehicle" end
+    local busy, kind = Bridge.genderTaskBusy()
+    if busy then return "block", kind or "job" end
+    if Bridge.genderInCombat() then return "block", "combat" end
+    if BridgeInventory ~= nil and type(BridgeInventory.herTransferBusy) == "function"
+            and BridgeInventory.herTransferBusy() then
+        return "defer", "transfer"
+    end
+    return nil
+end
+
+
+function Bridge.genderGateMessage(mode, reason, wait)
+    if reason == "cooldown" then
+        return string.format("Gender change available in %ds", math.max(0, math.floor(tonumber(wait) or 0)))
+    end
+    if reason == "vehicle" then return "Cannot change gender in a vehicle" end
+    if reason == "job" then return "Cannot change gender during a job" end
+    if reason == "shower" then return "Cannot change gender during a shower" end
+    if reason == "heal" then return "Cannot change gender while she is being treated" end
+    if reason == "combat" then return "Cannot change gender during combat" end
+    if reason == "transfer" then return "Changing gender after the current item transfer" end
+    return "Cannot change gender right now"
+end
+
+
+function Bridge.liveOutfitSnapshot()
+    if not Bridge.alive() or Bridge.kind ~= "zombie" then return nil, "no body" end
+    if BridgeInventory == nil or type(BridgeInventory.snapshot) ~= "function" then return nil, "inventory" end
+    pcall(function() BridgeInventory.dropGone(Bridge.body) end)
+    local unstable = false
+    pcall(function()
+        local items = Bridge.body:getInventory():getItems()
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            if it ~= nil and it:getWorldItem() ~= nil then
+                unstable = true
+                return
+            end
+        end
+    end)
+    if unstable then return nil, "item state" end
+    local ok, snap = pcall(function()
+        return BridgeInventory.encode(BridgeInventory.snapshot(Bridge.body))
+    end)
+    checkInventoryWarning()
+    if not ok or BridgeItems.truncated == true then return nil, "outfit" end
+    local st = Bridge.store
+    local saved = BridgeItems.get(st)
+    if snap == "" and st ~= nil and type(saved) == "string" and saved ~= "" then
+        return nil, "outfit not ready"
+    end
+    return snap
+end
+
+
+function Bridge.saveOutfitForRebuild()
+    Bridge.rebuildSnap = nil
+    local snap, why = Bridge.liveOutfitSnapshot()
+    if snap == nil then return false, why end
+    if not Bridge.saveOutfit(snap, true) then return false, "save" end
+    Bridge.rebuildSnap = snap
+    return true, snap
+end
+
+
+function Bridge.genderSnapshotMessage(why)
+    if why == "inventory" then return "Cannot change gender: inventory unavailable" end
+    if why == "item state" then return "Cannot change gender: an item is still on the ground" end
+    if why == "outfit" then return "Cannot change gender: outfit snapshot failed" end
+    if why == "outfit not ready" then return "Cannot change gender: outfit is not ready" end
+    if why == "save" then return "Cannot change gender: outfit could not be saved" end
+    return "Cannot change gender: outfit unavailable"
+end
+
+
 Bridge.genderRespawnAt = nil
+Bridge.genderPending = nil
 
 function Bridge.setGender(gender)
     gender = BridgeData.cleanGender(gender)
     local st = Bridge.store
     if st == nil then return "no store" end
-    if BridgeData.genderOf(st) == gender then return "gender=" .. gender end
+    if BridgeData.genderOf(st) == gender then
+        Bridge.genderPending = nil
+        return "gender=" .. gender
+    end
 
+    Bridge.genderPending = nil
+    Bridge.rebuildSnap = nil
     local wasAlive = Bridge.alive()
+    local canSnap = wasAlive and Bridge.kind == "zombie"
 
-    if wasAlive then pcall(function() Bridge.saveOutfit() end) end
+    local mode, reason, wait = Bridge.genderGate()
+    if mode == "defer" then
+        Bridge.genderPending = { gender = gender, at = Bridge.time or 0 }
+        Bridge.genderNotice(Bridge.genderGateMessage(mode, reason, wait), 300)
+        log("gender deferred: " .. tostring(reason))
+        return "gender deferred: " .. tostring(reason)
+    elseif mode == "block" then
+        Bridge.genderNotice(Bridge.genderGateMessage(mode, reason, wait), 300)
+        log("gender blocked: " .. tostring(reason))
+        return "gender blocked: " .. tostring(reason)
+    end
 
     local fresh = false
-    pcall(function() fresh = BridgeData.untouched(st) end)
+    local snap = nil
+
+    if canSnap then
+        local saved, why = Bridge.saveOutfitForRebuild()
+        if not saved then
+            Bridge.genderNotice(Bridge.genderSnapshotMessage(why), 300)
+            log("gender blocked: " .. tostring(why))
+            return "gender blocked: " .. tostring(why)
+        end
+        snap = Bridge.rebuildSnap
+    else
+        local canReset = false
+        pcall(function()
+            canReset = st.outfitGiven ~= true and st.items == nil
+        end)
+        if canReset then pcall(function() fresh = BridgeData.untouched(st) end) end
+    end
 
     st.gender = gender
+    if not Bridge.mp then
+        st.genderAt = os.time()
+    end
+    Bridge.genderCooldownUntil = os.time() + Bridge.GENDER_SWAP_COOLDOWN
+    Bridge.genderNotice(nil, 0)
 
 
     if BridgeAppearance ~= nil and type(BridgeAppearance.close) == "function" then
@@ -2554,7 +2790,10 @@ function Bridge.setGender(gender)
 
 
     if Bridge.mp then
-        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { gender = gender, resetOutfit = fresh or nil }) end)
+        pcall(function()
+            sendClientCommand(BridgeData.owner(), "Bridge", "state",
+                { gender = gender, resetOutfit = fresh or nil, items = snap })
+        end)
     end
     Bridge.dressFresh = fresh or nil
 
@@ -2563,7 +2802,7 @@ function Bridge.setGender(gender)
         Bridge.setMode("follow")
 
         Bridge.parked = false
-        pcall(function() Bridge.despawn() end)
+        pcall(function() Bridge.despawn(true) end)
         Bridge.genderRespawnAt = Bridge.time + 30
     end
     if fresh then
@@ -3398,7 +3637,8 @@ local function updateZombieBody(body)
 
         local okSnap, list = pcall(function() return BridgeInventory.snapshot(body) end)
         local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
-        if okSnap and not showering then
+        local transferBusy = type(BridgeInventory.herTransferBusy) == "function" and BridgeInventory.herTransferBusy()
+        if okSnap and not showering and not transferBusy then
             local sign = BridgeItems.signature(list)
             if sign ~= Bridge.itemsSign then
                 Bridge.itemsSign = sign
@@ -3715,11 +3955,12 @@ local function updateZombieBody(body)
             Bridge.logError("car", carBusy)
 
             if redCar ~= nil and Bridge.mode == "follow" then
-                Bridge.saveOutfit()
+                local saved = false
+                pcall(function() saved = Bridge.saveOutfitForRebuild() end)
                 Bridge.parked = true
                 if BridgeParked ~= nil then pcall(BridgeParked.enter, redCar, "car failed") end
                 Bridge.hideBody(body, true)
-                Bridge.despawn()
+                Bridge.despawn(saved == true)
                 Bridge.result = "body parked: player in car"
                 return
             end
@@ -4601,18 +4842,21 @@ local function itemselftest()
     local N = 250
     local flat = {}
     for i = 1, N do flat[i] = { t = "Base.Axe", h = 4, c = 2, w = false } end
-    local text1 = BridgeItems.encode(flat)
+    local text1 = BridgeItems.encodeOriginal(flat)
     check("flat: one coalesced part", select(2, string.gsub(text1, ",", "")) == 0)
     check("flat: q=" .. N .. " present", string.find(text1, ";q=" .. N, 1, true) ~= nil)
     local got1 = BridgeItems.decode(text1)
     check("flat: decode length " .. #got1, #got1 == N)
     check("flat: re-encode stable", BridgeItems.encode(got1) == BridgeItems.encode(flat))
+    local compact1 = BridgeItems.encode(flat)
+    check("compact: prefix", string.sub(compact1, 1, 2) == "B2")
+    check("compact: roundtrip", #BridgeItems.decode(compact1) == N)
 
     local mixed = {}
     for _ = 1, 3 do mixed[#mixed + 1] = { t = "Base.Axe", h = 4, c = 2 } end
     mixed[#mixed + 1] = { t = "Base.Hammer", h = 2, c = 3 }
     for _ = 1, 2 do mixed[#mixed + 1] = { t = "Base.Axe", h = 4, c = 2 } end
-    local text2 = BridgeItems.encode(mixed)
+    local text2 = BridgeItems.encodeOriginal(mixed)
     check("mixed: two runs separated", select(2, string.gsub(text2, ",", "")) == 2)
     local got2 = BridgeItems.decode(text2)
     check("mixed: length", #got2 == #mixed)
@@ -4647,6 +4891,20 @@ local function itemselftest()
 
     check("empty: encode", BridgeItems.encode({}) == "")
     check("empty: decode", #BridgeItems.decode("") == 0)
+
+    local shortText = "short inventory"
+    check("chunk: short unchanged", BridgeItems.store(shortText) == shortText)
+    check("chunk: nil", BridgeItems.store(nil) == nil and BridgeItems.text(nil) == nil)
+    local longText = string.rep("a", BridgeItems.CHUNK * 3 + 17)
+    local stored = BridgeItems.store(longText)
+    check("chunk: long is table", type(stored) == "table" and #stored >= 4)
+    check("chunk: roundtrip", BridgeItems.text(stored) == longText)
+    local rec = {}
+    BridgeItems.set(rec, longText)
+    check("chunk: set long", type(rec.items) == "table" and BridgeItems.get(rec) == longText)
+    BridgeItems.set(rec, shortText)
+    check("chunk: set short", rec.items == shortText)
+    check("chunk: decode table", #BridgeItems.decode(stored) == 1)
 
     local foodRec = { t = "Base.GranolaBar", h = 4, a = 12.5, fp = 0.5 }
     local got5 = BridgeItems.decode(BridgeItems.encode({ foodRec }))
@@ -5861,6 +6119,7 @@ function Bridge.diagLines()
             add("body_pathing", tostring(BridgeMove.pathing))
             add("body_moving", tostring(BridgeMove.moving))
             add("path_result", BridgeMove.pathResult)
+            pcall(function() add("nav", BridgeMove.navInfo()) end)
             add("obstacle", BridgeMove.obstacle)
             pcall(function() add("doors", BridgeMove.doorInfo()) end)
             add("fight", tostring(BridgeFight.enabled) .. " " .. BridgeFight.state .. " " .. BridgeFight.info)
@@ -5895,7 +6154,7 @@ function Bridge.diagLines()
             pcall(function()
                 local md = Bridge.store
                 if md == nil then add("saved_items", "no store")
-                else add("saved_items", tostring(md.items or "")) end
+                else add("saved_items", tostring(BridgeItems.get(md) or "")) end
                 if md == nil then add("items_cut", "0")
                 else add("items_cut", tostring(md.cut or 0)) end
             end)
@@ -6602,12 +6861,31 @@ function Bridge.onTick()
 
     if Bridge.leaveAt ~= nil and Bridge.time >= Bridge.leaveAt then
         Bridge.leaveAt = nil
-        log("left after goodbye")
-
-        pcall(function() Bridge.saveOutfit() end)
-        Bridge.despawnByCommand = true
-        Bridge.despawn()
-        Bridge.despawnByCommand = false
+        if not Bridge.alive() then
+            Bridge.leaveTries = nil
+            log("goodbye: no body left")
+        else
+            local ok, why = Bridge.saveOutfitForRebuild()
+            if not ok then
+                Bridge.leaveTries = (Bridge.leaveTries or 0) + 1
+                if Bridge.leaveTries <= 5 then
+                    Bridge.leaveAt = Bridge.time + 60
+                    if Bridge.leaveTries == 1 then pcall(function() Bridge.speak("Wait") end) end
+                    log("goodbye delayed: " .. tostring(why))
+                else
+                    Bridge.leaveTries = nil
+                    Bridge.result = "goodbye cancelled: " .. tostring(why)
+                    log(Bridge.result)
+                    setWant(true)
+                end
+            else
+                Bridge.leaveTries = nil
+                log("left after goodbye")
+                Bridge.despawnByCommand = true
+                Bridge.despawn(true)
+                Bridge.despawnByCommand = false
+            end
+        end
     end
     if Bridge.spawnAsked ~= nil and (Bridge.time - Bridge.spawnAsked) > 600 then Bridge.spawnAsked = nil end
 
@@ -6641,6 +6919,26 @@ function Bridge.onTick()
     if Bridge.startGenderDone ~= true and Bridge.store ~= nil and Bridge.gotData then
         pcall(Bridge.pickStartGender)
         if not BridgeData.neverSpawned(Bridge.store) then Bridge.startGenderDone = true end
+    end
+    if Bridge.genderPending ~= nil then
+        if not Bridge.alive() then
+            Bridge.genderPending = nil
+        elseif Bridge.time - (Bridge.genderPending.at or Bridge.time) > 600 then
+            Bridge.genderPending = nil
+            Bridge.genderNotice("Gender change cancelled: she is still busy", 300)
+            log("gender deferred: gave up waiting for her to be free")
+        else
+            local mode, reason, wait = Bridge.genderGate()
+            if mode == "block" then
+                Bridge.genderPending = nil
+                Bridge.genderNotice(Bridge.genderGateMessage(mode, reason, wait), 300)
+                log("gender deferred: cancelled, " .. tostring(reason))
+            elseif mode == nil then
+                local want = Bridge.genderPending.gender
+                Bridge.genderPending = nil
+                Bridge.setGender(want)
+            end
+        end
     end
     if Bridge.genderRespawnAt ~= nil and Bridge.time >= Bridge.genderRespawnAt then
         if Bridge.alive() then
@@ -7008,6 +7306,15 @@ function Bridge.onServerCommand(module, command, args)
         if Bridge.claimParked ~= nil then Bridge.claimAnswer() end
     elseif command == "error" then
         Bridge.result = "server: " .. tostring(args.text)
+        log(Bridge.result)
+    elseif command == "genderDenied" then
+        local wait = math.max(0, math.floor(tonumber(args.wait) or 0))
+        Bridge.genderCooldownUntil = os.time() + wait
+        if args.gender ~= nil and Bridge.store ~= nil then
+            pcall(function() Bridge.store.gender = BridgeData.cleanGender(args.gender) end)
+        end
+        Bridge.genderNotice(Bridge.genderGateMessage("block", "cooldown", wait), 600)
+        Bridge.result = "gender change denied: " .. tostring(wait) .. "s"
         log(Bridge.result)
     elseif command == "gave" then
         local ok, res = pcall(function() return BridgeInventory.receive(args) end)
