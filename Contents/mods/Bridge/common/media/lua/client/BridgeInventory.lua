@@ -2828,6 +2828,7 @@ function BridgeInventory.hands(b, item)
         return false
     end
     if not BridgeWeapon.isMelee(item) then return false end
+    if BridgeWeapon.isAssigned(b, item) then return true end
     pcall(function() note("assign " .. item:getType()) end)
     local ok, err = pcall(function()
         if b:isEquippedClothing(item) then b:removeWornItem(item) end
@@ -2847,6 +2848,7 @@ function BridgeInventory.handsGun(b, item)
     if b == nil or item == nil then return false end
     if not BridgeInventory.isGun(item) then return false end
     if BridgeGunfight == nil then return false end
+    if BridgeGunfight.isAssigned(b) and BridgeGunfight.assignedItem(b) == item then return true end
     pcall(function() note("assign gun " .. item:getType()) end)
     local ok, err = pcall(function()
         if b:isEquippedClothing(item) then b:removeWornItem(item) end
@@ -3394,18 +3396,24 @@ function BridgeInventory.onFill(playerNum, context, items)
             if BridgeWeapon.isMelee(it) and not fav then weapon = it break end
         end
         if BridgeInventory.shown and weapon ~= nil then
-            pcall(function()
-                local opt = rin:addOption(label("MenuAssign"), player, BridgeInventory.assignOnHer, weapon)
+            local assigned = false
+            pcall(function() assigned = BridgeWeapon.isAssigned(b, weapon) end)
+            if assigned then
+                rin:addOption(label("MenuUnassign"), b, BridgeInventory.drop, weapon)
+            else
+                pcall(function()
+                    local opt = rin:addOption(label("MenuAssign"), player, BridgeInventory.assignOnHer, weapon)
 
-                local fits = viaPlayerFits(player, weapon)
-                if fits then pcall(function() fits = BridgeInventory.overflowDest(b, player, weapon, nil) ~= nil end) end
-                if not fits then
-                    opt.notAvailable = true
-                    local tip = ISInventoryPaneContextMenu.addToolTip()
-                    tip.description = getText("ContextMenu_FullInventory")
-                    opt.toolTip = tip
-                end
-            end)
+                    local fits = viaPlayerFits(player, weapon)
+                    if fits then pcall(function() fits = BridgeInventory.overflowDest(b, player, weapon, nil) ~= nil end) end
+                    if not fits then
+                        opt.notAvailable = true
+                        local tip = ISInventoryPaneContextMenu.addToolTip()
+                        tip.description = getText("ContextMenu_FullInventory")
+                        opt.toolTip = tip
+                    end
+                end)
+            end
         end
         local gun = nil
         for _, it in ipairs(list) do
@@ -3414,17 +3422,25 @@ function BridgeInventory.onFill(playerNum, context, items)
             if BridgeInventory.isGun(it) and not fav then gun = it break end
         end
         if BridgeInventory.shown and gun ~= nil and BridgeGunfight ~= nil then
+            local assigned = false
             pcall(function()
-                local opt = rin:addOption(label("MenuAssignGun"), player, BridgeInventory.assignOnHer, gun, "gun")
-                local fits = viaPlayerFits(player, gun)
-                if fits then pcall(function() fits = BridgeInventory.overflowDest(b, player, gun, nil) ~= nil end) end
-                if not fits then
-                    opt.notAvailable = true
-                    local tip = ISInventoryPaneContextMenu.addToolTip()
-                    tip.description = getText("ContextMenu_FullInventory")
-                    opt.toolTip = tip
-                end
+                assigned = BridgeGunfight.isAssigned(b) and BridgeGunfight.assignedItem(b) == gun
             end)
+            if assigned then
+                rin:addOption(label("MenuUnassignGun"), b, BridgeInventory.dropGun, gun)
+            else
+                pcall(function()
+                    local opt = rin:addOption(label("MenuAssignGun"), player, BridgeInventory.assignOnHer, gun, "gun")
+                    local fits = viaPlayerFits(player, gun)
+                    if fits then pcall(function() fits = BridgeInventory.overflowDest(b, player, gun, nil) ~= nil end) end
+                    if not fits then
+                        opt.notAvailable = true
+                        local tip = ISInventoryPaneContextMenu.addToolTip()
+                        tip.description = getText("ContextMenu_FullInventory")
+                        opt.toolTip = tip
+                    end
+                end)
+            end
         end
     end
 

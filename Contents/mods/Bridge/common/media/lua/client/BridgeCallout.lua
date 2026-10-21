@@ -115,6 +115,12 @@ BridgeCallout.SAY = {
     EvAimOnMe    = 1,
     EvTorchLow   = 1,
     EvSwingAtMe  = 1,
+    EvReload     = 1,
+    EvReloadLoose = 1,
+    EvOutOfAmmo  = 1,
+    EvLowAmmo    = 1,
+    EvLineOfFire = 1,
+    EvGunKill    = 1,
 }
 
 
@@ -149,6 +155,12 @@ BridgeCallout.EVENTS = {
     EvAimOnMe    = { slot = "AimOnMe",    cooldown = 15 },
     EvTorchLow   = { slot = "TorchLow",   cooldown = 300 },
     EvSwingAtMe  = { slot = "SwingAtMe",  cooldown = 30 },
+    EvReload     = { slot = "Reload",     cooldown = 20 },
+    EvReloadLoose = { slot = "Reload",    cooldown = 20 },
+    EvOutOfAmmo  = { slot = "OutOfAmmo",  cooldown = 30 },
+    EvLowAmmo    = { slot = "LowAmmo",    cooldown = 45 },
+    EvLineOfFire = { slot = "LineOfFire", cooldown = 15 },
+    EvGunKill    = { slot = "GunKill",    cooldown = 20 },
 }
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeCallout] " .. tostring(text)) end end
@@ -205,8 +217,48 @@ end
 
 local function target()
     local t = nil
-    pcall(function() if BridgeFight ~= nil then t = BridgeFight.target end end)
+    pcall(function()
+        if BridgeGunfight ~= nil and BridgeGunfight.target ~= nil then
+            t = BridgeGunfight.target
+            return
+        end
+        if BridgeFight ~= nil then t = BridgeFight.target end
+    end)
     return t
+end
+
+local function gunThreat()
+    local assigned = false
+    pcall(function() assigned = BridgeGunfight ~= nil and BridgeGunfight.assignedId ~= nil end)
+    if not assigned then return false end
+    local active = false
+    pcall(function() active = BridgeFight ~= nil and BridgeFight.state == "gun" end)
+    if active then return true end
+    local body, red = Bridge.body, nil
+    pcall(function() red = BridgeData.owner() end)
+    if body == nil and red == nil then return false end
+    local near = false
+    pcall(function()
+        local list = getCell():getZombieList()
+        for i = 0, list:size() - 1 do
+            local z = list:get(i)
+            if z ~= nil and z ~= body and z ~= red and not isBodyZ(z) and not BridgeData.harmless(z) then
+                local alive = false
+                pcall(function() alive = z:isAlive() and z:getHealth() > 0 end)
+                if alive then
+                    if body ~= nil then
+                        local dx, dy = z:getX() - body:getX(), z:getY() - body:getY()
+                        if dx * dx + dy * dy <= 225 and math.abs(z:getZ() - body:getZ()) < 1 then near = true return end
+                    end
+                    if red ~= nil then
+                        local dx, dy = z:getX() - red:getX(), z:getY() - red:getY()
+                        if dx * dx + dy * dy <= 225 and math.abs(z:getZ() - red:getZ()) < 1 then near = true return end
+                    end
+                end
+            end
+        end
+    end)
+    return near
 end
 
 local function nearTarget(body)
@@ -581,6 +633,40 @@ end
 
 function BridgeCallout.lostTarget()
     return say("EvLostTarget")
+end
+
+function BridgeCallout.reloading(hasMag)
+    if not gunThreat() then return false end
+    if hasMag == false then return say("EvReloadLoose") end
+    return say("EvReload")
+end
+
+function BridgeCallout.outOfAmmo()
+    if not gunThreat() then return false end
+    return say("EvOutOfAmmo")
+end
+
+function BridgeCallout.lowAmmo()
+    if not gunThreat() then return false end
+    return say("EvLowAmmo")
+end
+
+function BridgeCallout.lineOfFire()
+    local active = false
+    pcall(function()
+        active = BridgeGunfight ~= nil and BridgeGunfight.assignedId ~= nil
+            and BridgeGunfight.drawn == true and BridgeGunfight.reloadStage == nil
+            and (tonumber(BridgeGunfight.rounds) or 0) > 0
+    end)
+    if not active then return false end
+    if not gunThreat() then return false end
+    return say("EvLineOfFire")
+end
+
+function BridgeCallout.gunKill(z)
+    if z == nil or not deadZ(z) then return false end
+    if not gunThreat() then return false end
+    return say("EvGunKill")
 end
 
 function BridgeCallout.sayPriority(event)

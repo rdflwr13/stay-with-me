@@ -2236,6 +2236,30 @@ function Bridge.setTorchMode(mode)
 end
 
 
+function Bridge.setGunUse(mode)
+    mode = BridgeData.cleanGunUse(mode)
+    if mode == nil then return "unknown gun use " .. tostring(mode) end
+    if Bridge.store ~= nil then Bridge.store.gunUse = mode end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { gunUse = mode }) end)
+    end
+    log("gunUse=" .. mode)
+    return "gunUse=" .. mode
+end
+
+
+function Bridge.setAmmoReserve(mode)
+    mode = BridgeData.cleanAmmoReserve(mode)
+    if mode == nil then return "unknown ammo reserve " .. tostring(mode) end
+    if Bridge.store ~= nil then Bridge.store.ammoReserve = mode end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { ammoReserve = mode }) end)
+    end
+    log("ammoReserve=" .. mode)
+    return "ammoReserve=" .. mode
+end
+
+
 function Bridge.setEquipScale(value)
     local scale = BridgeData.cleanEquipScale(value)
     if scale == nil then return "unknown equip scale " .. tostring(value) end
@@ -7338,6 +7362,8 @@ function Bridge.onServerCommand(module, command, args)
         pcall(function() Bridge.lookSwing(args) end)
     elseif command == "gunResult" then
         pcall(function() BridgeGunfight.onResult(args) end)
+    elseif command == "gunReloadResult" then
+        pcall(function() BridgeGunfight.onReloadResult(args) end)
     elseif command == "gunFx" then
         pcall(function() BridgeGunfight.onFx(args) end)
     elseif command == "torch" then

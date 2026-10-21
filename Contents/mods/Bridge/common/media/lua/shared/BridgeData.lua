@@ -334,11 +334,11 @@ BridgeData.DEFAULT_COMBAT = "bodyguard"
 
 
 BridgeData.COMBAT = {
-    bodyguard = { rank = "player", engageSelf = 2.5, engageRed = 3.0, targetMax = 6.0, approach = 4.5, leash = 4.0 },
-    escort = { rank = "self", engageSelf = 3.0, engageRed = 5.5, targetMax = 9.0, approach = 7.0, leash = 7.0 },
-    aggressive = { rank = "self", engageSelf = 4.5, engageRed = 11.0, targetMax = 13.0, approach = 12.0, leash = 12.0 },
-    backup = { rank = "player", engageSelf = 2.5, engageRed = 3.0, targetMax = 6.0, approach = 4.5, leash = 4.0, assist = true },
-    stayback = { rank = "self", engageSelf = 0, engageRed = 0, targetMax = 0, approach = 0, leash = 99, passive = true },
+    bodyguard = { rank = "player", engageSelf = 2.5, engageRed = 3.0, targetMax = 6.0, approach = 4.5, leash = 4.0, gunRangePct = 0.35 },
+    escort = { rank = "self", engageSelf = 3.0, engageRed = 5.5, targetMax = 9.0, approach = 7.0, leash = 7.0, gunRangePct = 0.55 },
+    aggressive = { rank = "self", engageSelf = 4.5, engageRed = 11.0, targetMax = 13.0, approach = 12.0, leash = 12.0, gunRangePct = 1.0 },
+    backup = { rank = "player", engageSelf = 2.5, engageRed = 3.0, targetMax = 6.0, approach = 4.5, leash = 4.0, assist = true, gunRangePct = 0.35 },
+    stayback = { rank = "self", engageSelf = 0, engageRed = 0, targetMax = 0, approach = 0, leash = 99, passive = true, gunRangePct = 0 },
 }
 
 function BridgeData.combatOf(rec)
@@ -364,9 +364,15 @@ end
 
 
 
+BridgeData.GUN_USES = { always = true, player = true, off = true }
+BridgeData.DEFAULT_GUN_USE = "player"
+BridgeData.AMMO_RESERVES = { free = true, conserve = true, emergency = true }
+BridgeData.DEFAULT_AMMO_RESERVE = "free"
+
 BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
     relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true,
-    collapseActions = true }
+    collapseActions = true, gunMelee = true, gunReloadIdle = true, gunMagCare = false, gunUse = "player",
+    ammoReserve = "free" }
 BridgeData.HAIR_MAX = 40
 BridgeData.GENDER_SWAP_COOLDOWN = 60
 BridgeData.GENDER_COMBAT_GRACE = 15
@@ -376,6 +382,38 @@ function BridgeData.optionOf(rec, key)
     if rec ~= nil and rec[key] ~= nil then return rec[key] == true end
     if key == "romance" then return not BridgeData.sameSex(rec) end
     return BridgeData.OPTIONS[key] == true
+end
+
+
+function BridgeData.cleanGunUse(value)
+    if type(value) == "string" then value = string.lower(value) end
+    if BridgeData.GUN_USES[value] then return value end
+    return nil
+end
+
+
+function BridgeData.gunUseOf(rec)
+    if rec ~= nil then
+        local mode = BridgeData.cleanGunUse(rec.gunUse)
+        if mode ~= nil then return mode end
+    end
+    return BridgeData.cleanGunUse(BridgeData.OPTIONS.gunUse) or BridgeData.DEFAULT_GUN_USE
+end
+
+
+function BridgeData.cleanAmmoReserve(value)
+    if type(value) == "string" then value = string.lower(value) end
+    if BridgeData.AMMO_RESERVES[value] then return value end
+    return nil
+end
+
+
+function BridgeData.ammoReserveOf(rec)
+    if rec ~= nil then
+        local mode = BridgeData.cleanAmmoReserve(rec.ammoReserve)
+        if mode ~= nil then return mode end
+    end
+    return BridgeData.cleanAmmoReserve(BridgeData.OPTIONS.ammoReserve) or BridgeData.DEFAULT_AMMO_RESERVE
 end
 
 
@@ -1423,7 +1461,7 @@ if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeData] loaded") end
 
 
 
-BridgeData.SKILL_KEYS = { "Strength", "Axe", "Blunt", "SmallBlunt", "LongBlade", "SmallBlade", "Spear", "Maintenance", "Fitness" }
+BridgeData.SKILL_KEYS = { "Strength", "Axe", "Blunt", "SmallBlunt", "LongBlade", "SmallBlade", "Spear", "Maintenance", "Fitness", "Aiming", "Reloading" }
 
 
 

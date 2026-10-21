@@ -1382,14 +1382,23 @@ function BridgeFight.update(body)
             return true
         end
     end
-    if BridgeGunfight ~= nil and BridgeGunfight.hasGun ~= nil and BridgeGunfight.hasGun() then
+    local swinging = BridgeFight.state == "swing"
+    if not swinging and BridgeGunfight ~= nil and BridgeGunfight.isAssigned ~= nil and BridgeGunfight.isAssigned() then
         local ok, busy = pcall(function() return BridgeGunfight.update(body) end)
         if not ok then
             BridgeFight.info = "gun error: " .. tostring(busy)
             Bridge.logError("gun", busy)
             return false
         end
-        return busy == true
+        if busy == true then
+            BridgeFight.state = "gun"
+            return true
+        end
+        if BridgeGunfight.canMelee ~= true then
+            BridgeFight.state = "idle"
+            return false
+        end
+        if BridgeFight.state == "gun" then BridgeFight.state = "idle" end
     end
     local mode = BridgeFight.mode()
     watchCrawlers(body, red)

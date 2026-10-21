@@ -912,6 +912,8 @@ BridgeWindow.SKILLS = {
         { perk = "SmallBlade" },
         { perk = "Spear" },
         { perk = "Maintenance" },
+        { perk = "Aiming" },
+        { perk = "Reloading" },
     }},
     { category = "IGUI_perks_PhysicalCategory", rows = {
         { perk = "Strength" },

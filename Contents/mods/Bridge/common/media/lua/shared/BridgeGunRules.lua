@@ -36,6 +36,22 @@ local function flag(fn)
     return value
 end
 
+local function typeText(fn)
+    local value = text(fn, nil)
+    if value == nil or value == "null" then return nil end
+    return value
+end
+
+local function ammoKeyOf(item)
+    local key = nil
+    pcall(function()
+        local ammo = item:getAmmoType()
+        if ammo ~= nil then key = ammo:getItemKey() end
+    end)
+    if type(key) ~= "string" or key == "" or key == "null" then return nil end
+    return key
+end
+
 
 function BridgeGunRules.isGun(item)
     local yes = false
@@ -78,7 +94,26 @@ function BridgeGunRules.range(gun)
 end
 
 
+function BridgeGunRules.familyOf(desc)
+    if type(desc) ~= "table" then return "unsupported" end
+    local reload = string.lower(tostring(desc.reloadType or ""))
+    if desc.external == true or desc.magazineType ~= nil then
+        if string.find(reload, "handgun", 1, true) ~= nil or desc.kind == "Handgun" then return "handgun" end
+        return "rifle"
+    end
+    if string.find(reload, "shotgun", 1, true) ~= nil then return "shotgun" end
+    if string.find(reload, "revolver", 1, true) ~= nil then return "revolver" end
+    if string.find(reload, "boltactionnomag", 1, true) ~= nil then return "rifle_nomag" end
+    if desc.ammoTypeKey == nil then return "unsupported" end
+    if (tonumber(desc.projectileCount) or 1) > 1 then return "shotgun" end
+    if desc.kind == "Handgun" then return "revolver" end
+    return "rifle_nomag"
+end
+
+
 function BridgeGunRules.describe(item)
+    local maxAmmo = num(function() return item:getMaxAmmo() end, 0)
+    if maxAmmo <= 0 then maxAmmo = num(function() return item:getClipSize() end, 0) end
     local out = {
         fullType = text(function() return item:getFullType() end, "?"),
         name = text(function() return item:getName() end, "gun"),
@@ -99,26 +134,75 @@ function BridgeGunRules.describe(item)
         projectileCount = num(function() return item:getProjectileCount() end, 1),
         twoHanded = flag(function() return item:isTwoHandWeapon() or item:isRequiresEquippedBothHands() end),
         kind = "Handgun",
+        maxAmmo = maxAmmo,
+        reloadType = typeText(function() return item:getWeaponReloadType() end),
+        magazineType = typeText(function() return item:getMagazineType() end),
+        ammoTypeKey = ammoKeyOf(item),
+        ammoBox = typeText(function() return item:getAmmoBox() end),
+        insertAll = flag(function() return item:isInsertAllBulletsReload() end),
+        insertSound = typeText(function() return item:getInsertAmmoSound() end),
+        ejectSound = typeText(function() return item:getEjectAmmoSound() end),
+        insertStartSound = typeText(function() return item:getInsertAmmoStartSound() end),
+        insertStopSound = typeText(function() return item:getInsertAmmoStopSound() end),
+        rackSound = typeText(function() return item:getRackSound() end),
+        rounds = 0,
     }
     out.kind = BridgeGunRules.kind(item)
     out.range = BridgeGunRules.range(item)
+    out.external = out.magazineType ~= nil
+    out.reloadFamily = BridgeGunRules.familyOf(out)
+    pcall(function() out.rounds = BridgeGunRules.roundsOf(item) end)
     return out
 end
 
 
 function BridgeGunRules.summary(gun)
     if type(gun) ~= "table" then return "none" end
-    return string.format("%s rng=%s dmg=%.1f-%.1f hit=%.0f crit=%.0f aim=%.0f recoil=%.0f snd=%s rad=%.0f vol=%.0f two=%s kind=%s",
+    return string.format("%s rng=%s dmg=%.1f-%.1f hit=%.0f crit=%.0f aim=%.0f recoil=%.0f snd=%s rad=%.0f vol=%.0f two=%s kind=%s ammo=%s mag=%s family=%s reload=%s",
         tostring(gun.fullType), tostring(gun.range), gun.minDamage or 0, gun.maxDamage or 0,
         gun.hitChance or 0, gun.critChance or 0, gun.aimingTime or 0, gun.recoilDelay or 0,
         tostring(gun.sound or "-"), gun.soundRadius or 0, gun.soundVolume or 0,
-        tostring(gun.twoHanded == true), tostring(gun.kind))
+        tostring(gun.twoHanded == true), tostring(gun.kind), tostring(gun.maxAmmo or 0),
+        tostring(gun.magazineType or "-"), tostring(gun.reloadFamily or "?"), tostring(gun.reloadType or "-"))
 end
 
 
-function BridgeGunRules.hitChance(gun, distance, moving)
+function BridgeGunRules.effectiveRange(desc, aimingLevel)
+    if type(desc) ~= "table" then return 0 end
+    local base = tonumber(desc.range) or tonumber(desc.maxRange) or 0
+    local level = tonumber(aimingLevel) or 0
+    if level < 0 then level = 0 end
+    local range = base * (1 + 0.10 * level)
+    if range > BridgeGunRules.MAX_RANGE then range = BridgeGunRules.MAX_RANGE end
+    if range < 1 then range = 1 end
+    return range
+end
+
+
+function BridgeGunRules.aimTicks(desc, aimingLevel)
+    if type(desc) ~= "table" then return 10 end
+    local level = tonumber(aimingLevel) or 0
+    if level < 0 then level = 0 end
+    local aim = (tonumber(desc.aimingTime) or 40) * 0.6 * (1 - 0.02 * level)
+    if aim < 10 then aim = 10 end
+    return math.floor(aim + 0.5)
+end
+
+
+function BridgeGunRules.reloadFactor(reloadingLevel)
+    local level = tonumber(reloadingLevel) or 0
+    if level < 0 then level = 0 end
+    local factor = 1 - 0.04 * level
+    if factor < 0.6 then factor = 0.6 end
+    return factor
+end
+
+
+function BridgeGunRules.hitChance(gun, distance, moving, aimingLevel)
     if type(gun) ~= "table" then return BridgeGunRules.MIN_CHANCE end
-    local chance = (tonumber(gun.hitChance) or 50) + BridgeGunRules.AIM_BONUS
+    local level = tonumber(aimingLevel) or 0
+    if level < 0 then level = 0 end
+    local chance = (tonumber(gun.hitChance) or 50) + BridgeGunRules.AIM_BONUS + 1.5 * level
     chance = chance / 100
     if chance < 0 then chance = 0 end
     if chance > 1 then chance = 1 end
@@ -304,6 +388,322 @@ function BridgeGunRules.validType(value)
     local item = nil
     pcall(function() item = instanceItem(value) end)
     return BridgeGunRules.valid(item)
+end
+
+
+function BridgeGunRules.itemsOf(body)
+    local out = {}
+    if body == nil then return out end
+    local seen = {}
+    local function scan(container)
+        if container == nil or seen[container] then return end
+        seen[container] = true
+        local items = nil
+        pcall(function() items = container:getItems() end)
+        if items == nil then return end
+        for i = 0, items:size() - 1 do
+            local item = nil
+            pcall(function() item = items:get(i) end)
+            if item ~= nil then
+                out[#out + 1] = item
+                local inner = nil
+                pcall(function()
+                    if item:IsInventoryContainer() then inner = item:getInventory() end
+                end)
+                if inner ~= nil then scan(inner) end
+            end
+        end
+    end
+    pcall(function() scan(body:getInventory()) end)
+    return out
+end
+
+
+function BridgeGunRules.findGunItem(body, id, fullType)
+    if body == nil then return nil end
+    local function match(item)
+        if item == nil or not BridgeGunRules.valid(item) then return false end
+        if fullType ~= nil then
+            local full = nil
+            pcall(function() full = item:getFullType() end)
+            if full ~= fullType then return false end
+        end
+        return true
+    end
+
+    local found = nil
+    if id ~= nil then
+        pcall(function() found = body:getInventory():getItemWithIDRecursiv(id) end)
+        if not match(found) then found = nil end
+    end
+
+    if found == nil then
+        pcall(function()
+            local primary = body:getPrimaryHandItem()
+            if match(primary) then found = primary end
+            if found == nil then
+                local secondary = body:getSecondaryHandItem()
+                if match(secondary) then found = secondary end
+            end
+        end)
+    end
+
+    if found == nil then
+        pcall(function()
+            local attached = body:getAttachedItems()
+            if attached == nil then return end
+            for i = 0, attached:size() - 1 do
+                local entry = nil
+                pcall(function() entry = attached:get(i) end)
+                if entry == nil then pcall(function() entry = attached:getItemByIndex(i) end) end
+                local item = entry
+                if entry ~= nil then
+                    local ok, inner = pcall(function() return entry:getItem() end)
+                    if ok and inner ~= nil then item = inner end
+                end
+                if match(item) then found = item break end
+            end
+        end)
+    end
+
+    if found == nil and fullType ~= nil then
+        pcall(function()
+            local items = BridgeGunRules.itemsOf(body)
+            for _, item in ipairs(items) do
+                if match(item) then found = item break end
+            end
+        end)
+    end
+    return found
+end
+
+
+function BridgeGunRules.itemCount(item)
+    local count = 1
+    if item == nil then return 0 end
+    pcall(function()
+        local n = item:getCount()
+        if type(n) == "number" and n == n and n > 0 then count = math.floor(n) end
+    end)
+    return count
+end
+
+
+function BridgeGunRules.removeItem(item)
+    if item == nil then return false end
+    local ok = false
+    pcall(function()
+        local container = item:getContainer()
+        if container ~= nil then
+            container:Remove(item)
+            ok = true
+        end
+    end)
+    return ok
+end
+
+
+function BridgeGunRules.setItemCount(item, count)
+    if item == nil then return false end
+    if count <= 0 then return BridgeGunRules.removeItem(item) end
+    local ok = false
+    pcall(function()
+        item:setCount(math.floor(count))
+        ok = BridgeGunRules.itemCount(item) <= count
+    end)
+    if not ok then return BridgeGunRules.removeItem(item) end
+    return true
+end
+
+
+function BridgeGunRules.addToBody(body, item)
+    if body == nil or item == nil then return false end
+    local ok = false
+    pcall(function() ok = body:getInventory():AddItem(item) ~= nil end)
+    return ok
+end
+
+
+function BridgeGunRules.roundsOf(item)
+    local rounds = 0
+    if item == nil then return 0 end
+    pcall(function()
+        local n = item:getCurrentAmmoCount()
+        if type(n) == "number" and n == n and n > 0 then rounds = math.floor(n) end
+    end)
+    return rounds
+end
+
+
+function BridgeGunRules.setRounds(item, rounds, containsClip)
+    if item == nil then return false end
+    local n = math.floor(tonumber(rounds) or 0)
+    if n < 0 then n = 0 end
+    local ok = false
+    pcall(function()
+        item:setCurrentAmmoCount(n)
+        ok = true
+    end)
+    if containsClip ~= nil then
+        pcall(function() item:setContainsClip(containsClip == true) end)
+    end
+    return ok
+end
+
+
+function BridgeGunRules.findLoadedMagazine(body, desc)
+    if body == nil or type(desc) ~= "table" or desc.magazineType == nil then return nil, 0 end
+    local best, bestCount = nil, 0
+    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+        local full = nil
+        pcall(function() full = item:getFullType() end)
+        if full == desc.magazineType then
+            local n = BridgeGunRules.roundsOf(item)
+            if n > bestCount then best, bestCount = item, n end
+        end
+    end
+    if bestCount <= 0 then return nil, 0 end
+    return best, bestCount
+end
+
+
+function BridgeGunRules.findLooseRounds(body, desc, need)
+    local out, total = {}, 0
+    if body == nil or type(desc) ~= "table" or desc.ammoTypeKey == nil then return out, total end
+    local want = math.floor(tonumber(need) or 1)
+    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+        if total >= want then break end
+        local full = nil
+        pcall(function() full = item:getFullType() end)
+        if full == desc.ammoTypeKey then
+            local n = BridgeGunRules.itemCount(item)
+            if n > 0 then
+                out[#out + 1] = { item = item, count = n }
+                total = total + n
+            end
+        end
+    end
+    return out, total
+end
+
+
+function BridgeGunRules.removeOneLooseRound(body, desc)
+    local key = type(desc) == "table" and desc.ammoTypeKey or nil
+    if body == nil or key == nil then return nil end
+    local removed = nil
+    pcall(function() removed = body:getInventory():RemoveOneOf(key, true) end)
+    return removed
+end
+
+
+function BridgeGunRules.removeItemById(body, id)
+    if body == nil or id == nil then return nil end
+    local item = nil
+    pcall(function() item = body:getInventory():getItemWithIDRecursiv(id) end)
+    if item == nil then return nil end
+    local container = nil
+    pcall(function() container = item:getContainer() end)
+    if container == nil then return nil end
+    local count = BridgeGunRules.itemCount(item)
+    if count > 1 then
+        BridgeGunRules.setItemCount(item, count - 1)
+        pcall(function() sendItemStats(item) end)
+    else
+        container:Remove(item)
+        pcall(function() sendRemoveItemFromContainer(container, item) end)
+    end
+    return item
+end
+
+
+function BridgeGunRules.takeLooseRounds(body, desc, need)
+    local want = math.floor(tonumber(need) or 0)
+    if want <= 0 then return 0 end
+    local rounds, taken = BridgeGunRules.findLooseRounds(body, desc, want)
+    local done = 0
+    for _, entry in ipairs(rounds) do
+        if done >= want then break end
+        local n = math.min(entry.count, want - done)
+        local container = nil
+        pcall(function() container = entry.item:getContainer() end)
+        if n >= entry.count then
+            BridgeGunRules.removeItem(entry.item)
+            if container ~= nil then
+                pcall(function() sendRemoveItemFromContainer(container, entry.item) end)
+            end
+        else
+            BridgeGunRules.setItemCount(entry.item, entry.count - n)
+            pcall(function() sendItemStats(entry.item) end)
+        end
+        done = done + n
+    end
+    return done
+end
+
+
+function BridgeGunRules.findEmptyMagazine(body, desc)
+    if body == nil or type(desc) ~= "table" or desc.magazineType == nil then return nil end
+    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+        local full, rounds = nil, 0
+        pcall(function() full = item:getFullType() end)
+        if full == desc.magazineType then
+            rounds = BridgeGunRules.roundsOf(item)
+            if rounds <= 0 then return item end
+        end
+    end
+    return nil
+end
+
+
+function BridgeGunRules.makeEmptyMagazine(body, desc)
+    if type(desc) ~= "table" or desc.magazineType == nil then return nil end
+    local existing = BridgeGunRules.findEmptyMagazine(body, desc)
+    if existing ~= nil then return existing end
+    local magazine = nil
+    pcall(function() magazine = instanceItem(desc.magazineType) end)
+    if magazine == nil then return nil end
+    BridgeGunRules.setRounds(magazine, 0, false)
+    if not BridgeGunRules.addToBody(body, magazine) then return nil end
+    return magazine
+end
+
+
+function BridgeGunRules.unloadMagazine(body, desc)
+    local magazine = BridgeGunRules.makeEmptyMagazine(body, desc)
+    if magazine ~= nil then BridgeGunRules.setRounds(magazine, 0, false) end
+    return magazine
+end
+
+
+function BridgeGunRules.stashMagazine(body, desc, rounds)
+    local n = math.max(0, math.floor(tonumber(rounds) or 0))
+    if n <= 0 then return BridgeGunRules.makeEmptyMagazine(body, desc) end
+    if type(desc) ~= "table" or desc.magazineType == nil then return nil end
+    local magazine = nil
+    pcall(function() magazine = instanceItem(desc.magazineType) end)
+    if magazine == nil then return nil end
+    BridgeGunRules.setRounds(magazine, n, false)
+    if not BridgeGunRules.addToBody(body, magazine) then return nil end
+    return magazine
+end
+
+
+function BridgeGunRules.insertMagazine(body, weapon, magazine, desc)
+    if weapon == nil or magazine == nil then return 0 end
+    local rounds = BridgeGunRules.roundsOf(magazine)
+    BridgeGunRules.removeItem(magazine)
+    BridgeGunRules.setRounds(weapon, rounds, true)
+    return rounds
+end
+
+
+function BridgeGunRules.hasReloadSource(body, desc)
+    if body == nil or type(desc) ~= "table" then return false end
+    if desc.magazineType ~= nil then
+        return BridgeGunRules.findLoadedMagazine(body, desc) ~= nil
+    end
+    local _, total = BridgeGunRules.findLooseRounds(body, desc, 1)
+    return total > 0
 end
 
 
