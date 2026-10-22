@@ -1244,6 +1244,7 @@ function BridgeMenu.onLootMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.LOOTING_ENABLED ~= 1 then return end
+    if not BridgeData.optionOf(Bridge.store, "lootMenu") then return end
     if not present() then return end
     if BridgeWorkSelect == nil or BridgeWorkSelect.lootTargetFor == nil then return end
     local label = name() .. ": " .. tr("LootContainer")
@@ -1299,6 +1300,7 @@ function BridgeMenu.addItemLootOptions(menu, list, playerNum)
     if menu == nil or type(list) ~= "table" or #list == 0 then return 0 end
     if Bridge == nil or Bridge.store == nil then return 0 end
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.LOOTING_ENABLED ~= 1 then return 0 end
+    if not BridgeData.optionOf(Bridge.store, "lootMenu") then return 0 end
     if not present() then return 0 end
     if not BridgeMenu.inTalkRange() then return 0 end
     local ok = false
