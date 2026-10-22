@@ -566,8 +566,8 @@ function BridgeEquip.subscribeScale(cb)
     BridgeEquip.onScale[#BridgeEquip.onScale + 1] = cb
 end
 
-function BridgeEquip.applyScale()
-    local S = BridgeEquip.scaleValue()
+function BridgeEquip.applyScale(S)
+    S = S or BridgeEquip.scaleValue()
     local c = fontClearance()
     local L = { S = S, clearance = c }
     L.PANEL_WIDTH = BASE.PANEL_WIDTH * S
@@ -1416,6 +1416,7 @@ end
 function BridgeEquipWindow:onScale(combo)
     if combo == nil then return end
     local s = combo:getSelectedData()
+    self.fitPass = 0
     if s ~= nil and Bridge ~= nil and type(Bridge.setEquipScale) == "function" then Bridge.setEquipScale(s) end
 end
 
@@ -1544,6 +1545,18 @@ function BridgeEquipWindow:relayout()
         self.scaleCombo:setVisible(self.isCollapsed ~= true)
     end
     local contentH = comboY + btnH + gap
+
+    local sh, sw = 0, 0
+    pcall(function() sh, sw = getCore():getScreenHeight(), getCore():getScreenWidth() end)
+    if not self.isCollapsed and sh > 0 and th + contentH > sh - 8 and (self.fitPass or 0) < 2 then
+        self.fitPass = (self.fitPass or 0) + 1
+        local fit = (sh - 24 - th) / math.max(1, contentH)
+        BridgeEquip.applyScale(math.max(0.5, L.S * fit))
+        if BridgeEquip.instance ~= self then self:relayout() end
+        return
+    end
+    self.fitPass = 0
+
     self.contentH = contentH
     self.canvas:setHeight(contentH)
     self:setWidth(L.PANEL_WIDTH)
@@ -1551,6 +1564,14 @@ function BridgeEquipWindow:relayout()
         self:setMaxDrawHeight(self:titleBarHeight())
     else
         self:setHeight(th + contentH)
+        if sh > 0 then
+            if self:getY() + self:getHeight() > sh - 8 then
+                self:setY(math.max(0, sh - 8 - self:getHeight()))
+            end
+            if sw > 0 and self:getX() + self:getWidth() > sw then
+                self:setX(math.max(0, sw - self:getWidth()))
+            end
+        end
     end
     if self.popup ~= nil and self.popup:isVisible() then self:hidePopup() end
 end
@@ -1918,8 +1939,9 @@ end
 Events.OnTick.Add(tick)
 
 Events.OnResolutionChange.Add(function(oldw, oldh, neww, newh)
-    BridgeEquip.applyScale()
     local win = BridgeEquip.instance
+    if win ~= nil then win.fitPass = 0 end
+    BridgeEquip.applyScale()
     if win == nil then return end
     pcall(function()
         local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
