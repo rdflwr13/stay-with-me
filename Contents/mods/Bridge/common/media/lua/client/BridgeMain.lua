@@ -832,9 +832,15 @@ function Bridge.saveOutfit(encoded, force)
         Bridge.itemsSeen = encoded
         Bridge.itemsSavedTick = Bridge.time
         Bridge.itemsSpentAt = nil
-        pcall(function() Bridge.itemsSign = BridgeItems.signature(BridgeItems.decode(encoded)) end)
+        local snapSig, snapN = nil, nil
+        pcall(function()
+            local list = BridgeItems.decode(encoded)
+            snapN = #list
+            snapSig = BridgeItems.signature(list)
+        end)
+        if snapSig ~= nil then Bridge.itemsSign = snapSig end
         pcall(function() Bridge.noteWorn(encoded) end)
-        if not Bridge.mp and BridgeBackup ~= nil then pcall(BridgeBackup.noteItems, Bridge.body, encoded) end
+        if not Bridge.mp and BridgeBackup ~= nil then pcall(BridgeBackup.noteItems, Bridge.body, encoded, snapSig, snapN) end
     end
     return ok
 end

@@ -4301,7 +4301,11 @@ local function pruneBadDoors()
             BridgeMove.badDoors[key] = nil
         else
             local open = false
-            pcall(function() open = rec.obj ~= nil and rec.obj:IsOpen() == true end)
+            local window = false
+            pcall(function() window = rec.obj ~= nil and instanceof(rec.obj, "IsoWindow") end)
+            if window then
+                pcall(function() open = rec.obj:IsOpen() == true end)
+            end
             if open then BridgeMove.badDoors[key] = nil end
         end
     end
@@ -4433,6 +4437,17 @@ function BridgeMove.routeViaOpening(body, gx, gy, gz)
             end
             local obj = way.obj
             if obj ~= nil and way.kind == "window" then
+                local frame = false
+                pcall(function() frame = instanceof(obj, "IsoWindowFrame") end)
+                if frame then
+                    if BridgeMove.pendingClimb == nil and (Bridge.time - (way.climbAt or -9999) > 30) then
+                        way.climbAt = Bridge.time
+                        pcall(function() body:faceLocationF(way.x, way.y) end)
+                        BridgeMove.askClimb(body, "frame", obj)
+                        log("window frame climb at " .. tostring(way.key))
+                    end
+                    return way.x, way.y, way.z
+                end
                 local isOpen, blocked = false, false
                 pcall(function() isOpen = obj:IsOpen() == true or obj:isSmashed() == true end)
                 pcall(function() blocked = obj:isBarricaded() == true or obj:isPermaLocked() == true end)
@@ -4565,6 +4580,25 @@ function BridgeMove.askClimb(body, kind, object)
 end
 
 
+local function clearClimbHands(body)
+    if not isClient() then return true end
+    if body:getPrimaryHandItem() == nil and body:getSecondaryHandItem() == nil then
+        return true
+    end
+
+    pcall(function() BridgeWeapon.putAway(body) end)
+
+    if body:getPrimaryHandItem() ~= nil or body:getSecondaryHandItem() ~= nil then
+        pcall(function()
+            body:setPrimaryHandItem(nil)
+            body:setSecondaryHandItem(nil)
+            body:resetEquippedHandsModels()
+        end)
+    end
+
+    return body:getPrimaryHandItem() == nil and body:getSecondaryHandItem() == nil
+end
+
 function BridgeMove.climbStep(body)
     local c = BridgeMove.pendingClimb
     if c == nil then return false end
@@ -4584,15 +4618,11 @@ function BridgeMove.climbStep(body)
     if asn == "idle" or asn == "pathfind" then
 
 
-        if isClient() and body:getPrimaryHandItem() ~= nil then
-            local ok = false
-            pcall(function() ok = BridgeWeapon.putAway(body) end)
-            if not ok and body:getPrimaryHandItem() ~= nil then
-                BridgeMove.pendingClimb = nil
-                BridgeMove.climbUntil = 0
-                BridgeMove.obstacle = "climb skipped: item in hands"
-                return false
-            end
+        if not clearClimbHands(body) then
+            BridgeMove.pendingClimb = nil
+            BridgeMove.climbUntil = 0
+            BridgeMove.obstacle = "climb skipped: item in hands"
+            return false
         end
         if Bridge.time - c.asked >= 5 then
             c.asked = Bridge.time
@@ -5429,10 +5459,9 @@ function BridgeMove.crossStep(body)
 
 
 
-            if isClient() then
-                pcall(function()
-                    if body:getPrimaryHandItem() ~= nil then BridgeWeapon.putAway(body) end
-                end)
+            if not clearClimbHands(body) then
+                crossEnd(body, "item in hands")
+                return true
             end
             if c.kind == "window" and not BridgeMove.glassStep(body, c.object) then
                 crossEnd(body, "glass first")
@@ -5478,13 +5507,9 @@ function BridgeMove.crossStep(body)
     end
 
 
-    if isClient() and c.kind ~= "fence"
-        and (body:getPrimaryHandItem() ~= nil or body:getSecondaryHandItem() ~= nil) then
-        pcall(function() BridgeWeapon.putAway(body) end)
-        if body:getPrimaryHandItem() ~= nil or body:getSecondaryHandItem() ~= nil then
-            crossEnd(body, "item in hands")
-            return true
-        end
+    if c.kind ~= "fence" and not clearClimbHands(body) then
+        crossEnd(body, "item in hands")
+        return true
     end
     if edgeDist(body, c.from, c.to) <= CROSS_CALL and Bridge.time - (c.asked or -99) >= 3 then
         c.asked = Bridge.time
