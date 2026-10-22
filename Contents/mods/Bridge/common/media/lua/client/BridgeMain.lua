@@ -324,8 +324,12 @@ function Bridge.weaponVar(z)
     local v = ""
     pcall(function()
         local item = z:getPrimaryHandItem()
-        if item ~= nil and instanceof(item, "HandWeapon") and (item:isTwoHandWeapon() or item:isRequiresEquippedBothHands()) then
-            v = "2h"
+        if item ~= nil and instanceof(item, "HandWeapon") then
+            if item:isTwoHandWeapon() or item:isRequiresEquippedBothHands() then
+                v = "2h"
+            elseif item:isRanged() == true then
+                v = "handgun"
+            end
         end
     end)
     pcall(function()

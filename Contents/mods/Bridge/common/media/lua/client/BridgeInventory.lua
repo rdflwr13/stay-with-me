@@ -2137,6 +2137,10 @@ function BridgeInventory.paneMarks(pane)
     local b = body()
     if b == nil or pane.inventory ~= b:getInventory() then return nil end
     local eq, hot, keys = {}, {}, {}
+    local gun = nil
+    if BridgeGunfight ~= nil and BridgeGunfight.isAssigned(b) then
+        pcall(function() gun = BridgeGunfight.assignedItem(b) end)
+    end
     local items = pane.inventory:getItems()
     for i = 0, items:size() - 1 do
         local it = items:get(i)
@@ -2144,6 +2148,9 @@ function BridgeInventory.paneMarks(pane)
             if b:isEquipped(it) then
                 eq[it] = true
                 keys[#keys + 1] = "e" .. tostring(it:getID())
+            elseif gun ~= nil and it == gun then
+                eq[it] = true
+                keys[#keys + 1] = "u" .. tostring(it:getID())
             elseif BridgeWeapon.isAssigned(b, it) then
                 hot[it] = true
                 keys[#keys + 1] = "h" .. tostring(it:getID())

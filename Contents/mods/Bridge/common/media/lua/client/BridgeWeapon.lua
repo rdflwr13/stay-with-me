@@ -1205,6 +1205,7 @@ end
 function BridgeWeapon.update(body)
 
     if BridgeGunfight ~= nil and BridgeGunfight.hasGun ~= nil and BridgeGunfight.hasGun() then return end
+    if BridgeGunfight ~= nil and BridgeGunfight.magCareStage ~= nil then return end
     if Bridge.zombieTicks % 10 ~= 0 then return end
     if BridgeWeapon.body ~= body then
         BridgeWeapon.reset()

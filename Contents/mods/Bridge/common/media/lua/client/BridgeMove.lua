@@ -2592,6 +2592,9 @@ local function followTrailStep(body)
         BridgeMove.endFollowBump(body, "")
         return false
     end
+    if BridgeGunfight ~= nil and BridgeGunfight.reposition ~= nil then
+        return true
+    end
     local F = BridgeMove.follow
 
 

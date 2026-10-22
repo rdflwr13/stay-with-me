@@ -1816,6 +1816,93 @@ local function gunTarget(args)
 end
 
 
+local function applyGunHit(body, gun, target, damage, crit)
+    if body == nil or gun == nil or target == nil then return false, 0, 0, false, nil end
+    local hpBefore = 0
+    pcall(function() hpBefore = target:getHealth() end)
+    local fake = nil
+    pcall(function() fake = getCell():getFakeZombieForHit() end)
+    local attacker = fake or body
+    local reaction = BridgeGunRules.shotReaction(body, target, crit)
+    pcall(function() attacker:setVariable("ZombieHitReaction", reaction) end)
+    pcall(function() body:setVariable("ZombieHitReaction", reaction) end)
+    pcall(function() target:setHitFromBehind(body:isBehind(target)) end)
+    pcall(function() target:setAttackedBy(attacker) end)
+    pcall(function() target:setPlayerAttackPosition(target:testDotSide(body)) end)
+    pcall(function() target:setHitHeadWhileOnFloor(0) end)
+    pcall(function() target:setHitLegsWhileOnFloor(false) end)
+    pcall(function() body:setCriticalHit(crit) end)
+    local ok, err = pcall(function() target:Hit(gun, attacker, damage, false, 1, false) end)
+    pcall(function() body:setCriticalHit(false) end)
+    if not ok then log("gunShot Hit failed: " .. tostring(err)) end
+    local hpAfter = hpBefore
+    pcall(function() hpAfter = target:getHealth() end)
+    local killed = false
+    pcall(function() killed = target:isDead() == true or target:getHealth() <= 0 end)
+    return ok, hpBefore, hpAfter, killed, reaction
+end
+
+
+local function gunExtraCandidates(body, player, primary, modeRange)
+    local out = {}
+    local cell = getCell()
+    if cell == nil then return out end
+    local friendlies = {}
+    for _, p in pairs(BridgeServer.online or {}) do
+        if p ~= nil then friendlies[#friendlies + 1] = p end
+    end
+    local list = cell:getZombieList()
+    for i = 0, list:size() - 1 do
+        local z = list:get(i)
+        if z ~= nil and z ~= body and BridgeServer.isCompanionBody(z) then
+            friendlies[#friendlies + 1] = z
+        end
+    end
+    for i = 0, list:size() - 1 do
+        local z = list:get(i)
+        if z ~= nil and z ~= body and z ~= primary and z ~= player
+            and not BridgeServer.isCompanionBody(z)
+            and BridgeGunRules.isForeignNpc(z) == nil
+            and not BridgeData.harmless(z) then
+            local alive = false
+            pcall(function() alive = z:isAlive() and z:getHealth() > 0 and not z:isOnKillDone() end)
+            if alive and math.abs(z:getZ() - body:getZ()) < 0.8 then
+                local zd = dist(body, z:getX(), z:getY())
+                if zd <= modeRange + 1 then
+                    local clear = false
+                    pcall(function()
+                        clear = BridgeGunRules.fireLineClear(cell, body:getX(), body:getY(), body:getZ(),
+                            z:getX(), z:getY(), z:getZ()) == true
+                    end)
+                    if clear and BridgeGunRules.friendlyInLine(body, z, friendlies) == nil then
+                        out[#out + 1] = z
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+
+local function clearReload(rec)
+    rec.gunReloadStage, rec.gunReloadUntil, rec.gunReloadMagId = nil, nil, nil
+    rec.gunReloadFamily, rec.gunReloadRounds = nil, nil
+    rec.gunReloadUsed = nil
+    rec.gunReloadVirtual = nil
+    rec.gunReloadClientAmmo = nil
+    rec.gunReloadSavedRounds, rec.gunReloadBaseRounds = nil, nil
+end
+
+
+local function reloadStale(rec)
+    if rec.gunReloadStage == nil then return false end
+    local untilMs = tonumber(rec.gunReloadUntil) or 0
+    if untilMs <= 0 then return true end
+    return getTimestampMs() > untilMs + 2000
+end
+
+
 BridgeServer.Commands.gunShot = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
@@ -1828,7 +1915,14 @@ BridgeServer.Commands.gunShot = function(player, args)
     local body = currentBody(who, rec)
     if body == nil then return reject("no companion body") end
     if rec.gunType == nil then return reject("no primary gun") end
-    if rec.gunReloadStage ~= nil then return reject("reloading") end
+    if rec.gunReloadStage ~= nil then
+        if reloadStale(rec) then
+            clearReload(rec)
+            log("gunShot cleared stale reload for " .. tostring(who))
+        else
+            return reject("reloading")
+        end
+    end
     local gunUse = BridgeData.gunUseOf(rec)
     if gunUse == "off" then return reject("gun use off") end
     if gunUse == "player" then
@@ -1877,7 +1971,7 @@ BridgeServer.Commands.gunShot = function(player, args)
     end
     local d = dist(body, target:getX(), target:getY())
     if d > modeRange + 1 then return reject("target out of mode range") end
-    if not BridgeGunRules.lineClear(getCell(), body:getX(), body:getY(), body:getZ(),
+    if not BridgeGunRules.fireLineClear(getCell(), body:getX(), body:getY(), body:getZ(),
         target:getX(), target:getY(), target:getZ()) then
         return reject("no line")
     end
@@ -1894,33 +1988,84 @@ BridgeServer.Commands.gunShot = function(player, args)
 
     local chance = BridgeGunRules.hitChance(desc, d, false, aimLevel)
     local hit = ZombRand(100) < chance
+    local shotgun = (tonumber(desc.projectileCount) or 1) > 1
     local crit = false
+    if shotgun or hit then
+        crit = ZombRand(100) < (desc.critChance or 0)
+    end
+    local plan = { kind = nil, extras = {}, primaryShare = 1 }
+    if shotgun or (hit and desc.piercingBullets == true) then
+        plan = BridgeGunRules.multiPlan(body, target, desc,
+            gunExtraCandidates(body, player, target, modeRange), modeRange, {})
+    end
+    local extras = {}
+    local extraHits, extraKills, glass = 0, 0, 0
     local reaction = nil
     local damage = 0
     local hpBefore, hpAfter = 0, 0
     pcall(function() hpBefore = target:getHealth() end)
-    if hit then
-        crit = ZombRand(100) < (desc.critChance or 0)
-        damage = BridgeGunRules.rollDamage(desc)
-        if crit then damage = damage * math.max(1, math.min(5, desc.critMult or 2)) end
-        local fake = nil
-        pcall(function() fake = getCell():getFakeZombieForHit() end)
-        local attacker = fake or body
-        reaction = BridgeGunRules.shotReaction(body, target, crit)
-        pcall(function() attacker:setVariable("ZombieHitReaction", reaction) end)
-        pcall(function() body:setVariable("ZombieHitReaction", reaction) end)
-        pcall(function() target:setHitFromBehind(body:isBehind(target)) end)
-        pcall(function() target:setAttackedBy(attacker) end)
-        pcall(function() target:setPlayerAttackPosition(target:testDotSide(body)) end)
-        pcall(function() target:setHitHeadWhileOnFloor(0) end)
-        pcall(function() target:setHitLegsWhileOnFloor(false) end)
-        pcall(function() body:setCriticalHit(crit) end)
-        local ok, err = pcall(function() target:Hit(gun, attacker, damage, false, 1, false) end)
-        pcall(function() body:setCriticalHit(false) end)
-        if not ok then log("gunShot Hit failed: " .. tostring(err)) end
-    end
     hpAfter = hpBefore
-    pcall(function() hpAfter = target:getHealth() end)
+    local critDamage = crit and math.max(1, math.min(5, desc.critMult or 2)) or 1
+    local shellDamage = 0
+    if shotgun then shellDamage = BridgeGunRules.rollDamage(desc) * critDamage end
+    local primaryShare = tonumber(plan.primaryShare) or 1
+    local primaryOk = true
+    local primaryDamage = 0
+    if hit then
+        damage = shotgun and shellDamage or (BridgeGunRules.rollDamage(desc) * critDamage)
+        primaryDamage = damage * primaryShare
+        local ok, hpB, hpA, _, react = applyGunHit(body, gun, target, primaryDamage, crit)
+        primaryOk = ok == true
+        hpBefore, hpAfter, reaction = hpB, hpA, react
+    end
+
+    if shotgun or (hit and primaryOk) then
+        for _, ex in ipairs(plan.extras or {}) do
+            local z = ex.target
+            local ehit = true
+            if shotgun then
+                local echance = BridgeGunRules.hitChance(desc, ex.dist or dist(body, z:getX(), z:getY()), false, aimLevel)
+                    * (ex.chanceScale or 1)
+                if echance < BridgeGunRules.MIN_CHANCE then echance = BridgeGunRules.MIN_CHANCE end
+                if echance > BridgeGunRules.MAX_CHANCE then echance = BridgeGunRules.MAX_CHANCE end
+                ehit = ZombRand(100) < echance
+            end
+            local entry = { x = z:getX(), y = z:getY(), z = z:getZ(), hit = ehit, crit = false,
+                damage = 0, killed = false, hpAfter = 0, reaction = nil }
+            pcall(function() entry.id = z:getOnlineID() end)
+            pcall(function() entry.hpAfter = z:getHealth() end)
+            if ehit then
+                local edmg
+                if shotgun then
+                    edmg = shellDamage * (ex.share or 0)
+                else
+                    edmg = damage * (ex.share or 0)
+                end
+                local eok, _, ehp, ekilled, ereact = applyGunHit(body, gun, z, edmg, crit)
+                entry.hit = eok == true
+                entry.crit = crit
+                entry.damage = edmg
+                entry.killed = ekilled == true
+                entry.hpAfter = ehp
+                entry.reaction = ereact
+                if eok then extraHits = extraHits + 1 end
+                if ekilled then extraKills = extraKills + 1 end
+            end
+            extras[#extras + 1] = entry
+        end
+    end
+
+    pcall(function()
+        local cell = getCell()
+        glass = glass + (BridgeGunRules.breakGlassOnLine(cell, body:getX(), body:getY(), body:getZ(),
+            target:getX(), target:getY(), target:getZ()) or 0)
+        for _, e in ipairs(extras) do
+            if e.x ~= nil and e.y ~= nil and e.z ~= nil then
+                glass = glass + (BridgeGunRules.breakGlassOnLine(cell, body:getX(), body:getY(), body:getZ(),
+                    e.x, e.y, e.z) or 0)
+            end
+        end
+    end)
 
     pcall(function()
         local radius = (desc.soundRadius or 20) * BridgeGunRules.noiseMultiplier()
@@ -1934,8 +2079,9 @@ BridgeServer.Commands.gunShot = function(player, args)
     end)
 
     sendServerCommand(player, "Bridge", "gunResult",
-        { ok = true, hit = hit, crit = crit, reaction = reaction, damage = damage, hpBefore = hpBefore,
-            hpAfter = hpAfter, distance = d, chance = chance, rounds = rec.gunRounds })
+        { ok = true, hit = hit, crit = hit and crit or false, reaction = reaction, damage = primaryDamage,
+            hpBefore = hpBefore, hpAfter = hpAfter, distance = d, chance = chance, rounds = rec.gunRounds,
+            extras = extras })
 
     local fx = { owner = who, id = rec.bodyId, kind = desc.kind, sound = desc.sound,
         radius = desc.soundRadius, volume = desc.soundVolume }
@@ -1947,8 +2093,9 @@ BridgeServer.Commands.gunShot = function(player, args)
         end
     end
 
-    log(string.format("gunShot %s d=%.1f chance=%.0f hit=%s dmg=%.2f hp=%.2f->%.2f rounds=%d",
-        tostring(rec.gunType), d, chance, tostring(hit), damage, hpBefore, hpAfter, rec.gunRounds or 0))
+    log(string.format("gunShot %s d=%.1f chance=%.0f hit=%s dmg=%.2f hp=%.2f->%.2f rounds=%d extras=%d extraHits=%d extraKills=%d glass=%d kind=%s",
+        tostring(rec.gunType), d, chance, tostring(hit), primaryDamage, hpBefore, hpAfter, rec.gunRounds or 0,
+        #extras, extraHits, extraKills, glass, tostring(plan.kind or "none")))
 end
 
 
@@ -1981,18 +2128,44 @@ local function reloadTotalMs(desc, needed, level)
     return (base / factor) * RELOAD_TICK_MS
 end
 
-local function clearReload(rec)
-    rec.gunReloadStage, rec.gunReloadUntil, rec.gunReloadMagId = nil, nil, nil
-    rec.gunReloadFamily, rec.gunReloadRounds = nil, nil
-    rec.gunReloadUsed = nil
-    rec.gunReloadVirtual = nil
-    rec.gunReloadClientAmmo = nil
-    rec.gunReloadSavedRounds, rec.gunReloadBaseRounds = nil, nil
-end
-
 BridgeServer.Commands.gunLoadOne = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
+    local magId = tonumber(type(args) == "table" and args.magId or nil)
+    if magId ~= nil then
+        local body = currentBody(who, rec)
+        local itemId = tonumber(type(args) == "table" and args.itemId or nil)
+        if body ~= nil and itemId ~= nil then
+            pcall(function() BridgeGunRules.removeItemById(body, itemId) end)
+        end
+        if body ~= nil then
+            local magazine = nil
+            pcall(function() magazine = BridgeGunRules.findItemById(body, magId) end)
+            if magazine ~= nil then
+                local rounds = BridgeGunRules.roundsOf(magazine) + 1
+                local maxAmmo = 0
+                pcall(function()
+                    local g = instanceItem(rec.gunType)
+                    local d = g ~= nil and BridgeGunRules.describe(g) or nil
+                    maxAmmo = tonumber(d and d.maxAmmo) or 0
+                end)
+                if maxAmmo > 0 and rounds > maxAmmo then rounds = maxAmmo end
+                BridgeGunRules.setRounds(magazine, rounds, false)
+                local container = nil
+                pcall(function() container = magazine:getContainer() end)
+                if BridgeGunRules.canSync(container) then
+                    pcall(function() sendItemStats(magazine) end)
+                end
+            end
+        end
+        if rec.magCareMagId ~= magId then
+            rec.magCareMagId = magId
+            rec.magCareUsed = 0
+        end
+        rec.magCareUsed = math.max(0, math.floor(tonumber(rec.magCareUsed) or 0)) + 1
+        log(string.format("gunMagLoadOne used=%d mag=%d", rec.magCareUsed, magId))
+        return
+    end
     if rec.gunReloadStage == nil or rec.gunReloadClientAmmo ~= true then return end
     local used = math.max(0, math.floor(tonumber(rec.gunReloadUsed) or 0))
     local needed = math.max(0, math.floor(tonumber(rec.gunReloadRounds) or 0))
@@ -2041,7 +2214,14 @@ BridgeServer.Commands.gunReload = function(player, args)
     if gun == nil or not BridgeGunRules.valid(gun) then return answer(false, "invalid gun") end
     local desc = BridgeGunRules.describe(gun)
     if action == "start" then
-        if rec.gunReloadStage ~= nil then return answer(false, "already reloading") end
+        if rec.gunReloadStage ~= nil then
+            if reloadStale(rec) then
+                clearReload(rec)
+                log("gunReload cleared stale reload for " .. tostring(who))
+            else
+                return answer(false, "already reloading")
+            end
+        end
         local rounds = held ~= nil and BridgeGunRules.roundsOf(held) or (tonumber(rec.gunRounds) or 0)
         local maxAmmo = math.max(1, tonumber(desc.maxAmmo) or 1)
         rec.gunRounds = rounds
@@ -2065,7 +2245,8 @@ BridgeServer.Commands.gunReload = function(player, args)
         local clientNeeded = math.min(clientAvailable, math.max(1, maxAmmo - rounds))
         rec.gunReloadClientAmmo = nil
         if virtual then
-            needed = clientNeeded
+            needed = desc.magazineType ~= nil and clientAvailable or clientNeeded
+            if needed > maxAmmo then needed = maxAmmo end
             if needed < 1 then return answer(false, "no ammo") end
             rec.gunReloadClientAmmo = true
             rec.gunReloadMagId = nil
@@ -2101,6 +2282,21 @@ BridgeServer.Commands.gunReload = function(player, args)
         local now = getTimestampMs()
         if rec.gunReloadUntil ~= nil and now < rec.gunReloadUntil - 1500 then
             return answer(false, "too soon")
+        end
+        if rec.gunReloadClientAmmo and desc.magazineType ~= nil then
+            local needed = math.floor(tonumber(rec.gunReloadRounds) or 0)
+            local maxAmmo = math.max(1, tonumber(desc.maxAmmo) or needed)
+            if needed > maxAmmo then needed = maxAmmo end
+            if needed < 1 then
+                clearReload(rec)
+                return answer(false, "no ammo")
+            end
+            rec.gunRounds = needed
+            if held ~= nil then BridgeGunRules.setRounds(held, needed, true) end
+            clearReload(rec)
+            log(string.format("gunReload external complete needed=%d rounds=%d", needed, needed))
+            answer(true, nil, { rounds = needed, taken = needed })
+            return
         end
         if rec.gunReloadClientAmmo then
             local needed = math.floor(tonumber(rec.gunReloadRounds) or 0)
@@ -2153,7 +2349,7 @@ BridgeServer.Commands.gunReload = function(player, args)
         if desc.magazineType ~= nil then
             local magazine = nil
             if rec.gunReloadMagId ~= nil then
-                pcall(function() magazine = body:getInventory():getItemWithIDRecursiv(rec.gunReloadMagId) end)
+                pcall(function() magazine = BridgeGunRules.findItemById(body, rec.gunReloadMagId) end)
             end
             if magazine == nil or BridgeGunRules.roundsOf(magazine) <= 0 then
                 clearReload(rec)
@@ -2161,8 +2357,12 @@ BridgeServer.Commands.gunReload = function(player, args)
             end
             rounds = BridgeGunRules.roundsOf(magazine)
             BridgeGunRules.removeItem(magazine)
+            local hadClip = false
+            pcall(function() hadClip = held:isContainsClip() == true end)
             BridgeGunRules.setRounds(held, rounds, true)
-            BridgeGunRules.stashMagazine(body, desc, rec.gunReloadSavedRounds or 0)
+            if hadClip or (rec.gunReloadSavedRounds or 0) > 0 then
+                BridgeGunRules.stashMagazine(body, desc, rec.gunReloadSavedRounds or 0)
+            end
         else
             local needed = math.floor(tonumber(args.rounds) or tonumber(rec.gunReloadRounds) or 1)
             local maxAmmo = math.max(1, tonumber(desc.maxAmmo) or needed)
