@@ -499,7 +499,7 @@ end
 local function humanize(body)
     body:setVariable(BODY_VAR, true)
 
-    pcall(function() BridgeInventory.bodyArrived() end)
+    pcall(function() BridgeInventory.bodyArrived(body) end)
 
 
     pcall(function() body:setReanimatedForGrappleOnly(false) end)
