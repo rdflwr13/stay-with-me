@@ -104,6 +104,7 @@ BridgeTorchShared.CFG = {
 
 BridgeTorchShared.state = {}
 BridgeTorchShared.lastHours = {}
+BridgeTorchShared.stepAcc = {}
 
 local function log(text) if BridgeLog ~= nil and type(BridgeLog.on) == "function" and BridgeLog.on() then print("[BridgeTorchShared] " .. tostring(text)) end end
 
@@ -539,6 +540,7 @@ end
 function BridgeTorchShared.apply(body, on, range)
     if body == nil then return nil end
     on = on == true
+    local was = prevOn(body)
 
 
 
@@ -553,6 +555,10 @@ function BridgeTorchShared.apply(body, on, range)
         body:setVariable(BridgeTorchShared.RANGE_VAR, on and tostring(range) or "")
     end)
     setPrevOn(body, on)
+    if was ~= on then
+        local key = BridgeTorchShared.keyOf(body)
+        pcall(function() BridgeTorchShared.lastHours[key] = getGameTime():getWorldAgeHours() end)
+    end
     return item
 end
 
@@ -589,7 +595,13 @@ function BridgeTorchShared.drain(body, dt)
     local minutes = gameMinutesSince(body)
     if minutes <= 0 then return false end
 
-    local left = c - rate * minutes
+    local key = BridgeTorchShared.keyOf(body)
+    local acc = (BridgeTorchShared.stepAcc[key] or 0) + minutes
+    local steps = math.floor(acc / 10)
+    BridgeTorchShared.stepAcc[key] = acc - steps * 10
+    if steps <= 0 then return false end
+
+    local left = c - rate * steps
     if left < 0 then left = 0 end
     pcall(function() item:setUsedDelta(left) end)
     return left <= 0.0001
