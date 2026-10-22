@@ -475,9 +475,16 @@ function BridgeInventory.dropGone(b)
     for i = worn:size() - 1, 0, -1 do
         local item = worn:getItemByIndex(i)
         if item ~= nil and not inBody(item) then
-            b:removeWornItem(item)
-            changed = true
-            dropped[#dropped + 1] = tostring(item:getType())
+            local bodyVisual = false
+            pcall(function()
+                bodyVisual = hasTag(item, "Face") or hasTag(item, "BodyDetail") or hasTag(item, "Muscle")
+                    or isMuscleItem(item) or isMakeupItem(item)
+            end)
+            if not bodyVisual then
+                b:removeWornItem(item)
+                changed = true
+                dropped[#dropped + 1] = tostring(item:getType())
+            end
         end
     end
     local p, s = b:getPrimaryHandItem(), b:getSecondaryHandItem()
@@ -3488,8 +3495,13 @@ end
 
 
 
-function BridgeInventory.bodyArrived()
+function BridgeInventory.bodyArrived(b)
     local now = Bridge.time or 0
+    if b ~= nil then
+        for _, c in ipairs(containersOf(b)) do
+            BridgeInventory.goneContainers[c] = nil
+        end
+    end
     local keep = {}
     for c, t in pairs(BridgeInventory.goneContainers) do
         if type(t) == "number" and t > now then keep[c] = t end
