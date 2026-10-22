@@ -372,7 +372,7 @@ BridgeData.DEFAULT_AMMO_RESERVE = "free"
 BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
     relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true,
     collapseActions = true, gunMelee = true, gunReloadIdle = true, gunMagCare = false, gunUse = "player",
-    ammoReserve = "free" }
+    ammoReserve = "free", lootMenu = true }
 BridgeData.HAIR_MAX = 40
 BridgeData.GENDER_SWAP_COOLDOWN = 60
 BridgeData.GENDER_COMBAT_GRACE = 15

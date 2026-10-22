@@ -1578,6 +1578,8 @@
     "IGUI_NotAlone_OptHomeResourcesTipMale": "On: while at the home zone, when he starts a job or needs a bandage, disinfectant, or battery he does not have, he takes it straight from a container inside the home zone. Off: never.",
     "IGUI_NotAlone_OptCollapseActions": "Collapse companion actions",
     "IGUI_NotAlone_OptCollapseActionsTip": "On: sit, lie down, pry and cut tree appear inside the menu of the chair, bed, door or tree. Off: they appear at the top level of the right-click menu.",
+    "IGUI_NotAlone_OptLootMenu": "Show loot / gift menu options",
+    "IGUI_NotAlone_OptLootMenuTip": "Shows the companion's loot, wear, and gift options in right-click menus.",
     "IGUI_NotAlone_Say_HomeSet": "This is home, then.",
     "IGUI_NotAlone_WindowReport": "Bug Report",
     "IGUI_NotAlone_ReportStep1a": "1. Click Generate report, then upload the report file and console.txt",

@@ -3205,7 +3205,8 @@ end
 
 
 
-function BridgeInventory.wearOptions(context, b, player, items, list)
+function BridgeInventory.wearOptions(context, b, player, items, list, showWear)
+    if showWear == nil then showWear = true end
     local inv = b:getInventory()
     local t = BridgeInventory.wearTests(b, items)
     local target = t.clothing or t.container or t.other
@@ -3216,7 +3217,7 @@ function BridgeInventory.wearOptions(context, b, player, items, list)
 
 
     if plain and outside and #plan.entries == 0 then plain = false end
-    if plain and extraSubmenu(target) == nil then
+    if showWear and plain and extraSubmenu(target) == nil then
         local o = context:addOption(label("MenuWear"), player, BridgeInventory.wearList, plan)
         if list[1] ~= nil then iconOf(o, list[1], true) end
         wearTooltip(b, o, target, target)
@@ -3229,7 +3230,7 @@ function BridgeInventory.wearOptions(context, b, player, items, list)
             markFull(o, fits)
         end
     end
-    if t.extra ~= nil and not isBroken(t.extra) and not BridgeInventory.handsGear(t.extra) then
+    if showWear and t.extra ~= nil and not isBroken(t.extra) and not BridgeInventory.handsGear(t.extra) then
         local item = t.extra
         local mine = item:getContainer() == inv
         if mine or BridgeInventory.canWearOnHer(player, item) then
@@ -3309,6 +3310,7 @@ end
 
 
 function BridgeInventory.giftOption(context, b, player, list, dest)
+    if Bridge == nil or Bridge.store == nil or not BridgeData.optionOf(Bridge.store, "lootMenu") then return end
     if BridgeSocial == nil or BridgeSocial.giftPreview == nil then return end
     if context == nil or list == nil or #list == 0 then return end
     local item = list[1]
@@ -3421,6 +3423,8 @@ function BridgeInventory.onFill(playerNum, context, items)
     local inv = b:getInventory()
     local list = actualItems(items)
     if #list == 0 then return end
+    local showMenu = true
+    pcall(function() showMenu = BridgeData.optionOf(Bridge.store, "lootMenu") end)
     if Bridge ~= nil and Bridge.verbose and #list == 1 then
         context:addOption("Bridge: forget this item (debug)", list[1], BridgeInventory.forgetItem)
     end
@@ -3437,7 +3441,7 @@ function BridgeInventory.onFill(playerNum, context, items)
 
 
     if inMain or BridgeInventory.shown then
-        local ok, err = pcall(BridgeInventory.wearOptions, rin, b, player, items, list)
+        local ok, err = pcall(BridgeInventory.wearOptions, rin, b, player, items, list, showMenu)
         if not ok then warnOnce("wear menu failed: " .. tostring(err)) end
     end
     if not inMain then
