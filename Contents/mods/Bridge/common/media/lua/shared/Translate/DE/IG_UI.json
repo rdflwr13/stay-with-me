@@ -2464,6 +2464,8 @@
     "IGUI_NotAlone_OptHomeResourcesTipMale": "An: in der Heimzone nimmt er Verband, Desinfektionsmittel oder Batterie, die er nicht dabei hat, direkt aus einem Behälter in der Zone, sobald er eine Aufgabe beginnt oder etwas davon braucht. Aus: nie.",
     "IGUI_NotAlone_OptCollapseActions": "Aktionen im Objektmenü",
     "IGUI_NotAlone_OptCollapseActionsTip": "An: Hinsetzen, Aufs Bett legen, Tür aufbrechen und Baum fällen erscheinen im Menü von Stuhl, Bett, Tür oder Baum. Aus: sie erscheinen oben im Rechtsklickmenü.",
+    "IGUI_NotAlone_OptLootMenu": "Plünder- / Geschenkoptionen anzeigen",
+    "IGUI_NotAlone_OptLootMenuTip": "Zeigt Optionen zum Plündern, Anziehen und Verschenken im Rechtsklickmenü des Begleiters.",
     "IGUI_NotAlone_Lay": "Aufs Bett legen",
     "IGUI_NotAlone_GetUp": "Aufstehen",
     "IGUI_NotAlone_Sleep": "Schlafen",
