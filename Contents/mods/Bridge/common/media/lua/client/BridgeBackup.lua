@@ -222,7 +222,7 @@ end
 
 
 
-function BridgeBackup.noteItems(body, encoded)
+function BridgeBackup.noteItems(body, encoded, sig, n)
     if not active() or BridgeBackup.key == nil or body == nil then return end
     local who = BridgeData.me()
     if who == nil then return end
@@ -230,12 +230,13 @@ function BridgeBackup.noteItems(body, encoded)
     local ids = BridgeBackup.idsOf(body)
 
 
-    local sig, n = nil, nil
-    pcall(function()
-        local list = BridgeItems.decode(encoded)
-        n = #list
-        sig = BridgeItems.signature(list)
-    end)
+    if sig == nil or n == nil then
+        pcall(function()
+            local list = BridgeItems.decode(encoded)
+            n = #list
+            sig = BridgeItems.signature(list)
+        end)
+    end
     local prev = BridgeBackup.items[who]
     if prev ~= nil and sig ~= nil and prev.sig == sig and joinIds(prev.ids) == joinIds(ids) then
         prev.enc = encoded
@@ -270,22 +271,50 @@ end
 
 
 
+local recvCache = setmetatable({}, { __mode = "k" })
+
+local function cachedRecvText(recv)
+    local n, sum = 0, 0
+    for k, v in pairs(recv) do
+        n = n + 1
+        if type(k) == "string" then sum = sum + #k end
+        if v == true then sum = sum + 1 end
+    end
+    local c = recvCache[recv]
+    if c ~= nil and c.n == n and c.sum == sum then return c.text end
+    local packed = BridgeItems.packTable(recv)
+    local text = (packed ~= nil) and BridgeItems.esc(packed) or nil
+    recvCache[recv] = { n = n, sum = sum, text = text }
+    return text
+end
+
 local function fields(rec, without)
     local t = {}
     for k, v in pairs(rec) do
         if k ~= "items" and not (without and (k == "lastX" or k == "lastY" or k == "lastZ")) then t[k] = v end
     end
-    if without and type(rec.recv) == "table" then
-        local n = 0
-        for _ in pairs(rec.recv) do n = n + 1 end
-        t.recv = (n > 0) and ("n" .. tostring(n)) or nil
+    local tail = nil
+    if type(rec.recv) == "table" then
+        if without then
+            local n = 0
+            for _ in pairs(rec.recv) do n = n + 1 end
+            t.recv = (n > 0) and ("n" .. tostring(n)) or nil
+        else
+            t.recv = nil
+            tail = cachedRecvText(rec.recv)
+        end
     end
     if without and type(rec.rel) == "table" then
         local r = {}
         for k, v in pairs(rec.rel) do if k ~= "seen" and k ~= "hours" then r[k] = v end end
         t.rel = r
     end
-    return BridgeItems.packTable(t) or ""
+    local out = BridgeItems.packTable(t) or ""
+    if tail ~= nil then
+        local part = "recv~t~" .. tail
+        out = (out == "") and part or (out .. "|" .. part)
+    end
+    return out
 end
 
 
@@ -360,13 +389,16 @@ function BridgeBackup.write(md, sig)
     if key == nil or md == nil or md.players == nil then return false end
     local seq = BridgeBackup.seq + 1
     local lines = { VERSION, "seq " .. tostring(seq), "base " .. tostring(BridgeBackup.base), "world " .. key }
+    local flushed = {}
     pcall(function() lines[#lines + 1] = "age " .. string.format("%.3f", getGameTime():getWorldAgeHours()) end)
     for _, who in ipairs(sortedWho(md.players)) do
         local rec = md.players[who]
         if type(rec) == "table" then
             local w = escWho(who)
-            lines[#lines + 1] = "P " .. w .. " " .. fields(rec, false)
+            local packed = fields(rec, false)
+            lines[#lines + 1] = "P " .. w .. " " .. packed
             local items = BridgeItems.get(rec)
+            flushed[#flushed + 1] = packed .. "\n" .. (items or "")
             if items ~= nil and items ~= "" then
                 lines[#lines + 1] = "I " .. w .. " " .. items
                 local cur = BridgeBackup.items[who]
@@ -401,7 +433,7 @@ function BridgeBackup.write(md, sig)
     BridgeBackup.dirty = false
     BridgeBackup.lastWrite = Bridge.time
     BridgeBackup.writes = BridgeBackup.writes + 1
-    BridgeBackup.flushed = BridgeBackup.fullState(md)
+    BridgeBackup.flushed = table.concat(flushed, "\n")
     if Bridge.verbose then log("written seq=" .. tostring(seq) .. " base=" .. tostring(BridgeBackup.base) .. " lines=" .. tostring(#lines)) end
     return true
 end

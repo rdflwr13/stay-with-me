@@ -1504,17 +1504,64 @@ function BridgeInventory.addButton(page)
     end
 end
 
+local function guardClickClass(class)
+    if type(class) ~= "table" or rawget(class, "bridgeClickGuard") then return end
+    if type(class.onBackpackClick) ~= "function" then return end
+    class.bridgeClickGuard = true
+    local click = class.onBackpackClick
+    class.onBackpackClick = function(self, button, ...)
+        local release = self.bridgeClickRelease
+        if release ~= nil then
+            if release.handled then return end
+            release.handled = true
+        end
+        return click(self, button, ...)
+    end
+end
+
+local function bindOneClick(page, button)
+    if page == nil or button == nil then return end
+    guardClickClass(getmetatable(page) or page)
+    button.onclick = function(owner, target, ...)
+        return owner:onBackpackClick(target, ...)
+    end
+    if button.bridgeOneClickWrapper == button.onMouseUp then return end
+    local handler = button.onMouseUp
+    local wrapped = function(self, x, y)
+        local p = self.parent and self.parent.parent
+        if p == nil or p.bridgeClickRelease ~= nil then
+            return handler(self, x, y)
+        end
+        p.bridgeClickRelease = { handled = false }
+        local ok, result = pcall(handler, self, x, y)
+        p.bridgeClickRelease = nil
+        if not ok then error(result) end
+        return result
+    end
+    button.bridgeOneClickWrapper = wrapped
+    button.onMouseUp = wrapped
+end
+
+function BridgeInventory.bindOneClick(page)
+    if page == nil or page.onCharacter then return end
+    for _, button in ipairs(page.backpacks or {}) do
+        bindOneClick(page, button)
+    end
+end
+
 function BridgeInventory.onRefresh(page, stage)
     if stage ~= "buttonsAdded" then return end
     if BridgeInventory.twfActive() then return end
     BridgeInventory.addButton(page)
     if BridgeParked ~= nil then pcall(BridgeParked.addButtons, page) end
+    pcall(BridgeInventory.bindOneClick, page)
 end
 
 function BridgeInventory.onRefreshLate(page, stage)
     if stage ~= "buttonsAdded" then return end
     BridgeInventory.addButton(page)
     if BridgeParked ~= nil then pcall(BridgeParked.addButtons, page) end
+    pcall(BridgeInventory.bindOneClick, page)
 end
 
 
@@ -1554,6 +1601,7 @@ if ISInventoryPage ~= nil and ISInventoryPage.refreshBackpacks ~= nil and not IS
         original(self, ...)
         pcall(function() BridgeInventory.addButton(self) end)
         if BridgeParked ~= nil then pcall(BridgeParked.addButtons, self) end
+        pcall(function() BridgeInventory.bindOneClick(self) end)
     end
     ISInventoryPage.bridgeWrapped = true
     log("refreshBackpacks wrapped")
