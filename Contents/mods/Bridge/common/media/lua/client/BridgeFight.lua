@@ -1383,7 +1383,7 @@ function BridgeFight.update(body)
         end
     end
     local swinging = BridgeFight.state == "swing"
-    if not swinging and BridgeGunfight ~= nil and BridgeGunfight.isAssigned ~= nil and BridgeGunfight.isAssigned() then
+    if not swinging and BridgeGunfight ~= nil and BridgeGunfight.isAssigned ~= nil and BridgeGunfight.isAssigned(body) then
         local ok, busy = pcall(function() return BridgeGunfight.update(body) end)
         if not ok then
             BridgeFight.info = "gun error: " .. tostring(busy)

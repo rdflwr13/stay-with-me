@@ -433,7 +433,14 @@ function BridgeItems.apply(item, rec)
     end
     if rec.f then try(function() item:setFavorite(true) end) end
     if rec.k ~= nil then try(function() item:setKeyId(rec.k) end) end
-    if rec.am ~= nil then try(function() item:setCurrentAmmoCount(rec.am) end) end
+    if rec.am ~= nil then try(function() item:setCurrentAmmoCount(rec.am) end)
+    else
+        try(function()
+            if not item:IsWeapon() and item:getMaxAmmo() ~= nil and item:getMaxAmmo() > 0 then
+                item:setCurrentAmmoCount(0)
+            end
+        end)
+    end
     if rec.cl then try(function() item:setContainsClip(true) end) end
     if rec.ch then try(function() item:setRoundChambered(true) end) end
     if rec.fl ~= nil and rec.fa ~= nil then

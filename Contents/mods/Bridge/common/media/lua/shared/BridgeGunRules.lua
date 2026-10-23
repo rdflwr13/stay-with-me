@@ -351,6 +351,33 @@ end
 BridgeGunRules.edgeWindow = edgeWindow
 
 
+local function edgeTallHoppable(a, b)
+    if a == nil or b == nil then return false end
+    local owner, north = nil, false
+    if a:getX() ~= b:getX() then
+        owner, north = (a:getX() > b:getX()) and a or b, false
+    else
+        owner, north = (a:getY() > b:getY()) and a or b, true
+    end
+    local tall = false
+    pcall(function()
+        local objects = owner:getObjects()
+        if objects == nil then return end
+        for i = 0, objects:size() - 1 do
+            local o = objects:get(i)
+            if o ~= nil and o:isTallHoppable() then
+                local props = o:getProperties()
+                local n = props:has(IsoFlagType.TallHoppableN)
+                local w = props:has(IsoFlagType.TallHoppableW)
+                if (north and n) or (not north and w) then tall = true return end
+            end
+        end
+    end)
+    return tall
+end
+BridgeGunRules.edgeTallHoppable = edgeTallHoppable
+
+
 local function edgeStopsBullet(a, b)
     if a == nil or b == nil then return true, "no_square" end
     local w = edgeWindow(a, b)
@@ -361,6 +388,7 @@ local function edgeStopsBullet(a, b)
     local hop = false
     pcall(function() hop = a:isHoppableTo(b) == true or b:isHoppableTo(a) == true end)
     if hop then return false, nil end
+    if edgeTallHoppable(a, b) then return false, nil end
     local blocked = false
     pcall(function() blocked = a:isBlockedTo(b) == true or b:isBlockedTo(a) == true end)
     if blocked then return true, "wall_or_door" end
@@ -801,35 +829,6 @@ function BridgeGunRules.findGunItem(body, id, fullType)
         if not match(found) then found = nil end
     end
 
-    if found == nil then
-        pcall(function()
-            local primary = body:getPrimaryHandItem()
-            if match(primary) then found = primary end
-            if found == nil then
-                local secondary = body:getSecondaryHandItem()
-                if match(secondary) then found = secondary end
-            end
-        end)
-    end
-
-    if found == nil then
-        pcall(function()
-            local attached = body:getAttachedItems()
-            if attached == nil then return end
-            for i = 0, attached:size() - 1 do
-                local entry = nil
-                pcall(function() entry = attached:get(i) end)
-                if entry == nil then pcall(function() entry = attached:getItemByIndex(i) end) end
-                local item = entry
-                if entry ~= nil then
-                    local ok, inner = pcall(function() return entry:getItem() end)
-                    if ok and inner ~= nil then item = inner end
-                end
-                if match(item) then found = item break end
-            end
-        end)
-    end
-
     if found == nil and fullType ~= nil then
         pcall(function()
             local items = BridgeGunRules.itemsOf(body)
@@ -1072,7 +1071,7 @@ function BridgeGunRules.findPartialMagazine(body, desc)
         pcall(function() full = item:getFullType() end)
         if full == desc.magazineType then
             local rounds = BridgeGunRules.roundsOf(item)
-            if rounds < maxAmmo and (best == nil or rounds < bestRounds) then
+            if rounds < maxAmmo and (best == nil or rounds > bestRounds) then
                 best, bestRounds = item, rounds
             end
         end
@@ -1140,6 +1139,257 @@ function BridgeGunRules.hasReloadSource(body, desc)
     end
     local _, total = BridgeGunRules.findLooseRounds(body, desc, 1)
     return total > 0
+end
+
+
+BridgeGunRules.unpackCache = BridgeGunRules.unpackCache or {}
+
+local function safeMethod(obj, name)
+    if obj == nil then return nil end
+    local fn = nil
+    pcall(function() fn = obj[name] end)
+    if type(fn) == "function" then return fn end
+    return nil
+end
+
+local function safeCall(obj, name, arg)
+    local fn = safeMethod(obj, name)
+    if fn == nil then return nil end
+    local value = nil
+    if arg == nil then
+        pcall(function() value = fn(obj) end)
+    else
+        pcall(function() value = fn(obj, arg) end)
+    end
+    return value
+end
+
+local function safeList(list)
+    local sizeFn = safeMethod(list, "size")
+    local getFn = safeMethod(list, "get")
+    if sizeFn == nil or getFn == nil then return nil, nil, 0 end
+    local count = 0
+    pcall(function() count = sizeFn(list) end)
+    return sizeFn, getFn, tonumber(count) or 0
+end
+
+local function itemTypeOf(entry)
+    if entry == nil then return nil end
+    local full = safeCall(entry, "getFullType")
+    if type(full) == "string" and full ~= "" then return full end
+    full = safeCall(entry, "getItemKey")
+    if type(full) == "string" and full ~= "" then return full end
+    return nil
+end
+
+local function unpackUp(fullType)
+    if type(fullType) ~= "string" then return nil end
+    local module, name = string.match(fullType, "^([^%.]+)%.(.+)$")
+    if name == nil then module, name = "Base", fullType end
+    local up = nil
+    if string.find(name, "Crate", 1, true) then
+        up = string.gsub(name, "Crate", "Carton")
+    elseif string.find(name, "Carton", 1, true) then
+        up = string.gsub(name, "Carton", "Box")
+    end
+    if up == nil or up == name then return nil end
+    local target = module .. "." .. up
+    local inst = nil
+    pcall(function() inst = instanceItem(target) end)
+    if inst == nil then return nil end
+    return target
+end
+BridgeGunRules.unpackUp = unpackUp
+
+
+function BridgeGunRules.unpackOf(itemType)
+    if type(itemType) ~= "string" then return nil end
+    local hit = BridgeGunRules.unpackCache[itemType]
+    if hit ~= nil then return hit or nil end
+    local spec = false
+    pcall(function()
+        local inst = instanceItem(itemType)
+        local recipeName = safeCall(inst, "getDoubleClickRecipe")
+        if type(recipeName) ~= "string" or recipeName == "" then return end
+        local manager = getScriptManager()
+        if manager == nil then return end
+        local recipe = safeCall(manager, "getCraftRecipe", recipeName)
+        local outs = safeCall(recipe, "getOutputs")
+        local _, outGet, outCount = safeList(outs)
+        local itemRes = nil
+        pcall(function() itemRes = ResourceType.Item end)
+        if outGet == nil or itemRes == nil then return end
+        for i = 0, outCount - 1 do
+            local out = nil
+            pcall(function() out = outGet(outs, i) end)
+            if out ~= nil and safeCall(out, "getResourceType") == itemRes then
+                local amount = math.floor(tonumber(safeCall(out, "getIntAmount")) or 0)
+                local types = {}
+                local candidates = safeCall(out, "getPossibleResultItems")
+                local _, candGet, candCount = safeList(candidates)
+                if candGet ~= nil then
+                    for j = 0, candCount - 1 do
+                        local entry = nil
+                        pcall(function() entry = candGet(candidates, j) end)
+                        local full = itemTypeOf(entry)
+                        if full ~= nil then types[#types + 1] = full end
+                    end
+                end
+                if #types == 0 then
+                    local up = unpackUp(itemType)
+                    if up ~= nil then types[1] = up end
+                end
+                if amount > 0 then
+                    local ticks = 75
+                    local t = tonumber(safeCall(recipe, "getTime"))
+                    if t ~= nil then ticks = math.max(15, math.floor(t * 5)) end
+                    spec = { out = types, amount = amount, ticks = ticks, recipe = recipeName }
+                    break
+                end
+            end
+        end
+    end)
+    BridgeGunRules.unpackCache[itemType] = spec
+    return spec or nil
+end
+
+
+function BridgeGunRules.unpackPick(itemType, want, level)
+    level = level or 1
+    if level > 3 then return nil end
+    local spec = BridgeGunRules.unpackOf(itemType)
+    if spec == nil then return nil end
+    for _, nextType in ipairs(spec.out) do
+        if nextType == want then
+            return { type = nextType, amount = spec.amount, ticks = spec.ticks, depth = 1 }
+        end
+        local deeper = BridgeGunRules.unpackPick(nextType, want, level + 1)
+        if deeper ~= nil then
+            return { type = nextType, amount = spec.amount, ticks = spec.ticks, depth = 1 + deeper.depth }
+        end
+    end
+    return nil
+end
+
+
+function BridgeGunRules.findAmmoBox(body, gun)
+    local want = type(gun) == "table" and gun.ammoTypeKey or nil
+    if body == nil or want == nil then return nil end
+    local box = gun.ammoBox
+    if box == nil then
+        local candidate = want .. "Box"
+        local probe = nil
+        pcall(function() probe = instanceItem(candidate) end)
+        if probe ~= nil then box = candidate end
+    end
+    local best, bestDepth = nil, 99
+    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+        local full = nil
+        pcall(function() full = item:getFullType() end)
+        if type(full) == "string" and full ~= want then
+            if box ~= nil and full == box then
+                local spec = BridgeGunRules.unpackOf(full)
+                if spec ~= nil then
+                    return { item = item, type = full, out = want, amount = spec.amount, ticks = spec.ticks }
+                end
+            end
+            if box ~= nil then
+                local up = unpackUp(full)
+                if up ~= nil then
+                    local target, depth = nil, nil
+                    if up == box then
+                        target, depth = box, 2
+                    else
+                        local up2 = unpackUp(up)
+                        if up2 == box then target, depth = up, 3 end
+                    end
+                    if target ~= nil and depth < bestDepth then
+                        local spec = BridgeGunRules.unpackOf(full)
+                        if spec ~= nil then
+                            bestDepth = depth
+                            best = { item = item, type = full, out = target, amount = spec.amount, ticks = spec.ticks }
+                        end
+                    end
+                end
+            end
+            local pick = BridgeGunRules.unpackPick(full, want, 1)
+            if pick ~= nil then
+                local better = pick.depth < bestDepth
+                if pick.depth == bestDepth and box ~= nil and full == box then better = true end
+                if better then
+                    bestDepth = pick.depth
+                    best = { item = item, type = full, out = pick.type, amount = pick.amount, ticks = pick.ticks }
+                end
+            end
+        end
+    end
+    return best
+end
+
+
+function BridgeGunRules.openAmmoBox(body, item, outType, amount)
+    if body == nil or item == nil or type(outType) ~= "string" then return false end
+    local n = math.floor(tonumber(amount) or 0)
+    if n < 1 then return false end
+    if item:getContainer() == nil then return false end
+    local count = BridgeGunRules.itemCount(item)
+    if count > 1 then
+        BridgeGunRules.setItemCount(item, count - 1)
+    else
+        BridgeGunRules.removeItem(item)
+    end
+    local left = n
+    local function put(container)
+        if container == nil then return end
+        while left > 0 do
+            local added = nil
+            pcall(function() added = container:AddItem(outType, 1) end)
+            if added == nil then
+                pcall(function()
+                    local one = instanceItem(outType)
+                    if one ~= nil then added = container:AddItem(one) end
+                end)
+            end
+            if added == nil then return end
+            left = left - 1
+        end
+    end
+    pcall(function()
+        for _, bagItem in ipairs(wornItems(body)) do
+            if left <= 0 then break end
+            if bagItem:IsInventoryContainer() then
+                local bag = bagItem:getInventory()
+                if bag ~= nil then put(bag) end
+            end
+        end
+    end)
+    put(body:getInventory())
+    if left > 0 then
+        pcall(function()
+            local sq = body:getCurrentSquare() or body:getSquare()
+            if sq == nil then return end
+            local out = instanceItem(outType)
+            if out == nil then return end
+            out:setCount(left)
+            local x, y = ZombRandFloat(0.1, 0.9), ZombRandFloat(0.1, 0.9)
+            sq:AddWorldInventoryItem(out, x, y, sq:getApparentZ(x, y) - sq:getZ())
+        end)
+    end
+    return left <= 0
+end
+
+
+function BridgeGunRules.unpackDebug(itemType)
+    if type(itemType) ~= "string" or itemType == "" then return "unpack: no item type" end
+    BridgeGunRules.unpackCache[itemType] = nil
+    local spec = BridgeGunRules.unpackOf(itemType)
+    if spec == nil then return "unpack " .. itemType .. ": none" end
+    local list = {}
+    for _, t in ipairs(spec.out) do list[#list + 1] = t end
+    table.sort(list)
+    return string.format("unpack %s recipe=%s amount=%d ticks=%d out=%s",
+        itemType, tostring(spec.recipe), spec.amount, spec.ticks,
+        (#list > 0) and table.concat(list, ",") or "-")
 end
 
 

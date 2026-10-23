@@ -314,10 +314,10 @@ local function lootRef(c)
     return nil
 end
 
-function BridgeWorkSelect.lootTargets(b)
+function BridgeWorkSelect.lootTargets(b, cap)
     local list = {}
     if b == nil then return list end
-    local cap = BridgeWorkSelect.MAX_LOOT_ITEMS
+    cap = tonumber(cap) or BridgeWorkSelect.MAX_LOOT_ITEMS
     local seen, seenVeh = {}, {}
     local red = BridgeData ~= nil and BridgeData.owner() or nil
     local wantCorpse, wantVeh = true, true

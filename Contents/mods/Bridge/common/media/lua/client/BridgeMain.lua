@@ -322,12 +322,13 @@ end
 
 
 function Bridge.weaponVar(z)
-    local v = ""
+    local v, rifle = "", ""
     pcall(function()
         local item = z:getPrimaryHandItem()
         if item ~= nil and instanceof(item, "HandWeapon") then
             if item:isTwoHandWeapon() or item:isRequiresEquippedBothHands() then
                 v = "2h"
+                if item:isRanged() == true then rifle = "1" end
             elseif item:isRanged() == true then
                 v = "handgun"
             end
@@ -335,6 +336,7 @@ function Bridge.weaponVar(z)
     end)
     pcall(function()
         if z:getVariableString("NotAloneWeapon") ~= v then z:setVariable("NotAloneWeapon", v) end
+        if z:getVariableString("NotAloneRifle") ~= rifle then z:setVariable("NotAloneRifle", rifle) end
     end)
 end
 
@@ -584,7 +586,7 @@ function Bridge.unhumanize(z, pooled)
 
 
     pcall(function() BridgeInventory.forgetBody(z) end)
-    for _, name in ipairs({ "WalkSpeed", "RunSpeed", "LimpSpeed", "ZombieHitReaction", "NoLungeTarget", "NotAloneWeapon",
+    for _, name in ipairs({ "WalkSpeed", "RunSpeed", "LimpSpeed", "ZombieHitReaction", "NoLungeTarget", "NotAloneWeapon", "NotAloneRifle",
                             "NotAloneStride", "WalkInjury", "NotAloneAnimOld", "NotAloneSneak", "SurvivorNPC" }) do
         pcall(function() z:clearVariable(name) end)
     end
@@ -647,7 +649,7 @@ end
 
 
 function Bridge.releaseForeign(z)
-    for _, name in ipairs({ "NotAloneWeapon", "NotAloneStride", "NotAloneAnimOld", "NotAloneSneak" }) do
+    for _, name in ipairs({ "NotAloneWeapon", "NotAloneRifle", "NotAloneStride", "NotAloneAnimOld", "NotAloneSneak" }) do
         pcall(function() z:clearVariable(name) end)
     end
     local npc, brain = BridgeData.banditBrain(z, true)

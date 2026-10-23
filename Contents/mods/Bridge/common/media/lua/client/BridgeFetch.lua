@@ -170,19 +170,35 @@ function BridgeFetch.available()
 end
 
 
-function BridgeFetch.findItem(needId)
-    local need = BridgeFetch.BY_ID[needId]
-    local b = Bridge.body
-    if need == nil or b == nil then return nil end
+function BridgeFetch.availableAmmo()
+    if Bridge == nil or Bridge.store == nil or Bridge.body == nil then return false end
+    if not BridgeData.optionOf(Bridge.store, "homeAmmo") then return false end
+    local h = nil
+    pcall(function() h = BridgeHome ~= nil and BridgeHome.get() or nil end)
+    if h == nil then return false end
+    return nearHome(Bridge.body, h)
+end
+
+
+local function homeTargets(cap)
     local h = nil
     pcall(function() h = BridgeHome ~= nil and BridgeHome.get() or nil end)
     if h == nil then return nil end
     local rect = { x1 = h.x, y1 = h.y, x2 = h.x + h.w - 1, y2 = h.y + h.h - 1, z = h.z }
     local targets = nil
     if BridgeWorkSelect ~= nil and type(BridgeWorkSelect.lootTargets) == "function" then
-        local ok, res = pcall(BridgeWorkSelect.lootTargets, rect)
+        local ok, res = pcall(BridgeWorkSelect.lootTargets, rect, cap)
         if ok then targets = res end
     end
+    return targets
+end
+
+
+function BridgeFetch.findItem(needId)
+    local need = BridgeFetch.BY_ID[needId]
+    local b = Bridge.body
+    if need == nil or b == nil then return nil end
+    local targets = homeTargets()
     if targets == nil then return nil end
     local bx, by = nil, nil
     pcall(function() bx, by = b:getX(), b:getY() end)
@@ -217,14 +233,96 @@ function BridgeFetch.findItem(needId)
 end
 
 
+function BridgeFetch.findAmmo(gun, minRounds)
+    if gun == nil then return nil end
+    minRounds = tonumber(minRounds) or 0
+    local targets = homeTargets(100000)
+    if targets == nil then return nil end
+    local b = Bridge.body
+    local bx, by = nil, nil
+    if b ~= nil then pcall(function() bx, by = b:getX(), b:getY() end) end
+    local useBox = gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare")
+    local useLoose = useBox
+    local best, bestKind, bestValue, bestD = nil, nil, nil, nil
+    for i = 1, #targets do
+        local t = targets[i]
+        local c = t.cont
+        if c ~= nil then
+            local d = 0
+            if bx ~= nil and t.x ~= nil then
+                local dx, dy = bx - t.x, by - t.y
+                d = math.sqrt(dx * dx + dy * dy)
+            end
+            local list = nil
+            pcall(function() list = c:getItems() end)
+            if list ~= nil then
+                for j = 0, list:size() - 1 do
+                    local it = list:get(j)
+                    if it ~= nil then
+                        local kind, value = nil, 0
+                        pcall(function()
+                            local full = it:getFullType()
+                            if gun.magazineType ~= nil and full == gun.magazineType then
+                                local r = BridgeGunRules.roundsOf(it)
+                                if r > minRounds then kind, value = 1, r end
+                            elseif useLoose and full == gun.ammoTypeKey then
+                                kind, value = 2, BridgeGunRules.itemCount(it)
+                            elseif useBox and gun.ammoBox ~= nil and full == gun.ammoBox then
+                                kind, value = 3, 1
+                            elseif useBox and gun.ammoBox ~= nil then
+                                local up = BridgeGunRules.unpackUp(full)
+                                if up == gun.ammoBox then
+                                    kind, value = 4, 1
+                                elseif up ~= nil then
+                                    local up2 = BridgeGunRules.unpackUp(up)
+                                    if up2 == gun.ammoBox then kind, value = 5, 1 end
+                                end
+                            end
+                        end)
+                        if kind ~= nil then
+                            local better = false
+                            if best == nil then
+                                better = true
+                            elseif kind < bestKind then
+                                better = true
+                            elseif kind == bestKind then
+                                if value > bestValue then
+                                    better = true
+                                elseif value == bestValue and (bestD == nil or d < bestD) then
+                                    better = true
+                                end
+                            end
+                            if better then best, bestKind, bestValue, bestD = it, kind, value, d end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best, bestKind, bestValue
+end
+
+
+function BridgeFetch.hasAmmoStock(gun)
+    if not BridgeFetch.availableAmmo() then return false end
+    return BridgeFetch.findAmmo(gun) ~= nil
+end
+
+
 function BridgeFetch.pull(needId)
     if not BridgeFetch.available() then return "unavailable" end
     if BridgeFetch.has(needId) then return "have" end
-    local b = Bridge.body
-    local red = BridgeData.owner()
-    if b == nil or red == nil then return "unavailable" end
     local item = BridgeFetch.findItem(needId)
     if item == nil then return "absent" end
+    return BridgeFetch.pullItem(item, needId)
+end
+
+
+function BridgeFetch.pullItem(item, label)
+    local b = Bridge.body
+    local red = BridgeData.owner()
+    if item == nil then return "absent" end
+    if b == nil or red == nil then return "unavailable" end
     local dest = nil
     pcall(function() dest = BridgeInventory.overflowDest(b, red, item, nil) end)
     if dest == nil then return "noroom" end
@@ -233,12 +331,12 @@ function BridgeFetch.pull(needId)
         pcall(function() id = item:getID() end)
         if id == nil then return "failed" end
         BridgeInventory.pending[id] = { item = item, dest = dest }
-        local ok = pcall(function() sendClientCommand(red, "Bridge", "fetchSupply", { id = id, need = needId }) end)
+        local ok = pcall(function() sendClientCommand(red, "Bridge", "fetchSupply", { id = id, need = label or "item" }) end)
         if not ok then
             BridgeInventory.pending[id] = nil
             return "failed"
         end
-        log("requested " .. needId .. " (" .. tostring(itemType(item)) .. ") from a home container")
+        log("requested " .. tostring(label) .. " (" .. tostring(itemType(item)) .. ") from a home container")
         return "requested"
     end
     local src = nil
@@ -255,8 +353,16 @@ function BridgeFetch.pull(needId)
         return "noroom"
     end
     pcall(function() if Bridge.saveOutfit ~= nil then Bridge.saveOutfit() end end)
-    log("took " .. needId .. " (" .. tostring(itemType(item)) .. ") from a home container")
+    log("took " .. tostring(label) .. " (" .. tostring(itemType(item)) .. ") from a home container")
     return "moved"
+end
+
+
+function BridgeFetch.pullAmmo(gun, minRounds)
+    if not BridgeFetch.availableAmmo() then return "unavailable" end
+    local item = BridgeFetch.findAmmo(gun, minRounds)
+    if item == nil then return "absent" end
+    return BridgeFetch.pullItem(item, "ammo")
 end
 
 
