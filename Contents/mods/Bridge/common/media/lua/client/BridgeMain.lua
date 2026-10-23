@@ -66,6 +66,7 @@ Bridge.speakGraceUntil = 0
 Bridge.parked = false
 Bridge.mp = false
 Bridge.spawnAsked = nil
+Bridge.creating = nil
 Bridge.askedId = nil
 Bridge.askedNext = nil
 Bridge.lostId = nil
@@ -501,6 +502,7 @@ function Bridge.keepHidden(body, where)
 end
 
 local function humanize(body)
+    pcall(BridgeVoice.applyPrefix, body)
     body:setVariable(BODY_VAR, true)
 
     pcall(function() BridgeInventory.bodyArrived(body) end)
@@ -539,8 +541,6 @@ local function humanize(body)
 
     body:setVariable("ZombieHitReaction", "Chainsaw")
     body:setVariable("NoLungeTarget", true)
-    pcall(function() body:getEmitter():stopAll() end)
-    pcall(function() body:getDescriptor():setVoicePrefix(BridgeData.voicePrefix(Bridge.store)) end)
     body:setTurnAlertedValues(-5, 5)
     pcall(function() body:setSceneCulled(false) end)
 
@@ -548,6 +548,8 @@ local function humanize(body)
     body:setUseless(true)
     body:setTarget(nil)
     body:clearAggroList()
+    pcall(function() body:getEmitter():stopAll() end)
+    pcall(BridgeVoice.suppress, body)
 
 
 
@@ -627,6 +629,7 @@ function Bridge.unhumanize(z, pooled)
         end)
         pcall(function() z:resetModelNextFrame() end)
     end
+    pcall(BridgeVoice.restore, z)
     Bridge.touched[z] = nil
 end
 
@@ -673,6 +676,7 @@ function Bridge.releaseForeign(z)
     pcall(function() if BridgeFastForward ~= nil and BridgeFastForward.flagged == z then BridgeFastForward.flagged = nil end end)
     pcall(function() if z:isSittingOnFurniture() then z:setSittingOnFurniture(false) end end)
     pcall(function() z:setCollidable(true) end)
+    pcall(BridgeVoice.restore, z)
     Bridge.touched[z] = nil
     log("old body object went to another mod's NPC: only own flags cleared")
 end
@@ -1598,9 +1602,13 @@ function Bridge.spawnZombie(px, py, pz)
     local ok, err = pcall(function()
 
         local chance = BridgeData.isFemale(Bridge.store) and 100 or 0
-        local list = addZombiesInOutfit(x, y, z, 1, "Naked", chance, false, false, false, false, false, false, 1)
+        Bridge.creating = true
+        local okAdd, list = pcall(addZombiesInOutfit, x, y, z, 1, "Naked", chance, false, false, false, false, false, false, 1)
+        Bridge.creating = false
+        if not okAdd then failed = "addZombiesInOutfit failed: " .. tostring(list) return end
         if list == nil or list:size() == 0 then failed = "addZombiesInOutfit returned nothing" return end
         local body = list:get(0)
+        pcall(BridgeVoice.ensure, body)
         created = body
 
 
@@ -3003,24 +3011,15 @@ end)
 
 
 
-local ZOMBIE_VOICES = {
-    "FemaleZombieVoiceA", "FemaleZombieVoiceB", "FemaleZombieVoiceC",
-    "MaleZombieVoiceA", "MaleZombieVoiceB", "MaleZombieVoiceC",
-}
-
-
-local function muteZombieVoice(body)
-    local emitter = body:getEmitter()
-    if emitter == nil then return end
-    for i = 1, #ZOMBIE_VOICES do
-        emitter:stopSoundByName(ZOMBIE_VOICES[i])
-    end
-end
-
-
 function Bridge.voice(name)
     if not Bridge.alive() then return "no body" end
     return BridgeSound.voice(Bridge.body, name, 20)
+end
+
+
+function Bridge.soundInfo()
+    if not Bridge.alive() or Bridge.body == nil then return "no body" end
+    return BridgeVoice.info(Bridge.body)
 end
 
 
@@ -3607,7 +3606,7 @@ local function updateZombieBody(body)
         end
     end
     pcall(function() body:setAnimatingBackwards(false) end)
-    pcall(function() muteZombieVoice(body) end)
+    pcall(BridgeVoice.ensure, body)
 
 
 
@@ -4323,12 +4322,7 @@ local function applyLook(z, visuals, rec, who)
 
 
 
-    pcall(function()
-        local d = z:getDescriptor()
-        local vp = BridgeData.voicePrefix(rec)
-        if d ~= nil and d:getVoicePrefix() ~= vp then d:setVoicePrefix(vp) end
-    end)
-    pcall(function() muteZombieVoice(z) end)
+    pcall(BridgeVoice.ensure, z)
 
     local l = lookOf(z)
     local px, py = z:getX(), z:getY()
@@ -4865,7 +4859,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
-    exercise = true, endurance = true, skills = true, task = true, shower = true }
+    exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
 
 
 
@@ -5233,6 +5227,7 @@ function Bridge.run(line)
     end
     if cmd == "say" then return Bridge.say(decode(tail(line, 2))) end
     if cmd == "voice" then return Bridge.voice(parts[3] or "ShoutHey") end
+    if cmd == "sound" then return Bridge.soundInfo() end
 
 
 
@@ -6108,6 +6103,7 @@ function Bridge.diagLines()
             pcall(function() add("body_bump", tostring(Bridge.body:getBumpType())) end)
             pcall(function() add("body_has_path", tostring(Bridge.body:hasPath())) end)
             pcall(function() add("body_useless", tostring(Bridge.body:isUseless())) end)
+            pcall(function() add("sound", BridgeVoice.info(Bridge.body)) end)
             pcall(function() add("body_health", string.format("%.2f", Bridge.body:getHealth())) end)
             pcall(function()
                 if BridgeExercise ~= nil then
@@ -7449,7 +7445,10 @@ Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
 Events.OnGameStart.Add(function()
     pcall(function()
         Events.OnZombieUpdate.Remove(Bridge.onZombieUpdate)
-        Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
+Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
+Events.OnZombieCreate.Add(function(z)
+    if Bridge.creating and z ~= nil then pcall(BridgeVoice.ensure, z) end
+end)
     end)
 end)
 

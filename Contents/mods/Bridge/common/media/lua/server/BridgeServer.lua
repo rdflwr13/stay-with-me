@@ -289,6 +289,7 @@ local function companionFlags(body)
     pcall(function() body:setInvulnerable(true) end)
     pcall(function() body:setGodMod(true, true) end)
     markHuman(body)
+    pcall(BridgeVoice.ensure, body)
 end
 
 local function releaseBody(body)
@@ -299,6 +300,7 @@ local function releaseBody(body)
     pcall(function() body:setUseless(false) end)
     pcall(function() body:setNoTeeth(false) end)
     pcall(function() body:setTarget(nil) end)
+    pcall(BridgeVoice.restore, body)
 end
 
 
@@ -467,6 +469,7 @@ local function createBody(x, y, z, female)
                     log("new body object came with an owner (" .. tostring(was) .. "), cleared")
                 end
             end)
+            pcall(BridgeVoice.ensure, candidate)
             return candidate, nil
         end
 
@@ -3284,7 +3287,10 @@ local function onZombieCreate(z)
         pcall(function() z:setInvulnerable(false) end)
         pcall(function() z:setNoTeeth(false) end)
     end
-    if BridgeServer.creating then markHuman(z) end
+    if BridgeServer.creating then
+        markHuman(z)
+        pcall(BridgeVoice.ensure, z)
+    end
     local pid = nil
     pcall(function() pid = z:getPersistentOutfitID() end)
 
@@ -3758,6 +3764,12 @@ local function onTick()
 
     pcall(animalFlagOff)
     BridgeServer.tick = BridgeServer.tick + 1
+
+    if BridgeServer.tick % 15 == 0 and BridgeVoice ~= nil then
+        for _, b in pairs(BridgeServer.bodies) do
+            pcall(BridgeVoice.ensure, b)
+        end
+    end
 
     local sec = math.floor(nowMs() / 1000)
     BridgeServer.newSecond = sec ~= BridgeServer.lastSecond
