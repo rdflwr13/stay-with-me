@@ -1501,7 +1501,19 @@ local function washObjectName(sink)
         if isItem then
             pcall(function() nm = sink:getName() end)
         else
-            nm = getText("ContextMenu_NaturalWaterSource")
+            local fluidName = nil
+            local fluidContainer = nil
+            if type(sink) ~= "table" then
+                pcall(function() fluidContainer = sink:getFluidContainer() end)
+            end
+            if fluidContainer ~= nil then
+                pcall(function() fluidName = sink:getFluidUiName() end)
+            end
+            if fluidName ~= nil and tostring(fluidName) ~= "" and tostring(fluidName) ~= "nil" then
+                nm = tostring(fluidName)
+            else
+                nm = getText("ContextMenu_NaturalWaterSource")
+            end
         end
     end
     return nm

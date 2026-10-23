@@ -60,9 +60,14 @@ local function drawBar(self)
 
     local zoom = getCore():getZoom(pn)
     local lift = 128 * Core.getTileScale() / 2 / zoom
-    local x = isoToScreenX(pn, z:getX(), z:getY(), z:getZ())
-
-    local y = isoToScreenY(pn, z:getX(), z:getY(), z:getZ()) - lift - BAR_H - LIFT_EXTRA
+    local x, y
+    if Bridge ~= nil and Bridge.view3D ~= nil and Bridge.view3D(pn) then
+        x = getPlayerScreenLeft(pn) + getPlayerScreenWidth(pn) / 2
+        y = getPlayerScreenTop(pn) + getPlayerScreenHeight(pn) * 0.80
+    else
+        x = isoToScreenX(pn, z:getX(), z:getY(), z:getZ())
+        y = isoToScreenY(pn, z:getX(), z:getY(), z:getZ()) - lift - BAR_H - LIFT_EXTRA
+    end
 
 
     local l, t = getPlayerScreenLeft(pn), getPlayerScreenTop(pn)
