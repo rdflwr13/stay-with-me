@@ -156,7 +156,6 @@ Bug Fixes:
 - Fixed an MP server issue where deleting a torch battery caused anti-cheat triggers.
 - Added SP fast-forward support to most jobs, including sitting.
 - Fixed fast forward causing Rin to suffer a tragic chair death.
-- Fixed Rin not being able to wash at wells.
 
 Known Issues:
 - Rin clips into the top of beds. If I increase her z-height too high, she falls from the sky.
