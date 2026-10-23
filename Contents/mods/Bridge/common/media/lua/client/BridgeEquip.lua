@@ -347,7 +347,8 @@ local function anyLocInRegion(region, locs)
 end
 BridgeEquip.anyLocInRegion = anyLocInRegion
 
-local function wornItems(b)
+local function wornItems(b, pre)
+    if pre ~= nil then return pre end
     local out = {}
     if b == nil then return out end
     pcall(function()
@@ -370,17 +371,17 @@ local function wornItems(b)
 end
 BridgeEquip.wornItems = wornItems
 
-local function displayWorn(b)
+local function displayWorn(b, pre)
     local out = {}
-    for _, w in ipairs(wornItems(b)) do
+    for _, w in ipairs(wornItems(b, pre)) do
         if not isFurAppearance(w.item) then out[#out + 1] = w end
     end
     return out
 end
 
-local function regionItems(b, region)
+local function regionItems(b, region, worn)
     local out = {}
-    local worn = displayWorn(b)
+    local worn = worn or displayWorn(b)
     for _, v in ipairs(regionValues(region)) do
         if v ~= nil then
             for _, w in ipairs(worn) do
@@ -397,6 +398,9 @@ BridgeEquip.regionItems = regionItems
 local function providerMounts(b, item)
     local out = {}
     if b == nil or item == nil or BridgeGear == nil or BridgeGear.attached == nil then return out end
+    local any = false
+    for _ in pairs(BridgeGear.attached) do any = true break end
+    if not any then return out end
     local pid = nil
     pcall(function() pid = item:getID() end)
     if pid == nil then return out end
@@ -406,19 +410,21 @@ local function providerMounts(b, item)
             entries[#entries + 1] = { item = mounted, index = info.index or 0, loc = tostring(info.location or "") }
         end
     end
-    table.sort(entries, function(a, c)
-        if a.loc ~= c.loc then return a.loc < c.loc end
-        return a.index < c.index
-    end)
+    if #entries > 1 then
+        table.sort(entries, function(a, c)
+            if a.loc ~= c.loc then return a.loc < c.loc end
+            return a.index < c.index
+        end)
+    end
     for _, e in ipairs(entries) do out[#out + 1] = e.item end
     return out
 end
 BridgeEquip.providerMounts = providerMounts
 BridgeEquip.mountsOf = providerMounts
 
-local function regionLayers(b, region)
+local function regionLayers(b, region, worn)
     local out = {}
-    local worn = displayWorn(b)
+    local worn = worn or displayWorn(b)
     for _, v in ipairs(regionValues(region)) do
         if v ~= nil then
             for _, w in ipairs(worn) do
@@ -436,9 +442,9 @@ local function regionLayers(b, region)
 end
 BridgeEquip.regionLayers = regionLayers
 
-local function unmappedWorn(b)
+local function unmappedWorn(b, worn)
     local out = {}
-    for _, w in ipairs(displayWorn(b)) do
+    for _, w in ipairs(worn or displayWorn(b)) do
         local mapped = false
         for _, region in ipairs(BridgeEquip.REGIONS) do
             if anyLocInRegion(region, w.locs) then mapped = true break end
@@ -448,6 +454,20 @@ local function unmappedWorn(b)
     return out
 end
 BridgeEquip.unmappedWorn = unmappedWorn
+
+local function frameWorn(b, filtered)
+    local id = BridgeEquip.frameId or 0
+    local c = BridgeEquip._frameWorn
+    if c == nil or c.id ~= id or c.body ~= b then
+        c = { id = id, body = b, all = wornItems(b), shown = nil }
+        BridgeEquip._frameWorn = c
+    end
+    if filtered then
+        if c.shown == nil then c.shown = displayWorn(b, c.all) end
+        return c.shown
+    end
+    return c.all
+end
 
 local function weaponItem(b)
     if b == nil then return nil end
@@ -754,6 +774,7 @@ end
 
 
 local function refreshOutfit()
+    BridgeEquip._frameWorn = nil
     pcall(function() if Bridge ~= nil and Bridge.saveOutfit ~= nil then Bridge.saveOutfit() end end)
     pcall(function() if ISInventoryPage ~= nil then ISInventoryPage.renderDirty = true end end)
 end
@@ -1067,7 +1088,7 @@ BridgeEquipSuperSlot = ISPanel:derive("BridgeEquipSuperSlot")
 
 function BridgeEquipSuperSlot:refreshItems()
     local b = her()
-    self.items = b ~= nil and regionLayers(b, self.region) or {}
+    self.items = b ~= nil and regionLayers(b, self.region, frameWorn(b, true)) or {}
 end
 
 function BridgeEquipSuperSlot:hoverItem()
@@ -1452,7 +1473,7 @@ function BridgeEquipWindow:relayout()
     self.yHeader = 2
     self.yDoll = L.Y_OFFSET
     self.yDynHeader = L.DYN_Y
-    local dyn = unmappedWorn(b)
+    local dyn = unmappedWorn(b, frameWorn(b, true))
     local dynRows = math.ceil(#dyn / L.DYN_PER_ROW)
     self.yDynTop = self.yDynHeader + (dynRows > 0 and self.headerH or 0)
     self.dynBottom = self.yDynTop + dynRows * L.DYN_STEP
@@ -1605,14 +1626,26 @@ function BridgeEquipWindow:makeDesc(st)
     return desc
 end
 
+local function storeItemsKey(st)
+    local items = (st ~= nil and st.items) or ""
+    if type(items) ~= "string" then
+        return BridgeItems.lookKey(BridgeItems.decode(items))
+    end
+    if BridgeEquip._itemsSrc ~= items then
+        BridgeEquip._itemsSrc = items
+        BridgeEquip._itemsKey = BridgeItems.lookKey(BridgeItems.decode(items))
+    end
+    return BridgeEquip._itemsKey or ""
+end
+
 function BridgeEquipWindow:liveKey(st)
     local parts = { BridgeData.genderOf(st), BridgeData.skinOf(st), BridgeData.hairOf(st) }
     local hc = BridgeData.hairColorOf(st)
     parts[#parts + 1] = tostring(hc.r) .. tostring(hc.g) .. tostring(hc.b)
-    parts[#parts + 1] = tostring(BridgeWindow ~= nil and BridgeWindow.lookKey(st) or "")
+    parts[#parts + 1] = tostring(BridgeWindow ~= nil and BridgeWindow.lookKey(st, storeItemsKey(st)) or "")
     local b = her()
     if b ~= nil then
-        for _, w in ipairs(wornItems(b)) do
+        for _, w in ipairs(frameWorn(b, false)) do
             local id = nil
             pcall(function() id = w.item:getID() end)
             parts[#parts + 1] = tostring(w.item:getType()) .. ":" .. tostring(id) .. ":" .. tostring(w.loc)
@@ -1718,6 +1751,7 @@ function BridgeEquipWindow:close()
     BridgeEquip.savePosition(self)
     clearDrag()
     BridgeEquip.hideTooltip()
+    BridgeEquip._frameWorn = nil
     if self.popup ~= nil then self.popup:setVisible(false) end
     ISCollapsableWindow.close(self)
     self:removeFromUIManager()
@@ -1748,10 +1782,13 @@ function BridgeEquip.showTooltip(item)
         BridgeEquip.tooltip = tip
     end
     local tip = BridgeEquip.tooltip
-    if tip.item ~= item then tip:setItem(item) end
     tip:setVisible(true)
-    tip:bringToTop()
-    pcall(function() tip.tooltip:setWeightOfStack(1) end)
+    if tip.bridgeItem ~= item then
+        tip.bridgeItem = item
+        tip:setItem(item)
+        tip:bringToTop()
+        pcall(function() tip.tooltip:setWeightOfStack(1) end)
+    end
 end
 
 function BridgeEquip.hideTooltip()
@@ -1815,6 +1852,7 @@ function BridgeEquip.open(playerNum)
     local b = her()
     if b == nil then log("open refused: no body") return nil end
     if not BridgeEquip.withinRange(playerNum) then log("open refused: too far") return nil end
+    BridgeEquip._frameWorn = nil
     BridgeEquip.applyScale()
     local L = BridgeEquip.L
     local win = BridgeEquipWindow:new(100, 100, L.PANEL_WIDTH, 200)
@@ -1898,6 +1936,8 @@ local function tick()
     local win = BridgeEquip.instance
     if win == nil then return end
 
+    BridgeEquip.frameId = (BridgeEquip.frameId or 0) + 1
+
     local b = her()
     if b == nil then
         log("auto-close: body gone") BridgeEquip.close() return
@@ -1916,7 +1956,7 @@ local function tick()
     if Bridge.store ~= nil then pcall(function() win:refreshAvatar() end) end
 
     local cells = gearCells(b)
-    local dyn = unmappedWorn(b)
+    local dyn = unmappedWorn(b, frameWorn(b, true))
     local key = #cells .. "|" .. #dyn
     if key ~= win.layoutKey then
         win.layoutKey = key
@@ -1953,6 +1993,7 @@ Events.OnResolutionChange.Add(function(oldw, oldh, neww, newh)
 end)
 
 Events.OnClothingUpdated.Add(function(playerObj)
+    BridgeEquip._frameWorn = nil
     if BridgeEquip.instance == nil then return end
     pcall(function() BridgeEquip.instance:relayout() end)
 end)
