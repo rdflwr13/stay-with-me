@@ -112,7 +112,7 @@ function BridgeWindow.wornRecords(encoded)
 end
 
 
-function BridgeWindow.lookKey(st)
+function BridgeWindow.lookKey(st, itemsKey)
     local items = (st ~= nil and st.items) or ""
     local app = BridgeData.appearanceOf(st)
     local hc = BridgeData.hairColorOf(st)
@@ -123,7 +123,7 @@ function BridgeWindow.lookKey(st)
         .. tostring(BridgeData.muscleOf(st)) .. "|" .. table.concat(BridgeData.makeupOf(st), ",") .. "|"
         .. tostring(BridgeData.beardOf(st)) .. "|"
         .. tostring(bc.r) .. "," .. tostring(bc.g) .. "," .. tostring(bc.b) .. "|"
-        .. BridgeItems.lookKey(BridgeItems.decode(items))
+        .. (itemsKey or BridgeItems.lookKey(BridgeItems.decode(items)))
 end
 
 
