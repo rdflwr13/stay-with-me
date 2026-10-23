@@ -23,6 +23,8 @@ end
 local function drawOne(tm, pn, z, text)
     if z:isInvisible() then return end
 
+    if Bridge ~= nil and Bridge.view3D ~= nil and Bridge.view3D(pn) then return end
+
     if z:getAlpha(pn) < 0.1 then return end
 
 

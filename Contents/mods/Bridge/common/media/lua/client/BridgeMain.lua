@@ -6775,6 +6775,25 @@ function Bridge.every(n, phase)
     return math.floor((Bridge.time - phase) / n) > math.floor((Bridge.prevTime - phase) / n)
 end
 
+
+function Bridge.view3D(pn)
+    if pn ~= nil and pn ~= 0 then return false end
+    if type(getNumActivePlayers) == "function" then
+        local ok, n = pcall(getNumActivePlayers)
+        if ok and type(n) == "number" and n > 1 then return false end
+    end
+    local mode = 0
+    pcall(function() if PZ3D ~= nil and PZ3D.cameraMode ~= nil then mode = PZ3D.cameraMode() or 0 end end)
+    if mode ~= 0 then return true end
+    local v = Viewpoint and Viewpoint.View
+    if v ~= nil and type(v.next) == "function" then
+        local ok, n = pcall(v.next)
+        if ok and (n == "third" or n == "isometric") then return true end
+        if ok and n == "first" then return false end
+    end
+    return false
+end
+
 function Bridge.onTick()
     Bridge.tick = Bridge.tick + 1
     local dt = 1
