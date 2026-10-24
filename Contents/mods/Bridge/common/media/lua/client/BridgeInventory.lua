@@ -959,7 +959,7 @@ function BridgeInventory.herTransferBusy()
                 return
             end
             local item = a.item
-            if item ~= nil then
+            if item ~= nil and type(item) == "userdata" and instanceof(item, "InventoryItem") then
                 local c = item:getContainer()
                 if c ~= nil and BridgeInventory.inBody(c) then
                     busy = true
