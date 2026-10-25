@@ -2881,13 +2881,7 @@ end
 
 function BridgeInventory.hands(b, item)
     if BridgeInventory.isGun(item) then
-        local reacted = false
-        pcall(function() reacted = item:getModData().bridgeReceived == true end)
-        if not reacted then
-            pcall(function() Bridge.speak("NoGuns") end)
-            if BridgeSocial ~= nil and BridgeSocial.gunNervous ~= nil then pcall(BridgeSocial.gunNervous) end
-        end
-        return false
+        return BridgeInventory.handsGun(b, item)
     end
     if not BridgeWeapon.isMelee(item) then return false end
     if BridgeWeapon.isAssigned(b, item) then return true end
@@ -2921,6 +2915,7 @@ function BridgeInventory.handsGun(b, item)
     if ok == nil then ok = false end
     redress(b)
     refreshPanels()
+    if ok then pcall(function() BridgeGunTalk.equip(item) end) end
     return ok
 end
 

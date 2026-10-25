@@ -4464,18 +4464,24 @@ function BridgeTask.lootSay(item, kind)
     if BridgeTask.lootFullSaid then return end
     if BridgeMoments == nil or BridgeMoments.say == nil then return end
     local event = nil
+    local pool = nil
+    if item ~= nil and BridgeSocial ~= nil and BridgeSocial.receivePool ~= nil then
+        pcall(function() pool = BridgeSocial.receivePool(item) end)
+    end
+    if pool == "ReceiveGun" or pool == "ReceiveAmmo" or pool == "ReceiveAmmoParts" then
+        if BridgeGunTalk ~= nil and BridgeGunTalk.loot ~= nil then
+            pcall(function() BridgeGunTalk.loot(pool) end)
+        end
+        return
+    end
     if kind == "floor" then event = "LootGround"
     elseif kind == "body" then event = "LootCorpse" end
-    if event == nil and item ~= nil and BridgeSocial ~= nil and BridgeSocial.receivePool ~= nil then
-        local pool = nil
-        pcall(function() pool = BridgeSocial.receivePool(item) end)
-        if type(pool) == "string" and string.sub(pool, 1, 7) == "Receive" then
-            local cand = "Loot" .. string.sub(pool, 8)
-            local exists = nil
-            pcall(function() exists = getTextOrNull("IGUI_NotAlone_Soc_" .. cand .. "_Near_1", "", "") end)
-            if type(exists) == "string" and exists ~= "" and exists ~= ("IGUI_NotAlone_Soc_" .. cand .. "_Near_1") then
-                event = cand
-            end
+    if event == nil and type(pool) == "string" and string.sub(pool, 1, 7) == "Receive" then
+        local cand = "Loot" .. string.sub(pool, 8)
+        local exists = nil
+        pcall(function() exists = getTextOrNull("IGUI_NotAlone_Soc_" .. cand .. "_Near_1", "", "") end)
+        if type(exists) == "string" and exists ~= "" and exists ~= ("IGUI_NotAlone_Soc_" .. cand .. "_Near_1") then
+            event = cand
         end
     end
     if event == nil then

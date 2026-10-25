@@ -162,3 +162,36 @@ Known Issues:
 - Rin can't sit on picnic benches.
 
 [ ------ ]
+
+[ Stay With Me v0.5 ]
+Locked and Loaded
+
+New Features:
+- Rin can now equip and use firearms. Right-click on any firearm and choose Equip primary firearm or equip one in the equipment menu.
+- New Settings: 5 new settings are now under a Gun menu inside the Fight menu:
+  - Gun use (turns guns on/off)
+  - Melee switch (makes her switch to melee weapons when zombies are close)
+  - Reload between fights (she'll swap mags between fights)
+  - Magazine care (she fills magazines while idle)
+  - Ammo reserve (when she chooses to use guns).
+
+- Ammo Breakdown: Rin will automatically break down ammunition from cartons into ammo boxes and loose ammunition to reload her weapons.
+- Home system: enabling auto-use home ammunition will allow her to top off her own magazines while at home. She will only take what she needs and place back ammo boxes from cartons into the container she took it from.
+- New Skills: Added Aiming/Reloading.
+
+- Guns: Tested with vanilla, Guns of 93, Brita, and Marz gun mods.
+
+Bug Fixes:
+- Optimizations: Made 15+ fixes to improve the mod's performance across menus, inventory transfers, jobs, etc. Unified 50 separate zombie scans into 2, which should lead to better performance across the board.
+- Fixed a Lua error while building.
+
+Future Planned Features (not in this patch):
+- Being able to equip a primary/secondary firearm.
+- Adding support for gun attachments (laser sights, silencers, etc).
+- Adding support for target highlighting used in some aiming mods.
+- Adding support for different fire modes (single, burst, full-auto).
+
+Known Issues:
+- Not all gun mods may work or there might still be some incompatibility issues. She may not recognize the ammunition, magazines, etc. Post on the workshop page which mods have incompatibility issues.
+
+[ ------ ]

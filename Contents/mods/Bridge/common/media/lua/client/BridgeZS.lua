@@ -1,9 +1,3 @@
--- Compatibility shim for the unified zombie scan.
---
--- The cache now lives in shared/BridgeZScan.lua (one raw cell-list read per
--- tick per process). Existing BridgeZS callers keep working unchanged.
--- Rollback: set BridgeZScan.enabled = false.
-
 BridgeZS = BridgeZS or {}
 
 local function scan()

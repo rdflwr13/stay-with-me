@@ -1,22 +1,10 @@
--- BridgeVoice - keeps the companion's zombie body from playing vanilla zombie
--- vocal aliases. The body is still an IsoZombie, so the engine can start an
--- idle/breath/attack voice from the descriptor voice bank at any time. We point
--- the bank at a nonexistent prefix and sweep the aliases already known to the
--- engine. Every engine call is pcall-wrapped: emitters may be missing on the
--- server and a single unknown alias must not abort the sweep.
-
 BridgeVoice = BridgeVoice or {}
 
--- Nonexistent voice bank: the engine resolves <prefix><suffix>, finds no sound,
--- and stays quiet (same approach as Bandits / Project ALife).
 BridgeVoice.SILENT_PREFIX = "NotAZombie"
 
--- Gender-appropriate vanilla bank, used only when handing a silenced body back.
 BridgeVoice.FEMALE_PREFIX = "FemaleZombie"
 BridgeVoice.MALE_PREFIX = "MaleZombie"
 
--- Vocal aliases registered by the base game voice table. Idle is the one that
--- previously slipped through the old VoiceA/B/C-only sweep.
 BridgeVoice.ZOMBIE_ALIASES = {
     "FemaleZombieIdle", "MaleZombieIdle",
     "FemaleZombieHurt", "MaleZombieHurt",
@@ -44,8 +32,6 @@ local function prefixOf(body)
     return prefix
 end
 
--- Point the descriptor at the silent bank. Only called for bodies the mod owns;
--- does nothing when the descriptor is unavailable.
 function BridgeVoice.applyPrefix(body)
     if body == nil then return false end
     local prefix = prefixOf(body)
@@ -61,8 +47,6 @@ function BridgeVoice.applyPrefix(body)
     return ok
 end
 
--- Restore the vanilla bank only when we are the ones who silenced the body.
--- Released or pooled bodies must not stay silent as normal zombies.
 function BridgeVoice.restore(body)
     if body == nil then return false end
     if prefixOf(body) ~= BridgeVoice.SILENT_PREFIX then return false end
@@ -80,8 +64,6 @@ function BridgeVoice.restore(body)
     return ok
 end
 
--- Stop every tracked zombie vocal on the body emitter. Each alias is isolated so
--- one unknown name cannot abort the rest of the sweep.
 function BridgeVoice.suppress(body)
     if body == nil then return false end
     local emitter = nil
@@ -100,8 +82,6 @@ function BridgeVoice.ensure(body)
     return ok
 end
 
--- Short diagnostic: prefix, engine-cached voice name when available, and any
--- tracked alias still reporting as playing.
 function BridgeVoice.info(body)
     if body == nil then return "no body" end
     local prefix = "?"

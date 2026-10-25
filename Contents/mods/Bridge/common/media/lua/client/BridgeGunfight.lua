@@ -1741,13 +1741,6 @@ local function clearReloadSpeed(body)
     pcall(function() body:setVariable(RELOAD_VAR, 1) end)
 end
 
-local function playerGunOut(red)
-    if red == nil then return false end
-    local item = nil
-    pcall(function() item = red:getPrimaryHandItem() end)
-    return BridgeGunRules.isGun(item)
-end
-
 bumpName = function(action, family)
     if family == "handgun" then
         if action == "unload" then return "NA_UnloadHandgun" end
@@ -2547,19 +2540,6 @@ function BridgeGunfight.update(body)
         BridgeGunfight.info = "gun use off"
         return false
     end
-    if use == "player" and not playerGunOut(red) then
-        BridgeGunfight.rounds = BridgeGunRules.roundsOf(item)
-        if (BridgeGunfight.rounds or 0) <= 0 and BridgeGunfight.readyAmmo(body) then
-            if not BridgeGunfight.drawn then BridgeGunfight.draw(body) end
-            if BridgeGunfight.drawn and startReload(body, nil, true) then return true end
-        end
-        if BridgeGunfight.drawn then BridgeGunfight.stow(body) end
-        BridgeGunfight.canMelee = true
-        BridgeGunfight.target = nil
-        BridgeGunfight.state = "idle"
-        BridgeGunfight.info = "waiting for player gun"
-        return false
-    end
 
     if BridgeGunfight.suspended then
         if BridgeGunfight.noAmmoUntil ~= nil and Bridge.time < BridgeGunfight.noAmmoUntil then
@@ -2732,7 +2712,6 @@ function BridgeGunfight.update(body)
     if t == nil then
         stopReposition(body)
         local gunUse = BridgeData.gunUseOf(Bridge.store)
-        local playerOut = playerGunOut(red)
 
         local f = BridgeFight.target
         local meleeHold = false
@@ -2758,16 +2737,6 @@ function BridgeGunfight.update(body)
             BridgeGunfight.target = nil
             BridgeGunfight.state = "idle"
             BridgeGunfight.info = "melee switch"
-            return false
-        end
-
-        if gunUse == "player" and not playerOut then
-            if BridgeGunfight.drawn then BridgeGunfight.stow(body) end
-            BridgeGunfight.stance = "melee"
-            BridgeGunfight.canMelee = true
-            BridgeGunfight.target = nil
-            BridgeGunfight.state = "idle"
-            BridgeGunfight.info = "waiting for player gun"
             return false
         end
 
@@ -2820,15 +2789,6 @@ function BridgeGunfight.update(body)
     pcall(function() body:faceLocationF(t:getX(), t:getY()) end)
 
     local d = dist(body, t)
-    local gunUse = BridgeData.gunUseOf(Bridge.store)
-    if gunUse == "player" and not playerGunOut(red) then
-        if BridgeGunfight.drawn then BridgeGunfight.stow(body) end
-        BridgeGunfight.canMelee = true
-        BridgeGunfight.target = nil
-        BridgeGunfight.state = "idle"
-        BridgeGunfight.info = "waiting for player gun"
-        return false
-    end
     if d <= BridgeGunRules.MIN_RANGE and not gunLocked and swingRecoveryReady()
         and BridgeData.optionOf(Bridge.store, "gunMelee") and meleeReady(body) then
         local meleeReach = BridgeFight.reachable ~= nil and BridgeFight.reachable(body, t)

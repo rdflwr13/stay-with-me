@@ -1,13 +1,3 @@
--- Unified, tick-scoped zombie detection cache for Stay With Me.
---
--- Owns the single raw getCell():getZombieList() read per tick per process.
--- Consumers ask for a radius/cone-filtered view and keep their own predicates.
--- Build levels:
---   L0  refs only, no coordinate reads (find/list)
---   L1  coordinates, cheap flags, optional coarse bucket index
---
--- Rollback: BridgeZScan.enabled = false restores raw full-list behavior.
-
 BridgeZScan = BridgeZScan or {}
 local S = BridgeZScan
 
@@ -58,8 +48,6 @@ end
 
 S.stats = newStats()
 
--- Environment hooks. Set by the client shim / server module; resolved lazily
--- so shared modules loaded earlier keep working.
 S.tickOf = nil
 S.cellOf = nil
 S.listProvider = nil
@@ -72,7 +60,6 @@ S.isOwnerRisenOf = nil
 S.traceTag = nil
 S.traceUntil = nil
 
--- Internal state (never carried across ticks as a contract).
 local snap = nil
 local memo = nil
 local failedTick = nil
@@ -388,7 +375,6 @@ function S.isOwnerRisen(z, red)
     return v
 end
 
--- Canonical threat: alive + health + not companion/remote/harmless.
 function S.isThreat(z)
     if z == nil then return false end
     local m = memoNow()
@@ -563,8 +549,6 @@ local function buildCoords()
     s.alive, s.bod, s.rem = alive, bod, rem
     s.level = 1
 
-    -- Seed the per-tick memo with the cheap flags read above so filters do not
-    -- repeat isAlive/isRemote/BODY_VAR for the same zombie in one tick.
     local m = memoNow()
     for i = 1, s.n do
         local z = s.refs[i]
@@ -1326,7 +1310,6 @@ function S.selftest()
         S.isOwnerRisenOf = function() return false end
     end
 
-    -- Geometry: radius, z-band, duplicate coordinates.
     do
         local A = fakeZombie(0, 0, 0, { id = "A" })
         local B = fakeZombie(3, 0, 0, { id = "B" })
@@ -1355,7 +1338,6 @@ function S.selftest()
             ids(S.cone(0, 0, 1, 0, 1, 4, 1)))
     end
 
-    -- Filter profiles.
     do
         local K1 = fakeZombie(1, 0, 0, { id = "K1" })
         local K2 = fakeZombie(1, 0, 0, { id = "K2", hp = 0 })
@@ -1374,7 +1356,6 @@ function S.selftest()
         check("count z-band", S.count(0, 0, 0, 5, "raw", { zTol = 0.1 }) == 7, S.count(0, 0, 0, 5, "raw", { zTol = 0.1 }))
     end
 
-    -- find has full-cell semantics, including a distant chaser.
     do
         local near = fakeZombie(0, 0, 0, { id = "near" })
         local far = fakeZombie(500, 500, 0, { id = "far", chasing = true })
@@ -1383,7 +1364,6 @@ function S.selftest()
         check("find distant chaser", #got == 1 and got[1] == far, #got)
     end
 
-    -- Bucket path must match the linear path at the threshold.
     do
         local function grid(n)
             local zs = {}
@@ -1405,7 +1385,6 @@ function S.selftest()
         S.BUCKET_AT = saved.bucketAt
     end
 
-    -- One list read per tick, tick invalidation, cell invalidation.
     do
         setList({ fakeZombie(0, 0, 0, { id = "T" }) })
         local base = S.stats.refBuilds
@@ -1430,7 +1409,6 @@ function S.selftest()
         check("cell invalidation", providerCalls == 1, providerCalls)
     end
 
-    -- enabled = false fallback returns the full raw list.
     do
         local d1 = fakeZombie(0, 0, 0, { id = "d1" })
         local d2 = fakeZombie(50, 50, 0, { id = "d2" })
@@ -1448,7 +1426,6 @@ function S.selftest()
     check("coordBuilds <= refBuilds", S.stats.coordBuilds <= S.stats.refBuilds,
         S.stats.coordBuilds .. "/" .. S.stats.refBuilds)
 
-    -- Restore live state.
     S.enabled = saved.enabled
     S.debug = saved.debug
     S.tickOf = saved.tickOf

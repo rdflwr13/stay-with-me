@@ -4877,7 +4877,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
-    gunselftest = true, zscan = true, zsselftest = true,
+    gunselftest = true, guntalk = true, zscan = true, zsselftest = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
 
 
@@ -5566,6 +5566,16 @@ function Bridge.run(line)
     if cmd == "itemselftest" then return Bridge.itemselftest() end
 
     if cmd == "gunselftest" then return BridgeGunRules.selftest() end
+
+    if cmd == "guntalk" then
+        if BridgeGunTalk == nil then return "guntalk not loaded" end
+        local sub = parts[3] or "status"
+        if sub == "selftest" then return BridgeGunTalk.selftest() end
+        if sub == "audit" then return BridgeGunTalk.audit() end
+        if sub ~= "status" then return "guntalk [status | selftest | audit]" end
+        return string.format("guntalk band=%s group=%s %s",
+            tostring(BridgeGunTalk.band()), tostring(BridgeGunTalk.group()), BridgeGunTalk.audit())
+    end
 
     if cmd == "zsselftest" then
         if BridgeZScan == nil then return "zscan not loaded" end

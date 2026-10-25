@@ -1,29 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 if not isServer() then return end
 
 BridgeServer = BridgeServer or {}
@@ -1928,13 +1902,6 @@ BridgeServer.Commands.gunShot = function(player, args)
     end
     local gunUse = BridgeData.gunUseOf(rec)
     if gunUse == "off" then return reject("gun use off") end
-    if gunUse == "player" then
-        local out = false
-        pcall(function()
-            out = BridgeGunRules.isGun(player:getPrimaryHandItem()) or BridgeGunRules.isGun(player:getSecondaryHandItem())
-        end)
-        if not out then return reject("player gun not out") end
-    end
 
     local gun = nil
     pcall(function() gun = instanceItem(rec.gunType) end)
@@ -3825,7 +3792,6 @@ end
 
 local ANIMAL_NEAR = 12
 BridgeServer.animalFlag = {}
--- Set true to re-enable the companion animal proximity flag scan.
 BridgeServer.animalScan = false
 
 local function animalFlagOff()

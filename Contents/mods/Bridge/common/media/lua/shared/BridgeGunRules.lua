@@ -242,6 +242,22 @@ function BridgeGunRules.familyOf(desc)
 end
 
 
+function BridgeGunRules.talkKind(desc)
+    if type(desc) ~= "table" then return "Other" end
+    local family = tostring(desc.reloadFamily or "")
+    if family == "shotgun" or (tonumber(desc.projectileCount) or 1) > 1 then
+        return "Shotgun"
+    end
+    if desc.kind == "Rifle" or family == "rifle" or family == "rifle_nomag" then
+        return "Rifle"
+    end
+    if desc.kind == "Handgun" or family == "handgun" or family == "revolver" then
+        return "Pistol"
+    end
+    return "Other"
+end
+
+
 function BridgeGunRules.describe(item)
     local maxAmmo = num(function() return item:getMaxAmmo() end, 0)
     if maxAmmo <= 0 then maxAmmo = num(function() return item:getClipSize() end, 0) end
@@ -1765,6 +1781,33 @@ function BridgeGunRules.selftest()
     if sw29 ~= nil then
         check("SW29 ammoBox", sw29.ammoBox, "Base.Bullets44Box")
     end
+
+    check("talkKind pistol", BridgeGunRules.talkKind(
+        { kind = "Handgun", reloadFamily = "handgun", projectileCount = 1 }), "Pistol")
+    check("talkKind revolver", BridgeGunRules.talkKind(
+        { kind = "Handgun", reloadFamily = "revolver", projectileCount = 1 }), "Pistol")
+    check("talkKind sawed-off", BridgeGunRules.talkKind(
+        { kind = "Handgun", reloadFamily = "handgun", projectileCount = 8 }), "Shotgun")
+    check("talkKind pump shotgun", BridgeGunRules.talkKind(
+        { kind = "Handgun", reloadFamily = "shotgun", projectileCount = 1 }), "Shotgun")
+    check("talkKind rifle", BridgeGunRules.talkKind(
+        { kind = "Rifle", reloadFamily = "rifle", projectileCount = 1 }), "Rifle")
+    check("talkKind bolt-action", BridgeGunRules.talkKind(
+        { kind = "Rifle", reloadFamily = "rifle_nomag", projectileCount = 1 }), "Rifle")
+    check("talkKind unsupported", BridgeGunRules.talkKind(
+        { kind = nil, reloadFamily = "unsupported", projectileCount = 1 }), "Other")
+    check("talkKind nil", BridgeGunRules.talkKind(nil), "Other")
+
+    local realPistol = descOf("Base.Pistol")
+    if realPistol ~= nil then check("talkKind Base.Pistol", BridgeGunRules.talkKind(realPistol), "Pistol") end
+    local realRevolver = descOf("Base.Revolver")
+    if realRevolver ~= nil then check("talkKind Base.Revolver", BridgeGunRules.talkKind(realRevolver), "Pistol") end
+    local realSawn = descOf("Base.ShotgunSawnoff")
+    if realSawn ~= nil then check("talkKind Base.ShotgunSawnoff", BridgeGunRules.talkKind(realSawn), "Shotgun") end
+    local realPump = descOf("Base.Shotgun")
+    if realPump ~= nil then check("talkKind Base.Shotgun", BridgeGunRules.talkKind(realPump), "Shotgun") end
+    local realRifle = descOf("Base.HuntingRifle")
+    if realRifle ~= nil then check("talkKind Base.HuntingRifle", BridgeGunRules.talkKind(realRifle), "Rifle") end
 
     if #fails == 0 then return string.format("gunselftest PASS (%d checks)", checks) end
     return string.format("gunselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))

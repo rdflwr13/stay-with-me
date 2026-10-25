@@ -364,15 +364,15 @@ end
 
 
 
-BridgeData.GUN_USES = { always = true, player = true, off = true }
-BridgeData.DEFAULT_GUN_USE = "player"
+BridgeData.GUN_USES = { always = true, off = true }
+BridgeData.DEFAULT_GUN_USE = "always"
 BridgeData.AMMO_RESERVES = { free = true, conserve = true, emergency = true }
 BridgeData.DEFAULT_AMMO_RESERVE = "free"
 
 BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
     relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true,
     homeAmmo = false,
-    collapseActions = true, gunMelee = true, gunReloadIdle = true, gunMagCare = false, gunUse = "player",
+    collapseActions = true, gunMelee = true, gunReloadIdle = true, gunMagCare = false, gunUse = "always",
     ammoReserve = "free", lootMenu = true }
 BridgeData.HAIR_MAX = 40
 BridgeData.GENDER_SWAP_COOLDOWN = 60
@@ -551,7 +551,8 @@ BridgeData.LOOT_POOL_GROUP = {
     ReceiveCleaning = "ReceiveCleaner", ReceiveCleanWeapon = "ReceiveCleaner",
     ReceiveFireSource = "ReceiveTool", ReceiveTorch = "ReceiveTool", ReceiveTorchEmpty = "ReceiveTool",
     ReceiveBattery = "ReceiveElectronics",
-    ReceiveWeaponPart = "ReceiveWeapon", ReceiveGun = "ReceiveGun",
+    ReceiveMeleePart = "ReceiveWeapon", ReceiveGun = "ReceiveGun",
+    ReceiveGunPart = "ReceiveGun", ReceiveAmmoParts = "ReceiveAmmo",
     DressDirty = "ReceiveCloth", DressBroken = "ReceiveCloth", ReceiveUndies = "ReceiveCloth",
     ReceiveMap = "ReceiveRead",
     ReceiveSmokes = "ReceiveCigs",

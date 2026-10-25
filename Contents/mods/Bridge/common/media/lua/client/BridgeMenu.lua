@@ -398,7 +398,6 @@ end
 
 local function buildGun(context, env)
     local parent = context:addOption(tr("GunMenu"))
-    tip(parent, tr("GunMenuTip"))
     local gun = ISContextMenu:getNew(context)
     context:addSubMenu(parent, gun)
 
@@ -416,29 +415,26 @@ local function buildGun(context, env)
     end
 
     local use = BridgeData.gunUseOf(env.st)
-    local useLabels = { always = "GunUseAlways", player = "GunUsePlayer", off = "GunUseOff" }
-    local useEntries = {}
-    for _, mode in ipairs({ "always", "player", "off" }) do
-        useEntries[#useEntries + 1] = { mode, useLabels[mode], BridgeMenu.onGunUse, use == mode,
-            "GunUse" .. (mode == "always" and "Always" or mode == "player" and "Player" or "Off") .. "Tip" }
-    end
-    addMenu("GunUse", useEntries)
+    addMenu("GunUse", {
+        { "always", "GunUseAlways", BridgeMenu.onGunUse, use == "always", "GunUseAlwaysTip" },
+        { "off", "GunUseOff", BridgeMenu.onGunUse, use == "off", "GunUseOffTip" },
+    })
 
     local melee = BridgeData.optionOf(env.st, "gunMelee")
     addMenu("GunMelee", {
-        { true, "GunAuto", BridgeMenu.onGunMelee, melee == true, "GunMeleeAutoTip" },
+        { true, "GunOn", BridgeMenu.onGunMelee, melee == true, "GunMeleeOnTip" },
         { false, "GunOff", BridgeMenu.onGunMelee, melee == false, "GunMeleeOffTip" },
     })
 
     local idle = BridgeData.optionOf(env.st, "gunReloadIdle")
     addMenu("GunReloadIdle", {
-        { true, "GunAuto", BridgeMenu.onGunReloadIdle, idle == true, "GunReloadIdleAutoTip" },
+        { true, "GunOn", BridgeMenu.onGunReloadIdle, idle == true, "GunReloadIdleOnTip" },
         { false, "GunOff", BridgeMenu.onGunReloadIdle, idle == false, "GunReloadIdleOffTip" },
     })
 
     local care = BridgeData.optionOf(env.st, "gunMagCare")
     addMenu("GunMagCare", {
-        { true, "GunAuto", BridgeMenu.onGunMagCare, care == true, "GunMagCareAutoTip" },
+        { true, "GunOn", BridgeMenu.onGunMagCare, care == true, "GunMagCareOnTip" },
         { false, "GunOff", BridgeMenu.onGunMagCare, care == false, "GunMagCareOffTip" },
     })
 
