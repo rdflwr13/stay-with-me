@@ -71,6 +71,7 @@ BridgeGunfight.ammoCooldown = nil
 BridgeGunfight.peek = nil
 BridgeGunfight.peekCooldown = nil
 BridgeGunfight.homeAmmoAt = nil
+BridgeGunfight.ammoBorrow = nil
 
 local STOW_TICKS = 180
 local RECHECK = 12
@@ -244,6 +245,7 @@ BridgeGunfight.reserveN = 0
     BridgeGunfight.peek = nil
     BridgeGunfight.peekCooldown = nil
     BridgeGunfight.homeAmmoAt = nil
+    BridgeGunfight.ammoBorrow = nil
 end
 
 
@@ -1803,6 +1805,14 @@ local function homeAmmo(body)
     if body == nil or BridgeGunfight.gun == nil then return false end
     if BridgeFetch == nil or type(BridgeFetch.pullAmmo) ~= "function" then return false end
     local now = Bridge.time or 0
+    if BridgeGunfight.ammoBorrow ~= nil then
+        local held = nil
+        pcall(function() held = BridgeGunRules.findItemById(body, BridgeGunfight.ammoBorrow.itemId) end)
+        if held == nil then
+            BridgeGunfight.ammoBorrow = nil
+            log("home ammo: borrowed carton gone, clearing return record")
+        end
+    end
     if BridgeGunfight.homeAmmoAt ~= nil and now < BridgeGunfight.homeAmmoAt then return false end
     if not BridgeFetch.availableAmmo() then return false end
     local need = refillNeed(body, BridgeGunfight.gun)
@@ -1826,7 +1836,9 @@ local function homeAmmo(body)
     local _, loose = BridgeGunRules.findLooseRounds(body, BridgeGunfight.gun, need)
     if loose >= need then return false end
     if BridgeGunRules.findAmmoBox(body, BridgeGunfight.gun) ~= nil then return false end
-    local res = BridgeFetch.pullAmmo(BridgeGunfight.gun, minRounds)
+    local pull = need - loose
+    if pull < 1 then pull = 1 end
+    local res = BridgeFetch.pullAmmo(BridgeGunfight.gun, minRounds, pull)
     if res == "requested" or res == "moved" then
         BridgeGunfight.homeAmmoAt = now + 120
         BridgeGunfight.info = "taking ammo from home"
@@ -1836,6 +1848,9 @@ local function homeAmmo(body)
     if res == "absent" then
         log("home ammo: no matching ammo for " .. tostring(BridgeGunfight.gun and BridgeGunfight.gun.fullType or "?"))
     end
+    if res == "unsupported" then
+        log("home ammo: unsupported carton breakdown")
+    end
     if res ~= "have" then BridgeGunfight.homeAmmoAt = now + 600 end
     return false
 end
@@ -1844,6 +1859,8 @@ end
 local function finishAmmoOpen(body)
     local item = BridgeGunfight.ammoItem
     local out, amount = BridgeGunfight.ammoOut, BridgeGunfight.ammoAmount
+    local openedId = nil
+    if item ~= nil then pcall(function() openedId = item:getID() end) end
     BridgeGunfight.ammoItem, BridgeGunfight.ammoOut, BridgeGunfight.ammoAmount = nil, nil, 0
     BridgeGunfight.ammoUntil = nil
     BridgeGunfight.state = "idle"
@@ -1859,6 +1876,27 @@ local function finishAmmoOpen(body)
         opened = ok == true
         BridgeGunfight.info = opened and ("opened box: +" .. tostring(amount) .. " " .. tostring(out)) or "ammo box failed"
         log(string.format("ammoOpen done ok=%s out=%s n=%d", tostring(opened), tostring(out), amount))
+        local borrow = BridgeGunfight.ammoBorrow
+        if borrow ~= nil and openedId ~= nil and openedId == borrow.itemId then
+            local calledReturn, moved, available, reason =
+                pcall(BridgeGunRules.returnAmmoBoxes, body, borrow.src, borrow.boxType, borrow.count)
+            if not calledReturn then
+                moved, available, reason = 0, 0, tostring(moved)
+            end
+            moved = tonumber(moved) or 0
+            available = tonumber(available) or 0
+            local created = opened and amount or 0
+            log(string.format("home ammo: carton %s opened, created=%s, returned=%d, kept=%d, source=%s%s",
+                tostring(borrow.cartonType), tostring(created), moved, math.max(0, available - moved),
+                tostring(borrow.src), reason and (" reason=" .. tostring(reason)) or ""))
+            if not opened then
+                log("home ammo: carton open failed, return result=" .. tostring(moved) .. "/" .. tostring(available))
+            end
+            if moved > 0 then
+                BridgeGunfight.info = "kept 1 box, returned " .. tostring(moved) .. " to home"
+            end
+            BridgeGunfight.ammoBorrow = nil
+        end
     end
     BridgeGunfight.ammoCooldown = (Bridge.time or 0) + (opened and 30 or 600)
     return true
@@ -3075,6 +3113,7 @@ BridgeGunfight.reserveN = 0
     BridgeGunfight.peek = nil
     BridgeGunfight.peekCooldown = nil
     BridgeGunfight.homeAmmoAt = nil
+    BridgeGunfight.ammoBorrow = nil
     BridgeGunfight.magCareStage = nil
     BridgeGunfight.magCareUntil = nil
     BridgeGunfight.magCareMagId = nil

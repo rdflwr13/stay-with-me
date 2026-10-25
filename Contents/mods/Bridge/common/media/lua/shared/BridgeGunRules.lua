@@ -1254,6 +1254,25 @@ function BridgeGunRules.unpackOf(itemType)
 end
 
 
+function BridgeGunRules.cartonBreakdown(itemType)
+    local spec = BridgeGunRules.unpackOf(itemType)
+    if spec == nil then return nil, "no recipe", spec end
+    local amount = math.floor(tonumber(spec.amount) or 0)
+    if amount <= 1 then return nil, "amount " .. tostring(amount), spec end
+    local out = unpackUp(itemType)
+    if out == nil then return nil, "no box type", spec end
+    local types = spec.out
+    if type(types) == "table" and #types > 0 then
+        local found = false
+        for _, t in ipairs(types) do
+            if t == out then found = true break end
+        end
+        if not found then return nil, "output mismatch", spec end
+    end
+    return { out = out, amount = amount, ticks = spec.ticks }, nil, spec
+end
+
+
 function BridgeGunRules.unpackPick(itemType, want, level)
     level = level or 1
     if level > 3 then return nil end
@@ -1376,6 +1395,87 @@ function BridgeGunRules.openAmmoBox(body, item, outType, amount)
         end)
     end
     return left <= 0
+end
+
+
+local function vlog(text)
+    if Bridge ~= nil and Bridge.verbose and BridgeLog ~= nil and BridgeLog.on() then
+        print("[BridgeGunRules] " .. tostring(text))
+    end
+end
+
+
+function BridgeGunRules.returnAmmoBoxes(body, src, boxType, want)
+    local moved, available = 0, 0
+    if body == nil or src == nil or type(boxType) ~= "string" then return 0, 0, "no source" end
+    local n = math.floor(tonumber(want) or 0)
+    local items = {}
+    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+        local full = nil
+        pcall(function() full = item:getFullType() end)
+        if full == boxType then
+            local count = BridgeGunRules.itemCount(item)
+            available = available + count
+            items[#items + 1] = item
+        end
+    end
+    vlog(string.format("return ammo boxes: found=%d want=%d type=%s src=%s",
+        available, n, boxType, tostring(src)))
+    if n <= 0 or available <= 0 then
+        return 0, available, "nothing to return"
+    end
+    local take = math.min(n, available - 1)
+    if take <= 0 then return 0, available, "keep one" end
+    local left = take
+    local reason = (take < n) and "shortfall" or nil
+    for _, item in ipairs(items) do
+        if left <= 0 then break end
+        local count = BridgeGunRules.itemCount(item)
+        if count <= left then
+            local ok = false
+            pcall(function()
+                local from = item:getContainer()
+                if from == nil then return end
+                from:Remove(item)
+                ok = src:AddItem(item) ~= nil
+                if not ok then from:AddItem(item) end
+            end)
+            if ok then
+                moved = moved + count
+                left = left - count
+            else
+                reason = "source rejected box"
+            end
+        else
+            local use = left
+            local before = count
+            local split = BridgeGunRules.setItemCount(item, count - use)
+            local made, madeCount = nil, 0
+            if split then
+                pcall(function() made = src:AddItems(boxType, use) end)
+                if made ~= nil then pcall(function() madeCount = made:size() end) end
+            end
+            if madeCount == use then
+                moved = moved + use
+                left = left - use
+            else
+                if made ~= nil and madeCount > 0 then
+                    pcall(function()
+                        for i = madeCount - 1, 0, -1 do
+                            local one = made:get(i)
+                            if one ~= nil then src:Remove(one) end
+                        end
+                    end)
+                end
+                pcall(function() item:setCount(before) end)
+                reason = "source rejected box"
+            end
+        end
+    end
+    if left > 0 and reason == nil then reason = "shortfall" end
+    vlog(string.format("return ammo boxes: moved=%d kept=%d shortfall=%d src=%s%s",
+        moved, available - moved, left, tostring(src), reason and (" reason=" .. reason) or ""))
+    return moved, available, reason
 end
 
 

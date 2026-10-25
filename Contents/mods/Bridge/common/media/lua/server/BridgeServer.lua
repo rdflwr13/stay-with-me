@@ -3095,6 +3095,76 @@ local function findHomeItem(rec, body, player, wantId)
 end
 
 
+local function collectHomeItems(rec, body, player, fullType, want)
+    local x1, y1, x2, y2, z = homeRectOf(rec)
+    local out, total = {}, 0
+    if x1 == nil or type(fullType) ~= "string" then return out, total end
+    local need = math.floor(tonumber(want) or 0)
+    if need <= 0 then need = 1 end
+    local seen = {}
+    for x = x1, x2 do
+        if total >= need then break end
+        for y = y1, y2 do
+            if total >= need then break end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+            if sq ~= nil then
+                local function scan(objs)
+                    if objs == nil or total >= need then return end
+                    for i = 0, objs:size() - 1 do
+                        if total >= need then return end
+                        local o = objs:get(i)
+                        if o ~= nil then
+                            local n = 0
+                            pcall(function() n = o:getContainerCount() end)
+                            for j = 0, n - 1 do
+                                if total >= need then return end
+                                local c = nil
+                                pcall(function() c = o:getContainerByIndex(j) end)
+                                if c ~= nil and not seen[c] then
+                                    seen[c] = true
+                                    local skip = false
+                                    pcall(function() skip = body ~= nil and c == body:getInventory() end)
+                                    if not skip then
+                                        pcall(function()
+                                            if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
+                                        end)
+                                    end
+                                    if not skip then
+                                        local list = nil
+                                        pcall(function() list = c:getItems() end)
+                                        if list ~= nil then
+                                            for k = 0, list:size() - 1 do
+                                                if total >= need then return end
+                                                local it = list:get(k)
+                                                local full = nil
+                                                pcall(function() if it ~= nil then full = it:getFullType() end end)
+                                                if full == fullType then
+                                                    local cnt = 0
+                                                    pcall(function() cnt = it:getCount() end)
+                                                    cnt = math.floor(tonumber(cnt) or 1)
+                                                    if cnt < 1 then cnt = 1 end
+                                                    out[#out + 1] = { item = it, container = c, count = cnt }
+                                                    total = total + cnt
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                pcall(function() scan(sq:getObjects()) end)
+                pcall(function() scan(sq:getSpecialObjects()) end)
+                pcall(function() scan(sq:getStaticMovingObjects()) end)
+            end
+        end
+    end
+    return out, total
+end
+
+
 BridgeServer.Commands.fetchSupply = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
@@ -3105,7 +3175,6 @@ BridgeServer.Commands.fetchSupply = function(player, args)
             { id = wantId, ids = (wantId ~= nil) and { wantId } or {}, token = args.token, why = why })
     end
     if rec.bodyId == nil then return fail("no body") end
-    if wantId == nil then return fail("no item") end
     local x1, y1, x2, y2, z = homeRectOf(rec)
     if x1 == nil then return fail("no home") end
     local body = BridgeServer.bodies[who] or currentBody(who, rec)
@@ -3118,8 +3187,148 @@ BridgeServer.Commands.fetchSupply = function(player, args)
             or by < y1 - FETCH_MARGIN or by > y2 + FETCH_MARGIN then
         return fail("not at home")
     end
+
+    if args.loose ~= nil then
+        local ammoType = nil
+        pcall(function()
+            local gun = gunItemFor(body, rec)
+            if gun == nil and rec.gunType ~= nil then gun = instanceItem(rec.gunType) end
+            if gun ~= nil then
+                local desc = BridgeGunRules.describe(gun)
+                ammoType = desc ~= nil and desc.ammoTypeKey or nil
+            end
+        end)
+        if type(args.loose) ~= "string" or ammoType == nil or args.loose ~= ammoType then
+            return fail("bad ammo type")
+        end
+        local want = math.floor(tonumber(args.take) or 0)
+        if want < 1 then return fail("no ammo") end
+        if want > 500 then want = 500 end
+        local picked, available = collectHomeItems(rec, body, player, ammoType, want)
+        if available < 1 or #picked == 0 then return fail("no ammo") end
+        local take = math.min(want, available)
+        if instanceItem(ammoType) == nil then return fail("no ammo item") end
+        local list = BridgeItems.decode(rec.items or "")
+        local recs = {}
+        for i = 1, take do
+            local r = BridgeItems.record(instanceItem(ammoType), true)
+            recs[i] = r
+            flatten(r, nil, list)
+        end
+        local encoded = BridgeItems.encode(list)
+        if BridgeItems.overBlock() then return fail("carrying too much") end
+        if #BridgeItems.decode(encoded) ~= #list then return fail("snapshot full") end
+        local left = take
+        for i = 1, #picked do
+            if left <= 0 then break end
+            local it, c = picked[i].item, picked[i].container
+            local have = picked[i].count
+            local use = math.min(have, left)
+            if use >= have then
+                pcall(function() c:Remove(it) end)
+                pcall(function() sendRemoveItemFromContainer(c, it) end)
+            else
+                pcall(function() it:setCount(have - use) end)
+                pcall(function() sendItemStats(it) end)
+            end
+            left = left - use
+        end
+        BridgeItems.set(rec, encoded)
+        rec.saved = 1
+        rec.iseq = (rec.iseq or 0) + 1
+        local ids = {}
+        local base = (rec.iseq or 0) * 1000
+        for i = 1, take do ids[i] = -(base + i) - 1 end
+        local got = {}
+        for i = 1, take do flatten(recs[i], nil, got) end
+        journalNote("G", who, rec, ids[1], got)
+        transmit()
+        sendServerCommand(player, "Bridge", "gave",
+            { ids = ids, recs = recs, token = args.token, iseq = rec.iseq })
+        log(string.format("fetchSupply: loose %s for %s, took %d/%d, left %d in home storage",
+            tostring(ammoType), tostring(who), take, want, available - take))
+        return
+    end
+
+    if wantId == nil then return fail("no item") end
     local item, container = findHomeItem(rec, body, player, wantId)
     if item == nil or container == nil then return fail("not in home storage") end
+
+    if args.breakCarton == true then
+        local full = nil
+        pcall(function() full = item:getFullType() end)
+        local breakdown, why, spec = nil, nil, nil
+        pcall(function() breakdown, why, spec = BridgeGunRules.cartonBreakdown(full) end)
+        local outputs = (spec ~= nil and type(spec.out) == "table") and #spec.out or 0
+        if breakdown == nil then
+            log("fetchSupply: carton " .. tostring(full) .. " breakdown unsupported for " .. tostring(who)
+                .. ": " .. tostring(why) .. " (out=" .. tostring(outputs) .. ", amount="
+                .. tostring(spec ~= nil and spec.amount or "?") .. ")")
+            return fail("unsupported carton breakdown")
+        end
+        local boxType = breakdown.out
+        local count = breakdown.amount - 1
+        local one = instanceItem(boxType)
+        if one == nil then
+            log("fetchSupply: carton " .. tostring(full) .. " breakdown unsupported for " .. tostring(who)
+                .. ": no item " .. tostring(boxType))
+            return fail("unsupported carton breakdown")
+        end
+        local list = BridgeItems.decode(rec.items or "")
+        local r = BridgeItems.record(one, true)
+        flatten(r, nil, list)
+        local items = BridgeItems.encode(list)
+        if BridgeItems.overBlock() then return fail("carrying too much") end
+        if #BridgeItems.decode(items) ~= #list then return fail("snapshot full") end
+        local added, addedCount, removed, removeSent = nil, 0, false, false
+        local ok, err = pcall(function()
+            local probe = instanceItem(boxType)
+            if probe == nil or container:hasRoomFor(player, probe) == false
+                    or container:isItemAllowed(probe) == false then
+                error("no room")
+            end
+            container:Remove(item)
+            removed = true
+            sendRemoveItemFromContainer(container, item)
+            removeSent = true
+            pcall(function() added = container:AddItems(boxType, count) end)
+            if added ~= nil then pcall(function() addedCount = added:size() end) end
+            if addedCount < count then error("could only add " .. tostring(addedCount)) end
+            sendAddItemsToContainer(container, added)
+        end)
+        if not ok then
+            pcall(function()
+                if added ~= nil then
+                    for i = addedCount - 1, 0, -1 do
+                        local box = added:get(i)
+                        if box ~= nil then container:Remove(box) end
+                    end
+                end
+                if removed then
+                    container:AddItem(item)
+                    if removeSent then sendAddItemToContainer(container, item) end
+                end
+            end)
+            log("fetchSupply: carton " .. tostring(full) .. " breakdown failed for " .. tostring(who)
+                .. ": " .. tostring(err))
+            return fail("no room for carton breakdown")
+        end
+        BridgeItems.set(rec, items)
+        rec.saved = 1
+        rec.iseq = (rec.iseq or 0) + 1
+        local oneId = nil
+        pcall(function() oneId = one:getID() end)
+        if oneId == nil or oneId == 0 then oneId = -(rec.iseq or 0) - 1 end
+        local got = {}
+        flatten(r, nil, got)
+        journalNote("G", who, rec, oneId, got)
+        transmit()
+        sendServerCommand(player, "Bridge", "gave",
+            { ids = { oneId }, recs = { r }, token = args.token, iseq = rec.iseq })
+        log(string.format("fetchSupply: carton %s for %s, left %d boxes in home storage, gave 1 box",
+            tostring(full), tostring(who), count))
+        return
+    end
 
     local list = BridgeItems.decode(rec.items or "")
     local r = BridgeItems.record(item, true)

@@ -87,8 +87,8 @@ local BASE = {
     SUB_SLOT_THING = 5,
     WEAPON_PRIMARY_X = -18,
     WEAPON_PRIMARY_Y = 142,
-    WEAPON_GUN_RIGHT = 12,
-    WEAPON_GUN_TOP = 10,
+    WEAPON_GUN_X = -18,
+    WEAPON_GUN_Y = 250,
 }
 
 BridgeEquip.BASE = BASE
@@ -1478,8 +1478,8 @@ function BridgeEquipWindow:createChildren()
     self.weaponSlot:initialise()
     self.canvas:addChild(self.weaponSlot)
 
-    self.gunSlot = BridgeEquipSlot:new(L.PANEL_WIDTH - L.WEAPON_SLOT_SIZE - BASE.WEAPON_GUN_RIGHT * L.S,
-        L.Y_OFFSET + BASE.WEAPON_GUN_TOP * L.S, L.WEAPON_SLOT_SIZE, L.WEAPON_SLOT_SIZE, "gun")
+    self.gunSlot = BridgeEquipSlot:new(L.X_OFFSET + BASE.WEAPON_GUN_X * L.S,
+        L.Y_OFFSET + BASE.WEAPON_GUN_Y * L.S, L.WEAPON_SLOT_SIZE, L.WEAPON_SLOT_SIZE, "gun")
     self.gunSlot:initialise()
     self.canvas:addChild(self.gunSlot)
 
@@ -1537,8 +1537,8 @@ function BridgeEquipWindow:relayout()
     self.weaponSlot:setHeight(L.WEAPON_SLOT_SIZE)
 
     if self.gunSlot ~= nil then
-        self.gunSlot:setX(L.PANEL_WIDTH - L.WEAPON_SLOT_SIZE - BASE.WEAPON_GUN_RIGHT * S)
-        self.gunSlot:setY(L.Y_OFFSET + BASE.WEAPON_GUN_TOP * S)
+        self.gunSlot:setX(L.X_OFFSET + BASE.WEAPON_GUN_X * S)
+        self.gunSlot:setY(L.Y_OFFSET + BASE.WEAPON_GUN_Y * S)
         self.gunSlot:setWidth(L.WEAPON_SLOT_SIZE)
         self.gunSlot:setHeight(L.WEAPON_SLOT_SIZE)
     end
