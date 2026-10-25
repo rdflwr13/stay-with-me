@@ -54,11 +54,13 @@ function UI:countTargets(b)
     local key = b.x1 .. ":" .. b.y1 .. ":" .. b.x2 .. ":" .. b.y2 .. ":" .. b.z
     if self.countKey == key then return self.count or 0 end
     local def = BridgeWorkSelect.kinds[self.kind] or BridgeWorkSelect.kinds.chopTree
-    local n = 0
-    pcall(function() n = #def.collect(b) end)
+    local list = nil
+    pcall(function() list = def.collect(b) end)
     self.countKey = key
-    self.count = n
-    return n
+    self.count = list ~= nil and #list or 0
+    self.countList = list
+    self.countListKey = key
+    return self.count
 end
 
 function UI:valid(b)
@@ -81,6 +83,17 @@ function UI:valid(b)
     return self:countTargets(b) <= def.max
 end
 
+function UI:quickValid(b)
+    if b == nil then return false, true end
+    local w = b.x2 - b.x1 + 1
+    local h = b.y2 - b.y1 + 1
+    local def = BridgeWorkSelect.kinds[self.kind] or BridgeWorkSelect.kinds.chopTree
+    local side = def.maxSide or BridgeWorkSelect.MAX_SIDE
+    if w > side or h > side then return false, true end
+    if def.min == nil and w * h <= (def.max or math.huge) then return true, true end
+    return true, false
+end
+
 function UI:close()
     if self.closed then return end
     self.closed = true
@@ -92,7 +105,11 @@ end
 
 function UI:start(b)
     local def = BridgeWorkSelect.kinds[self.kind] or BridgeWorkSelect.kinds.chopTree
-    local targets = def.collect(b)
+    local key = b.x1 .. ":" .. b.y1 .. ":" .. b.x2 .. ":" .. b.y2 .. ":" .. b.z
+    local targets = nil
+    if self.countListKey == key then targets = self.countList end
+    self.countList, self.countListKey = nil, nil
+    if targets == nil then targets = def.collect(b) end
     self:close()
     if #targets == 0 then
         if Bridge ~= nil then Bridge.speak(def.noneSay) end
@@ -206,9 +223,11 @@ function UI:prerender()
     end
     local b = self:bounds()
     if b ~= nil then
-        local ok = self:valid(b)
+        local ok, known = self:quickValid(b)
+        local r, g = 1.0, 1.0
+        if known then r, g = (ok and 0.1 or 1.0), (ok and 1.0 or 0.1) end
         addAreaHighlightForPlayer(self.playerNum, b.x1, b.y1, b.x2 + 1, b.y2 + 1, b.z,
-            ok and 0.1 or 1.0, ok and 1.0 or 0.1, 0.1, 0.35)
+            r, g, 0.1, 0.35)
     elseif sq ~= nil then
         addAreaHighlightForPlayer(self.playerNum, wx, wy, wx + 1, wy + 1, self.level, 0.1, 1.0, 0.1, 0.55)
     end
