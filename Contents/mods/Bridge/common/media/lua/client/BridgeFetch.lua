@@ -243,6 +243,13 @@ function BridgeFetch.findAmmo(gun, minRounds)
     if b ~= nil then pcall(function() bx, by = b:getX(), b:getY() end) end
     local useBox = gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare")
     local useLoose = useBox
+    local box = gun.ammoBox
+    if box == nil and type(gun.ammoTypeKey) == "string" then
+        box = BridgeGunRules.resolveItemType(gun.ammoTypeKey .. "Box",
+            BridgeGunRules.moduleOf(gun.fullType),
+            BridgeGunRules.moduleOf(gun.ammoTypeKey),
+            "Base")
+    end
     local best, bestKind, bestValue, bestD = nil, nil, nil, nil
     for i = 1, #targets do
         local t = targets[i]
@@ -267,15 +274,15 @@ function BridgeFetch.findAmmo(gun, minRounds)
                                 if r > minRounds then kind, value = 1, r end
                             elseif useLoose and full == gun.ammoTypeKey then
                                 kind, value = 2, BridgeGunRules.itemCount(it)
-                            elseif useBox and gun.ammoBox ~= nil and full == gun.ammoBox then
+                            elseif useBox and box ~= nil and full == box then
                                 kind, value = 3, 1
-                            elseif useBox and gun.ammoBox ~= nil then
+                            elseif useBox and box ~= nil then
                                 local up = BridgeGunRules.unpackUp(full)
-                                if up == gun.ammoBox then
+                                if up == box then
                                     kind, value = 4, 1
                                 elseif up ~= nil then
                                     local up2 = BridgeGunRules.unpackUp(up)
-                                    if up2 == gun.ammoBox then kind, value = 5, 1 end
+                                    if up2 == box then kind, value = 5, 1 end
                                 end
                             end
                         end)

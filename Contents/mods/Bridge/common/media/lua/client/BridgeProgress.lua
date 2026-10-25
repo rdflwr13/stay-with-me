@@ -50,9 +50,11 @@ end
 
 local function visibleNow()
     if BridgeProgress.seenAt == nil or now() - BridgeProgress.seenAt > BridgeProgress.HOLD_MS then return false end
+    if body() == nil then return false end
+    if BridgeProgress.forceUntil ~= nil and now() <= BridgeProgress.forceUntil then return true end
     local on = true
     pcall(function() on = getCore():isOptionProgressBar() end)
-    return on and body() ~= nil
+    return on
 end
 
 local function create()
@@ -122,9 +124,11 @@ local function create()
 end
 
 
-function BridgeProgress.show(value)
+function BridgeProgress.show(value, force)
     BridgeProgress.value = tonumber(value) or 0
-    BridgeProgress.seenAt = now()
+    local t = now()
+    BridgeProgress.seenAt = t
+    if force == true then BridgeProgress.forceUntil = t + BridgeProgress.HOLD_MS end
     local b = create()
     if b ~= nil and not b:isVisible() then
         b:setVisible(true)

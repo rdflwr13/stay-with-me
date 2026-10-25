@@ -4873,6 +4873,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
+    gunselftest = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
 
 
@@ -5559,6 +5560,8 @@ function Bridge.run(line)
 
 
     if cmd == "itemselftest" then return Bridge.itemselftest() end
+
+    if cmd == "gunselftest" then return BridgeGunRules.selftest() end
 
     if cmd == "menu" then
         getCore():exitToMenu()

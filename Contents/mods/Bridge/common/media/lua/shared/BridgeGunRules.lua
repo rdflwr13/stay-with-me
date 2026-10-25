@@ -60,6 +60,130 @@ local function ammoKeyOf(item)
 end
 
 
+local warned = {}
+
+local function warnOnce(key, message)
+    if type(key) ~= "string" then key = tostring(message) end
+    if warned[key] then return end
+    warned[key] = true
+    print("[BridgeGunRules] " .. tostring(message))
+end
+
+
+local function diag(key, message)
+    if Bridge ~= nil and Bridge.verbose then warnOnce(key, message) end
+end
+
+
+local function moduleOf(fullType)
+    if type(fullType) ~= "string" then return nil end
+    local module = string.match(fullType, "^([^%.]+)%.")
+    return module
+end
+
+
+local function probeItem(candidate)
+    if type(candidate) ~= "string" or candidate == "" then return false end
+    local checked, found = false, false
+    pcall(function()
+        local manager = nil
+        if ScriptManager ~= nil then manager = ScriptManager.instance end
+        if manager == nil then manager = getScriptManager() end
+        if manager == nil then return end
+        found = manager:getItem(candidate) ~= nil
+        checked = true
+    end)
+    if checked then return found end
+    local ok = false
+    pcall(function() ok = instanceItem(candidate) ~= nil end)
+    return ok
+end
+
+
+local function tryCandidate(candidate, seen)
+    if candidate == nil or candidate == "" or seen[candidate] then return nil end
+    seen[candidate] = true
+    if probeItem(candidate) then return candidate end
+    return nil
+end
+
+
+local function resolveItemType(value, ...)
+    if type(value) ~= "string" then return nil end
+    local raw = string.match(value, "^%s*(.-)%s*$")
+    if raw == "" then return nil end
+    local seen = {}
+    local hit = nil
+    if string.find(raw, ".", 1, true) ~= nil then
+        return tryCandidate(raw, seen)
+    end
+    local colon = string.find(raw, ":", 1, true)
+    if colon ~= nil then
+        local module = string.sub(raw, 1, colon - 1)
+        local name = string.sub(raw, colon + 1)
+        if module ~= "" and name ~= "" then
+            local capital = string.upper(string.sub(module, 1, 1)) .. string.sub(module, 2)
+            hit = tryCandidate(capital .. "." .. name, seen)
+            if hit ~= nil then return hit end
+        end
+        return tryCandidate(raw, seen)
+    end
+    for i = 1, select("#", ...) do
+        local module = select(i, ...)
+        if type(module) == "string" and module ~= "" then
+            hit = tryCandidate(module .. "." .. raw, seen)
+            if hit ~= nil then return hit end
+        end
+    end
+    return tryCandidate("Base." .. raw, seen)
+end
+BridgeGunRules.moduleOf = moduleOf
+BridgeGunRules.resolveItemType = resolveItemType
+
+
+local function specFeeds(spec, ammoTypeKey)
+    if type(spec) ~= "table" or type(spec.out) ~= "table" or ammoTypeKey == nil then return false end
+    for _, t in ipairs(spec.out) do
+        if t == ammoTypeKey then return true end
+    end
+    return false
+end
+
+
+local function ammoBoxFor(gunFullType, rawBox, ammoTypeKey)
+    local gunModule = moduleOf(gunFullType)
+    local ammoModule = moduleOf(ammoTypeKey)
+    local label = tostring(gunFullType or "?") .. " ammoBox:" .. tostring(rawBox)
+    local box = resolveItemType(rawBox, gunModule, ammoModule, "Base")
+    if box == nil then
+        local derived = nil
+        if type(ammoTypeKey) == "string" then
+            derived = resolveItemType(ammoTypeKey .. "Box", gunModule, ammoModule, "Base")
+        end
+        if derived ~= nil and specFeeds(BridgeGunRules.unpackOf(derived), ammoTypeKey) then
+            return derived
+        end
+        if rawBox ~= nil then
+            warnOnce(label, string.format("%s ammoBox %s unresolved", tostring(gunFullType), tostring(rawBox)))
+        end
+        return nil
+    end
+    if type(ammoTypeKey) ~= "string" then return box end
+    local spec = BridgeGunRules.unpackOf(box)
+    if spec == nil then return box end
+    if specFeeds(spec, ammoTypeKey) then return box end
+    local derived = resolveItemType(ammoTypeKey .. "Box", gunModule, ammoModule, "Base")
+    if derived ~= nil and derived ~= box and specFeeds(BridgeGunRules.unpackOf(derived), ammoTypeKey) then
+        warnOnce(label, string.format("%s ammoBox %s -> %s (feeds %s)",
+            tostring(gunFullType), tostring(rawBox), derived, tostring(ammoTypeKey)))
+        return derived
+    end
+    diag(label, string.format("%s ammoBox %s could not be verified to feed %s",
+        tostring(gunFullType), tostring(box), tostring(ammoTypeKey)))
+    return box
+end
+
+
 function BridgeGunRules.isGun(item)
     local yes = false
     pcall(function()
@@ -158,6 +282,26 @@ function BridgeGunRules.describe(item)
         rackSound = typeText(function() return item:getRackSound() end),
         rounds = 0,
     }
+    local gunModule = moduleOf(out.fullType)
+    local rawKey = out.ammoTypeKey
+    out.ammoTypeKey = resolveItemType(rawKey, gunModule) or rawKey
+    out.magazineType = resolveItemType(out.magazineType, gunModule, moduleOf(out.ammoTypeKey))
+    out.magazineTypes = {}
+    out.magazineSet = {}
+    local function addMag(t)
+        if type(t) ~= "string" or t == "" or out.magazineSet[t] then return end
+        out.magazineSet[t] = true
+        out.magazineTypes[#out.magazineTypes + 1] = t
+    end
+    addMag(out.magazineType)
+    pcall(function()
+        local mod = require("WeaponSystems/Utils/Magazine")
+        local list = mod and mod.GetMagazineTypesForGun and mod.GetMagazineTypesForGun(item) or nil
+        if type(list) == "table" then
+            for _, t in ipairs(list) do addMag(t) end
+        end
+    end)
+    out.ammoBox = ammoBoxFor(out.fullType, out.ammoBox, out.ammoTypeKey)
     out.kind = BridgeGunRules.kind(item)
     out.range = BridgeGunRules.range(item)
     out.external = out.magazineType ~= nil
@@ -169,12 +313,13 @@ end
 
 function BridgeGunRules.summary(gun)
     if type(gun) ~= "table" then return "none" end
-    return string.format("%s rng=%s dmg=%.1f-%.1f hit=%.0f crit=%.0f aim=%.0f recoil=%.0f snd=%s rad=%.0f vol=%.0f two=%s kind=%s ammo=%s mag=%s family=%s reload=%s maxhit=%s pierce=%s spread=%s minang=%s",
+    return string.format("%s rng=%s dmg=%.1f-%.1f hit=%.0f crit=%.0f aim=%.0f recoil=%.0f snd=%s rad=%.0f vol=%.0f two=%s kind=%s ammo=%s box=%s mag=%s family=%s reload=%s maxhit=%s pierce=%s spread=%s minang=%s",
         tostring(gun.fullType), tostring(gun.range), gun.minDamage or 0, gun.maxDamage or 0,
         gun.hitChance or 0, gun.critChance or 0, gun.aimingTime or 0, gun.recoilDelay or 0,
         tostring(gun.sound or "-"), gun.soundRadius or 0, gun.soundVolume or 0,
         tostring(gun.twoHanded == true), tostring(gun.kind), tostring(gun.maxAmmo or 0),
-        tostring(gun.magazineType or "-"), tostring(gun.reloadFamily or "?"), tostring(gun.reloadType or "-"),
+        tostring(gun.ammoBox or "-"), tostring(gun.magazineType or "-"),
+        tostring(gun.reloadFamily or "?"), tostring(gun.reloadType or "-"),
         tostring(gun.maxHitCount or 1), tostring(gun.piercingBullets == true),
         tostring(gun.projectileSpread or 1), tostring(gun.minAngle or 0.9))
 end
@@ -902,8 +1047,13 @@ function BridgeGunRules.setRounds(item, rounds, containsClip)
     if item == nil then return false end
     local n = math.floor(tonumber(rounds) or 0)
     if n < 0 then n = 0 end
-    local ok = false
     local gun = BridgeGunRules.isGun(item)
+    if not gun then
+        local cap = 0
+        pcall(function() cap = math.floor(tonumber(item:getMaxAmmo()) or 0) end)
+        if cap > 0 and n > cap then n = cap end
+    end
+    local ok = false
     if gun and containsClip == true then
         pcall(function() item:setContainsClip(true) end)
         pcall(function()
@@ -923,19 +1073,42 @@ function BridgeGunRules.setRounds(item, rounds, containsClip)
 end
 
 
+function BridgeGunRules.isMagazineType(desc, fullType)
+    if type(desc) ~= "table" or type(fullType) ~= "string" then return false end
+    if desc.magazineType ~= nil and fullType == desc.magazineType then return true end
+    local set = desc.magazineSet
+    return type(set) == "table" and set[fullType] == true
+end
+
+
 function BridgeGunRules.findLoadedMagazine(body, desc)
     if body == nil or type(desc) ~= "table" or desc.magazineType == nil then return nil, 0 end
     local best, bestCount = nil, 0
     for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
         local full = nil
         pcall(function() full = item:getFullType() end)
-        if full == desc.magazineType then
+        if BridgeGunRules.isMagazineType(desc, full) then
             local n = BridgeGunRules.roundsOf(item)
             if n > bestCount then best, bestCount = item, n end
         end
     end
     if bestCount <= 0 then return nil, 0 end
     return best, bestCount
+end
+
+
+function BridgeGunRules.magazineCount(body, desc)
+    local total, loaded = 0, 0
+    if body == nil or type(desc) ~= "table" or desc.magazineType == nil then return 0, 0 end
+    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+        local full = nil
+        pcall(function() full = item:getFullType() end)
+        if BridgeGunRules.isMagazineType(desc, full) then
+            total = total + 1
+            if BridgeGunRules.roundsOf(item) > 0 then loaded = loaded + 1 end
+        end
+    end
+    return total, loaded
 end
 
 
@@ -1052,7 +1225,7 @@ function BridgeGunRules.findEmptyMagazine(body, desc)
     for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
         local full, rounds = nil, 0
         pcall(function() full = item:getFullType() end)
-        if full == desc.magazineType then
+        if BridgeGunRules.isMagazineType(desc, full) then
             rounds = BridgeGunRules.roundsOf(item)
             if rounds <= 0 then return item end
         end
@@ -1063,15 +1236,17 @@ end
 
 function BridgeGunRules.findPartialMagazine(body, desc)
     if body == nil or type(desc) ~= "table" or desc.magazineType == nil then return nil end
-    local maxAmmo = tonumber(desc.maxAmmo) or 0
-    if maxAmmo <= 0 then return nil end
+    local gunMax = tonumber(desc.maxAmmo) or 0
     local best, bestRounds = nil, nil
     for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
         local full = nil
         pcall(function() full = item:getFullType() end)
-        if full == desc.magazineType then
+        if BridgeGunRules.isMagazineType(desc, full) then
             local rounds = BridgeGunRules.roundsOf(item)
-            if rounds < maxAmmo and (best == nil or rounds > bestRounds) then
+            local cap = 0
+            pcall(function() cap = math.floor(tonumber(item:getMaxAmmo()) or 0) end)
+            if cap <= 0 then cap = gunMax end
+            if (cap <= 0 or rounds < cap) and (best == nil or rounds > bestRounds) then
                 best, bestRounds = item, rounds
             end
         end
@@ -1291,15 +1466,63 @@ function BridgeGunRules.unpackPick(itemType, want, level)
 end
 
 
+function BridgeGunRules.ammoAccept(desc)
+    local out = { rounds = {}, boxes = {}, cartons = {} }
+    if type(desc) ~= "table" then return out end
+    local key = desc.ammoTypeKey
+    if type(key) == "string" and key ~= "" then out.rounds[#out.rounds + 1] = key end
+    local seenBox = {}
+    local function addBox(t)
+        if type(t) ~= "string" or t == "" or seenBox[t] then return end
+        seenBox[t] = true
+        out.boxes[#out.boxes + 1] = t
+    end
+    addBox(desc.ammoBox)
+    if type(key) == "string" then
+        addBox(resolveItemType(key .. "Box", moduleOf(desc.fullType), moduleOf(key), "Base"))
+    end
+    if #out.boxes == 0 then return out end
+    local all = nil
+    pcall(function()
+        all = getAllItems()
+        if all == nil then
+            local manager = getScriptManager()
+            if manager ~= nil then all = manager:getAllItems() end
+        end
+    end)
+    if all == nil then return out end
+    local seenCarton = {}
+    pcall(function()
+        for i = 0, all:size() - 1 do
+            local script = all:get(i)
+            local full = nil
+            pcall(function() full = script:getFullName() end)
+            if type(full) == "string" and not seenCarton[full]
+                and string.find(full, "Carton", 1, true) ~= nil then
+                local up = unpackUp(full)
+                local hit = up ~= nil and seenBox[up] == true
+                if not hit and up ~= nil then
+                    local up2 = unpackUp(up)
+                    hit = up2 ~= nil and seenBox[up2] == true
+                end
+                if hit then
+                    seenCarton[full] = true
+                    out.cartons[#out.cartons + 1] = full
+                end
+            end
+        end
+    end)
+    table.sort(out.cartons)
+    return out
+end
+
+
 function BridgeGunRules.findAmmoBox(body, gun)
     local want = type(gun) == "table" and gun.ammoTypeKey or nil
     if body == nil or want == nil then return nil end
     local box = gun.ammoBox
     if box == nil then
-        local candidate = want .. "Box"
-        local probe = nil
-        pcall(function() probe = instanceItem(candidate) end)
-        if probe ~= nil then box = candidate end
+        box = resolveItemType(want .. "Box", moduleOf(gun.fullType), moduleOf(want), "Base")
     end
     local best, bestDepth = nil, 99
     for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
@@ -1490,6 +1713,61 @@ function BridgeGunRules.unpackDebug(itemType)
     return string.format("unpack %s recipe=%s amount=%d ticks=%d out=%s",
         itemType, tostring(spec.recipe), spec.amount, spec.ticks,
         (#list > 0) and table.concat(list, ",") or "-")
+end
+
+
+function BridgeGunRules.selftest()
+    local checks, fails = 0, {}
+    local function check(name, got, want)
+        checks = checks + 1
+        if got ~= want then
+            fails[#fails + 1] = string.format("%s got=%s want=%s", name, tostring(got), tostring(want))
+        end
+    end
+    local function itemOf(fullType)
+        local item = nil
+        pcall(function() item = instanceItem(fullType) end)
+        return item
+    end
+    local function descOf(fullType)
+        local item = itemOf(fullType)
+        if item == nil then return nil end
+        local desc = nil
+        pcall(function() desc = BridgeGunRules.describe(item) end)
+        return desc
+    end
+
+    check("resolve bare", resolveItemType("Bullets44Box", "Base"), "Base.Bullets44Box")
+    check("resolve qualified", resolveItemType("Base.Bullets44Box", "Base"), "Base.Bullets44Box")
+    check("resolve missing", resolveItemType("NoSuchAmmoBox_XYZ", "Base"), nil)
+    check("resolve colon", resolveItemType("base:Bullets44Box", "Base"), "Base.Bullets44Box")
+    check("unpackUp carton", unpackUp("Base.Bullets44Carton"), "Base.Bullets44Box")
+
+    local de44 = descOf("Base.DE44")
+    if de44 ~= nil then
+        check("DE44 ammoBox", de44.ammoBox, "Base.Bullets44Box")
+    end
+    local de357 = descOf("Base.DE357")
+    if de357 ~= nil then
+        check("DE357 ammoBox", de357.ammoBox, "Base.Bullets357Box")
+        check("DE357 ammo", de357.ammoTypeKey, "Base.Bullets357")
+    end
+    local m60 = descOf("Base.M60")
+    if m60 ~= nil then
+        check("M60 ammoBox", m60.ammoBox, "Base.308Box")
+        check("M60 magazine", m60.magazineType, "Base.M60Box")
+    end
+    local m1 = descOf("Base.M1Carbine")
+    if m1 ~= nil then
+        check("M1Carbine ammoBox", m1.ammoBox, "Base.30CarBox")
+    end
+    local sw29 = descOf("Base.SW29")
+    if sw29 ~= nil then
+        check("SW29 ammoBox", sw29.ammoBox, "Base.Bullets44Box")
+    end
+
+    if #fails == 0 then return string.format("gunselftest PASS (%d checks)", checks) end
+    return string.format("gunselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
 end
 
 

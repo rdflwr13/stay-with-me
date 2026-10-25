@@ -2288,14 +2288,18 @@ BridgeServer.Commands.gunReload = function(player, args)
         end
         if rec.gunReloadClientAmmo and desc.magazineType ~= nil then
             local needed = math.floor(tonumber(rec.gunReloadRounds) or 0)
-            local maxAmmo = math.max(1, tonumber(desc.maxAmmo) or needed)
+            local maxAmmo = math.max(1, tonumber(args.maxAmmo) or tonumber(desc.maxAmmo) or needed)
             if needed > maxAmmo then needed = maxAmmo end
             if needed < 1 then
                 clearReload(rec)
                 return answer(false, "no ammo")
             end
             rec.gunRounds = needed
-            if held ~= nil then BridgeGunRules.setRounds(held, needed, true) end
+            if held ~= nil then
+                BridgeGunRules.setRounds(held, needed, true)
+                pcall(function() held:setMaxAmmo(maxAmmo) end)
+                if args.magType ~= nil then pcall(function() held:setMagazineType(args.magType) end) end
+            end
             clearReload(rec)
             log(string.format("gunReload external complete needed=%d rounds=%d", needed, needed))
             answer(true, nil, { rounds = needed, taken = needed })
@@ -2359,10 +2363,15 @@ BridgeServer.Commands.gunReload = function(player, args)
                 return answer(false, "magazine gone")
             end
             rounds = BridgeGunRules.roundsOf(magazine)
+            local magCap, magType = 0, nil
+            pcall(function() magCap = math.floor(tonumber(magazine:getMaxAmmo()) or 0) end)
+            pcall(function() magType = magazine:getFullType() end)
             BridgeGunRules.removeItem(magazine)
             local hadClip = false
             pcall(function() hadClip = held:isContainsClip() == true end)
             BridgeGunRules.setRounds(held, rounds, true)
+            if magCap > 0 then pcall(function() held:setMaxAmmo(magCap) end) end
+            if magType ~= nil then pcall(function() held:setMagazineType(magType) end) end
             if hadClip or (rec.gunReloadSavedRounds or 0) > 0 then
                 BridgeGunRules.stashMagazine(body, desc, rec.gunReloadSavedRounds or 0)
             end
