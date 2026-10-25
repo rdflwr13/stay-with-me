@@ -382,7 +382,10 @@ local function crowdAround(body, radius)
     radius = radius or CROWD_RADIUS
     local n = 0
     pcall(function()
-        local list = getCell():getZombieList()
+        local bx, by = body:getX(), body:getY()
+        local list = nil
+        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, radius + 0.05) end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
             if z ~= nil and z ~= body and not isBody(z) and z:isAlive() and z:getHealth() > 0
@@ -797,66 +800,98 @@ end
 
 local function pickTarget(body, red, mode)
     mode = mode or BridgeFight.mode()
-    local list = getCell():getZombieList()
     local best, bestD = nil, math.huge
     local reach = 1.0
     pcall(function() reach = weapon(body):getMaxRange() end)
+    local bx, by = body:getX(), body:getY()
+    local rx, ry, rz = red:getX(), red:getY(), red:getZ()
+    local engageSelf = mode.engageSelf or math.huge
+    local engageRed = mode.engageRed or math.huge
+    if engageSelf < 0 then engageSelf = 0 end
+    if engageRed < 0 then engageRed = 0 end
+    local selfR2 = engageSelf * engageSelf
+    local redR2 = engageRed * engageRed
+    local guardOnly = BridgeFight.guardOnly
+    local maxNear = guardOnly and engageSelf or math.max(engageSelf, engageRed)
+    local list = nil
+    if BridgeZS ~= nil and maxNear < 1000 then
+        if guardOnly then
+            list = BridgeZS.near(bx, by, maxNear + 0.2)
+        else
+            list = BridgeZS.nearUnion(bx, by, rx, ry, maxNear + 0.2)
+        end
+    end
+    if list == nil then list = getCell():getZombieList() end
     for i = 0, list:size() - 1 do
         local z = list:get(i)
-
-
-
-        local banned = false
-        pcall(function()
-            local b = BridgeFight.blacklist[z]
-            if b == nil then return end
-
-
-            if type(b) == "number" then banned = numberBan(z, b) return end
-            local st = tostring(z:getActionStateName())
-
-
-
-            local broke = BARRIER_STATE[b.st] and not BARRIER_STATE[st]
-            local came = (z:getX() - b.x) ^ 2 + (z:getY() - b.y) ^ 2 > 1.0 and dist(z, red) < mode.engageRed
-                and not wallBetween(body, z)
-            if b.untilT <= Bridge.time or broke or came then
-                BridgeFight.blacklist[z] = nil
-                if b.untilT > Bridge.time then
-                    vlog(string.format("target unbanned: %s", broke and ("stopped " .. b.st .. ", now " .. st) or "came to player"))
+        local nearEnough = false
+        if z ~= nil then
+            local zz = z:getZ()
+            if math.abs(zz - rz) < 0.8 then
+                local zx, zy = z:getX(), z:getY()
+                local sdx, sdy = zx - bx, zy - by
+                if sdx * sdx + sdy * sdy < selfR2 then
+                    nearEnough = true
+                elseif not guardOnly then
+                    local rdx, rdy = zx - rx, zy - ry
+                    nearEnough = (rdx * rdx + rdy * rdy) < redR2
                 end
-            else
-                banned = true
             end
-        end)
-
-        local busy = false
-        pcall(function()
-            local st = z:getActionStateName()
-            busy = (st == "thump" and barrierSide(z, body))
-        end)
-
+        end
+        if nearEnough then
+            local banned = false
+            pcall(function()
+                local b = BridgeFight.blacklist[z]
+                if b == nil then return end
 
 
-        local isRemote = z ~= nil and remoteZombie(z)
-        if z ~= nil and not banned and not busy and not isBody(z) and z:isAlive() and z:getHealth() > 0
-            and not BridgeFight.ownerRisen(z, red)
-            and math.abs(z:getZ() - red:getZ()) < 0.8 and not BridgeData.harmless(z) and visible(z, red) then
-            local dRed = dist(z, red)
-            local dSelf = dist(z, body)
-            local remoteOk = (not isRemote) or dSelf <= reach + 0.3
-            local near = remoteOk and (dSelf < mode.engageSelf or (not BridgeFight.guardOnly and dRed < mode.engageRed))
-            if near then
-                local score = BridgeFight.threat(z, body, red, mode)
-                if BridgeAim ~= nil and BridgeAim.zone.on and BridgeAim.inCone(z:getX(), z:getY(), z:getZ()) then
-                    score = score + (BridgeAim.TARGET_PENALTY or 30)
+                if type(b) == "number" then banned = numberBan(z, b) return end
+                local st = tostring(z:getActionStateName())
+
+
+
+                local broke = BARRIER_STATE[b.st] and not BARRIER_STATE[st]
+                local came = (z:getX() - b.x) ^ 2 + (z:getY() - b.y) ^ 2 > 1.0 and dist(z, red) < mode.engageRed
+                    and not wallBetween(body, z)
+                if b.untilT <= Bridge.time or broke or came then
+                    BridgeFight.blacklist[z] = nil
+                    if b.untilT > Bridge.time then
+                        vlog(string.format("target unbanned: %s", broke and ("stopped " .. b.st .. ", now " .. st) or "came to player"))
+                    end
+                else
+                    banned = true
                 end
-                if score < bestD and (NO_CLIMB_ON == 0 or BridgeFight.reachable(body, z)) then
-                    best, bestD = z, score
+            end)
+
+            local busy = false
+            pcall(function()
+                local st = z:getActionStateName()
+                busy = (st == "thump" and barrierSide(z, body))
+            end)
+
+
+
+            local isRemote = z ~= nil and remoteZombie(z)
+            if z ~= nil and not banned and not busy and not isBody(z) and z:isAlive() and z:getHealth() > 0
+                and not BridgeFight.ownerRisen(z, red)
+                and math.abs(z:getZ() - red:getZ()) < 0.8 and not BridgeData.harmless(z) and visible(z, red) then
+                local dRed = dist(z, red)
+                local dSelf = dist(z, body)
+                local remoteOk = (not isRemote) or dSelf <= reach + 0.3
+                local near = remoteOk and (dSelf < mode.engageSelf or (not BridgeFight.guardOnly and dRed < mode.engageRed))
+                if near then
+                    local score = BridgeFight.threat(z, body, red, mode)
+                    if BridgeAim ~= nil and BridgeAim.zone.on and BridgeAim.inCone(z:getX(), z:getY(), z:getZ()) then
+                        score = score + (BridgeAim.TARGET_PENALTY or 30)
+                    end
+                    if score < bestD and (NO_CLIMB_ON == 0 or BridgeFight.reachable(body, z)) then
+                        best, bestD = z, score
+                    end
                 end
             end
         end
     end
+
     if BridgeAnimals ~= nil and BridgeAnimals.wanted then
         pcall(function()
             local animals = getCell():getAnimals()
@@ -1093,7 +1128,10 @@ local function extraTargets(body, item, primary, want)
     local red = BridgeData.owner()
     local cands = {}
     pcall(function()
-        local list = getCell():getZombieList()
+        local bx, by = body:getX(), body:getY()
+        local list = nil
+        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.35) end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
             if z ~= nil and z ~= primary and z ~= body and z:isAlive() and z:getHealth() > 0
@@ -1176,7 +1214,10 @@ local function shoveTargets(body)
     pcall(function() fx, fy = body:getForwardDirectionX(), body:getForwardDirectionY() end)
     local red = BridgeData.owner()
     pcall(function()
-        local list = getCell():getZombieList()
+        local bx, by = body:getX(), body:getY()
+        local list = nil
+        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, SHOVE_RANGE + 0.05) end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
             if z ~= nil and z ~= body and z:isAlive() and z:getHealth() > 0

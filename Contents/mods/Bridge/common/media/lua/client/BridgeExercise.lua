@@ -23,6 +23,8 @@ BridgeExercise.CATCHUP = 1.5
 BridgeExercise.DRAIN_PER_SESSION = 0.02
 BridgeExercise.DRAIN_FLOOR = 0.6
 BridgeExercise.COMBAT_WINDOW_TICKS = 60 * 60
+BridgeExercise.POLL_EVERY = 10
+BridgeExercise.POLL_PHASE = 3
 BridgeExercise.TIERS = {
     { count = 0, key = "ExTierUntrained", label = "Untrained" },
     { count = 5, key = "ExTierWarmingUp", label = "Warming Up" },
@@ -467,8 +469,11 @@ end
 
 
 if type(Events) == "table" and Events.OnTick ~= nil then
-    Events.OnTick.Add(function() pcall(BridgeExercise.readyTick) end)
-    Events.OnTick.Add(function() pcall(BridgeExercise.mirrorTick) end)
+    Events.OnTick.Add(function()
+        if Bridge.every ~= nil and not Bridge.every(BridgeExercise.POLL_EVERY, BridgeExercise.POLL_PHASE) then return end
+        pcall(BridgeExercise.readyTick)
+        pcall(BridgeExercise.mirrorTick)
+    end)
 end
 
 if type(Events) == "table" and Events.OnWeaponHitXp ~= nil then

@@ -3603,6 +3603,8 @@ end
 
 local ANIMAL_NEAR = 12
 BridgeServer.animalFlag = {}
+-- Set true to re-enable the companion animal proximity flag scan.
+BridgeServer.animalScan = false
 
 local function animalFlagOff()
     for b in pairs(BridgeServer.animalFlag) do
@@ -3613,7 +3615,7 @@ end
 BridgeServer.animalFlagOff = animalFlagOff
 
 local function animalFlagOn()
-
+    if not BridgeServer.animalScan then return end
     animalFlagOff()
     local online = 0
     pcall(function() online = getOnlinePlayers():size() end)
@@ -3888,6 +3890,7 @@ Events.OnClientCommand.Add(onClientCommand)
 Events.OnInitGlobalModData.Add(onInit)
 Events.OnTick.Add(onTick)
 Events.OnTickEvenPaused.Add(function()
+    if not BridgeServer.animalScan then return end
     local ok, err = pcall(animalFlagOn)
     if not ok then warn("animals flag failed: " .. tostring(err)) end
 end)

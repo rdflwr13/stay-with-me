@@ -1648,15 +1648,23 @@ function BridgeTask.dangerNear(body, radius)
     local dr = radius or BridgeTask.DANGER_RADIUS
     pcall(function()
         if BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle") then danger = true return end
-        local list = getCell():getZombieList()
+        local bx, by = body:getX(), body:getY()
+        local rx, ry = bx, by
+        if red ~= nil then rx, ry = red:getX(), red:getY() end
+        local list = nil
+        if BridgeZS ~= nil then list = BridgeZS.nearUnion(bx, by, rx, ry, dr + 0.01) end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and z ~= body and z:isAlive() and z:getHealth() > 0
-                and not z:getVariableBoolean("NotAloneBody") and not BridgeData.harmless(z)
-                and math.abs(z:getZ() - body:getZ()) < 0.8 then
+            local nearEnough = false
+            if z ~= nil and z ~= body then
                 local d = dist2(z, body)
                 local dr2 = red ~= nil and dist2(z, red) or 999
-                if d < dr or dr2 < dr then
+                nearEnough = math.abs(z:getZ() - body:getZ()) < 0.8 and (d < dr or dr2 < dr)
+            end
+            if nearEnough then
+                if z:isAlive() and z:getHealth() > 0
+                    and not z:getVariableBoolean("NotAloneBody") and not BridgeData.harmless(z) then
                     local seen = false
                     pcall(function() seen = (red ~= nil and red:CanSee(z)) or body:CanSee(z) end)
                     if seen then danger = true return end

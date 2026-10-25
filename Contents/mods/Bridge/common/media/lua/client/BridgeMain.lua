@@ -46,7 +46,7 @@ Bridge.result = "loaded"
 Bridge.skipped = false
 Bridge.zombieTicks = 0
 Bridge.idleSince = 0
-Bridge.checked = {}
+Bridge.checked = setmetatable({}, { __mode = "k" })
 Bridge.stash = nil
 Bridge.stashAt = 0
 Bridge.walkSpy = nil
@@ -165,6 +165,14 @@ local PATH_EVERY = 30
 local FOLLOW_DIST = 2.5
 local BODY_VAR = "NotAloneBody"
 Bridge.BODY_VAR = BODY_VAR
+
+local function zombieBodyVar(z)
+    return z:getVariableBoolean(BODY_VAR)
+end
+
+local function zombieOutfitId(z)
+    return z:getPersistentOutfitID()
+end
 
 
 
@@ -3123,9 +3131,13 @@ end
 
 function Bridge.protectBodies()
     local b = Bridge.body
-    if b ~= nil and Bridge.kind == "zombie" then pcall(function() b:setShootable(false) end) end
+    if b ~= nil and Bridge.kind == "zombie" then
+        pcall(function() if b:isShootable() then b:setShootable(false) end end)
+    end
     for z in pairs(Bridge.seen) do
-        if z ~= b then pcall(function() z:setShootable(false) end) end
+        if z ~= b then
+            pcall(function() if z:isShootable() then z:setShootable(false) end end)
+        end
     end
 end
 
@@ -4675,7 +4687,7 @@ function Bridge.watchGuest(z, who, remote)
 end
 
 function Bridge.onZombieUpdate(zombie)
-    local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY_VAR) end)
+    local ok, isBody = pcall(zombieBodyVar, zombie)
     if not ok then return end
 
     if not isBody and Bridge.hiddenObjs ~= nil and Bridge.hiddenObjs[zombie] then Bridge.hideBody(zombie, false) end
@@ -4696,8 +4708,8 @@ function Bridge.onZombieUpdate(zombie)
     end
     if Bridge.mp then
 
-        local pid = nil
-        pcall(function() pid = zombie:getPersistentOutfitID() end)
+        local okPid, pid = pcall(zombieOutfitId, zombie)
+        if not okPid then pid = nil end
         if pid == nil then return end
         local st = Bridge.store
 
@@ -4776,8 +4788,8 @@ function Bridge.onZombieUpdate(zombie)
 
 
 
-        local pid = nil
-        pcall(function() pid = zombie:getPersistentOutfitID() end)
+        local okPid, pid = pcall(zombieOutfitId, zombie)
+        if not okPid then pid = nil end
         if Bridge.checked[zombie] == pid then return end
         Bridge.checked[zombie] = pid
         if not BridgeInventory.isMarked(zombie) then return end
@@ -5942,15 +5954,17 @@ local function noShootTick()
     for z, e in pairs(Bridge.seen) do
         if z ~= Bridge.body and Bridge.time - (e.tick or -9999) <= 120 then
             pcall(function()
-                z:setShootable(false)
+                if z:isShootable() then z:setShootable(false) end
                 if z:getBallisticsTarget() ~= nil then z:releaseBallisticsTarget() end
             end)
         end
     end
     if Bridge.mortal or not (Bridge.alive() and Bridge.kind == "zombie") then return end
     pcall(function()
-        if Bridge.body:isShootable() then Bridge.preWas = (Bridge.preWas or 0) + 1 end
-        Bridge.body:setShootable(false)
+        if Bridge.body:isShootable() then
+            Bridge.preWas = (Bridge.preWas or 0) + 1
+            Bridge.body:setShootable(false)
+        end
     end)
 
 
@@ -5969,7 +5983,6 @@ Events.OnTickEvenPaused.Add(noShootTick)
 local function noFireTick()
     if not (Bridge.alive() and Bridge.kind == "zombie") then return end
     local body = Bridge.body
-    if not Bridge.mortal then pcall(function() body:setShootable(false) end) end
     Bridge.noFire(body)
 end
 Events.OnTick.Add(noFireTick)
@@ -8021,7 +8034,7 @@ Events.OnCreatePlayer.Add(function(playerIndex)
 
 
 
-    Bridge.checked = {}
+Bridge.checked = setmetatable({}, { __mode = "k" })
     Bridge.holdPos = nil
     Bridge.walkTypeSet = nil
 

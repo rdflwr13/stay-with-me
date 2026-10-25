@@ -239,7 +239,15 @@ local function gunThreat()
     if body == nil and red == nil then return false end
     local near = false
     pcall(function()
-        local list = getCell():getZombieList()
+        local bx, by, rx, ry = nil, nil, nil, nil
+        if body ~= nil then bx, by = body:getX(), body:getY() end
+        if red ~= nil then rx, ry = red:getX(), red:getY() end
+        local wx, wy = bx or rx, by or ry
+        local list = nil
+        if BridgeZS ~= nil and wx ~= nil and wy ~= nil then
+            list = BridgeZS.nearUnion(wx, wy, rx or wx, ry or wy, 15.1)
+        end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
             if z ~= nil and z ~= body and z ~= red and not isBodyZ(z) and not BridgeData.harmless(z) then
@@ -419,11 +427,12 @@ local function scanWorld(body, red, wantClear)
     pcall(function() redx, redy, redz = red:getX(), red:getY(), red:getZ() end)
 
     pcall(function()
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZS ~= nil then list = BridgeZS.nearUnion(bodyx, bodyy, redx, redy, 15.5) end
+        if list == nil then list = getCell():getZombieList() end
         local n = list:size()
         for i = 0, n - 1 do
-            local z = nil
-            pcall(function() z = list:get(i) end)
+            local z = list:get(i)
             if z ~= nil then
                 local zx, zy, zz = nil, nil, nil
                 pcall(function() zx, zy, zz = z:getX(), z:getY(), z:getZ() end)

@@ -44,14 +44,15 @@ function BridgeHorde.count(cx, cy, cz, radius)
     local czz = tonumber(cz) or 0
     local n = 0
     pcall(function()
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZS ~= nil then list = BridgeZS.near(cx, cy, r + 0.01) end
+        if list == nil then list = getCell():getZombieList() end
         local sz = list:size()
         for i = 0, sz - 1 do
-            local z = nil
-            pcall(function() z = list:get(i) end)
-            if z ~= nil and BridgeHorde.threat(z) then
+            local z = list:get(i)
+            if z ~= nil and math.abs(z:getZ() - czz) < 1 and BridgeHorde.threat(z) then
                 local dx, dy = z:getX() - cx, z:getY() - cy
-                if dx * dx + dy * dy <= r2 and math.abs(z:getZ() - czz) < 1 then n = n + 1 end
+                if dx * dx + dy * dy <= r2 then n = n + 1 end
             end
         end
     end)
@@ -70,17 +71,22 @@ function BridgeHorde.countCone(car, minD, maxD, half, seen, red)
     pcall(function() cz = car:getZ() end)
     local n = 0
     pcall(function()
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZS ~= nil then
+            local nearR = math.sqrt(dmax * dmax + hw * hw) + 0.5
+            list = BridgeZS.near(C.cx, C.cy, nearR)
+        end
+        if list == nil then list = getCell():getZombieList() end
         local sz = list:size()
         for i = 0, sz - 1 do
-            local z = nil
-            pcall(function() z = list:get(i) end)
-            if z ~= nil and BridgeHorde.threat(z) then
+            local z = list:get(i)
+            if z ~= nil then
                 local rx, ry = z:getX() - C.cx, z:getY() - C.cy
                 local along = rx * C.fx + ry * C.fy
                 local side = ry * C.fx - rx * C.fy
                 if along >= dmin and along <= dmax and math.abs(side) <= hw
-                    and (cz == nil or math.abs(z:getZ() - cz) < 1) then
+                    and (cz == nil or math.abs(z:getZ() - cz) < 1)
+                    and BridgeHorde.threat(z) then
                     local ok = true
                     if seen and red ~= nil then
                         local vis = false

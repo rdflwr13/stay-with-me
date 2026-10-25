@@ -12,6 +12,7 @@
 
 BridgeShare = BridgeShare or {}
 BridgeShare.PHASE = 7
+BridgeShare.EVERY = 10
 
 BridgeShare.SHARE = 0.5
 BridgeShare.CATCHUP = 0.75
@@ -71,6 +72,7 @@ local function fracFor(perk, red)
 end
 
 function BridgeShare.tick()
+    if Bridge.every ~= nil and not Bridge.every(BridgeShare.EVERY, BridgeShare.PHASE) then return end
     if BridgeSkills == nil or BridgeSkills.add == nil then return end
     local red = owner()
     if red == nil then return end

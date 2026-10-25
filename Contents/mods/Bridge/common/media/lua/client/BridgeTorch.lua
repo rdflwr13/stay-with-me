@@ -950,11 +950,13 @@ function BridgeTorch.renderFrame()
 
     local live = {}
     local markedN, litN = 0, 0
+    local candidates = {}
+    if Bridge ~= nil then
+        if Bridge.body ~= nil then candidates[Bridge.body] = true end
+        for z in pairs(Bridge.seen or {}) do candidates[z] = true end
+    end
     pcall(function()
-        local list = cell:getZombieList()
-        if list == nil then return end
-        for i = 0, list:size() - 1 do
-            local z = list:get(i)
+        for z in pairs(candidates) do
             if z ~= nil then
                 local marked, on = false, false
                 pcall(function() marked = z:getVariableBoolean("NotAloneBody") == true end)

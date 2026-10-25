@@ -631,11 +631,24 @@ end
 local function pickTarget(body, red)
     local best, bestScore = nil, math.huge
     local range = BridgeGunfight.modeRange or (BridgeGunfight.gun and BridgeGunfight.gun.range) or 0
+    if range <= 0 then return nil end
     local cell = getCell()
-    local list = cell:getZombieList()
+    local bx, by, bz = body:getX(), body:getY(), body:getZ()
+    local range2 = range * range
+    local list = nil
+    if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.2) end
+    if list == nil then list = cell:getZombieList() end
     for i = 0, list:size() - 1 do
         local z = list:get(i)
-        if targetOk(z, body, red) and math.abs(z:getZ() - body:getZ()) < 0.8 then
+        local nearEnough = false
+        if z ~= nil then
+            local zz = z:getZ()
+            if math.abs(zz - bz) < 0.8 then
+                local dx, dy = z:getX() - bx, z:getY() - by
+                nearEnough = dx * dx + dy * dy <= range2
+            end
+        end
+        if nearEnough and targetOk(z, body, red) and math.abs(z:getZ() - body:getZ()) < 0.8 then
             local dSelf = dist(body, z)
             if dSelf <= range then
                 local clear = false
@@ -665,16 +678,27 @@ local PEEK_RETRY = 180
 local function peekTarget(body, red)
     local range = BridgeGunfight.modeRange or (BridgeGunfight.gun and BridgeGunfight.gun.range) or 0
     if range <= 0 then return nil end
-    local best, bestD = nil, math.huge
+    local best, bestD2 = nil, math.huge
+    local bx, by, bz = body:getX(), body:getY(), body:getZ()
+    local range2 = range * range
+    local min2 = BridgeGunRules.MIN_RANGE * BridgeGunRules.MIN_RANGE
     pcall(function()
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.2) end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if targetOk(z, body, red) and math.abs(z:getZ() - body:getZ()) < 0.8 then
-                local d = dist(body, z)
-                if d <= range and d > BridgeGunRules.MIN_RANGE and d < bestD then
-                    best, bestD = z, d
+            local nearEnough, d2 = false, nil
+            if z ~= nil then
+                local zz = z:getZ()
+                if math.abs(zz - bz) < 0.8 then
+                    local dx, dy = z:getX() - bx, z:getY() - by
+                    d2 = dx * dx + dy * dy
+                    nearEnough = d2 <= range2
                 end
+            end
+            if nearEnough and d2 > min2 and d2 < bestD2 and targetOk(z, body, red) and math.abs(z:getZ() - body:getZ()) < 0.8 then
+                best, bestD2 = z, d2
             end
         end
     end)
@@ -1078,7 +1102,10 @@ local function gunCandidates(body, red, primary)
     local cell = getCell()
     if cell == nil then return out end
     local friends = friendlies(body)
-    local list = cell:getZombieList()
+    local bx, by = body:getX(), body:getY()
+    local list = nil
+    if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 1.0) end
+    if list == nil then list = cell:getZombieList() end
     for i = 0, list:size() - 1 do
         local z = list:get(i)
         if z ~= nil and z ~= primary and targetOk(z, body, red)

@@ -37,6 +37,32 @@ end
 BridgeEquip.DEV = false
 
 BridgeEquip.range = 2.5
+BridgeEquip.REFRESH_EVERY = 6
+BridgeEquip.refreshStats = {
+    ticks = 0,
+    heavy = 0,
+    skipped = 0,
+    dirty = 0,
+    relayouts = 0,
+    lastMs = 0,
+    maxMs = 0,
+}
+
+local function nowMs()
+    local t = 0
+    pcall(function() t = getTimestampMs() end)
+    return t
+end
+
+local function flushRefreshLog()
+    if Bridge == nil or not Bridge.verbose then return end
+    local s = BridgeEquip.refreshStats
+    if s.ticks < 300 then return end
+    log(string.format("refresh every=%d ticks=%d heavy=%d skipped=%d dirty=%d relayouts=%d lastMs=%.2f maxMs=%.2f",
+        BridgeEquip.REFRESH_EVERY, s.ticks, s.heavy, s.skipped, s.dirty, s.relayouts, s.lastMs, s.maxMs))
+    s.ticks, s.heavy, s.skipped, s.dirty, s.relayouts = 0, 0, 0, 0, 0
+    s.lastMs, s.maxMs = 0, 0
+end
 
 
 local BASE = {
@@ -761,6 +787,7 @@ function BridgeEquip.resolveDrop(targetWidget)
     if item == nil then item = draggedItem() end
     clearDrag()
     if item == nil then return end
+    BridgeEquip.dirty = true
     local b = her()
     if b == nil then return end
 
@@ -777,6 +804,7 @@ end
 
 local function refreshOutfit()
     BridgeEquip._frameWorn = nil
+    BridgeEquip.dirty = true
     pcall(function() if Bridge ~= nil and Bridge.saveOutfit ~= nil then Bridge.saveOutfit() end end)
     pcall(function() if ISInventoryPage ~= nil then ISInventoryPage.renderDirty = true end end)
 end
@@ -1923,6 +1951,7 @@ function BridgeEquip.open(playerNum)
     win:addToUIManager()
     win:setVisible(true)
     BridgeEquip.instance = win
+    BridgeEquip.dirty = true
     log("open " .. string.format("%dx%d scale=%.2f", win:getWidth(), win:getHeight(), L.S))
     return win
 end
@@ -2000,14 +2029,31 @@ local function tick()
     end)
     if not near then log("auto-close: too far") BridgeEquip.close() return end
 
-    if Bridge.store ~= nil then pcall(function() win:refreshAvatar() end) end
+    BridgeEquip.refreshStats.ticks = BridgeEquip.refreshStats.ticks + 1
+    local dirty = BridgeEquip.dirty == true
+    local heavy = dirty or (BridgeEquip.frameId % BridgeEquip.REFRESH_EVERY == 0)
+    if heavy then
+        BridgeEquip.refreshStats.heavy = BridgeEquip.refreshStats.heavy + 1
+        if dirty then BridgeEquip.refreshStats.dirty = BridgeEquip.refreshStats.dirty + 1 end
+        BridgeEquip.dirty = nil
+        local started = nowMs()
 
-    local cells = gearCells(b)
-    local dyn = unmappedWorn(b, frameWorn(b, true))
-    local key = #cells .. "|" .. #dyn
-    if key ~= win.layoutKey then
-        win.layoutKey = key
-        pcall(function() win:relayout() end)
+        if Bridge.store ~= nil then pcall(function() win:refreshAvatar() end) end
+
+        local cells = gearCells(b)
+        local dyn = unmappedWorn(b, frameWorn(b, true))
+        local key = #cells .. "|" .. #dyn
+        if key ~= win.layoutKey then
+            win.layoutKey = key
+            BridgeEquip.refreshStats.relayouts = BridgeEquip.refreshStats.relayouts + 1
+            pcall(function() win:relayout() end)
+        end
+
+        local elapsed = nowMs() - started
+        BridgeEquip.refreshStats.lastMs = elapsed
+        if elapsed > BridgeEquip.refreshStats.maxMs then BridgeEquip.refreshStats.maxMs = elapsed end
+    else
+        BridgeEquip.refreshStats.skipped = BridgeEquip.refreshStats.skipped + 1
     end
 
     if BridgeEquip.drag ~= nil and not isMouseButtonDown(0) then
@@ -2021,6 +2067,8 @@ local function tick()
 
     local item = findHoverItem(win)
     if item ~= nil and not isMouseButtonDown(0) then BridgeEquip.showTooltip(item) else BridgeEquip.hideTooltip() end
+
+    flushRefreshLog()
 end
 
 Events.OnTick.Add(tick)
@@ -2041,6 +2089,7 @@ end)
 
 Events.OnClothingUpdated.Add(function(playerObj)
     BridgeEquip._frameWorn = nil
+    BridgeEquip.dirty = true
     if BridgeEquip.instance == nil then return end
     pcall(function() BridgeEquip.instance:relayout() end)
 end)

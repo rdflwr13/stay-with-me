@@ -92,13 +92,17 @@ local function dangerNear(red, body)
     if dist <= 0 then return false end
     local near = false
     pcall(function()
-        local list = getCell():getZombieList()
+        local rx, ry = red:getX(), red:getY()
+        local list = nil
+        if BridgeZS ~= nil then list = BridgeZS.near(rx, ry, dist + 0.01) end
+        if list == nil then list = getCell():getZombieList() end
+        local rz = red:getZ()
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and z ~= body and z:isAlive()
-                and not z:getVariableBoolean(Bridge.BODY_VAR) and not BridgeData.harmless(z) then
-                local dx, dy = z:getX() - red:getX(), z:getY() - red:getY()
-                if dx * dx + dy * dy < dist * dist and math.abs(z:getZ() - red:getZ()) < 1 then
+            if z ~= nil and z ~= body then
+                local dx, dy = z:getX() - rx, z:getY() - ry
+                if dx * dx + dy * dy < dist * dist and math.abs(z:getZ() - rz) < 1
+                    and z:isAlive() and not z:getVariableBoolean(Bridge.BODY_VAR) and not BridgeData.harmless(z) then
                     local seen = true
                     pcall(function() seen = red:CanSee(z) end)
                     if seen then near = true break end
