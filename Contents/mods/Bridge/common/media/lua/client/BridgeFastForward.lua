@@ -385,7 +385,11 @@ function BridgeFastForward.calm(b, now)
 
         local zombies = {}
         local keep = far + BridgeFastForward.ZOMBIE_NEAR
-        local zl = cell:getZombieList()
+        local zl = nil
+        if BridgeZScan ~= nil then
+            zl = BridgeZScan.near(bx, by, keep, { tag = "fastforward.sight" })
+        end
+        if zl == nil then zl = cell:getZombieList() end
         for i = 0, zl:size() - 1 do
             local z = zl:get(i)
             if z ~= b then

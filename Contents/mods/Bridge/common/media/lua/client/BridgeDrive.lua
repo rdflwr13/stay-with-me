@@ -583,7 +583,7 @@ local function nearbyZombies(car)
     local n = 0
     pcall(function()
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.near(cx, cy, (BridgeDrive.GREET_RADIUS or 0) + 0.01) end
+        if BridgeZS ~= nil then list = BridgeZS.near(cx, cy, (BridgeDrive.GREET_RADIUS or 0) + 0.01, { tag = "drive.greet" }) end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
@@ -604,7 +604,7 @@ local function zombiesNear(red, radius)
     if x == nil then return 0 end
     pcall(function()
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.near(x, y, radius + 0.01) end
+        if BridgeZS ~= nil then list = BridgeZS.near(x, y, radius + 0.01, { tag = "drive.exit" }) end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)

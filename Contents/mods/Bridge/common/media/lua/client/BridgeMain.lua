@@ -1328,7 +1328,11 @@ local function watchOthers(red, body, around)
         if sq ~= nil then redRoom = sq:getRoom() end
     end)
     pcall(function()
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZScan ~= nil then
+            list = BridgeZScan.near(red:getX(), red:getY(), SCARE_RADIUS, { tag = "watch.others" })
+        end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
 
@@ -4873,7 +4877,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
-    gunselftest = true,
+    gunselftest = true, zscan = true, zsselftest = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
 
 
@@ -5563,6 +5567,27 @@ function Bridge.run(line)
 
     if cmd == "gunselftest" then return BridgeGunRules.selftest() end
 
+    if cmd == "zsselftest" then
+        if BridgeZScan == nil then return "zscan not loaded" end
+        return BridgeZScan.selftest()
+    end
+
+    if cmd == "zscan" then
+        if BridgeZScan == nil then return "zscan not loaded" end
+        local sub = parts[3]
+        if sub == nil or sub == "status" then return BridgeZScan.statusText() end
+        if sub == "tags" then return BridgeZScan.tagsText() end
+        if sub == "why" then return BridgeZScan.whyText(parts[4]) end
+        if sub == "near" then return BridgeZScan.debugNear(parts[4], parts[5], parts[6]) end
+        if sub == "trace" then return BridgeZScan.trace(parts[4], parts[5]) end
+        if sub == "debug" then return BridgeZScan.setDebug(parts[4]) end
+        if sub == "on" then return BridgeZScan.setOn(true) end
+        if sub == "off" then return BridgeZScan.setOn(false) end
+        if sub == "reset" then return BridgeZScan.reset() end
+        if sub == "selftest" then return BridgeZScan.selftest() end
+        return "zscan status|tags|why|near|trace|debug|on|off|reset|selftest"
+    end
+
     if cmd == "menu" then
         getCore():exitToMenu()
         return "exit to menu"
@@ -6087,6 +6112,7 @@ function Bridge.diagLines()
             add("mood", BridgeMood.info)
         end)
         add("pose", Bridge.pose and Bridge.pose.anim or "none")
+        pcall(function() add("zscan", BridgeZScan.diagLine()) end)
         add("target", Bridge.target and string.format("%.1f %.1f %.0f", Bridge.target.x, Bridge.target.y, Bridge.target.z) or "none")
 
         pcall(function() add("car", BridgeCar.describe() .. (Bridge.store and Bridge.store.left and " left=1" or "")) end)

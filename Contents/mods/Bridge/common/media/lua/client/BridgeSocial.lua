@@ -1510,7 +1510,14 @@ local function zombiesNear(dist)
     pcall(function()
         local red = BridgeData.owner()
         local body = Bridge.body
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZScan ~= nil and red ~= nil then
+            local x1, y1 = red:getX(), red:getY()
+            local x2, y2 = x1, y1
+            if body ~= nil then x2, y2 = body:getX(), body:getY() end
+            list = BridgeZScan.nearUnion(x1, y1, x2, y2, dist, { tag = "social.busy" })
+        end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
             if z ~= nil and z ~= body and not z:getVariableBoolean(Bridge.BODY_VAR) and z:isAlive()

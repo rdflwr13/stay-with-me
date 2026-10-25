@@ -428,7 +428,7 @@ local function scanWorld(body, red, wantClear)
 
     pcall(function()
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.nearUnion(bodyx, bodyy, redx, redy, 15.5) end
+        if BridgeZS ~= nil then list = BridgeZS.nearUnion(bodyx, bodyy, redx, redy, 15.5, { tag = "callout.scan" }) end
         if list == nil then list = getCell():getZombieList() end
         local n = list:size()
         for i = 0, n - 1 do

@@ -384,7 +384,7 @@ local function crowdAround(body, radius)
     pcall(function()
         local bx, by = body:getX(), body:getY()
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, radius + 0.05) end
+        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, radius + 0.05, { tag = "fight.crowd" }) end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
@@ -816,9 +816,9 @@ local function pickTarget(body, red, mode)
     local list = nil
     if BridgeZS ~= nil and maxNear < 1000 then
         if guardOnly then
-            list = BridgeZS.near(bx, by, maxNear + 0.2)
+            list = BridgeZS.near(bx, by, maxNear + 0.2, { tag = "fight.pick" })
         else
-            list = BridgeZS.nearUnion(bx, by, rx, ry, maxNear + 0.2)
+            list = BridgeZS.nearUnion(bx, by, rx, ry, maxNear + 0.2, { tag = "fight.pick" })
         end
     end
     if list == nil then list = getCell():getZombieList() end
@@ -1130,7 +1130,7 @@ local function extraTargets(body, item, primary, want)
     pcall(function()
         local bx, by = body:getX(), body:getY()
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.35) end
+        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.35, { tag = "fight.extra" }) end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
@@ -1216,7 +1216,7 @@ local function shoveTargets(body)
     pcall(function()
         local bx, by = body:getX(), body:getY()
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, SHOVE_RANGE + 0.05) end
+        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, SHOVE_RANGE + 0.05, { tag = "fight.shove" }) end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)

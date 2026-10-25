@@ -3694,8 +3694,12 @@ end
 local function othersNear(p, bodies)
     local found = false
     pcall(function()
-        local list = getCell():getZombieList()
         local px, py, pz = p:getX(), p:getY(), p:getZ()
+        local list = nil
+        if BridgeZScan ~= nil then
+            list = BridgeZScan.near(px, py, PANIC_RADIUS, { tag = "server.othersNear" })
+        end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
 
@@ -4113,5 +4117,13 @@ Events.OnTickEvenPaused.Add(function()
     if not ok then warn("animals flag failed: " .. tostring(err)) end
 end)
 Events.OnZombieCreate.Add(onZombieCreate)
+
+if BridgeZScan ~= nil then
+    BridgeZScan.tickOf = function() return BridgeServer.tick end
+    BridgeZScan.isCompanionOf = function(z) return BridgeServer.isCompanionBody(z) == true end
+    BridgeZScan.isRemoteOf = function() return false end
+    BridgeZScan.cellOf = function() return getCell() end
+end
+
 log("loaded v" .. tostring(BridgeServer.version))
 

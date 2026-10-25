@@ -1720,7 +1720,7 @@ function BridgeTask.dangerNear(body, radius)
         local rx, ry = bx, by
         if red ~= nil then rx, ry = red:getX(), red:getY() end
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.nearUnion(bx, by, rx, ry, dr + 0.01) end
+        if BridgeZS ~= nil then list = BridgeZS.nearUnion(bx, by, rx, ry, dr + 0.01, { tag = "task.danger" }) end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)

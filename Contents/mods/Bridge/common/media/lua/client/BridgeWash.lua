@@ -731,7 +731,11 @@ function BridgeWash.update(body)
     if Bridge.every(10) then
         local threat = false
         pcall(function()
-            local list = getCell():getZombieList()
+            local list = nil
+            if BridgeZScan ~= nil then
+                list = BridgeZScan.near(body:getX(), body:getY(), 5, { tag = "wash.threat" })
+            end
+            if list == nil then list = getCell():getZombieList() end
             for i = 0, list:size() - 1 do
                 local z = list:get(i)
                 if z ~= nil and z ~= body and z:isAlive() and not z:getVariableBoolean(Bridge.BODY_VAR)

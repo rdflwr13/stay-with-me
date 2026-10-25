@@ -94,7 +94,7 @@ local function dangerNear(red, body)
     pcall(function()
         local rx, ry = red:getX(), red:getY()
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.near(rx, ry, dist + 0.01) end
+        if BridgeZS ~= nil then list = BridgeZS.near(rx, ry, dist + 0.01, { tag = "ambient.danger" }) end
         if list == nil then list = getCell():getZombieList() end
         local rz = red:getZ()
         for i = 0, list:size() - 1 do
