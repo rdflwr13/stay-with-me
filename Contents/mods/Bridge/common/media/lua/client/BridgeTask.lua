@@ -187,6 +187,7 @@ BridgeTask.LOOT_TRANSFER_WAIT = 20 * SECOND
 BridgeTask.LOOT_ITEM_TIME = 0.5 * SECOND
 BridgeTask.LOOT_SAY_COOLDOWN = 25 * SECOND
 BridgeTask.LOOT_SCAN_BUDGET = 200
+BridgeTask.LOOT_BATCH_MAX = 20
 BridgeTask.OPENING_GIVE_UP = 6 * SECOND
 
 
@@ -4259,31 +4260,43 @@ function BridgeTask.lootTake(body, target, item, dest)
     local chr = BridgeData ~= nil and BridgeData.owner() or nil
     pcall(function() act = ISInventoryTransferAction:new(chr, item, src, dest) end)
     if act == nil then return false end
-    local single = target ~= nil and type(target.only) == "table" and #target.only > 0
-    if not single then
-        pcall(function()
+    pcall(function()
+        local only = (target ~= nil and type(target.only) == "table" and #target.only > 0)
+            and target.only or nil
+        local cap = BridgeTask.LOOT_BATCH_MAX or 20
+        local full = item:getFullType()
+        local group = { item }
+        if only ~= nil then
+            for i = 1, #only do
+                if #group >= cap then break end
+                local it = only[i]
+                if it ~= item and it:getContainer() == src and it:getFullType() == full then
+                    group[#group + 1] = it
+                end
+            end
+        else
+            local list = src:getItems()
+            for i = 0, list:size() - 1 do
+                if #group >= cap then break end
+                local it = list:get(i)
+                if it ~= nil and it ~= item and it:getFullType() == full then
+                    group[#group + 1] = it
+                end
+            end
+        end
+        if #group > 1 then
             if isClient() then
-                local group = BridgeInventory.sameStack(src, item, BridgeInventory.LOOT_STACK_MAX)
                 if act.bridgeRelay ~= nil then
-                    act.queueList = { { items = group, time = act.maxTime, type = item:getFullType() } }
+                    act.queueList = { { items = group, time = act.maxTime, type = full } }
                     act.bridgeRelay.group = group
                 else
                     act.group = group
                 end
             else
-                local full = item:getFullType()
-                local group = { item }
-                local list = src:getItems()
-                for i = 0, list:size() - 1 do
-                    local it = list:get(i)
-                    if it ~= nil and it ~= item and it:getFullType() == full then group[#group + 1] = it end
-                end
-                if #group > 1 then
-                    act.queueList = { { items = group, time = act.maxTime, type = full } }
-                end
+                act.queueList = { { items = group, time = act.maxTime, type = full } }
             end
-        end)
-    end
+        end
+    end)
     pcall(function() act.bridgeHerLoot = BridgeTask.lootAnim(src) end)
     BridgeTask.lootAct = act
     BridgeTask.lootSrc = src
