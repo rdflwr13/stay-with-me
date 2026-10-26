@@ -1764,6 +1764,17 @@ end
 
 BridgeServer.gunAt = BridgeServer.gunAt or {}
 
+local function gunPeaceful(z, player)
+    local compat = rawget(_G, "BridgeALifeCompat")
+    if type(compat) == "table" and type(compat.peaceful) == "function" then
+        local ok, answer = pcall(compat.peaceful, z, player)
+        if ok then return answer end
+    end
+    local ok, answer = pcall(BridgeData.foreignPeaceful, z)
+    if ok then return answer end
+    return nil
+end
+
 local function gunTarget(args)
     local target = nil
     local tid = tonumber(args and args.targetId)
@@ -1789,12 +1800,47 @@ local function gunTarget(args)
             end
         end
     end)
+    if target == nil then
+        pcall(function()
+            local animals = getCell():getAnimals()
+            if animals == nil then return end
+            for i = 0, animals:size() - 1 do
+                local a = animals:get(i)
+                if a ~= nil and tid ~= nil then
+                    local oid = nil
+                    pcall(function() oid = a:getOnlineID() end)
+                    if oid == tid then target = a return end
+                end
+            end
+            if target == nil then
+                local x, y, zz = tonumber(args.x), tonumber(args.y), tonumber(args.z)
+                if x == nil or y == nil or zz == nil then return end
+                for i = 0, animals:size() - 1 do
+                    local a = animals:get(i)
+                    if a ~= nil and math.abs(a:getZ() - zz) < 0.5 and dist(a, x, y) <= 1.0 then
+                        target = a
+                        break
+                    end
+                end
+            end
+        end)
+    end
     return target
 end
 
 
 local function applyGunHit(body, gun, target, damage, crit)
     if body == nil or gun == nil or target == nil then return false, 0, 0, false, nil end
+    if instanceof(target, "IsoAnimal") then
+        local hpBefore = 0
+        pcall(function() hpBefore = target:getHealth() end)
+        if BridgeAnimals ~= nil then BridgeAnimals.apply(target, damage, body) end
+        local hpAfter = hpBefore
+        pcall(function() hpAfter = target:getHealth() end)
+        local killed = false
+        pcall(function() killed = target:isDead() == true or target:getHealth() <= 0 end)
+        return true, hpBefore, hpAfter, killed, nil
+    end
     local hpBefore = 0
     pcall(function() hpBefore = target:getHealth() end)
     local fake = nil
@@ -1835,12 +1881,13 @@ local function gunExtraCandidates(body, player, primary, modeRange)
             friendlies[#friendlies + 1] = z
         end
     end
+    local allowedFor = function(z) return gunPeaceful(z, player) end
     for i = 0, list:size() - 1 do
         local z = list:get(i)
         if z ~= nil and z ~= body and z ~= primary and z ~= player
             and not BridgeServer.isCompanionBody(z)
-            and BridgeGunRules.isForeignNpc(z) == nil
-            and not BridgeData.harmless(z) then
+            and BridgeGunRules.foreignGunAllowed(z, allowedFor)
+            and not BridgeData.dragged(z) and not BridgeData.friendlyNpc(z) then
             local alive = false
             pcall(function() alive = z:isAlive() and z:getHealth() > 0 and not z:isOnKillDone() end)
             if alive and math.abs(z:getZ() - body:getZ()) < 0.8 then
@@ -1923,10 +1970,15 @@ BridgeServer.Commands.gunShot = function(player, args)
     local target = gunTarget(args)
     if target == nil then return reject("no target") end
     if target == body or BridgeServer.isCompanionBody(target) then return reject("companion target") end
-    if BridgeGunRules.isForeignNpc(target) ~= nil then return reject("friendly npc") end
+    if not BridgeGunRules.foreignGunAllowed(target, function(z) return gunPeaceful(z, player) end) then
+        return reject("friendly npc")
+    end
 
     local alive = false
-    pcall(function() alive = target:isAlive() and target:getHealth() > 0 and not target:isOnKillDone() end)
+    pcall(function()
+        local onKill = type(target.isOnKillDone) ~= "function" or target:isOnKillDone() ~= true
+        alive = target:isAlive() and target:getHealth() > 0 and onKill
+    end)
     if not alive then return reject("target dead") end
     if math.abs(target:getZ() - body:getZ()) >= 0.8 then return reject("target on another floor") end
 
@@ -2042,10 +2094,8 @@ BridgeServer.Commands.gunShot = function(player, args)
         local outside = true
         pcall(function() outside = body:isOutside() ~= false end)
         if not outside then radius = radius * 0.5 end
-        local ok = pcall(function() body:addWorldSoundUnlessInvisible(radius, desc.soundVolume, true) end)
-        if not ok then
-            addSound(body, body:getX(), body:getY(), body:getZ(), radius, desc.soundVolume)
-        end
+        pcall(addSound, nil, math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()),
+            math.floor(radius), math.floor(desc.soundVolume or 10))
     end)
 
     sendServerCommand(player, "Bridge", "gunResult",

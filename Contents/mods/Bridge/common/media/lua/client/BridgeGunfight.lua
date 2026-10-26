@@ -710,7 +710,12 @@ local function targetOk(z, body, red)
     if z == nil or body == nil or z == body then return false end
     if Bridge.body ~= nil and z == Bridge.body then return false end
     if companionBody(z) then return false end
-    if BridgeGunRules.isForeignNpc(z) ~= nil then return false end
+    if not BridgeGunRules.foreignGunAllowed(z, BridgeData.foreignPeaceful) then return false end
+    if instanceof(z, "IsoAnimal") then
+        if BridgeAnimals == nil or BridgeAnimals.wanted ~= true or not BridgeAnimals.hostile(z) then return false end
+        local ok, alive = pcall(function() return z:isAlive() and z:getHealth() > 0 end)
+        return ok and alive
+    end
     local ok, alive = pcall(function() return z:isAlive() and z:getHealth() > 0 and not z:isOnKillDone() end)
     if not ok or not alive then return false end
     if BridgeData.harmless(z) then return false end
@@ -757,6 +762,25 @@ local function pickTarget(body, red)
                 local dSelf = math.sqrt(d2)
                 if dSelf <= range then
                     cands[#cands + 1] = { z = z, score = dist(red, z) + dSelf * 0.01 }
+                end
+            end
+        end
+    end
+    if BridgeAnimals ~= nil and BridgeAnimals.wanted then
+        local animals = nil
+        pcall(function() animals = cell:getAnimals() end)
+        if animals ~= nil then
+            for i = 0, animals:size() - 1 do
+                local a = animals:get(i)
+                if a ~= nil and math.abs(a:getZ() - bz) < 0.8 then
+                    local dx, dy = a:getX() - bx, a:getY() - by
+                    local d2 = dx * dx + dy * dy
+                    if d2 <= range2 and targetOk(a, body, red) then
+                        local dSelf = math.sqrt(d2)
+                        if dSelf <= range then
+                            cands[#cands + 1] = { z = a, score = dist(red, a) + dSelf * 0.01 }
+                        end
+                    end
                 end
             end
         end
@@ -1124,10 +1148,8 @@ local function playShot(body, gun)
         local outside = true
         pcall(function() outside = body:isOutside() ~= false end)
         if not outside then radius = radius * 0.5 end
-        local ok = pcall(function() body:addWorldSoundUnlessInvisible(radius, gun.soundVolume, true) end)
-        if not ok then
-            addSound(body, body:getX(), body:getY(), body:getZ(), radius, gun.soundVolume)
-        end
+        pcall(addSound, nil, math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()),
+            math.floor(radius), math.floor(gun.soundVolume or 10))
     end)
     flash(body)
 end
@@ -1290,6 +1312,29 @@ local function fire(body)
     BridgeGunfight.fireUntil = (Bridge.time or 0) + FIRE_TICKS
     retainBump(body, "NA_Aim" .. kind)
     playShot(body, gun)
+
+    if instanceof(t, "IsoAnimal") then
+        local roll = ZombRand(100)
+        local hit = roll < chance
+        if hit then
+            local crit = ZombRand(100) < (tonumber(gun.critChance) or 0)
+            local dmg = BridgeGunRules.rollDamage(gun)
+            if crit then dmg = dmg * math.max(1, math.min(5, gun.critMult or 2)) end
+            if BridgeAnimals ~= nil then BridgeAnimals.attack(t, dmg, body) end
+            if BridgeSkills ~= nil then pcall(function() BridgeSkills.add("Aiming", 1, "hit") end) end
+            BridgeGunfight.info = string.format("hit d=%.1f dmg=%.1f%s", d, dmg, crit and " crit" or "")
+            vlog(string.format("shot animal d=%.1f chance=%.0f%% dmg=%.2f%s", d, chance, dmg, crit and " CRIT" or ""))
+        else
+            pcall(function()
+                local sq = t:getSquare()
+                if sq ~= nil then sq:playSound(gun.impactSound or "BulletImpact") end
+            end)
+            BridgeGunfight.info = string.format("miss d=%.1f chance=%.0f", d, chance)
+            vlog(string.format("shot animal miss d=%.1f chance=%.0f%% roll=%d", d, chance, roll + 1))
+        end
+        checkLowAmmo()
+        return
+    end
 
     local shotgun = (tonumber(gun.projectileCount) or 1) > 1
     local red = BridgeData.owner()
@@ -2739,7 +2784,9 @@ function BridgeGunfight.update(body)
     local t = BridgeGunfight.target
     local pick = (Bridge.time - (BridgeGunfight.lastPick or 0)) >= RECHECK
     if t ~= nil and pick and not validTarget(t, body, red) then
-        vlog("target lost: " .. tostring(t:getType()))
+        local lost = "body"
+        pcall(function() lost = tostring(t:getType()) end)
+        vlog("target lost: " .. lost)
         t = nil
         BridgeGunfight.target = nil
         BridgeGunfight.state = "idle"

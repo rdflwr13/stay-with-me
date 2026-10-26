@@ -822,6 +822,19 @@ function BridgeGunRules.isForeignNpc(z)
 end
 
 
+function BridgeGunRules.foreignGunAllowed(z, peacefulOf)
+    local who = BridgeGunRules.isForeignNpc(z)
+    if who == nil then return true end
+    if who ~= "Project A-Life" then return false end
+    local answer = nil
+    if type(peacefulOf) == "function" then
+        local ok, value = pcall(peacefulOf, z)
+        if ok then answer = value end
+    end
+    return answer == false
+end
+
+
 local SHOT_SIDE = { "ShotChest", "ShotChestStep", "ShotLeg", "ShotShoulder", "ShotShoulderStep" }
 
 function BridgeGunRules.shotReaction(shooter, victim, crit)

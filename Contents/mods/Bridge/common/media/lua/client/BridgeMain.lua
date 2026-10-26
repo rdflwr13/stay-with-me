@@ -2998,6 +2998,15 @@ function Bridge.alife(parts)
 end
 
 
+function Bridge.compat(parts)
+    local module = rawget(_G, "BridgeALifeCompat")
+    if type(module) ~= "table" then return "compat: BridgeALifeCompat not loaded" end
+    if parts[3] == "selftest" and type(module.selftest) == "function" then return module.selftest() end
+    if type(module.status) ~= "function" then return "compat: no status" end
+    return module.status()
+end
+
+
 Events.OnServerCommand.Add(function(module, command, args)
     if module ~= "ProjectALife" or type(command) ~= "string" then return end
     if string.find(command, "Result", 1, true) == nil then return end
@@ -5251,6 +5260,7 @@ function Bridge.run(line)
 
 
     if cmd == "alife" then return Bridge.alife(parts) end
+    if cmd == "compat" then return Bridge.compat(parts) end
     if cmd == "clean" then
         local killed = 0
         local ok, err = pcall(function()
