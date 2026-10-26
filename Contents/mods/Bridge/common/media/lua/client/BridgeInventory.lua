@@ -1118,6 +1118,9 @@ end
 function BridgeInventory.lootFor(act, anim)
     local b = body()
     if b == nil then return false end
+    if BridgeGunfight ~= nil and type(BridgeGunfight.interruptReload) == "function" then
+        pcall(BridgeGunfight.interruptReload, b, "inventory transfer")
+    end
     anim = anim or LOOT_ANIM
     if BridgeInventory.seated(b) then
         if type(act) == "table" then act.bridgeSeated = true end
@@ -2954,7 +2957,11 @@ end
 function BridgeInventory.keepOnHer(b, item)
     local keep = false
     pcall(function()
-        keep = b:isEquipped(item) or item:isFavorite() or (BridgeWeapon ~= nil and BridgeWeapon.isAssigned(b, item))
+        keep = b:isEquipped(item) or item:isFavorite()
+            or (BridgeWeapon ~= nil and BridgeWeapon.isAssigned(b, item))
+            or (BridgeGear ~= nil and BridgeInventory.isGun(item) and BridgeGear.isGear(b, item))
+            or (BridgeGunfight ~= nil and BridgeGunfight.assignedId ~= nil
+                and item:getID() == BridgeGunfight.assignedId)
     end)
     return keep == true
 end
@@ -4880,6 +4887,16 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeStay
             if BridgeShower ~= nil and BridgeShower.showing ~= nil and BridgeShower.showing()
                     and (BridgeInventory.isHers(self.srcContainer) or BridgeInventory.isHers(self.destContainer)) then
                 return false
+            end
+            local mine = false
+            if self.srcContainer ~= nil then
+                pcall(function() mine = BridgeInventory.inBody(self.srcContainer) end)
+            end
+            if not mine and self.destContainer ~= nil then
+                pcall(function() mine = BridgeInventory.inBody(self.destContainer) end)
+            end
+            if mine and BridgeGunfight ~= nil and type(BridgeGunfight.interruptReload) == "function" then
+                pcall(BridgeGunfight.interruptReload, body(), "inventory transfer")
             end
             if BridgeInventory.goneAction(self) and not BridgeInventory.takingFromHer(self) then return false end
             if self.bridgeStays then BridgeInventory.keepFloorItem(self) end

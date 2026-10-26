@@ -461,6 +461,10 @@ function BridgeGunfight.recover(body)
     if found ~= nil then
         setMark(found, true)
         setFields(found)
+        if BridgeGear ~= nil and BridgeGear.isGear(body, found) then
+            pcall(function() BridgeGear.release(body, found) end)
+            pcall(function() body:resetModelNextFrame() end)
+        end
         tellServer(BridgeGunfight.gun.fullType, BridgeGunfight.assignedId, BridgeGunfight.rounds)
         log("recovered primary gun " .. BridgeGunRules.summary(BridgeGunfight.gun))
         logGunState("gun state at recover", body)
@@ -494,6 +498,10 @@ function BridgeGunfight.assign(body, item)
         log("assign refused: gun could not move to her main inventory")
         return false
     end
+    if BridgeGear ~= nil and BridgeGear.isGear(body, item) then
+        pcall(function() BridgeGear.release(body, item) end)
+        pcall(function() body:resetModelNextFrame() end)
+    end
     BridgeGunfight.cancelMagCare(body)
     setMark(item, true)
     setFields(item)
@@ -511,21 +519,6 @@ function BridgeGunfight.assign(body, item)
     BridgeGunfight.peekCooldown = nil
     BridgeGunfight.magCareLogged = nil
     pcall(function() BridgeWeapon.putAway(body) end)
-    pcall(function()
-        if BridgeGear ~= nil and BridgeGear.attached ~= nil then
-            local drop = {}
-            for other, info in pairs(BridgeGear.attached) do
-                if info.body == body and BridgeGunRules.isGun(other) then
-                    local oid = nil
-                    pcall(function() oid = other:getID() end)
-                    if oid ~= BridgeGunfight.assignedId then drop[#drop + 1] = other end
-                end
-            end
-            for _, other in ipairs(drop) do
-                pcall(function() BridgeGear.release(body, other) end)
-            end
-        end
-    end)
     tellServer(BridgeGunfight.gun.fullType, BridgeGunfight.assignedId, BridgeGunfight.rounds)
     log("assigned primary gun " .. BridgeGunRules.summary(BridgeGunfight.gun))
     logGunState("gun state at assign", body)
@@ -575,6 +568,9 @@ local function attachGun(body, item)
     local slot, set, defType = nil, nil, nil
     pcall(function() slot, set, defType = BridgeWeapon.slotFor(body, item) end)
     if slot == nil then return false end
+    local taken = nil
+    pcall(function() taken = body:getAttachedItem(slot) end)
+    if taken ~= nil and taken ~= item then return false end
     detachGun(body)
     local ok = pcall(function()
         body:setAttachedItem(slot, item)
@@ -1642,6 +1638,18 @@ local function swingRecoveryReady()
 end
 
 
+local function transferHoldsReload(body)
+    if BridgeGunfight.reloadHoldUntil ~= nil and (Bridge.time or 0) < BridgeGunfight.reloadHoldUntil then
+        return true
+    end
+    if BridgeInventory ~= nil and type(BridgeInventory.transferPending) == "function" then
+        local pending = false
+        pcall(function() pending = BridgeInventory.transferPending(body) == true end)
+        if pending then return true end
+    end
+    return false
+end
+
 local function idleReloadWanted(body, gun)
     if body == nil or gun == nil then return false end
     local rounds = BridgeGunfight.rounds or 0
@@ -1789,6 +1797,7 @@ local function magazineCare(body, gun)
         end
         return advanceMagCare(body, gun)
     end
+    if transferHoldsReload(body) then return false end
     if not BridgeData.optionOf(Bridge.store, "gunMagCare") then return false end
     if BridgeFight == nil or BridgeFight.target ~= nil or BridgeFight.state == "swing" then return false end
     if BridgeGunfight.reloadStage ~= nil or BridgeGunfight.state ~= "idle" then return false end
@@ -2037,6 +2046,37 @@ local function cancelReload(body, reason)
     return false
 end
 
+function BridgeGunfight.interruptReload(body, reason)
+    local stopped = false
+    if BridgeGunfight.magCareStage ~= nil then
+        pcall(function() BridgeGunfight.cancelMagCare(body) end)
+        stopped = true
+    end
+    if BridgeGunfight.reloadStage ~= nil then
+        pcall(function() cancelReload(body, reason or "inventory transfer") end)
+        stopped = true
+    end
+    if BridgeGunfight.ammoItem ~= nil then
+        BridgeGunfight.ammoItem, BridgeGunfight.ammoOut, BridgeGunfight.ammoAmount = nil, nil, 0
+        BridgeGunfight.ammoUntil = nil
+        BridgeGunfight.ammoStageAt = nil
+        BridgeGunfight.ammoStageTicks = 0
+        BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 60
+        pcall(function() magCareEnd(body) end)
+        if BridgeWeapon ~= nil then pcall(function() BridgeWeapon.lost = nil end) end
+        stopped = true
+    end
+    if stopped then
+        BridgeGunfight.reloadHoldUntil = math.max(tonumber(BridgeGunfight.reloadHoldUntil) or 0,
+            (Bridge.time or 0) + 120)
+        if BridgeMove ~= nil then BridgeMove.forcedWalk = nil end
+        pcall(function() clearBump(body) end)
+        BridgeGunfight.state = "idle"
+        BridgeGunfight.info = "reload interrupted: " .. tostring(reason or "inventory transfer")
+    end
+    return stopped
+end
+
 local function refillNeed(body, gun)
     if body == nil or gun == nil then return 0 end
     local cap = tonumber(gun.maxAmmo) or 0
@@ -2061,6 +2101,7 @@ end
 local function startAmmoOpen(body)
     if body == nil or BridgeGunfight.gun == nil then return false end
     if BridgeGunfight.ammoItem ~= nil then return true end
+    if transferHoldsReload(body) then return false end
     if BridgeGunfight.ammoCooldown ~= nil and (Bridge.time or 0) < BridgeGunfight.ammoCooldown then return false end
     if BridgeGunfight.gun.magazineType ~= nil and not BridgeData.optionOf(Bridge.store, "gunMagCare") then
         BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 600
@@ -2311,6 +2352,7 @@ end
 
 local function startReload(body, t, idle)
     if BridgeGunfight.reloadStage ~= nil then return true end
+    if transferHoldsReload(body) then return false end
     if BridgeGunfight.reloadDoneAt ~= nil and (Bridge.time or 0) - BridgeGunfight.reloadDoneAt < 30 then
         return false
     end

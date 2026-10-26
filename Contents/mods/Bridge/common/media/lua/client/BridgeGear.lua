@@ -128,27 +128,26 @@ local function inHer(b, item)
 end
 BridgeGear.inHer = inHer
 
-local function otherGun(item)
-    if item == nil then return false end
-    if BridgeGunRules == nil or not BridgeGunRules.isGun(item) then return false end
-    if BridgeGunfight == nil or BridgeGunfight.assignedId == nil then return false end
+function BridgeGear.isPrimary(item)
+    if item == nil or BridgeGunfight == nil or BridgeGunfight.assignedId == nil then return false end
     local id = nil
     pcall(function() id = item:getID() end)
-    return id ~= BridgeGunfight.assignedId
+    return id == BridgeGunfight.assignedId
 end
 
 
 function BridgeGear.canAttach(item)
     if item == nil then return false end
-    if otherGun(item) then return false end
+    if BridgeGear.isPrimary(item) then return false end
     local broken = false
     local kind = nil
     local model = nil
     pcall(function() broken = item:isBroken() end)
     pcall(function() kind = item:getAttachmentType() end)
     pcall(function() model = item:getStaticModel() end)
+    local gun = BridgeGunRules ~= nil and BridgeGunRules.isGun(item) == true
     return not broken and kind ~= nil and kind ~= ""
-        and type(model) == "string" and model ~= ""
+        and (gun or (type(model) == "string" and model ~= ""))
 end
 
 function BridgeGear.slotsFor(b, item)
@@ -232,6 +231,7 @@ function BridgeGear.locationOf(b, item)
     if info ~= nil and info.body == b then return info.location end
     if BridgeWeapon ~= nil and (BridgeWeapon.isAssigned(b, item)
             or (BridgeWeapon.attached ~= nil and BridgeWeapon.attached.item == item)) then return nil end
+    if BridgeGear.isPrimary(item) then return nil end
     local loc = nil
     pcall(function() loc = item:getAttachedToModel() end)
     if type(loc) == "string" and loc ~= "" then return loc end
@@ -284,7 +284,7 @@ end
 
 function BridgeGear.attachSlot(b, item, slot, quiet)
     if b == nil or item == nil or slot == nil or not inHer(b, item) then return false end
-    if otherGun(item) then return false end
+    if BridgeGear.isPrimary(item) then return false end
     pcall(function()
         if BridgeWeapon ~= nil and BridgeWeapon.isAssigned(b, item) then
             BridgeWeapon.assignedId = nil
@@ -306,6 +306,11 @@ function BridgeGear.attachSlot(b, item, slot, quiet)
     local current = gearInSlot(b, slot.providerId, slot.type)
     if current == item then return false end
     if current ~= nil and current ~= item then BridgeGear.release(b, current) end
+    if BridgeGunRules ~= nil and BridgeGunRules.isGun(item) then
+        local taken = nil
+        pcall(function() taken = b:getAttachedItem(slot.location) end)
+        if taken ~= nil and taken ~= item then return false end
+    end
     if not setOnModel(b, item, slot) then return false end
     BridgeGear.attached[item] = { location = slot.location, type = slot.type, index = slot.index,
                                   animset = slot.animset, providerId = slot.providerId,
@@ -326,7 +331,6 @@ end
 
 function BridgeGear.attachTo(b, item, location, defType, providerType)
     if b == nil or item == nil or type(location) ~= "string" or location == "" then return false end
-    if otherGun(item) then return false end
     if not setOnModel(b, item, { location = location, type = defType or "", index = 1 }) then return false end
     local animset, providerId, providerName, ptype = nil, nil, nil, nil
     local slots = BridgeGear.slotsFor(b, item)
@@ -383,12 +387,10 @@ function BridgeGear.sync(b)
         if info.body == b then
             local weapon = BridgeWeapon ~= nil and (BridgeWeapon.isAssigned(b, item)
                 or (BridgeWeapon.attached ~= nil and BridgeWeapon.attached.item == item))
+            local primary = BridgeGear.isPrimary(item)
             local inHand = false
             pcall(function() inHand = b:getPrimaryHandItem() == item or b:getSecondaryHandItem() == item end)
-            if otherGun(item) then
-                drop = drop or {}
-                drop[#drop + 1] = item
-            elseif weapon then
+            if weapon or primary then
                 handsOff = handsOff or {}
                 handsOff[#handsOff + 1] = item
             elseif inHand then
