@@ -1368,6 +1368,16 @@ local function itemTypeOf(entry)
     if entry == nil then return nil end
     local full = safeCall(entry, "getFullType")
     if type(full) == "string" and full ~= "" then return full end
+    full = safeCall(entry, "getFullName")
+    if type(full) == "string" and full ~= "" then
+        if string.find(full, ".", 1, true) == nil then
+            local module = safeCall(entry, "getModuleName")
+            if type(module) == "string" and module ~= "" then
+                full = module .. "." .. full
+            end
+        end
+        return full
+    end
     full = safeCall(entry, "getItemKey")
     if type(full) == "string" and full ~= "" then return full end
     return nil
@@ -1426,9 +1436,13 @@ function BridgeGunRules.unpackOf(itemType)
                         if full ~= nil then types[#types + 1] = full end
                     end
                 end
-                if #types == 0 then
-                    local up = unpackUp(itemType)
-                    if up ~= nil then types[1] = up end
+                local up = unpackUp(itemType)
+                if up ~= nil then
+                    local found = false
+                    for _, t in ipairs(types) do
+                        if t == up then found = true break end
+                    end
+                    if not found then types[#types + 1] = up end
                 end
                 if amount > 0 then
                     local ticks = 75

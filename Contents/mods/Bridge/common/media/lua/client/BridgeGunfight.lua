@@ -1463,15 +1463,53 @@ local function liveThreat(body, target, maxRange)
 end
 
 
+local nearestCache = { body = nil, at = nil, threat = nil }
+
+local function nearestMeleeThreat(body, maxRange)
+    if body == nil then return nil end
+    local now = Bridge.time or 0
+    local c = nearestCache
+    local hit = nil
+    if c.body == body and c.at ~= nil and now - c.at < 5 then
+        hit = c.threat
+    else
+        local best, bestD = nil, MELEE_RELEASE_RANGE
+        local red = BridgeData.owner()
+        pcall(function()
+            local list = nil
+            if BridgeZS ~= nil then
+                list = BridgeZS.near(body:getX(), body:getY(), MELEE_RELEASE_RANGE)
+            end
+            if list == nil then list = getCell():getZombieList() end
+            if list == nil then return end
+            for i = 0, list:size() - 1 do
+                local z = list:get(i)
+                if z ~= nil and z ~= body and targetOk(z, body, red)
+                    and math.abs(z:getZ() - body:getZ()) < 0.8 then
+                    local d = dist(body, z)
+                    if d <= bestD then best, bestD = z, d end
+                end
+            end
+        end)
+        c.body, c.at, c.threat = body, now, best
+        hit = best
+    end
+    return liveThreat(body, hit, maxRange or BridgeGunRules.MIN_RANGE)
+end
+
+
 local function meleeThreat(body)
     if not BridgeData.optionOf(Bridge.store, "gunMelee") or not meleeReady(body) then return nil end
-    return liveThreat(body, BridgeFight.target, BridgeGunRules.MIN_RANGE)
+    local target = liveThreat(body, BridgeFight.target, BridgeGunRules.MIN_RANGE)
+    if target ~= nil then return target end
+    return nearestMeleeThreat(body, BridgeGunRules.MIN_RANGE)
 end
 
 
 local function meleeReleaseReady(body)
     if not BridgeData.optionOf(Bridge.store, "gunMelee") or not meleeReady(body) then return true end
-    if liveThreat(body, BridgeFight.target, MELEE_RELEASE_RANGE) ~= nil then
+    if liveThreat(body, BridgeFight.target, MELEE_RELEASE_RANGE) ~= nil
+        or nearestMeleeThreat(body, MELEE_RELEASE_RANGE) ~= nil then
         BridgeGunfight.meleeClearAt = nil
         return false
     end
@@ -2590,20 +2628,39 @@ function BridgeGunfight.update(body)
     end
 
     local reserve = BridgeData.ammoReserveOf(Bridge.store)
+    local reserveBlocked, reserveN, reserveNeed = false, 0, 0
     if reserve ~= "free" then
-        local n = reserveNear(body)
-        local need = reserve == "conserve" and 4 or 13
-        if n < need then
-            if BridgeGunfight.drawn then BridgeGunfight.stow(body) end
-            BridgeGunfight.stance = "melee"
-            BridgeGunfight.meleeClearAt = nil
-            BridgeGunfight.meleeFallback = true
-            BridgeGunfight.canMelee = true
-            BridgeGunfight.target = nil
-            BridgeGunfight.state = "idle"
-            BridgeGunfight.info = string.format("ammo reserve %s: %d/%d", reserve, n, need)
-            return false
+        reserveN = reserveNear(body)
+        reserveNeed = reserve == "conserve" and 4 or 13
+        reserveBlocked = reserveN < reserveNeed
+
+        -- Upkeep (reload a magazine, open an ammo box) is preparation, not engagement.
+        -- Run it even while the reserve holds her on melee, otherwise she never reloads
+        -- until the horde arrives and then reloads mid-fight.
+        if reserveBlocked and idleScan and BridgeGunfight.target == nil
+            and (BridgeFight == nil or BridgeFight.target == nil) then
+            if BridgeGunfight.gun ~= nil and BridgeGunfight.gun.magazineType ~= nil
+                and startAmmoOpen(body) then return false end
+
+            if idleReloadWanted(body, BridgeGunfight.gun) then
+                if not BridgeGunfight.drawn then BridgeGunfight.draw(body) end
+                if BridgeGunfight.drawn and startReload(body, nil, true) then return true end
+            end
+
+            if (BridgeGunfight.gun == nil or BridgeGunfight.gun.magazineType == nil)
+                and startAmmoOpen(body) then return false end
         end
+    end
+    if reserveBlocked then
+        if BridgeGunfight.drawn then BridgeGunfight.stow(body) end
+        BridgeGunfight.stance = "melee"
+        BridgeGunfight.meleeClearAt = nil
+        BridgeGunfight.meleeFallback = true
+        BridgeGunfight.canMelee = true
+        BridgeGunfight.target = nil
+        BridgeGunfight.state = "idle"
+        BridgeGunfight.info = string.format("ammo reserve %s: %d/%d", reserve, reserveN, reserveNeed)
+        return false
     end
     BridgeGunfight.meleeFallback = false
 
