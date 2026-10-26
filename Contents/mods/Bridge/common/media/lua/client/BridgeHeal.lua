@@ -758,7 +758,18 @@ end
 function BridgeHeal.threatNear(body, red, imminentOnly, running)
     local found = false
     pcall(function()
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZScan ~= nil then
+            local x1, y1 = nil, nil
+            if red ~= nil then x1, y1 = red:getX(), red:getY() end
+            if x1 == nil and body ~= nil then x1, y1 = body:getX(), body:getY() end
+            if x1 ~= nil then
+                local x2, y2 = x1, y1
+                if body ~= nil then x2, y2 = body:getX(), body:getY() end
+                list = BridgeZScan.nearUnion(x1, y1, x2, y2, THREAT_FAR, { tag = "heal.threat" })
+            end
+        end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
             local hit = false

@@ -282,6 +282,31 @@ function BridgeMenu.onTorch(mode)
     if Bridge ~= nil and type(Bridge.setTorchMode) == "function" then Bridge.setTorchMode(mode) end
 end
 
+
+function BridgeMenu.onGunUse(mode)
+    if Bridge ~= nil and type(Bridge.setGunUse) == "function" then Bridge.setGunUse(mode) end
+end
+
+
+function BridgeMenu.onAmmoReserve(mode)
+    if Bridge ~= nil and type(Bridge.setAmmoReserve) == "function" then Bridge.setAmmoReserve(mode) end
+end
+
+
+function BridgeMenu.onGunMelee(on)
+    if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption("gunMelee", on == true) end
+end
+
+
+function BridgeMenu.onGunReloadIdle(on)
+    if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption("gunReloadIdle", on == true) end
+end
+
+
+function BridgeMenu.onGunMagCare(on)
+    if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption("gunMagCare", on == true) end
+end
+
 function BridgeMenu.onRenameDone(target, button, playerNum)
     if button == nil or button.internal ~= "OK" then return end
     local text = nil
@@ -371,6 +396,59 @@ local function buildActions(context, playerNum, env)
     actions:addOption(tr("Goodbye"), nil, BridgeMenu.onGoodbye)
 end
 
+local function buildGun(context, env)
+    local parent = context:addOption(tr("GunMenu"))
+    local gun = ISContextMenu:getNew(context)
+    context:addSubMenu(parent, gun)
+
+    local function addMenu(key, entries)
+        local opt = gun:addOption(tr(key))
+        local sub = ISContextMenu:getNew(gun)
+        gun:addSubMenu(opt, sub)
+        for _, entry in ipairs(entries) do
+            local value = entry[1]
+            local handler = entry[3]
+            local o = sub:addOption(tr(entry[2]), nil, function() handler(value) end)
+            if entry[4] then o.isDisabled = true end
+            tip(o, tr(entry[5]))
+        end
+    end
+
+    local use = BridgeData.gunUseOf(env.st)
+    addMenu("GunUse", {
+        { "always", "GunUseAlways", BridgeMenu.onGunUse, use == "always", "GunUseAlwaysTip" },
+        { "off", "GunUseOff", BridgeMenu.onGunUse, use == "off", "GunUseOffTip" },
+    })
+
+    local melee = BridgeData.optionOf(env.st, "gunMelee")
+    addMenu("GunMelee", {
+        { true, "GunOn", BridgeMenu.onGunMelee, melee == true, "GunMeleeOnTip" },
+        { false, "GunOff", BridgeMenu.onGunMelee, melee == false, "GunMeleeOffTip" },
+    })
+
+    local idle = BridgeData.optionOf(env.st, "gunReloadIdle")
+    addMenu("GunReloadIdle", {
+        { true, "GunOn", BridgeMenu.onGunReloadIdle, idle == true, "GunReloadIdleOnTip" },
+        { false, "GunOff", BridgeMenu.onGunReloadIdle, idle == false, "GunReloadIdleOffTip" },
+    })
+
+    local care = BridgeData.optionOf(env.st, "gunMagCare")
+    addMenu("GunMagCare", {
+        { true, "GunOn", BridgeMenu.onGunMagCare, care == true, "GunMagCareOnTip" },
+        { false, "GunOff", BridgeMenu.onGunMagCare, care == false, "GunMagCareOffTip" },
+    })
+
+    local reserve = BridgeData.ammoReserveOf(env.st)
+    local reserveLabels = { free = "GunReserveFree", conserve = "GunReserveConserve", emergency = "GunReserveEmergency" }
+    local reserveEntries = {}
+    for _, mode in ipairs({ "free", "conserve", "emergency" }) do
+        reserveEntries[#reserveEntries + 1] = { mode, reserveLabels[mode], BridgeMenu.onAmmoReserve,
+            reserve == mode, "GunReserve" .. (mode == "free" and "Free" or mode == "conserve" and "Conserve" or "Emergency") .. "Tip" }
+    end
+    addMenu("GunAmmoReserve", reserveEntries)
+end
+
+
 local function buildFight(context, playerNum, env)
     local combatOption = context:addOption(tr("Combat"))
     local guard = false
@@ -381,6 +459,7 @@ local function buildFight(context, playerNum, env)
     else
         local combat = ISContextMenu:getNew(context)
         context:addSubMenu(combatOption, combat)
+        buildGun(combat, env)
         local combatMode = BridgeData.combatOf(env.st)
         for _, entry in ipairs({ { "bodyguard", "CombatBodyguard" }, { "escort", "CombatEscort" },
             { "aggressive", "CombatAggressive" }, { "backup", "CombatBackMeUp" }, { "stayback", "CombatStayBack" } }) do
@@ -1732,3 +1811,4 @@ Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobject
     if Bridge ~= nil and Bridge.claimMenuFix ~= nil then pcall(Bridge.claimMenuFix, playerNum, context, worldobjects, test) end
 end)
 log("loaded")
+

@@ -187,6 +187,7 @@ BridgeTask.LOOT_TRANSFER_WAIT = 20 * SECOND
 BridgeTask.LOOT_ITEM_TIME = 0.5 * SECOND
 BridgeTask.LOOT_SAY_COOLDOWN = 25 * SECOND
 BridgeTask.LOOT_SCAN_BUDGET = 200
+BridgeTask.LOOT_BATCH_MAX = 20
 BridgeTask.OPENING_GIVE_UP = 6 * SECOND
 
 
@@ -222,6 +223,19 @@ BridgeTask.subHands = nil
 BridgeTask.cleanHandsKey = nil
 BridgeTask.cleanStowPending = false
 BridgeTask.cleanDrawPending = false
+BridgeTask.tools = {}
+BridgeTask.toolsAt = {}
+BridgeTask.cleanGearCache = {}
+BridgeTask.cleanGearAt = {}
+BridgeTask.cleanKindCache = nil
+BridgeTask.cleanClassKey = nil
+BridgeTask.cleanClassAt = nil
+BridgeTask.cleanWallCache = nil
+BridgeTask.plantKindCache = nil
+BridgeTask.plantKindKey = nil
+BridgeTask.plantKindAt = nil
+BridgeTask.danger = nil
+BridgeTask.dangerAt = nil
 BridgeTask.washSink = nil
 BridgeTask.washPhase = nil
 BridgeTask.washSince = 0
@@ -955,6 +969,60 @@ local function ownedByBody(body, item)
     return ok
 end
 
+local function cleanerStillOk(item, kind)
+    if item == nil then return false end
+    local ok = false
+    pcall(function()
+        local c = item:getFluidContainer()
+        ok = c ~= nil and c:getAmount() >= (BridgeTask.CLEAN_FLUID_PER_SQUARE or 0.025)
+    end)
+    return ok
+end
+BridgeTask.cleanerStillOk = cleanerStillOk
+
+function BridgeTask.toolOk(body, item)
+    if body == nil or item == nil then return false end
+    local ok = false
+    pcall(function() ok = not item:isBroken() end)
+    if not ok then return false end
+    local held = false
+    pcall(function()
+        held = body:getPrimaryHandItem() == item or body:getSecondaryHandItem() == item
+    end)
+    return held or ownedByBody(body, item)
+end
+
+function BridgeTask.cachedTool(body, key, finder, okFn)
+    local item = BridgeTask.tools[key]
+    local at = BridgeTask.toolsAt[key] or -99999
+    if item ~= nil and (Bridge.tick - at) < 120 and (okFn == nil or okFn(body, item)) then
+        return item
+    end
+    item = finder(body)
+    BridgeTask.tools[key] = item
+    BridgeTask.toolsAt[key] = Bridge.tick
+    return item
+end
+
+function BridgeTask.cleanGear(body, kind)
+    local entry = BridgeTask.cleanGearCache[kind]
+    local at = BridgeTask.cleanGearAt[kind] or -99999
+    local age = Bridge.tick - at
+    if entry ~= nil and age < 120 then
+        local toolOk = entry.tool == nil or BridgeTask.toolOk(body, entry.tool)
+        local fluidOk = true
+        if kind == "blood" or kind == "grime" or kind == "graffiti" then
+            fluidOk = cleanerStillOk(entry.cleaner, kind)
+        end
+        if toolOk and fluidOk then return entry.tool, entry.cleaner end
+        BridgeTask.cleanClassAt = -99999
+    end
+    local tool, cleaner = BridgeTask.cleanKindTool(body, kind)
+    BridgeTask.cleanGearCache[kind] = { tool = tool, cleaner = cleaner }
+    BridgeTask.cleanGearAt[kind] = Bridge.tick
+    return tool, cleaner
+end
+
 local function restoreHands(body)
     local p, s = BridgeTask.savedPrimary, BridgeTask.savedSecondary
     BridgeTask.savedPrimary, BridgeTask.savedSecondary = nil, nil
@@ -1648,15 +1716,29 @@ function BridgeTask.dangerNear(body, radius)
     local dr = radius or BridgeTask.DANGER_RADIUS
     pcall(function()
         if BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle") then danger = true return end
-        local list = getCell():getZombieList()
+        local bx, by = body:getX(), body:getY()
+        local rx, ry = bx, by
+        if red ~= nil then rx, ry = red:getX(), red:getY() end
+        local list = nil
+        if BridgeZS ~= nil then list = BridgeZS.nearUnion(bx, by, rx, ry, dr + 0.01, { tag = "task.danger" }) end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and z ~= body and z:isAlive() and z:getHealth() > 0
-                and not z:getVariableBoolean("NotAloneBody") and not BridgeData.harmless(z)
-                and math.abs(z:getZ() - body:getZ()) < 0.8 then
+            local nearEnough = false
+            if z ~= nil and z ~= body then
                 local d = dist2(z, body)
                 local dr2 = red ~= nil and dist2(z, red) or 999
-                if d < dr or dr2 < dr then
+                nearEnough = math.abs(z:getZ() - body:getZ()) < 0.8 and (d < dr or dr2 < dr)
+            end
+            if nearEnough then
+                local threat = false
+                if BridgeHorde ~= nil and BridgeHorde.threat ~= nil then
+                    threat = BridgeHorde.threat(z)
+                else
+                    threat = z:isAlive() and z:getHealth() > 0
+                        and not z:getVariableBoolean("NotAloneBody") and not BridgeData.harmless(z)
+                end
+                if threat then
                     local seen = false
                     pcall(function() seen = (red ~= nil and red:CanSee(z)) or body:CanSee(z) end)
                     if seen then danger = true return end
@@ -1692,6 +1774,13 @@ function BridgeTask.reset()
     BridgeTask.cleanHandsKey = nil
     BridgeTask.cleanStowPending = false
     BridgeTask.cleanDrawPending = false
+    BridgeTask.tools = {}
+    BridgeTask.toolsAt = {}
+    BridgeTask.cleanGearCache = {}
+    BridgeTask.cleanGearAt = {}
+    BridgeTask.cleanKindCache, BridgeTask.cleanClassKey, BridgeTask.cleanClassAt, BridgeTask.cleanWallCache = nil, nil, nil, nil
+    BridgeTask.plantKindCache, BridgeTask.plantKindKey, BridgeTask.plantKindAt = nil, nil, nil
+    BridgeTask.danger, BridgeTask.dangerAt = nil, nil
     BridgeTask.washSink = nil
     BridgeTask.washPhase = nil
     BridgeTask.washSince = 0
@@ -1961,6 +2050,13 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     BridgeTask.cleanHandsKey = nil
     BridgeTask.cleanStowPending = false
     BridgeTask.cleanDrawPending = false
+    BridgeTask.tools = {}
+    BridgeTask.toolsAt = {}
+    BridgeTask.cleanGearCache = {}
+    BridgeTask.cleanGearAt = {}
+    BridgeTask.cleanKindCache, BridgeTask.cleanClassKey, BridgeTask.cleanClassAt, BridgeTask.cleanWallCache = nil, nil, nil, nil
+    BridgeTask.plantKindCache, BridgeTask.plantKindKey, BridgeTask.plantKindAt = nil, nil, nil
+    BridgeTask.danger, BridgeTask.dangerAt = nil, nil
     BridgeTask.chopRest = false
     BridgeTask.chopRestSitAt = nil
     BridgeTask.chopResumeAt = nil
@@ -2065,6 +2161,13 @@ function BridgeTask.cancel(reason)
     BridgeTask.cleanApplied = {}
     BridgeTask.chargeCleanSpend()
     BridgeTask.cleanStowPending = false
+    BridgeTask.tools = {}
+    BridgeTask.toolsAt = {}
+    BridgeTask.cleanGearCache = {}
+    BridgeTask.cleanGearAt = {}
+    BridgeTask.cleanKindCache, BridgeTask.cleanClassKey, BridgeTask.cleanClassAt, BridgeTask.cleanWallCache = nil, nil, nil, nil
+    BridgeTask.plantKindCache, BridgeTask.plantKindKey, BridgeTask.plantKindAt = nil, nil, nil
+    BridgeTask.danger, BridgeTask.dangerAt = nil, nil
     BridgeTask.washSink = nil
     BridgeTask.washPhase = nil
     BridgeTask.washSince = 0
@@ -2290,7 +2393,20 @@ function BridgeTask.update(body)
         BridgeTask.cancel("error")
         return false
     end
-    if BridgeTask.dangerNear(body, def.dangerRadius) then
+    local fighting = false
+    pcall(function()
+        fighting = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle")
+    end)
+    if fighting then
+        BridgeTask.cancel("danger")
+        return false
+    end
+    if BridgeTask.danger == nil
+            or (Bridge.tick - (BridgeTask.dangerAt or -99999)) >= 6 then
+        BridgeTask.dangerAt = Bridge.tick
+        BridgeTask.danger = BridgeTask.dangerNear(body, def.dangerRadius) == true
+    end
+    if BridgeTask.danger then
         BridgeTask.cancel("danger")
         return false
     end
@@ -2456,7 +2572,7 @@ function BridgeTask.kinds.chopTree.update(body)
     end
 
     local tree = resolveTree(target)
-    if tree ~= nil then
+    if tree ~= nil and Bridge.tick % 60 == 0 then
         log(string.format("tree target %d,%d enclosure=%s", target.x, target.y,
             tostring(BridgeTask.enclosureKeyOf(getCell():getGridSquare(target.x, target.y, target.z)))))
     end
@@ -2469,7 +2585,7 @@ function BridgeTask.kinds.chopTree.update(body)
         return true
     end
 
-    local axe = BridgeTask.findAxe(body)
+    local axe = BridgeTask.cachedTool(body, "axe", BridgeTask.findAxe, BridgeTask.toolOk)
     if axe == nil then
         BridgeTask.cancel("noAxe")
         return false
@@ -2685,7 +2801,7 @@ function BridgeTask.kinds.pryDoor.update(body)
         return true
     end
 
-    local crowbar = BridgeTask.findCrowbar(body)
+    local crowbar = BridgeTask.cachedTool(body, "crowbar", BridgeTask.findCrowbar, BridgeTask.toolOk)
     if crowbar == nil then
         BridgeTask.cancel("noSupplies")
         return false
@@ -2892,16 +3008,12 @@ function BridgeTask.kinds.cleanUp.update(body)
         while i <= #BridgeTask.queue do
             local t = BridgeTask.queue[i]
             local sq = getCell():getGridSquare(t.x, t.y, t.z)
-            if not BridgeTask.recordCleanNeeds(body, sq) then
-                table.remove(BridgeTask.queue, i)
-            else
-                local d = (bx - t.x) ^ 2 + (by - t.y) ^ 2
-                if bestAnyD == nil or d < bestAnyD then bestAnyD = d; bestAnyI = i end
-                if bodyKey == nil or BridgeTask.enclosureKeyOf(sq) == bodyKey then
-                    if bestD == nil or d < bestD then bestD = d; bestI = i end
-                end
-                i = i + 1
+            local d = (bx - t.x) ^ 2 + (by - t.y) ^ 2
+            if bestAnyD == nil or d < bestAnyD then bestAnyD = d; bestAnyI = i end
+            if bodyKey == nil or BridgeTask.enclosureKeyOf(sq) == bodyKey then
+                if bestD == nil or d < bestD then bestD = d; bestI = i end
             end
+            i = i + 1
         end
         local must = BridgeTask.mustTarget
         if must ~= nil then
@@ -2929,6 +3041,7 @@ function BridgeTask.kinds.cleanUp.update(body)
         BridgeTask.animLogged = false
         BridgeTask.cleanRounds = 0
         BridgeTask.cleanApplied = {}
+        BridgeTask.cleanKindCache, BridgeTask.cleanClassKey, BridgeTask.cleanClassAt, BridgeTask.cleanWallCache = nil, nil, nil, nil
         BridgeTask.vineObject = nil
         BridgeTask.chargeCleanSpend()
         BridgeTask.bestD = nil
@@ -2938,12 +3051,22 @@ function BridgeTask.kinds.cleanUp.update(body)
     end
 
     local square = getCell():getGridSquare(target.x, target.y, target.z)
-    log(string.format("target %d,%d enclosure=%s", target.x, target.y, tostring(BridgeTask.enclosureKeyOf(square))))
+    local targetKey = target.x .. "," .. target.y .. "," .. target.z
+    if BridgeTask.cleanClassKey ~= targetKey
+            or (Bridge.tick - (BridgeTask.cleanClassAt or -99999)) >= 30 then
+        BridgeTask.cleanClassKey = targetKey
+        BridgeTask.cleanClassAt = Bridge.tick
+        BridgeTask.cleanKindCache = BridgeTask.cleanCanDo(body, square, BridgeTask.cleanApplied)
+        BridgeTask.cleanWallCache = nil
+        if BridgeTask.cleanKindCache == "blood" or BridgeTask.cleanKindCache == "grime" then
+            BridgeTask.cleanWallCache = stainIsWall(square)
+        end
+        if Bridge.tick % 60 == 0 then
+            log(string.format("target %d,%d enclosure=%s", target.x, target.y, tostring(BridgeTask.enclosureKeyOf(square))))
+        end
+    end
 
-
-
-
-    local kind = BridgeTask.cleanCanDo(body, square, BridgeTask.cleanApplied)
+    local kind = BridgeTask.cleanKindCache
     if kind == nil then
         BridgeTask.recordCleanNeeds(body, square)
         BridgeTask.clearChop(body)
@@ -2953,7 +3076,7 @@ function BridgeTask.kinds.cleanUp.update(body)
         if #BridgeTask.queue == 0 then return BridgeTask.finish() end
         return true
     end
-    local tool, cleaner = BridgeTask.cleanKindTool(body, kind)
+    local tool, cleaner = BridgeTask.cleanGear(body, kind)
 
     BridgeTask.cleanSpan = (kind == "vine") and BridgeTask.VINE_TIME or BridgeTask.SCRUB_TIME
 
@@ -3015,7 +3138,7 @@ function BridgeTask.kinds.cleanUp.update(body)
 
     local wall = false
     if kind == "blood" or kind == "grime" then
-        wall = stainIsWall(square)
+        wall = BridgeTask.cleanWallCache == true
     elseif kind == "graffiti" then
         wall = true
     end
@@ -3150,6 +3273,12 @@ function BridgeTask.kinds.cleanUp.update(body)
             BridgeTask.current = nil
             if #BridgeTask.queue == 0 then return BridgeTask.finish() end
             return true
+        end
+        BridgeTask.cleanKindCache = remaining
+        BridgeTask.cleanClassAt = Bridge.tick
+        BridgeTask.cleanWallCache = nil
+        if remaining == "blood" or remaining == "grime" then
+            BridgeTask.cleanWallCache = stainIsWall(square)
         end
 
 
@@ -3889,16 +4018,12 @@ function BridgeTask.kinds.clearPlants.update(body)
         while i <= #BridgeTask.queue do
             local t = BridgeTask.queue[i]
             local sq = getCell():getGridSquare(t.x, t.y, t.z)
-            if plantKind(sq) == nil then
-                table.remove(BridgeTask.queue, i)
-            else
-                local d = (bx - t.x) ^ 2 + (by - t.y) ^ 2
-                if bestAnyD == nil or d < bestAnyD then bestAnyD = d; bestAnyI = i end
-                if bodyKey == nil or BridgeTask.enclosureKeyOf(sq) == bodyKey then
-                    if bestD == nil or d < bestD then bestD = d; bestI = i end
-                end
-                i = i + 1
+            local d = (bx - t.x) ^ 2 + (by - t.y) ^ 2
+            if bestAnyD == nil or d < bestAnyD then bestAnyD = d; bestAnyI = i end
+            if bodyKey == nil or BridgeTask.enclosureKeyOf(sq) == bodyKey then
+                if bestD == nil or d < bestD then bestD = d; bestI = i end
             end
+            i = i + 1
         end
         if bestI == nil then bestI, bestD = bestAnyI, bestAnyD end
         if bestI == nil then
@@ -3917,6 +4042,7 @@ function BridgeTask.kinds.clearPlants.update(body)
         BridgeTask.animHold = 0
         BridgeTask.animLogged = false
         BridgeTask.clearStart = nil
+        BridgeTask.plantKindCache, BridgeTask.plantKindKey, BridgeTask.plantKindAt = nil, nil, nil
         BridgeTask.bestD = nil
         BridgeTask.progressAt = Bridge.time
         BridgeTask.pathFails = 0
@@ -3924,7 +4050,14 @@ function BridgeTask.kinds.clearPlants.update(body)
     end
 
     local square = getCell():getGridSquare(target.x, target.y, target.z)
-    local kind = plantKind(square)
+    local plantKey = target.x .. "," .. target.y .. "," .. target.z
+    if BridgeTask.plantKindKey ~= plantKey
+            or (Bridge.tick - (BridgeTask.plantKindAt or -99999)) >= 30 then
+        BridgeTask.plantKindKey = plantKey
+        BridgeTask.plantKindAt = Bridge.tick
+        BridgeTask.plantKindCache = plantKind(square)
+    end
+    local kind = BridgeTask.plantKindCache
     if kind == nil then
         BridgeTask.clearChop(body)
         BridgeTask.info = "clear"
@@ -3935,7 +4068,7 @@ function BridgeTask.kinds.clearPlants.update(body)
 
     local tool = nil
     if kind == "bush" then
-        tool = BridgeTask.findCutTool(body)
+        tool = BridgeTask.cachedTool(body, "cut", BridgeTask.findCutTool, BridgeTask.toolOk)
         if tool == nil then
             BridgeTask.clearNeedCut = true
             dropBushTargets()
@@ -4251,31 +4384,43 @@ function BridgeTask.lootTake(body, target, item, dest)
     local chr = BridgeData ~= nil and BridgeData.owner() or nil
     pcall(function() act = ISInventoryTransferAction:new(chr, item, src, dest) end)
     if act == nil then return false end
-    local single = target ~= nil and type(target.only) == "table" and #target.only > 0
-    if not single then
-        pcall(function()
+    pcall(function()
+        local only = (target ~= nil and type(target.only) == "table" and #target.only > 0)
+            and target.only or nil
+        local cap = BridgeTask.LOOT_BATCH_MAX or 20
+        local full = item:getFullType()
+        local group = { item }
+        if only ~= nil then
+            for i = 1, #only do
+                if #group >= cap then break end
+                local it = only[i]
+                if it ~= item and it:getContainer() == src and it:getFullType() == full then
+                    group[#group + 1] = it
+                end
+            end
+        else
+            local list = src:getItems()
+            for i = 0, list:size() - 1 do
+                if #group >= cap then break end
+                local it = list:get(i)
+                if it ~= nil and it ~= item and it:getFullType() == full then
+                    group[#group + 1] = it
+                end
+            end
+        end
+        if #group > 1 then
             if isClient() then
-                local group = BridgeInventory.sameStack(src, item, BridgeInventory.LOOT_STACK_MAX)
                 if act.bridgeRelay ~= nil then
-                    act.queueList = { { items = group, time = act.maxTime, type = item:getFullType() } }
+                    act.queueList = { { items = group, time = act.maxTime, type = full } }
                     act.bridgeRelay.group = group
                 else
                     act.group = group
                 end
             else
-                local full = item:getFullType()
-                local group = { item }
-                local list = src:getItems()
-                for i = 0, list:size() - 1 do
-                    local it = list:get(i)
-                    if it ~= nil and it ~= item and it:getFullType() == full then group[#group + 1] = it end
-                end
-                if #group > 1 then
-                    act.queueList = { { items = group, time = act.maxTime, type = full } }
-                end
+                act.queueList = { { items = group, time = act.maxTime, type = full } }
             end
-        end)
-    end
+        end
+    end)
     pcall(function() act.bridgeHerLoot = BridgeTask.lootAnim(src) end)
     BridgeTask.lootAct = act
     BridgeTask.lootSrc = src
@@ -4319,18 +4464,24 @@ function BridgeTask.lootSay(item, kind)
     if BridgeTask.lootFullSaid then return end
     if BridgeMoments == nil or BridgeMoments.say == nil then return end
     local event = nil
+    local pool = nil
+    if item ~= nil and BridgeSocial ~= nil and BridgeSocial.receivePool ~= nil then
+        pcall(function() pool = BridgeSocial.receivePool(item) end)
+    end
+    if pool == "ReceiveGun" or pool == "ReceiveAmmo" or pool == "ReceiveAmmoParts" then
+        if BridgeGunTalk ~= nil and BridgeGunTalk.loot ~= nil then
+            pcall(function() BridgeGunTalk.loot(pool) end)
+        end
+        return
+    end
     if kind == "floor" then event = "LootGround"
     elseif kind == "body" then event = "LootCorpse" end
-    if event == nil and item ~= nil and BridgeSocial ~= nil and BridgeSocial.receivePool ~= nil then
-        local pool = nil
-        pcall(function() pool = BridgeSocial.receivePool(item) end)
-        if type(pool) == "string" and string.sub(pool, 1, 7) == "Receive" then
-            local cand = "Loot" .. string.sub(pool, 8)
-            local exists = nil
-            pcall(function() exists = getTextOrNull("IGUI_NotAlone_Soc_" .. cand .. "_Near_1", "", "") end)
-            if type(exists) == "string" and exists ~= "" and exists ~= ("IGUI_NotAlone_Soc_" .. cand .. "_Near_1") then
-                event = cand
-            end
+    if event == nil and type(pool) == "string" and string.sub(pool, 1, 7) == "Receive" then
+        local cand = "Loot" .. string.sub(pool, 8)
+        local exists = nil
+        pcall(function() exists = getTextOrNull("IGUI_NotAlone_Soc_" .. cand .. "_Near_1", "", "") end)
+        if type(exists) == "string" and exists ~= "" and exists ~= ("IGUI_NotAlone_Soc_" .. cand .. "_Near_1") then
+            event = cand
         end
     end
     if event == nil then

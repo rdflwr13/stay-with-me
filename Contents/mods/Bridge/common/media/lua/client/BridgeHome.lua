@@ -323,7 +323,7 @@ function BridgeHomeTab.heightFor(width)
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
     local tickH = math.max(btnH, fontS) + (UI_BORDER_SPACING or 10)
-    return PAD + fontS + PAD + btnH + PAD + btnH + PAD + tickH + PAD
+    return PAD + fontS + PAD + btnH + PAD + btnH + PAD + tickH + PAD + tickH + PAD
 end
 
 function BridgeHomeTab:createChildren()
@@ -352,9 +352,21 @@ function BridgeHomeTab:createChildren()
     self.resTick.tooltip = tr("OptHomeResourcesTip")
     self:addChild(self.resTick)
     self.resTickY = y
+    y = y + btnH + PAD
+    self.ammoTick = ISTickBox:new(PAD, y, self.width - PAD * 2, btnH, "", self, BridgeHomeTab.onAmmoTick, "homeAmmo")
+    self.ammoTick:initialise()
+    self.ammoTick:instantiate()
+    self.ammoTick:addOption(tr("OptHomeAmmo"))
+    self.ammoTick.tooltip = tr("OptHomeAmmoTip")
+    self:addChild(self.ammoTick)
+    self.ammoTickY = y
 end
 
 function BridgeHomeTab:onResourceTick(index, selected, key)
+    if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption(key, selected == true) end
+end
+
+function BridgeHomeTab:onAmmoTick(index, selected, key)
     if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption(key, selected == true) end
 end
 
@@ -375,6 +387,10 @@ function BridgeHomeTab:prerender()
     if self.resTick ~= nil then
         local want = BridgeData.optionOf(Bridge.store, "homeResources")
         if self.resTick:isSelected(1) ~= want then self.resTick:setSelected(1, want) end
+    end
+    if self.ammoTick ~= nil then
+        local want = BridgeData.optionOf(Bridge.store, "homeAmmo")
+        if self.ammoTick:isSelected(1) ~= want then self.ammoTick:setSelected(1, want) end
     end
     if h ~= nil then
         local pn = 0

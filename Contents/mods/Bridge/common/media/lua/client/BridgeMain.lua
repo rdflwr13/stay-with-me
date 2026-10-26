@@ -46,7 +46,7 @@ Bridge.result = "loaded"
 Bridge.skipped = false
 Bridge.zombieTicks = 0
 Bridge.idleSince = 0
-Bridge.checked = {}
+Bridge.checked = setmetatable({}, { __mode = "k" })
 Bridge.stash = nil
 Bridge.stashAt = 0
 Bridge.walkSpy = nil
@@ -165,6 +165,14 @@ local PATH_EVERY = 30
 local FOLLOW_DIST = 2.5
 local BODY_VAR = "NotAloneBody"
 Bridge.BODY_VAR = BODY_VAR
+
+local function zombieBodyVar(z)
+    return z:getVariableBoolean(BODY_VAR)
+end
+
+local function zombieOutfitId(z)
+    return z:getPersistentOutfitID()
+end
 
 
 
@@ -322,15 +330,21 @@ end
 
 
 function Bridge.weaponVar(z)
-    local v = ""
+    local v, rifle = "", ""
     pcall(function()
         local item = z:getPrimaryHandItem()
-        if item ~= nil and instanceof(item, "HandWeapon") and (item:isTwoHandWeapon() or item:isRequiresEquippedBothHands()) then
-            v = "2h"
+        if item ~= nil and instanceof(item, "HandWeapon") then
+            if item:isTwoHandWeapon() or item:isRequiresEquippedBothHands() then
+                v = "2h"
+                if item:isRanged() == true then rifle = "1" end
+            elseif item:isRanged() == true then
+                v = "handgun"
+            end
         end
     end)
     pcall(function()
         if z:getVariableString("NotAloneWeapon") ~= v then z:setVariable("NotAloneWeapon", v) end
+        if z:getVariableString("NotAloneRifle") ~= rifle then z:setVariable("NotAloneRifle", rifle) end
     end)
 end
 
@@ -580,7 +594,7 @@ function Bridge.unhumanize(z, pooled)
 
 
     pcall(function() BridgeInventory.forgetBody(z) end)
-    for _, name in ipairs({ "WalkSpeed", "RunSpeed", "LimpSpeed", "ZombieHitReaction", "NoLungeTarget", "NotAloneWeapon",
+    for _, name in ipairs({ "WalkSpeed", "RunSpeed", "LimpSpeed", "ZombieHitReaction", "NoLungeTarget", "NotAloneWeapon", "NotAloneRifle",
                             "NotAloneStride", "WalkInjury", "NotAloneAnimOld", "NotAloneSneak", "SurvivorNPC" }) do
         pcall(function() z:clearVariable(name) end)
     end
@@ -643,7 +657,7 @@ end
 
 
 function Bridge.releaseForeign(z)
-    for _, name in ipairs({ "NotAloneWeapon", "NotAloneStride", "NotAloneAnimOld", "NotAloneSneak" }) do
+    for _, name in ipairs({ "NotAloneWeapon", "NotAloneRifle", "NotAloneStride", "NotAloneAnimOld", "NotAloneSneak" }) do
         pcall(function() z:clearVariable(name) end)
     end
     local npc, brain = BridgeData.banditBrain(z, true)
@@ -1314,7 +1328,11 @@ local function watchOthers(red, body, around)
         if sq ~= nil then redRoom = sq:getRoom() end
     end)
     pcall(function()
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZScan ~= nil then
+            list = BridgeZScan.near(red:getX(), red:getY(), SCARE_RADIUS, { tag = "watch.others" })
+        end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
 
@@ -1921,6 +1939,12 @@ function Bridge.teleportToRed(prefer)
     if red == nil then return "no player" end
     if not Bridge.drivable() then return "no body or driven by another client" end
     Bridge.pose = nil
+    pcall(function()
+        if BridgeGunfight ~= nil and type(BridgeGunfight.hasGun) == "function" and BridgeGunfight.hasGun()
+            and type(BridgeGunfight.stow) == "function" then
+            BridgeGunfight.stow(Bridge.body)
+        end
+    end)
 
 
 
@@ -2241,6 +2265,30 @@ function Bridge.setTorchMode(mode)
     end
     log("torch=" .. mode)
     return "torch=" .. mode
+end
+
+
+function Bridge.setGunUse(mode)
+    mode = BridgeData.cleanGunUse(mode)
+    if mode == nil then return "unknown gun use " .. tostring(mode) end
+    if Bridge.store ~= nil then Bridge.store.gunUse = mode end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { gunUse = mode }) end)
+    end
+    log("gunUse=" .. mode)
+    return "gunUse=" .. mode
+end
+
+
+function Bridge.setAmmoReserve(mode)
+    mode = BridgeData.cleanAmmoReserve(mode)
+    if mode == nil then return "unknown ammo reserve " .. tostring(mode) end
+    if Bridge.store ~= nil then Bridge.store.ammoReserve = mode end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { ammoReserve = mode }) end)
+    end
+    log("ammoReserve=" .. mode)
+    return "ammoReserve=" .. mode
 end
 
 
@@ -3087,9 +3135,13 @@ end
 
 function Bridge.protectBodies()
     local b = Bridge.body
-    if b ~= nil and Bridge.kind == "zombie" then pcall(function() b:setShootable(false) end) end
+    if b ~= nil and Bridge.kind == "zombie" then
+        pcall(function() if b:isShootable() then b:setShootable(false) end end)
+    end
     for z in pairs(Bridge.seen) do
-        if z ~= b then pcall(function() z:setShootable(false) end) end
+        if z ~= b then
+            pcall(function() if z:isShootable() then z:setShootable(false) end end)
+        end
     end
 end
 
@@ -4639,7 +4691,7 @@ function Bridge.watchGuest(z, who, remote)
 end
 
 function Bridge.onZombieUpdate(zombie)
-    local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY_VAR) end)
+    local ok, isBody = pcall(zombieBodyVar, zombie)
     if not ok then return end
 
     if not isBody and Bridge.hiddenObjs ~= nil and Bridge.hiddenObjs[zombie] then Bridge.hideBody(zombie, false) end
@@ -4660,8 +4712,8 @@ function Bridge.onZombieUpdate(zombie)
     end
     if Bridge.mp then
 
-        local pid = nil
-        pcall(function() pid = zombie:getPersistentOutfitID() end)
+        local okPid, pid = pcall(zombieOutfitId, zombie)
+        if not okPid then pid = nil end
         if pid == nil then return end
         local st = Bridge.store
 
@@ -4740,8 +4792,8 @@ function Bridge.onZombieUpdate(zombie)
 
 
 
-        local pid = nil
-        pcall(function() pid = zombie:getPersistentOutfitID() end)
+        local okPid, pid = pcall(zombieOutfitId, zombie)
+        if not okPid then pid = nil end
         if Bridge.checked[zombie] == pid then return end
         Bridge.checked[zombie] = pid
         if not BridgeInventory.isMarked(zombie) then return end
@@ -4825,6 +4877,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
+    gunselftest = true, guntalk = true, zscan = true, zsselftest = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
 
 
@@ -5512,6 +5565,39 @@ function Bridge.run(line)
 
     if cmd == "itemselftest" then return Bridge.itemselftest() end
 
+    if cmd == "gunselftest" then return BridgeGunRules.selftest() end
+
+    if cmd == "guntalk" then
+        if BridgeGunTalk == nil then return "guntalk not loaded" end
+        local sub = parts[3] or "status"
+        if sub == "selftest" then return BridgeGunTalk.selftest() end
+        if sub == "audit" then return BridgeGunTalk.audit() end
+        if sub ~= "status" then return "guntalk [status | selftest | audit]" end
+        return string.format("guntalk band=%s group=%s %s",
+            tostring(BridgeGunTalk.band()), tostring(BridgeGunTalk.group()), BridgeGunTalk.audit())
+    end
+
+    if cmd == "zsselftest" then
+        if BridgeZScan == nil then return "zscan not loaded" end
+        return BridgeZScan.selftest()
+    end
+
+    if cmd == "zscan" then
+        if BridgeZScan == nil then return "zscan not loaded" end
+        local sub = parts[3]
+        if sub == nil or sub == "status" then return BridgeZScan.statusText() end
+        if sub == "tags" then return BridgeZScan.tagsText() end
+        if sub == "why" then return BridgeZScan.whyText(parts[4]) end
+        if sub == "near" then return BridgeZScan.debugNear(parts[4], parts[5], parts[6]) end
+        if sub == "trace" then return BridgeZScan.trace(parts[4], parts[5]) end
+        if sub == "debug" then return BridgeZScan.setDebug(parts[4]) end
+        if sub == "on" then return BridgeZScan.setOn(true) end
+        if sub == "off" then return BridgeZScan.setOn(false) end
+        if sub == "reset" then return BridgeZScan.reset() end
+        if sub == "selftest" then return BridgeZScan.selftest() end
+        return "zscan status|tags|why|near|trace|debug|on|off|reset|selftest"
+    end
+
     if cmd == "menu" then
         getCore():exitToMenu()
         return "exit to menu"
@@ -5906,15 +5992,17 @@ local function noShootTick()
     for z, e in pairs(Bridge.seen) do
         if z ~= Bridge.body and Bridge.time - (e.tick or -9999) <= 120 then
             pcall(function()
-                z:setShootable(false)
+                if z:isShootable() then z:setShootable(false) end
                 if z:getBallisticsTarget() ~= nil then z:releaseBallisticsTarget() end
             end)
         end
     end
     if Bridge.mortal or not (Bridge.alive() and Bridge.kind == "zombie") then return end
     pcall(function()
-        if Bridge.body:isShootable() then Bridge.preWas = (Bridge.preWas or 0) + 1 end
-        Bridge.body:setShootable(false)
+        if Bridge.body:isShootable() then
+            Bridge.preWas = (Bridge.preWas or 0) + 1
+            Bridge.body:setShootable(false)
+        end
     end)
 
 
@@ -5933,7 +6021,6 @@ Events.OnTickEvenPaused.Add(noShootTick)
 local function noFireTick()
     if not (Bridge.alive() and Bridge.kind == "zombie") then return end
     local body = Bridge.body
-    if not Bridge.mortal then pcall(function() body:setShootable(false) end) end
     Bridge.noFire(body)
 end
 Events.OnTick.Add(noFireTick)
@@ -6035,6 +6122,7 @@ function Bridge.diagLines()
             add("mood", BridgeMood.info)
         end)
         add("pose", Bridge.pose and Bridge.pose.anim or "none")
+        pcall(function() add("zscan", BridgeZScan.diagLine()) end)
         add("target", Bridge.target and string.format("%.1f %.1f %.0f", Bridge.target.x, Bridge.target.y, Bridge.target.z) or "none")
 
         pcall(function() add("car", BridgeCar.describe() .. (Bridge.store and Bridge.store.left and " left=1" or "")) end)
@@ -6125,6 +6213,7 @@ function Bridge.diagLines()
             add("obstacle", BridgeMove.obstacle)
             pcall(function() add("doors", BridgeMove.doorInfo()) end)
             add("fight", tostring(BridgeFight.enabled) .. " " .. BridgeFight.state .. " " .. BridgeFight.info)
+            pcall(function() add("gun", tostring(BridgeGunfight.assignedId ~= nil) .. " " .. tostring(BridgeGunfight.info)) end)
             add("task", tostring(BridgeTask ~= nil and BridgeTask.active) .. " " .. tostring(BridgeTask ~= nil and BridgeTask.kind)
                 .. " " .. tostring(BridgeTask ~= nil and BridgeTask.phase) .. " " .. tostring(BridgeTask ~= nil and BridgeTask.info or "none"))
             add("fight_target", BridgeFight.targetInfo)
@@ -6823,6 +6912,10 @@ function Bridge.onTick()
 
                     local fightingNow = false
                     pcall(function() fightingNow = BridgeFight.target ~= nil or BridgeFight.state == "swing" end)
+                    if BridgeGunfight ~= nil
+                        and (BridgeGunfight.target ~= nil or BridgeGunfight.drawn == true) then
+                        fightingNow = true
+                    end
                     if fightingNow then Bridge.stuckCount = 0 end
 
 
@@ -7346,6 +7439,12 @@ function Bridge.onServerCommand(module, command, args)
         Bridge.result = "took: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
     elseif command == "look" then
         pcall(function() Bridge.lookSwing(args) end)
+    elseif command == "gunResult" then
+        pcall(function() BridgeGunfight.onResult(args) end)
+    elseif command == "gunReloadResult" then
+        pcall(function() BridgeGunfight.onReloadResult(args) end)
+    elseif command == "gunFx" then
+        pcall(function() BridgeGunfight.onFx(args) end)
     elseif command == "torch" then
         if BridgeTorch ~= nil then pcall(function() BridgeTorch.onServerState(args) end) end
     elseif command == "carSeat" then
@@ -7974,7 +8073,7 @@ Events.OnCreatePlayer.Add(function(playerIndex)
 
 
 
-    Bridge.checked = {}
+Bridge.checked = setmetatable({}, { __mode = "k" })
     Bridge.holdPos = nil
     Bridge.walkTypeSet = nil
 

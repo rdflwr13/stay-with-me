@@ -787,7 +787,7 @@ local RECEIVE_CAT = {
     Furniture = "ReceiveFurniture",
     Paint = "ReceivePaint",
     Security = "ReceiveSecurity",
-    WeaponPart = "ReceiveWeaponPart",
+    WeaponPart = "ReceiveGunPart",
     Appearance = "ReceiveMakeup", MakeUp = "ReceiveMakeup",
     AnimalPart = "ReceiveAnimalPart", Ears = "ReceiveAnimalPart", Eye = "ReceiveAnimalPart", Tail = "ReceiveAnimalPart",
     Animal = "ReceiveAnimal", Bug = "ReceiveAnimal", Frog = "ReceiveAnimal", Bunny = "ReceiveAnimal",
@@ -810,7 +810,7 @@ local RECEIVE_CAT = {
     LitC = "ReceiveMap", LitE = "ReceiveRead", LitR = "ReceiveRead", LitS = "ReceiveRead", LitW = "ReceiveHousehold",
     SurCamp = "ReceiveCamping", SurFish = "ReceiveFishing", SurTrap = "ReceiveTrapping", SurBait = "ReceiveBait",
     Farm = "ReceiveGardening", FarmSeed = "ReceiveGardening",
-    WepPart = "ReceiveWeaponPart", WepAmmoMag = "ReceiveAmmo",
+    WepPart = "ReceiveGunPart", WepAmmoMag = "ReceiveAmmo",
     AnimalPartWeapon = "ReceiveAnimalPart",
     Key = "ReceiveItem", Misc = "ReceiveItem",
     WepMelee = "ReceiveWeapon", WepBomb = "ReceiveWeapon",
@@ -826,9 +826,9 @@ local RECEIVE_CAT = {
     ClothMisc = "ReceiveCloth", ClothAcc = "ReceiveCloth", ClothArm = "ReceiveCloth", ClothBody = "ReceiveCloth",
     ClothFeet = "ReceiveCloth", ClothHead = "ReceiveCloth", ClothJew = "ReceiveCloth", ClothLeg = "ReceiveCloth",
     ClothUnder = "ReceiveCloth", ClothBack = "ReceiveContainer", ClothBag = "ReceiveContainer",
-    Casings = "ReceiveAmmo", WeaponMagazine = "ReceiveAmmo", GunMag = "ReceiveAmmo", FixedMag = "ReceiveAmmo",
-    ReloadingTool = "ReceiveWeaponPart", GunClean = "ReceiveWeaponPart", Components = "ReceiveWeaponPart",
-    WeaponConversion = "ReceiveWeaponPart",
+    Casings = "ReceiveAmmoParts", WeaponMagazine = "ReceiveAmmo", GunMag = "ReceiveAmmo", FixedMag = "ReceiveAmmo",
+    ReloadingTool = "ReceiveGunPart", GunClean = "ReceiveGunPart", Components = "ReceiveGunPart",
+    WeaponConversion = "ReceiveGunPart",
     Devices = "ReceiveElectronics", PowerPlantParts = "ReceiveElectronics",
     Tuning = "ReceiveVehiclePart", TuningService = "ReceiveVehiclePart", VehicleMantenance = "ReceiveVehiclePart",
     Bulldog = "ReceiveVehiclePart", Cars = "ReceiveVehiclePart",
@@ -848,7 +848,8 @@ local RECEIVE_GESTURE = {
     ReceiveMemento = "Yes", ReceiveGardening = "Yes", ReceiveAnimal = "Yes",
     ReceiveBattery = "Yes",
     ReceiveFun = "Clap", ReceiveSports = "Clap", ReceiveFishing = "Clap", ReceiveMakeup = "Clap",
-    ReceiveWeaponPart = "NoThankYou", ReceiveCorpse = "NoThankYou",
+    ReceiveGun = "Yes", ReceiveAmmo = "Yes", ReceiveGunPart = "Yes", ReceiveMeleePart = "Yes",
+    ReceiveCorpse = "NoThankYou",
     ReceiveCigs = "NoThankYou",
 }
 
@@ -1206,9 +1207,82 @@ function BridgeSocial.giftCommand(sub, a, b)
 end
 
 
+local AMMO_CATS = {
+    Ammo = true, WeaponMagazine = true, GunMag = true, FixedMag = true,
+    WepAmmo = true, WepAmmoMag = true, WepAmmoMagF = true, WepMag = true,
+}
+local AMMO_PART_CATS = { Casings = true }
+local GUN_PART_CATS = {
+    WeaponConversion = true, GunClean = true, ReloadingTool = true, Components = true,
+}
+
+local AMMO_PART_WORDS = {
+    "casing", "primer", "bullethead", "bullettip", "bulletmold", "castbullet",
+    "gunpowder", "smokelesspowder", "powderrifle", "powderpistol", "powdershotgun",
+    "reloadingpowder",
+}
+local GUN_PART_WORDS = {
+    "scope", "silencer", "suppressor", "recoilpad", "choketube", "gunchoke", "ammostrap",
+    "tritiumsight", "reddot", "gunlight", "gunlaser", "weaponconversion", "gunconversion",
+    "cleaningkit", "gunclean", "reloadingpress", "reloadingtool", "reloadingkit",
+    "dieset", "bulletpuller", "magloading", "mecloader", "handguard", "barrel",
+    "gunstock", "riflestock", "pistolgrip", "underbarrel", "railmount",
+}
+
+local function wordsIn(name, words)
+    local low = string.lower(tostring(name or ""))
+    for _, w in ipairs(words) do
+        if string.find(low, w, 1, true) ~= nil then return true end
+    end
+    return false
+end
+
+
+local function partTypeOf(item)
+    local value = mcall(item, "getPartType")
+    if type(value) ~= "string" or value == "" or value == "null" then return nil end
+    return value
+end
+
+
+local function isAmmoPartName(name, cat)
+    if wordsIn(name, AMMO_PART_WORDS) then return true end
+    if cat == "Material" or cat == "Tool" or cat == "Components" or cat == "RecipeResource"
+        or cat == "CraftAmmo" or cat == "Ammo" then
+        return string.find(string.lower(tostring(name or "")), "powder", 1, true) ~= nil
+    end
+    return false
+end
+
+
+local function isGunPartItem(item, cat, name)
+    if partTypeOf(item) ~= nil then return true end
+    if cat == "WeaponPart" or cat == "WepPart" then return wordsIn(name, GUN_PART_WORDS) end
+    if GUN_PART_CATS[cat] then return not isAmmoPartName(name, cat) end
+    if cat == "Material" or cat == "Tool" or cat == "RecipeResource" then
+        return wordsIn(name, GUN_PART_WORDS)
+    end
+    return false
+end
+
+
+function BridgeSocial.gunPool(item, cat, name)
+    if item == nil then return nil end
+    cat = cat or tostring(mcall(item, "getDisplayCategory") or "")
+    name = name or itemTypeName(item)
+    if AMMO_PART_CATS[cat] or isAmmoPartName(name, cat) then return "ReceiveAmmoParts" end
+    if AMMO_CATS[cat] then return "ReceiveAmmo" end
+    if cat == "WeaponPart" or cat == "WepPart" then
+        return isGunPartItem(item, cat, name) and "ReceiveGunPart" or "ReceiveMeleePart"
+    end
+    if GUN_PART_CATS[cat] or isGunPartItem(item, cat, name) then return "ReceiveGunPart" end
+    if cat == "CraftAmmo" then return "ReceiveAmmo" end
+    return nil
+end
+
+
 function BridgeSocial.receivePool(item)
     if item == nil then return "ReceiveItem" end
-
     if isMale() then
         local g = BridgeSocial.maleReceive(item)
         if g ~= nil then return g.pool end
@@ -1302,6 +1376,8 @@ function BridgeSocial.receivePool(item)
     if nameHas(item, "Corpse") then return "ReceiveCorpse" end
 
     local cat = tostring(mcall(item, "getDisplayCategory") or "")
+    local gunPool = BridgeSocial.gunPool(item, cat)
+    if gunPool ~= nil then return gunPool end
     if isMale() and cat == "Drugs" then return "ReceiveSmokes" end
     local pool = RECEIVE_CAT[cat]
     if pool ~= nil then return pool end
@@ -1388,15 +1464,11 @@ function BridgeSocial.received(item)
         end
     else
         if gift ~= nil and pool ~= "ReceiveAgain" and pool ~= "CarryFull" then pool = gift end
-        BridgeSocial.receiveSay(pool)
+        BridgeSocial.receiveSay(pool, item)
     end
 
-    if pool == "ReceiveGun" then
-        BridgeSocial.gunNervous()
-    else
-        local anim = RECEIVE_GESTURE[pool]
-        if anim ~= nil then gesture(anim) end
-    end
+    local anim = RECEIVE_GESTURE[pool]
+    if anim ~= nil then gesture(anim) end
     BridgeSocial.info = "received " .. pool
     log(BridgeSocial.info)
     return true
@@ -1437,13 +1509,7 @@ function BridgeSocial.maleGift(item, pool)
 end
 
 
-function BridgeSocial.gunNervous()
-    gesture("PullAtCollar", true)
-end
-
-
-
-function BridgeSocial.receiveSay(pool)
+function BridgeSocial.receiveSay(pool, item)
     if pool == nil then return false end
     if BridgeSocial.RECEIVE_ENABLED == 0 then return false end
     local fight = false
@@ -1451,7 +1517,14 @@ function BridgeSocial.receiveSay(pool)
     if fight then return false end
     local said = false
 
-
+    local handled = false
+    if BridgeGunTalk ~= nil and BridgeGunTalk.handles ~= nil then
+        pcall(function() handled = BridgeGunTalk.handles(pool) == true end)
+    end
+    if handled then
+        pcall(function() said = BridgeGunTalk.receive(pool, item) == true end)
+        return said
+    end
 
     pcall(function() said = BridgeMoments.say(pool, 5 * 60, "soft", pool) == true end)
     return said
@@ -1510,7 +1583,14 @@ local function zombiesNear(dist)
     pcall(function()
         local red = BridgeData.owner()
         local body = Bridge.body
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZScan ~= nil and red ~= nil then
+            local x1, y1 = red:getX(), red:getY()
+            local x2, y2 = x1, y1
+            if body ~= nil then x2, y2 = body:getX(), body:getY() end
+            list = BridgeZScan.nearUnion(x1, y1, x2, y2, dist, { tag = "social.busy" })
+        end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
             if z ~= nil and z ~= body and not z:getVariableBoolean(Bridge.BODY_VAR) and z:isAlive()

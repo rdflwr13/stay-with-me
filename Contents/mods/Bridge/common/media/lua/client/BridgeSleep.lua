@@ -60,6 +60,25 @@ function BridgeSleep.onlyCompanions(playerObj)
     local counted = stats:getNumVisibleZombies() > 0 or stats:getNumChasingZombies() > 0
         or stats:getNumVeryCloseZombies() > 0
     if not counted then return false end
+    local refs = nil
+    if BridgeZScan ~= nil then
+        refs = BridgeZScan.find(function(z)
+            return z ~= nil and z:isAlive() and not BridgeZScan.isCompanion(z) and not BridgeZScan.isDragged(z)
+        end, nil, { tag = "sleep.only" })
+    end
+    if refs ~= nil then
+        for i = 1, #refs do
+            local z = refs[i]
+            local block, why = BridgeSleep.blocks(playerObj, z)
+            if block then
+                local d = 0
+                pcall(function() d = math.sqrt((z:getX() - playerObj:getX()) ^ 2 + (z:getY() - playerObj:getY()) ^ 2) end)
+                log(string.format("zombie %s at %.1f: game check decides", why, d))
+                return false
+            end
+        end
+        return true
+    end
     local list = getCell():getZombieList()
     for i = 0, list:size() - 1 do
         local z = list:get(i)
@@ -302,10 +321,15 @@ function BridgeSleep.searchZombieBlock(playerObj)
     local close2 = BridgeSleep.SEARCH_CLOSE * BridgeSleep.SEARCH_CLOSE
     local seen2 = BridgeSleep.SEARCH_SEEN * BridgeSleep.SEARCH_SEEN
     local ownClose, ownSeen, ownChasing = 0, 0, 0
-    local list = getCell():getZombieList()
-    for i = 0, list:size() - 1 do
-        local z = list:get(i)
-        if z ~= nil and z:isAlive() and not BridgeData.dragged(z) then
+    local refs = nil
+    if BridgeZScan ~= nil then
+        refs = BridgeZScan.find(function(z)
+            return z ~= nil and z:isAlive() and not BridgeZScan.isDragged(z)
+        end, nil, { tag = "sleep.search" })
+    end
+    if refs ~= nil then
+        for i = 1, #refs do
+            local z = refs[i]
             local dx, dy = z:getX() - px, z:getY() - py
             local d2 = dx * dx + dy * dy
             local floor = math.abs(z:getZ() - pz) < 1
@@ -315,6 +339,23 @@ function BridgeSleep.searchZombieBlock(playerObj)
                 if z:getTarget() == playerObj then ownChasing = ownChasing + 1 end
             elseif floor and d2 < close2 then
                 return true
+            end
+        end
+    else
+        local list = getCell():getZombieList()
+        for i = 0, list:size() - 1 do
+            local z = list:get(i)
+            if z ~= nil and z:isAlive() and not BridgeData.dragged(z) then
+                local dx, dy = z:getX() - px, z:getY() - py
+                local d2 = dx * dx + dy * dy
+                local floor = math.abs(z:getZ() - pz) < 1
+                if z:getVariableBoolean(Bridge.BODY_VAR) then
+                    if d2 < close2 then ownClose = ownClose + 1 end
+                    if d2 < seen2 then ownSeen = ownSeen + 1 end
+                    if z:getTarget() == playerObj then ownChasing = ownChasing + 1 end
+                elseif floor and d2 < close2 then
+                    return true
+                end
             end
         end
     end
@@ -414,6 +455,29 @@ function BridgeSleep.speedBlocker(playerObj)
     local body = Bridge.body
     local dx, dy = body:getX() - playerObj:getX(), body:getY() - playerObj:getY()
     if dx * dx + dy * dy > 8 * 8 then return "companion far" end
+    local refs = nil
+    if BridgeZScan ~= nil then
+        refs = BridgeZScan.find(function(z)
+            return z ~= nil and z:isAlive() and not BridgeZScan.isCompanion(z) and not BridgeZScan.isDragged(z)
+        end, nil, { tag = "sleep.speed" })
+    end
+    if refs ~= nil then
+        for i = 1, #refs do
+            local z = refs[i]
+            local zx, zy = z:getX() - playerObj:getX(), z:getY() - playerObj:getY()
+            local d2 = zx * zx + zy * zy
+            if d2 < 4 * 4 then return "zombie within 4" end
+            if d2 < 20 * 20 then
+                local seen = false
+                pcall(function() seen = playerObj:CanSee(z) end)
+                if seen then return "zombie in sight" end
+            end
+            local chasing = false
+            pcall(function() chasing = z:getTarget() == playerObj end)
+            if chasing then return "zombie chasing" end
+        end
+        return nil
+    end
     local list = getCell():getZombieList()
     for i = 0, list:size() - 1 do
         local z = list:get(i)

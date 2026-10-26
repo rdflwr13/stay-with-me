@@ -385,7 +385,11 @@ function BridgeFastForward.calm(b, now)
 
         local zombies = {}
         local keep = far + BridgeFastForward.ZOMBIE_NEAR
-        local zl = cell:getZombieList()
+        local zl = nil
+        if BridgeZScan ~= nil then
+            zl = BridgeZScan.near(bx, by, keep, { tag = "fastforward.sight" })
+        end
+        if zl == nil then zl = cell:getZombieList() end
         for i = 0, zl:size() - 1 do
             local z = zl:get(i)
             if z ~= b then
@@ -488,6 +492,8 @@ function BridgeFastForward.holdStand(b)
 
             or (BridgeWeapon ~= nil and BridgeWeapon.move ~= nil and BridgeWeapon.move.anim == bump
                 and not BridgeWeapon.move.connected)
+            or (BridgeGunfight ~= nil and (BridgeGunfight.reloadStage ~= nil
+                or BridgeGunfight.magCareStage ~= nil or BridgeGunfight.ammoItem ~= nil))
     end)
     if owned then return false end
     local climbing = false
@@ -702,6 +708,14 @@ function BridgeFastForward.tick()
         if Bridge.every(120) then
             log("ff drive: " .. tostring(BridgeTask.kind) .. " time=" .. string.format("%.1f", Bridge.time or 0))
         end
+    end
+
+
+    if BridgeFastForward.flagged ~= nil and why == nil and Bridge.body ~= nil
+            and BridgeGunfight ~= nil and type(BridgeGunfight.fastForwardTick) == "function"
+            and (BridgeGunfight.reloadStage ~= nil or BridgeGunfight.ammoItem ~= nil
+                or BridgeGunfight.magCareStage ~= nil) then
+        pcall(function() BridgeGunfight.fastForwardTick(Bridge.body) end)
     end
 
 

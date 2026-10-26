@@ -9,14 +9,14 @@ local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[Bri
 function BridgeCarTalk.with(playerObj)
     if playerObj == nil then return false end
     if BridgeCar == nil or type(BridgeCar.withRed) ~= "function" then return false end
-    local car = nil
-    pcall(function() car = playerObj:getVehicle() end)
-    if car == nil then return false end
     return BridgeCar.withRed(playerObj) == true
 end
 
 
 function BridgeCarTalk.open(playerObj)
+    if playerObj == nil and BridgeData ~= nil and type(BridgeData.owner) == "function" then
+        playerObj = BridgeData.owner()
+    end
     BridgeCarTalk.pending = playerObj
 end
 
@@ -49,20 +49,18 @@ end
 
 
 function BridgeCarTalk.slice(playerObj)
+    if BridgeCarTalk.off == true then return end
     if not BridgeCarTalk.with(playerObj) then log("wheel: she is not in this car, no slice") return end
-    local menu = nil
-    pcall(function() menu = getPlayerRadialMenu(playerObj:getPlayerNum()) end)
+    local menu = getPlayerRadialMenu(playerObj:getPlayerNum())
     if menu == nil then return end
-    local empty = true
-    pcall(function() empty = menu:isEmpty() == true end)
-    if empty then log("wheel: menu closed, no slice") return end
+    if menu:isEmpty() == true then log("wheel: menu closed, no slice") return end
     local label = "Talk"
     if BridgeData ~= nil and type(BridgeData.text) == "function" then
-        pcall(function() label = BridgeData.text("Talk") end)
+        local t = BridgeData.text("Talk")
+        if type(t) == "string" and t ~= "" then label = t end
     end
-    local icon = nil
-    pcall(function() icon = getTexture("media/ui/Sidebar/NotAlone_On_48.png") end)
-    pcall(function() menu:addSlice(label, icon, BridgeCarTalk.open, playerObj) end)
+    local icon = getTexture("media/ui/Sidebar/NotAlone_On_48.png")
+    menu:addSlice(label, icon, BridgeCarTalk.open, playerObj)
     log("wheel: Talk slice added")
 end
 
@@ -78,7 +76,12 @@ if BridgeCarTalk.wrapped ~= true and ISVehicleMenu ~= nil and type(ISVehicleMenu
     local vanilla = ISVehicleMenu.showRadialMenu
     ISVehicleMenu.showRadialMenu = function(playerObj, ...)
         vanilla(playerObj, ...)
-        pcall(BridgeCarTalk.slice, playerObj)
+        if BridgeCarTalk.off == true then return end
+        local ok, err = pcall(BridgeCarTalk.slice, playerObj)
+        if not ok then
+            BridgeCarTalk.off = true
+            print("[BridgeCarTalk] wheel slice disabled for this session: " .. tostring(err))
+        end
     end
     log("vehicle radial menu wrapped")
 end

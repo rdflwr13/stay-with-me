@@ -135,7 +135,12 @@ function BridgeAim.beyond(body)
     if ha == nil then return false end
     local found = false
     pcall(function()
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZS ~= nil then
+            local nearR = math.sqrt((Z.range or 0) * (Z.range or 0) + (Z.half or 0) * (Z.half or 0)) + 0.5
+            list = BridgeZS.near(Z.px, Z.py, nearR)
+        end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
             if z ~= nil and z ~= body and not isBodyZ(z) then

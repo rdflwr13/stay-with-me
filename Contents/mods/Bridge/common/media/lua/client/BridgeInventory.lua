@@ -469,7 +469,13 @@ function BridgeInventory.dropGone(b)
 
 
     local function inBody(item)
-        return item:getContainer() == inv
+        if item == nil then return false end
+        if item:getContainer() == inv then return true end
+        local p, s = b:getPrimaryHandItem(), b:getSecondaryHandItem()
+        if item == p or item == s then return true end
+        local attached = false
+        pcall(function() attached = b:isAttachedItem(item) == true end)
+        return attached
     end
     local worn = b:getWornItems()
     for i = worn:size() - 1, 0, -1 do
@@ -558,6 +564,11 @@ function BridgeInventory.redress(b, force)
     BridgeInventory.applyWorn(b)
     pcall(function() b:resetModelNextFrame() end)
     pcall(function() b:resetModel() end)
+    pcall(function()
+        if BridgeGunfight ~= nil and type(BridgeGunfight.syncHands) == "function" then
+            BridgeGunfight.syncHands(b)
+        end
+    end)
     BridgeInventory.redressUntil = Bridge.time + 300
 end
 
@@ -959,7 +970,7 @@ function BridgeInventory.herTransferBusy()
                 return
             end
             local item = a.item
-            if item ~= nil then
+            if item ~= nil and type(item) == "userdata" and instanceof(item, "InventoryItem") then
                 local c = item:getContainer()
                 if c ~= nil and BridgeInventory.inBody(c) then
                     busy = true
@@ -2126,6 +2137,10 @@ function BridgeInventory.paneMarks(pane)
     local b = body()
     if b == nil or pane.inventory ~= b:getInventory() then return nil end
     local eq, hot, keys = {}, {}, {}
+    local gun = nil
+    if BridgeGunfight ~= nil and BridgeGunfight.isAssigned(b) then
+        pcall(function() gun = BridgeGunfight.assignedItem(b) end)
+    end
     local items = pane.inventory:getItems()
     for i = 0, items:size() - 1 do
         local it = items:get(i)
@@ -2133,6 +2148,9 @@ function BridgeInventory.paneMarks(pane)
             if b:isEquipped(it) then
                 eq[it] = true
                 keys[#keys + 1] = "e" .. tostring(it:getID())
+            elseif gun ~= nil and it == gun then
+                eq[it] = true
+                keys[#keys + 1] = "u" .. tostring(it:getID())
             elseif BridgeWeapon.isAssigned(b, it) then
                 hot[it] = true
                 keys[#keys + 1] = "h" .. tostring(it:getID())
@@ -2726,12 +2744,14 @@ end
 
 
 
-function BridgeInventory.assignOnHer(player, item)
+function BridgeInventory.assignOnHer(player, item, mode)
     local b = body()
     if b == nil or item == nil then return false end
+    if mode ~= "gun" then mode = "melee" end
     local inv = b:getInventory()
     local id = item:getID()
     if item:getContainer() == inv then
+        if mode == "gun" then return BridgeInventory.handsGun(b, item) end
         BridgeInventory.hands(b, item)
         return true
     end
@@ -2747,6 +2767,8 @@ function BridgeInventory.assignOnHer(player, item)
         end
     end
     pcall(function() note("assign on her " .. item:getType()) end)
+    BridgeInventory.assignMode = BridgeInventory.assignMode or {}
+    BridgeInventory.assignMode[id] = mode
     local ok, err = pcall(function()
         local act = ISInventoryTransferAction:new(player, item, item:getContainer(), dest)
         if act.bridgeRelay ~= nil then
@@ -2756,13 +2778,19 @@ function BridgeInventory.assignOnHer(player, item)
         end
         ISTimedActionQueue.add(act)
     end)
-    if not ok then warn("assign on her failed: " .. tostring(err)) return false end
+    if not ok then
+        if BridgeInventory.assignMode ~= nil then BridgeInventory.assignMode[id] = nil end
+        warn("assign on her failed: " .. tostring(err))
+        return false
+    end
     return true
 end
 
 
 
 function BridgeInventory.finishAssign(id)
+    local mode = BridgeInventory.assignMode ~= nil and BridgeInventory.assignMode[id] or nil
+    if BridgeInventory.assignMode ~= nil then BridgeInventory.assignMode[id] = nil end
     local b = body()
     if b == nil then return end
     local item = nil
@@ -2771,7 +2799,11 @@ function BridgeInventory.finishAssign(id)
         log("assign on her: item " .. tostring(id) .. " did not arrive")
         return
     end
-    BridgeInventory.hands(b, item)
+    if mode == "gun" then
+        BridgeInventory.handsGun(b, item)
+    else
+        BridgeInventory.hands(b, item)
+    end
 end
 
 function BridgeInventory.unwear(b, item)
@@ -2849,15 +2881,10 @@ end
 
 function BridgeInventory.hands(b, item)
     if BridgeInventory.isGun(item) then
-        local reacted = false
-        pcall(function() reacted = item:getModData().bridgeReceived == true end)
-        if not reacted then
-            pcall(function() Bridge.speak("NoGuns") end)
-            if BridgeSocial ~= nil and BridgeSocial.gunNervous ~= nil then pcall(BridgeSocial.gunNervous) end
-        end
-        return false
+        return BridgeInventory.handsGun(b, item)
     end
     if not BridgeWeapon.isMelee(item) then return false end
+    if BridgeWeapon.isAssigned(b, item) then return true end
     pcall(function() note("assign " .. item:getType()) end)
     local ok, err = pcall(function()
         if b:isEquippedClothing(item) then b:removeWornItem(item) end
@@ -2870,6 +2897,37 @@ function BridgeInventory.hands(b, item)
     refreshPanels()
     if ok then pcall(function() BridgeInventory.handed(item) end) end
     return ok
+end
+
+
+function BridgeInventory.handsGun(b, item)
+    if b == nil or item == nil then return false end
+    if not BridgeInventory.isGun(item) then return false end
+    if BridgeGunfight == nil then return false end
+    if BridgeGunfight.isAssigned(b) and BridgeGunfight.assignedItem(b) == item then return true end
+    pcall(function() note("assign gun " .. item:getType()) end)
+    local ok, err = pcall(function()
+        if b:isEquippedClothing(item) then b:removeWornItem(item) end
+        if BridgeGear ~= nil and BridgeGear.isGear(b, item) then BridgeGear.detach(b, item) end
+        return BridgeGunfight.assign(b, item)
+    end)
+    if not ok then warn("assign gun failed: " .. tostring(err)) ok = false end
+    if ok == nil then ok = false end
+    redress(b)
+    refreshPanels()
+    if ok then pcall(function() BridgeGunTalk.equip(item) end) end
+    return ok
+end
+
+
+function BridgeInventory.dropGun(b, item)
+    if BridgeGunfight == nil then return false end
+    pcall(function() note("unassign gun " .. tostring(item and item:getType() or "?")) end)
+    local ok, err = pcall(function() return BridgeGunfight.unassign(b, "unassigned by the player") end)
+    if not ok then warn("unassign gun failed: " .. tostring(err)) ok = false end
+    redress(b)
+    refreshPanels()
+    return ok == true
 end
 
 
@@ -3399,18 +3457,51 @@ function BridgeInventory.onFill(playerNum, context, items)
             if BridgeWeapon.isMelee(it) and not fav then weapon = it break end
         end
         if BridgeInventory.shown and weapon ~= nil then
-            pcall(function()
-                local opt = rin:addOption(label("MenuAssign"), player, BridgeInventory.assignOnHer, weapon)
+            local assigned = false
+            pcall(function() assigned = BridgeWeapon.isAssigned(b, weapon) end)
+            if assigned then
+                rin:addOption(label("MenuUnassign"), b, BridgeInventory.drop, weapon)
+            else
+                pcall(function()
+                    local opt = rin:addOption(label("MenuAssign"), player, BridgeInventory.assignOnHer, weapon)
 
-                local fits = viaPlayerFits(player, weapon)
-                if fits then pcall(function() fits = BridgeInventory.overflowDest(b, player, weapon, nil) ~= nil end) end
-                if not fits then
-                    opt.notAvailable = true
-                    local tip = ISInventoryPaneContextMenu.addToolTip()
-                    tip.description = getText("ContextMenu_FullInventory")
-                    opt.toolTip = tip
-                end
+                    local fits = viaPlayerFits(player, weapon)
+                    if fits then pcall(function() fits = BridgeInventory.overflowDest(b, player, weapon, nil) ~= nil end) end
+                    if not fits then
+                        opt.notAvailable = true
+                        local tip = ISInventoryPaneContextMenu.addToolTip()
+                        tip.description = getText("ContextMenu_FullInventory")
+                        opt.toolTip = tip
+                    end
+                end)
+            end
+        end
+        local gun = nil
+        for _, it in ipairs(list) do
+            local fav = false
+            pcall(function() fav = it:isFavorite() end)
+            if BridgeInventory.isGun(it) and not fav then gun = it break end
+        end
+        if BridgeInventory.shown and gun ~= nil and BridgeGunfight ~= nil then
+            local assigned = false
+            pcall(function()
+                assigned = BridgeGunfight.isAssigned(b) and BridgeGunfight.assignedItem(b) == gun
             end)
+            if assigned then
+                rin:addOption(label("MenuUnassignGun"), b, BridgeInventory.dropGun, gun)
+            else
+                pcall(function()
+                    local opt = rin:addOption(label("MenuAssignGun"), player, BridgeInventory.assignOnHer, gun, "gun")
+                    local fits = viaPlayerFits(player, gun)
+                    if fits then pcall(function() fits = BridgeInventory.overflowDest(b, player, gun, nil) ~= nil end) end
+                    if not fits then
+                        opt.notAvailable = true
+                        local tip = ISInventoryPaneContextMenu.addToolTip()
+                        tip.description = getText("ContextMenu_FullInventory")
+                        opt.toolTip = tip
+                    end
+                end)
+            end
         end
     end
 
@@ -3422,6 +3513,12 @@ function BridgeInventory.onFill(playerNum, context, items)
                 rin:addOption(label("MenuUnassign"), b, BridgeInventory.drop, item)
             else
                 rin:addOption(label("MenuAssign"), b, BridgeInventory.hands, item)
+            end
+        elseif BridgeInventory.isGun(item) and BridgeGunfight ~= nil then
+            if BridgeGunfight.isAssigned(b) and BridgeGunfight.assignedItem(b) == item then
+                rin:addOption(label("MenuUnassignGun"), b, BridgeInventory.dropGun, item)
+            else
+                rin:addOption(label("MenuAssignGun"), b, BridgeInventory.handsGun, item)
             end
         end
     end
@@ -3692,6 +3789,7 @@ function BridgeInventory.restore(b, list)
         pcall(function() b:resetModelNextFrame() end)
     end
     BridgeInventory.restoring = nil
+    pcall(function() if BridgeGunfight ~= nil then BridgeGunfight.recover(b) end end)
     return worn, hands, bag
 end
 

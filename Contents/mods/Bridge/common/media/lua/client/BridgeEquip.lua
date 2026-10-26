@@ -37,6 +37,32 @@ end
 BridgeEquip.DEV = false
 
 BridgeEquip.range = 2.5
+BridgeEquip.REFRESH_EVERY = 6
+BridgeEquip.refreshStats = {
+    ticks = 0,
+    heavy = 0,
+    skipped = 0,
+    dirty = 0,
+    relayouts = 0,
+    lastMs = 0,
+    maxMs = 0,
+}
+
+local function nowMs()
+    local t = 0
+    pcall(function() t = getTimestampMs() end)
+    return t
+end
+
+local function flushRefreshLog()
+    if Bridge == nil or not Bridge.verbose then return end
+    local s = BridgeEquip.refreshStats
+    if s.ticks < 300 then return end
+    log(string.format("refresh every=%d ticks=%d heavy=%d skipped=%d dirty=%d relayouts=%d lastMs=%.2f maxMs=%.2f",
+        BridgeEquip.REFRESH_EVERY, s.ticks, s.heavy, s.skipped, s.dirty, s.relayouts, s.lastMs, s.maxMs))
+    s.ticks, s.heavy, s.skipped, s.dirty, s.relayouts = 0, 0, 0, 0, 0
+    s.lastMs, s.maxMs = 0, 0
+end
 
 
 local BASE = {
@@ -61,6 +87,8 @@ local BASE = {
     SUB_SLOT_THING = 5,
     WEAPON_PRIMARY_X = -18,
     WEAPON_PRIMARY_Y = 142,
+    WEAPON_GUN_X = -18,
+    WEAPON_GUN_Y = 250,
 }
 
 BridgeEquip.BASE = BASE
@@ -347,7 +375,8 @@ local function anyLocInRegion(region, locs)
 end
 BridgeEquip.anyLocInRegion = anyLocInRegion
 
-local function wornItems(b)
+local function wornItems(b, pre)
+    if pre ~= nil then return pre end
     local out = {}
     if b == nil then return out end
     pcall(function()
@@ -370,17 +399,17 @@ local function wornItems(b)
 end
 BridgeEquip.wornItems = wornItems
 
-local function displayWorn(b)
+local function displayWorn(b, pre)
     local out = {}
-    for _, w in ipairs(wornItems(b)) do
+    for _, w in ipairs(wornItems(b, pre)) do
         if not isFurAppearance(w.item) then out[#out + 1] = w end
     end
     return out
 end
 
-local function regionItems(b, region)
+local function regionItems(b, region, worn)
     local out = {}
-    local worn = displayWorn(b)
+    local worn = worn or displayWorn(b)
     for _, v in ipairs(regionValues(region)) do
         if v ~= nil then
             for _, w in ipairs(worn) do
@@ -397,6 +426,9 @@ BridgeEquip.regionItems = regionItems
 local function providerMounts(b, item)
     local out = {}
     if b == nil or item == nil or BridgeGear == nil or BridgeGear.attached == nil then return out end
+    local any = false
+    for _ in pairs(BridgeGear.attached) do any = true break end
+    if not any then return out end
     local pid = nil
     pcall(function() pid = item:getID() end)
     if pid == nil then return out end
@@ -406,19 +438,21 @@ local function providerMounts(b, item)
             entries[#entries + 1] = { item = mounted, index = info.index or 0, loc = tostring(info.location or "") }
         end
     end
-    table.sort(entries, function(a, c)
-        if a.loc ~= c.loc then return a.loc < c.loc end
-        return a.index < c.index
-    end)
+    if #entries > 1 then
+        table.sort(entries, function(a, c)
+            if a.loc ~= c.loc then return a.loc < c.loc end
+            return a.index < c.index
+        end)
+    end
     for _, e in ipairs(entries) do out[#out + 1] = e.item end
     return out
 end
 BridgeEquip.providerMounts = providerMounts
 BridgeEquip.mountsOf = providerMounts
 
-local function regionLayers(b, region)
+local function regionLayers(b, region, worn)
     local out = {}
-    local worn = displayWorn(b)
+    local worn = worn or displayWorn(b)
     for _, v in ipairs(regionValues(region)) do
         if v ~= nil then
             for _, w in ipairs(worn) do
@@ -436,9 +470,9 @@ local function regionLayers(b, region)
 end
 BridgeEquip.regionLayers = regionLayers
 
-local function unmappedWorn(b)
+local function unmappedWorn(b, worn)
     local out = {}
-    for _, w in ipairs(displayWorn(b)) do
+    for _, w in ipairs(worn or displayWorn(b)) do
         local mapped = false
         for _, region in ipairs(BridgeEquip.REGIONS) do
             if anyLocInRegion(region, w.locs) then mapped = true break end
@@ -448,6 +482,20 @@ local function unmappedWorn(b)
     return out
 end
 BridgeEquip.unmappedWorn = unmappedWorn
+
+local function frameWorn(b, filtered)
+    local id = BridgeEquip.frameId or 0
+    local c = BridgeEquip._frameWorn
+    if c == nil or c.id ~= id or c.body ~= b then
+        c = { id = id, body = b, all = wornItems(b), shown = nil }
+        BridgeEquip._frameWorn = c
+    end
+    if filtered then
+        if c.shown == nil then c.shown = displayWorn(b, c.all) end
+        return c.shown
+    end
+    return c.all
+end
 
 local function weaponItem(b)
     if b == nil then return nil end
@@ -739,6 +787,7 @@ function BridgeEquip.resolveDrop(targetWidget)
     if item == nil then item = draggedItem() end
     clearDrag()
     if item == nil then return end
+    BridgeEquip.dirty = true
     local b = her()
     if b == nil then return end
 
@@ -754,6 +803,8 @@ end
 
 
 local function refreshOutfit()
+    BridgeEquip._frameWorn = nil
+    BridgeEquip.dirty = true
     pcall(function() if Bridge ~= nil and Bridge.saveOutfit ~= nil then Bridge.saveOutfit() end end)
     pcall(function() if ISInventoryPage ~= nil then ISInventoryPage.renderDirty = true end end)
 end
@@ -853,6 +904,24 @@ local function acceptWeapon(b, player, item)
 end
 BridgeEquip.acceptWeapon = acceptWeapon
 
+local function acceptGun(b, player, item)
+    if b == nil or item == nil or BridgeGunfight == nil or BridgeInventory == nil then return false end
+    if not BridgeInventory.isGun(item) then return false end
+    if not canHandOver(b, player, item) then return false end
+    if BridgeGunfight.assignedItem(b) == item then return false end
+    local top = false
+    pcall(function() top = item:getContainer() == b:getInventory() end)
+    local ok = false
+    if top then
+        ok = BridgeInventory.handsGun(b, item)
+    else
+        ok = BridgeInventory.assignOnHer(player, item, "gun")
+    end
+    if ok then refreshOutfit() end
+    return ok == true
+end
+BridgeEquip.acceptGun = acceptGun
+
 local function itemColor(item)
     local r, g, bb = 1, 1, 1
     pcall(function()
@@ -910,6 +979,9 @@ function BridgeEquipSlot:getItem()
         return it
     elseif self.kind == "weapon" then
         return weaponItem(her())
+    elseif self.kind == "gun" then
+        if BridgeGunfight == nil then return nil end
+        return BridgeGunfight.assignedItem(her())
     elseif self.kind == "popup" or self.kind == "dynamic" then
         return self.dynItem
     end
@@ -920,7 +992,8 @@ function BridgeEquipSlot:acceptItem(item)
     local b, player = her(), playerOf(0)
     if b == nil or item == nil then return end
     if self.kind == "gear" then acceptGear(b, player, item, self.cell)
-    elseif self.kind == "weapon" then acceptWeapon(b, player, item) end
+    elseif self.kind == "weapon" then acceptWeapon(b, player, item)
+    elseif self.kind == "gun" then acceptGun(b, player, item) end
 end
 
 function BridgeEquipSlot:canAccept(item)
@@ -932,6 +1005,10 @@ function BridgeEquipSlot:canAccept(item)
     elseif self.kind == "weapon" then
         local cur = self:getItem()
         return cur ~= item and BridgeWeapon ~= nil and BridgeWeapon.isMelee(item)
+    elseif self.kind == "gun" then
+        local cur = self:getItem()
+        return cur ~= item and BridgeInventory ~= nil and BridgeInventory.isGun(item)
+            and BridgeGunfight ~= nil
     end
     return false
 end
@@ -1025,10 +1102,16 @@ end
 local function addOffMenu(context, item)
     local b = her()
     if context == nil or item == nil or b == nil then return end
-    local isGear, isWeapon = false, false
+    local isGear, isWeapon, isGun = false, false, false
     pcall(function() isGear = BridgeGear ~= nil and type(BridgeGear.isGear) == "function" and BridgeGear.isGear(b, item) == true end)
     pcall(function() isWeapon = BridgeWeapon ~= nil and type(BridgeWeapon.isAssigned) == "function" and BridgeWeapon.isAssigned(b, item) == true end)
-    if isWeapon and not isGear then
+    pcall(function()
+        isGun = BridgeGunfight ~= nil and BridgeGunfight.assignedItem(b) == item
+    end)
+    if isGun then
+        menuAction(context, tr("MenuUnassignGun"), item,
+            function(t) if BridgeInventory ~= nil then BridgeInventory.dropGun(b, t) end refreshOutfit() end)
+    elseif isWeapon and not isGear then
         menuAction(context, tr("InvUnassign", herName()), item,
             function(t) if BridgeInventory ~= nil then BridgeInventory.drop(b, t) end end)
     elseif isGear then
@@ -1067,7 +1150,7 @@ BridgeEquipSuperSlot = ISPanel:derive("BridgeEquipSuperSlot")
 
 function BridgeEquipSuperSlot:refreshItems()
     local b = her()
-    self.items = b ~= nil and regionLayers(b, self.region) or {}
+    self.items = b ~= nil and regionLayers(b, self.region, frameWorn(b, true)) or {}
 end
 
 function BridgeEquipSuperSlot:hoverItem()
@@ -1395,6 +1478,11 @@ function BridgeEquipWindow:createChildren()
     self.weaponSlot:initialise()
     self.canvas:addChild(self.weaponSlot)
 
+    self.gunSlot = BridgeEquipSlot:new(L.X_OFFSET + BASE.WEAPON_GUN_X * L.S,
+        L.Y_OFFSET + BASE.WEAPON_GUN_Y * L.S, L.WEAPON_SLOT_SIZE, L.WEAPON_SLOT_SIZE, "gun")
+    self.gunSlot:initialise()
+    self.canvas:addChild(self.gunSlot)
+
     self.dynamicSlots = {}
     self.gearSlots = {}
 
@@ -1448,11 +1536,18 @@ function BridgeEquipWindow:relayout()
     self.weaponSlot:setWidth(L.WEAPON_SLOT_SIZE)
     self.weaponSlot:setHeight(L.WEAPON_SLOT_SIZE)
 
+    if self.gunSlot ~= nil then
+        self.gunSlot:setX(L.X_OFFSET + BASE.WEAPON_GUN_X * S)
+        self.gunSlot:setY(L.Y_OFFSET + BASE.WEAPON_GUN_Y * S)
+        self.gunSlot:setWidth(L.WEAPON_SLOT_SIZE)
+        self.gunSlot:setHeight(L.WEAPON_SLOT_SIZE)
+    end
+
     self.headerH = L.clearance
     self.yHeader = 2
     self.yDoll = L.Y_OFFSET
     self.yDynHeader = L.DYN_Y
-    local dyn = unmappedWorn(b)
+    local dyn = unmappedWorn(b, frameWorn(b, true))
     local dynRows = math.ceil(#dyn / L.DYN_PER_ROW)
     self.yDynTop = self.yDynHeader + (dynRows > 0 and self.headerH or 0)
     self.dynBottom = self.yDynTop + dynRows * L.DYN_STEP
@@ -1605,14 +1700,26 @@ function BridgeEquipWindow:makeDesc(st)
     return desc
 end
 
+local function storeItemsKey(st)
+    local items = (st ~= nil and st.items) or ""
+    if type(items) ~= "string" then
+        return BridgeItems.lookKey(BridgeItems.decode(items))
+    end
+    if BridgeEquip._itemsSrc ~= items then
+        BridgeEquip._itemsSrc = items
+        BridgeEquip._itemsKey = BridgeItems.lookKey(BridgeItems.decode(items))
+    end
+    return BridgeEquip._itemsKey or ""
+end
+
 function BridgeEquipWindow:liveKey(st)
     local parts = { BridgeData.genderOf(st), BridgeData.skinOf(st), BridgeData.hairOf(st) }
     local hc = BridgeData.hairColorOf(st)
     parts[#parts + 1] = tostring(hc.r) .. tostring(hc.g) .. tostring(hc.b)
-    parts[#parts + 1] = tostring(BridgeWindow ~= nil and BridgeWindow.lookKey(st) or "")
+    parts[#parts + 1] = tostring(BridgeWindow ~= nil and BridgeWindow.lookKey(st, storeItemsKey(st)) or "")
     local b = her()
     if b ~= nil then
-        for _, w in ipairs(wornItems(b)) do
+        for _, w in ipairs(frameWorn(b, false)) do
             local id = nil
             pcall(function() id = w.item:getID() end)
             parts[#parts + 1] = tostring(w.item:getType()) .. ":" .. tostring(id) .. ":" .. tostring(w.loc)
@@ -1718,6 +1825,7 @@ function BridgeEquipWindow:close()
     BridgeEquip.savePosition(self)
     clearDrag()
     BridgeEquip.hideTooltip()
+    BridgeEquip._frameWorn = nil
     if self.popup ~= nil then self.popup:setVisible(false) end
     ISCollapsableWindow.close(self)
     self:removeFromUIManager()
@@ -1748,10 +1856,13 @@ function BridgeEquip.showTooltip(item)
         BridgeEquip.tooltip = tip
     end
     local tip = BridgeEquip.tooltip
-    if tip.item ~= item then tip:setItem(item) end
     tip:setVisible(true)
-    tip:bringToTop()
-    pcall(function() tip.tooltip:setWeightOfStack(1) end)
+    if tip.bridgeItem ~= item then
+        tip.bridgeItem = item
+        tip:setItem(item)
+        tip:bringToTop()
+        pcall(function() tip.tooltip:setWeightOfStack(1) end)
+    end
 end
 
 function BridgeEquip.hideTooltip()
@@ -1815,6 +1926,7 @@ function BridgeEquip.open(playerNum)
     local b = her()
     if b == nil then log("open refused: no body") return nil end
     if not BridgeEquip.withinRange(playerNum) then log("open refused: too far") return nil end
+    BridgeEquip._frameWorn = nil
     BridgeEquip.applyScale()
     local L = BridgeEquip.L
     local win = BridgeEquipWindow:new(100, 100, L.PANEL_WIDTH, 200)
@@ -1839,6 +1951,7 @@ function BridgeEquip.open(playerNum)
     win:addToUIManager()
     win:setVisible(true)
     BridgeEquip.instance = win
+    BridgeEquip.dirty = true
     log("open " .. string.format("%dx%d scale=%.2f", win:getWidth(), win:getHeight(), L.S))
     return win
 end
@@ -1873,6 +1986,7 @@ local function findHoverItem(win)
             if slot:isVisible() and slot:isMouseOver() then item = slot.dynItem end
         end
         if win.weaponSlot:isMouseOver() then item = win.weaponSlot:getItem() end
+    if win.gunSlot ~= nil and win.gunSlot:isMouseOver() then item = win.gunSlot:getItem() end
         for _, slot in ipairs(win.superSlots) do
             if slot:isMouseOver() then
                 local it = slot:hoverItem()
@@ -1898,6 +2012,8 @@ local function tick()
     local win = BridgeEquip.instance
     if win == nil then return end
 
+    BridgeEquip.frameId = (BridgeEquip.frameId or 0) + 1
+
     local b = her()
     if b == nil then
         log("auto-close: body gone") BridgeEquip.close() return
@@ -1913,14 +2029,31 @@ local function tick()
     end)
     if not near then log("auto-close: too far") BridgeEquip.close() return end
 
-    if Bridge.store ~= nil then pcall(function() win:refreshAvatar() end) end
+    BridgeEquip.refreshStats.ticks = BridgeEquip.refreshStats.ticks + 1
+    local dirty = BridgeEquip.dirty == true
+    local heavy = dirty or (BridgeEquip.frameId % BridgeEquip.REFRESH_EVERY == 0)
+    if heavy then
+        BridgeEquip.refreshStats.heavy = BridgeEquip.refreshStats.heavy + 1
+        if dirty then BridgeEquip.refreshStats.dirty = BridgeEquip.refreshStats.dirty + 1 end
+        BridgeEquip.dirty = nil
+        local started = nowMs()
 
-    local cells = gearCells(b)
-    local dyn = unmappedWorn(b)
-    local key = #cells .. "|" .. #dyn
-    if key ~= win.layoutKey then
-        win.layoutKey = key
-        pcall(function() win:relayout() end)
+        if Bridge.store ~= nil then pcall(function() win:refreshAvatar() end) end
+
+        local cells = gearCells(b)
+        local dyn = unmappedWorn(b, frameWorn(b, true))
+        local key = #cells .. "|" .. #dyn
+        if key ~= win.layoutKey then
+            win.layoutKey = key
+            BridgeEquip.refreshStats.relayouts = BridgeEquip.refreshStats.relayouts + 1
+            pcall(function() win:relayout() end)
+        end
+
+        local elapsed = nowMs() - started
+        BridgeEquip.refreshStats.lastMs = elapsed
+        if elapsed > BridgeEquip.refreshStats.maxMs then BridgeEquip.refreshStats.maxMs = elapsed end
+    else
+        BridgeEquip.refreshStats.skipped = BridgeEquip.refreshStats.skipped + 1
     end
 
     if BridgeEquip.drag ~= nil and not isMouseButtonDown(0) then
@@ -1934,6 +2067,8 @@ local function tick()
 
     local item = findHoverItem(win)
     if item ~= nil and not isMouseButtonDown(0) then BridgeEquip.showTooltip(item) else BridgeEquip.hideTooltip() end
+
+    flushRefreshLog()
 end
 
 Events.OnTick.Add(tick)
@@ -1953,6 +2088,8 @@ Events.OnResolutionChange.Add(function(oldw, oldh, neww, newh)
 end)
 
 Events.OnClothingUpdated.Add(function(playerObj)
+    BridgeEquip._frameWorn = nil
+    BridgeEquip.dirty = true
     if BridgeEquip.instance == nil then return end
     pcall(function() BridgeEquip.instance:relayout() end)
 end)

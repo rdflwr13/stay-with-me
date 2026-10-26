@@ -158,7 +158,11 @@ end
 local function zombiesNear(red, dist)
     local near = false
     pcall(function()
-        local list = getCell():getZombieList()
+        local list = nil
+        if BridgeZScan ~= nil then
+            list = BridgeZScan.near(red:getX(), red:getY(), dist, { tag = "moments.danger" })
+        end
+        if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
             if z ~= nil and z ~= Bridge.body then

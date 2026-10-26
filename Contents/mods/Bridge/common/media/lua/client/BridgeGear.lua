@@ -128,8 +128,19 @@ local function inHer(b, item)
 end
 BridgeGear.inHer = inHer
 
+local function otherGun(item)
+    if item == nil then return false end
+    if BridgeGunRules == nil or not BridgeGunRules.isGun(item) then return false end
+    if BridgeGunfight == nil or BridgeGunfight.assignedId == nil then return false end
+    local id = nil
+    pcall(function() id = item:getID() end)
+    return id ~= BridgeGunfight.assignedId
+end
+
+
 function BridgeGear.canAttach(item)
     if item == nil then return false end
+    if otherGun(item) then return false end
     local broken = false
     local kind = nil
     local model = nil
@@ -273,6 +284,7 @@ end
 
 function BridgeGear.attachSlot(b, item, slot, quiet)
     if b == nil or item == nil or slot == nil or not inHer(b, item) then return false end
+    if otherGun(item) then return false end
     pcall(function()
         if BridgeWeapon ~= nil and BridgeWeapon.isAssigned(b, item) then
             BridgeWeapon.assignedId = nil
@@ -314,6 +326,7 @@ end
 
 function BridgeGear.attachTo(b, item, location, defType, providerType)
     if b == nil or item == nil or type(location) ~= "string" or location == "" then return false end
+    if otherGun(item) then return false end
     if not setOnModel(b, item, { location = location, type = defType or "", index = 1 }) then return false end
     local animset, providerId, providerName, ptype = nil, nil, nil, nil
     local slots = BridgeGear.slotsFor(b, item)
@@ -372,7 +385,10 @@ function BridgeGear.sync(b)
                 or (BridgeWeapon.attached ~= nil and BridgeWeapon.attached.item == item))
             local inHand = false
             pcall(function() inHand = b:getPrimaryHandItem() == item or b:getSecondaryHandItem() == item end)
-            if weapon then
+            if otherGun(item) then
+                drop = drop or {}
+                drop[#drop + 1] = item
+            elseif weapon then
                 handsOff = handsOff or {}
                 handsOff[#handsOff + 1] = item
             elseif inHand then
