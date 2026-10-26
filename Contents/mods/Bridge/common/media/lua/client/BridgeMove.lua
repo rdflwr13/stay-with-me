@@ -4583,6 +4583,12 @@ function BridgeMove.askClimb(body, kind, object)
 end
 
 
+local function stopReloadForTraversal(body, why)
+    if BridgeGunfight ~= nil and type(BridgeGunfight.interruptReload) == "function" then
+        pcall(BridgeGunfight.interruptReload, body, why or "traversal")
+    end
+end
+
 local function clearClimbHands(body)
     if not isClient() then return true end
     if body:getPrimaryHandItem() == nil and body:getSecondaryHandItem() == nil then
@@ -4605,6 +4611,7 @@ end
 function BridgeMove.climbStep(body)
     local c = BridgeMove.pendingClimb
     if c == nil then return false end
+    stopReloadForTraversal(body, "climb")
     local asn = ""
     pcall(function() asn = tostring(body:getActionStateName()) end)
     if asn == "climbwindow" or asn == "climbfence" then
@@ -5140,6 +5147,7 @@ function BridgeMove.edgeOnLine(body, x, y, z, maxTiles)
 end
 
 local function crossEnd(body, why)
+    BridgeMove.setCollide(body, true)
     local c = BridgeMove.cross
     BridgeMove.cross = nil
     BridgeMove.crossInfo = tostring(why)
@@ -5332,6 +5340,7 @@ function BridgeMove.crossStep(body)
             end)
         end
     end
+    stopReloadForTraversal(body, "climb")
     c.lastFrame = Bridge.time
     BridgeMove.climbUntil = Bridge.time + 30
     local asn = ""

@@ -21,28 +21,68 @@ local function warn(text) print("[BridgeSound] " .. tostring(text)) end
 
 
 
-function BridgeSound.voice(body, name, gap)
-    if body == nil then return "no body" end
-    local sound = BridgeData.voicePrefix(Bridge.store) .. tostring(name)
-    local lastTick = BridgeSound.last[sound] or -99999
-    if Bridge.time - lastTick < (gap or 30) then return "too soon" end
-    BridgeSound.last[sound] = Bridge.time
-    local emitter = nil
-    pcall(function() emitter = body:getEmitter() end)
-    if emitter == nil then return "no emitter" end
+local function playStyled(emitter, sound, voiceType, pitch)
     local id, path = 0, "vocals"
     pcall(function() id = emitter:playVocals(sound) end)
     if id == nil or id == 0 then
         path = "sound"
         pcall(function() id = emitter:playSound(sound) end)
     end
-    local result = string.format("%s via %s id=%s", sound, path, tostring(id))
+    if id ~= nil and id ~= 0 then
+        pcall(function()
+            emitter:setParameterValueByName(id, "CharacterVoiceType", voiceType)
+            emitter:setParameterValueByName(id, "CharacterVoicePitch", pitch)
+        end)
+    end
+    return id, path
+end
+
+function BridgeSound.voice(body, name, gap, style)
+    if body == nil then return "no body" end
+    if type(style) ~= "table" or type(style.prefix) ~= "string" or style.prefix == "" then
+        style = nil
+        pcall(function() style = BridgeData.voiceOf(Bridge.store) end)
+        if type(style) ~= "table" or type(style.prefix) ~= "string" or style.prefix == "" then
+            style = BridgeData.defaultVoice(Bridge.store)
+        end
+    end
+    local suffix = tostring(name)
+    local key = tostring(style.prefix) .. suffix
+    local wait = gap or 30
+    local lastTick = BridgeSound.last[key] or -99999
+    if wait > 0 and Bridge.time - lastTick < wait then return "too soon" end
+    BridgeSound.last[key] = Bridge.time
+    local emitter = nil
+    pcall(function() emitter = body:getEmitter() end)
+    if emitter == nil then return "no emitter" end
+    local voiceType = tonumber(style.type) or 0
+    local pitch = tonumber(style.pitch) or 0
+    local sound = key
+    local id, path = playStyled(emitter, sound, voiceType, pitch)
+    local fallback = false
+    if id == nil or id == 0 then
+        local def = BridgeData.defaultVoice(Bridge.store)
+        local alt = tostring(def.prefix) .. suffix
+        if alt ~= sound then
+            id, path = playStyled(emitter, alt, voiceType, pitch)
+            if id ~= nil and id ~= 0 then
+                sound, fallback = alt, true
+            end
+        end
+    end
+    local result = string.format("%s via %s id=%s type=%d pitch=%d%s", sound, path, tostring(id),
+        voiceType, pitch, fallback and " fallback" or "")
     BridgeSound.info = result
-    if BridgeSound.logged[sound] ~= path then
-        BridgeSound.logged[sound] = path
+    local logKey = fallback and ("fallback:" .. key) or sound
+    if BridgeSound.logged[logKey] ~= path then
+        BridgeSound.logged[logKey] = path
         log("voice " .. result)
     end
     return result
+end
+
+function BridgeSound.preview(body, style, name)
+    return BridgeSound.voice(body, name or "ShoutHey", 0, style)
 end
 
 

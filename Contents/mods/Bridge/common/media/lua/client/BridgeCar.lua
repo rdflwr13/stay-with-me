@@ -991,6 +991,11 @@ end
 local function goInside(body, why)
     local saved = false
     pcall(function() saved = Bridge.saveOutfitForRebuild() end)
+    pcall(function()
+        if BridgeTorch ~= nil and type(BridgeTorch.offForCar) == "function" then
+            BridgeTorch.offForCar(body, "car")
+        end
+    end)
     Bridge.hideBody(body, true)
     standUp(body)
     local car = BridgeCar.car

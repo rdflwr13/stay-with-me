@@ -685,6 +685,16 @@ local function plant(body, name)
     BridgeGunfight.lastBump = name
 end
 
+local MOVEMENT_BUMPS = { FollowWalk = true, FollowRun = true, StartMove = true }
+
+local function plantMaintenance(body, name)
+    if body == nil or name == nil then return end
+    local cur = nil
+    pcall(function() cur = tostring(body:getBumpType()) end)
+    if MOVEMENT_BUMPS[cur] then return end
+    plant(body, name)
+end
+
 clearBump = function(body)
     if body == nil then return end
     local cur = nil
@@ -1681,7 +1691,7 @@ local function handAlive(item)
 end
 
 
-local function magCareBegin(body, magazine)
+local function magCareBegin(body, magazine, skipAnim)
     BridgeGunfight.magCareHand1 = nil
     BridgeGunfight.magCareHand2 = nil
     pcall(function() BridgeGunfight.magCareHand1 = body:getPrimaryHandItem() end)
@@ -1693,7 +1703,7 @@ local function magCareBegin(body, magazine)
     end
     pcall(function() body:setVariable(RELOAD_VAR, reloadFactor()) end)
     pcall(function() body:resetEquippedHandsModels() end)
-    plant(body, "NA_InsertBullets")
+    if not skipAnim then plantMaintenance(body, "NA_InsertBullets") end
 end
 
 
@@ -1732,7 +1742,7 @@ local function advanceMagCare(body, gun)
     local now = Bridge.time or 0
     showGunBar(magCareProgress())
     if not actionElapsed(BridgeGunfight.magCareStageAt, BridgeGunfight.magCareStageTicks) then
-        plant(body, "NA_InsertBullets")
+        plantMaintenance(body, "NA_InsertBullets")
         return true
     end
     local magazine = nil
@@ -1782,7 +1792,7 @@ local function advanceMagCare(body, gun)
     BridgeGunfight.magCareStageAt = now
     BridgeGunfight.magCareStageTicks = nextTicks
     BridgeGunfight.magCareUntil = now + (nextTicks / speedMult())
-    plant(body, "NA_InsertBullets")
+    plantMaintenance(body, "NA_InsertBullets")
     return true
 end
 
@@ -2151,8 +2161,8 @@ local function startAmmoOpen(body)
     BridgeGunfight.info = "opening " .. tostring(pick.type)
     BridgeGunfight.canMelee = false
     if BridgeGunfight.drawn then BridgeGunfight.stow(body) end
-    magCareBegin(body, pick.item)
-    plant(body, "NA_OpenAmmoBox")
+    magCareBegin(body, pick.item, true)
+    plantMaintenance(body, "NA_OpenAmmoBox")
     log(string.format("ammoOpen start box=%s out=%s n=%d ticks=%d",
         tostring(pick.type), tostring(pick.out), pick.amount, pick.ticks or 75))
     return true
@@ -2225,6 +2235,7 @@ local function finishAmmoOpen(body)
     BridgeGunfight.ammoStageTicks = 0
     BridgeGunfight.state = "idle"
     magCareEnd(body)
+    BridgeGunfight.magCareAt = Bridge.time or 0
     if BridgeWeapon ~= nil then pcall(function() BridgeWeapon.lost = nil end) end
     local opened = false
     if item ~= nil and out ~= nil then
@@ -2266,7 +2277,7 @@ end
 local function ammoOpenTick(body)
     if BridgeGunfight.ammoItem == nil then return false end
     if not actionElapsed(BridgeGunfight.ammoStageAt, BridgeGunfight.ammoStageTicks) then
-        plant(body, "NA_OpenAmmoBox")
+        plantMaintenance(body, "NA_OpenAmmoBox")
         return true
     end
     return finishAmmoOpen(body)

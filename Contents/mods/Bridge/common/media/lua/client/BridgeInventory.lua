@@ -353,6 +353,9 @@ function BridgeInventory.skin(b, rec)
             end
         end)
     end
+    if BridgeVoice ~= nil and type(BridgeVoice.applyStyle) == "function" then
+        pcall(BridgeVoice.applyStyle, b, BridgeData.voiceOf(rec))
+    end
     return true
 end
 

@@ -241,8 +241,8 @@ local function markHuman(body)
 
     pcall(function() body:getModData().RandomZedsExcluded = true end)
     pcall(function() body:getModData().tzCooldown = TRIP_IGNORE end)
-    if BridgeCompatRainingZombies ~= nil then
-        pcall(BridgeCompatRainingZombies.apply, body)
+    if BridgeCompat ~= nil and type(BridgeCompat.rainingApply) == "function" then
+        pcall(BridgeCompat.rainingApply, body)
     end
 end
 
@@ -254,8 +254,8 @@ local function unmarkHuman(body)
     pcall(function() body:getModData().ST_Ignore = nil end)
     pcall(function() body:getModData().RandomZedsExcluded = nil end)
     pcall(function() body:getModData().tzCooldown = nil end)
-    if BridgeCompatRainingZombies ~= nil then
-        pcall(BridgeCompatRainingZombies.clear, body)
+    if BridgeCompat ~= nil and type(BridgeCompat.rainingClear) == "function" then
+        pcall(BridgeCompat.rainingClear, body)
     end
 end
 
@@ -1223,7 +1223,8 @@ BridgeServer.Commands.state = function(player, args)
         pcall(function() BridgeServer.lookAt[player:getUsername()] = getTimestampMs() end)
     end
     if args.hair ~= nil or args.skin ~= nil or args.hairColor ~= nil or args.face ~= nil
-        or args.details ~= nil or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil or args.beardColor ~= nil then
+        or args.details ~= nil or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil
+        or args.beardColor ~= nil or args.voice ~= nil then
         local app = BridgeData.appearanceOf(rec)
         if args.hair ~= nil then
             local hair = BridgeData.cleanHair(args.hair)
@@ -1319,6 +1320,21 @@ BridgeServer.Commands.state = function(player, args)
                     and math.abs((old.b or 0) - color.b) < 0.01
                 if not same then
                     app.beardColor = color
+                    changed = true
+                end
+            end
+        end
+        if args.voice ~= nil then
+            local voice = BridgeData.cleanVoice(args.voice, BridgeData.genderOf(rec))
+            if voice ~= nil then
+                local old = app.voice
+                local same = type(old) == "table"
+                    and tostring(old.name) == tostring(voice.name)
+                    and tostring(old.prefix) == tostring(voice.prefix)
+                    and (tonumber(old.type) or 0) == voice.type
+                    and (tonumber(old.pitch) or 0) == voice.pitch
+                if not same then
+                    app.voice = voice
                     changed = true
                 end
             end

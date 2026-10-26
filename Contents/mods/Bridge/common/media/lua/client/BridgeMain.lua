@@ -2612,6 +2612,22 @@ function Bridge.setMakeup(list)
 end
 
 
+function Bridge.setVoice(voice)
+    local gender = BridgeData.genderOf(Bridge.store)
+    local clean = BridgeData.cleanVoice(voice, gender)
+    if clean == nil then return "bad voice" end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).voice = clean end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { voice = clean }) end)
+    end
+    if Bridge.alive() and Bridge.kind == "zombie" and BridgeVoice ~= nil and type(BridgeVoice.applyStyle) == "function" then
+        pcall(BridgeVoice.applyStyle, Bridge.body, clean)
+    end
+    log(string.format("voice name=%s prefix=%s type=%d pitch=%d", clean.name, clean.prefix, clean.type, clean.pitch))
+    return string.format("voice %s type=%d pitch=%d", tostring(clean.prefix), clean.type, clean.pitch)
+end
+
+
 local function setWant(want)
     if Bridge.store ~= nil then Bridge.store.want = want end
     if Bridge.mp then
@@ -3092,7 +3108,11 @@ end
 
 function Bridge.soundInfo()
     if not Bridge.alive() or Bridge.body == nil then return "no body" end
-    return BridgeVoice.info(Bridge.body)
+    local info = BridgeVoice.info(Bridge.body)
+    local voice = nil
+    pcall(function() voice = BridgeData.voiceText(Bridge.store) end)
+    if voice == nil then return info end
+    return info .. " style=" .. voice
 end
 
 
@@ -3289,7 +3309,7 @@ function Bridge.onZombieDead(zombie)
 
     pcall(function() if zombie:isSittingOnFurniture() then zombie:setSittingOnFurniture(false) end end)
     if zombie == Bridge.body then BridgeMove.seatFlag = false end
-    pcall(function() zombie:getEmitter():playSound(BridgeData.voicePrefix(Bridge.store) .. "DeathAlone") end)
+    pcall(function() BridgeSound.voice(zombie, "DeathAlone", 0) end)
     if Bridge.mp then
         pcall(function() zombie:setPrimaryHandItem(nil) end)
         pcall(function() zombie:setSecondaryHandItem(nil) end)
@@ -6230,6 +6250,7 @@ function Bridge.diagLines()
             pcall(function() add("body_has_path", tostring(Bridge.body:hasPath())) end)
             pcall(function() add("body_useless", tostring(Bridge.body:isUseless())) end)
             pcall(function() add("sound", BridgeVoice.info(Bridge.body)) end)
+            pcall(function() add("voice", BridgeData.voiceText(Bridge.store)) end)
             pcall(function() add("body_health", string.format("%.2f", Bridge.body:getHealth())) end)
             pcall(function()
                 if BridgeExercise ~= nil then

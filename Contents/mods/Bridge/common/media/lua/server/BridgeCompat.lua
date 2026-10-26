@@ -187,11 +187,64 @@ function BridgeCompat.dogsTick()
     BridgeCompat.dogsInstall()
 end
 
+BridgeCompat.rainingWanted = nil
+BridgeCompat.rainingTicks = 0
+BridgeCompat.rainingLogged = false
+
+local RAINING_RETRY_EVERY = 30
+
+function BridgeCompat.rainingModActive()
+    if BridgeCompat.rainingWanted == nil then BridgeCompat.rainingWanted = modActive("RainingZombies") end
+    return BridgeCompat.rainingWanted
+end
+
+function BridgeCompat.rainingApply(body)
+    if body == nil then return end
+    local want = BridgeCompat.rainingModActive()
+    local ok, current = pcall(function() return body:getVariableBoolean("ClimbWindow") end)
+    if not ok then return end
+    if current == want then return end
+    if want then
+        pcall(function() body:setVariable("ClimbWindow", true) end)
+        if not BridgeCompat.rainingLogged then
+            BridgeCompat.rainingLogged = true
+            log("RainingZombies fall guard active")
+        end
+    else
+        pcall(function() body:clearVariable("ClimbWindow") end)
+    end
+end
+
+function BridgeCompat.rainingClear(body)
+    if body == nil then return end
+    pcall(function() body:clearVariable("ClimbWindow") end)
+end
+
+local function eachRainingBody()
+    local server = rawget(_G, "BridgeServer")
+    if type(server) ~= "table" or type(server.bodies) ~= "table" then return end
+    for _, body in pairs(server.bodies) do BridgeCompat.rainingApply(body) end
+end
+
+function BridgeCompat.rainingTick()
+    BridgeCompat.rainingTicks = BridgeCompat.rainingTicks + 1
+    if BridgeCompat.rainingTicks < RAINING_RETRY_EVERY then return end
+    BridgeCompat.rainingTicks = 0
+    eachRainingBody()
+end
+
+function BridgeCompat.rainingStart()
+    BridgeCompat.rainingWanted = nil
+    BridgeCompat.rainingTicks = 0
+    eachRainingBody()
+end
+
 Events.OnTick.Add(function()
     pcall(BridgeCompat.tick)
     pcall(BridgeCompat.survivorsTick)
     pcall(BridgeCompat.divgadgetsTick)
     pcall(BridgeCompat.dogsTick)
+    pcall(BridgeCompat.rainingTick)
 end)
 Events.OnGameStart.Add(function()
     BridgeCompat.ticks = 0
@@ -202,6 +255,7 @@ Events.OnGameStart.Add(function()
     pcall(BridgeCompat.survivorsInstall)
     pcall(BridgeCompat.divgadgetsInstall)
     pcall(BridgeCompat.dogsInstall)
+    pcall(BridgeCompat.rainingStart)
 end)
 Events.OnServerStarted.Add(function()
     BridgeCompat.ticks = 0
@@ -212,4 +266,5 @@ Events.OnServerStarted.Add(function()
     pcall(BridgeCompat.survivorsInstall)
     pcall(BridgeCompat.divgadgetsInstall)
     pcall(BridgeCompat.dogsInstall)
+    pcall(BridgeCompat.rainingStart)
 end)

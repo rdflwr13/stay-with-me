@@ -801,8 +801,84 @@ function BridgeData.isMale(rec)
     return BridgeData.genderOf(rec) == "male"
 end
 
+BridgeData.VOICE_TYPE_MAX = 15
+BridgeData.VOICE_PITCH_MIN = -100
+BridgeData.VOICE_PITCH_MAX = 100
+BridgeData.VOICE_NAME_MAX = 48
+BridgeData.VOICE_PREFIX_MAX = 48
+
+local function voiceGender(value)
+    if value == "male" or value == "female" then return value end
+    return BridgeData.genderOf(value)
+end
+
+function BridgeData.defaultVoice(rec)
+    if voiceGender(rec) == "male" then
+        return { name = "Bob", prefix = "VoiceMale", type = 0, pitch = 0 }
+    end
+    return { name = "Kate", prefix = "VoiceFemale", type = 0, pitch = 0 }
+end
+
+function BridgeData.cleanVoice(value, gender)
+    if type(value) ~= "table" then return nil end
+    local def = BridgeData.defaultVoice(gender or "female")
+    local out = { name = def.name, prefix = def.prefix, type = 0, pitch = 0 }
+
+    if value.name ~= nil then
+        if type(value.name) ~= "string" then return nil end
+        if value.name ~= "" then
+            if #value.name > BridgeData.VOICE_NAME_MAX then return nil end
+            if string.find(value.name, "[%z\1-\31]") ~= nil then return nil end
+            out.name = value.name
+        end
+    end
+
+    if value.prefix ~= nil then
+        if type(value.prefix) ~= "string" then return nil end
+        if value.prefix ~= "" then
+            if #value.prefix > BridgeData.VOICE_PREFIX_MAX then return nil end
+            if string.find(value.prefix, "[^%w_]") ~= nil then return nil end
+            out.prefix = value.prefix
+        end
+    end
+
+    if value.type ~= nil then
+        local v = tonumber(value.type)
+        if v == nil or v ~= v then return nil end
+        v = math.floor(v)
+        if v < 0 then v = 0 end
+        if v > BridgeData.VOICE_TYPE_MAX then v = BridgeData.VOICE_TYPE_MAX end
+        out.type = v
+    end
+
+    if value.pitch ~= nil then
+        local v = tonumber(value.pitch)
+        if v == nil or v ~= v then return nil end
+        v = math.floor(v + 0.5)
+        if v < BridgeData.VOICE_PITCH_MIN then v = BridgeData.VOICE_PITCH_MIN end
+        if v > BridgeData.VOICE_PITCH_MAX then v = BridgeData.VOICE_PITCH_MAX end
+        out.pitch = v
+    end
+
+    return out
+end
+
+function BridgeData.voiceOf(rec)
+    local app = BridgeData.appearanceOf(rec)
+    local voice = nil
+    if app ~= nil then voice = BridgeData.cleanVoice(app.voice, BridgeData.genderOf(rec)) end
+    if voice ~= nil then return voice end
+    return BridgeData.defaultVoice(rec)
+end
+
+function BridgeData.voiceText(rec)
+    local voice = BridgeData.voiceOf(rec)
+    return string.format("name=%s prefix=%s type=%d pitch=%d",
+        tostring(voice.name), tostring(voice.prefix), voice.type, voice.pitch)
+end
+
 function BridgeData.voicePrefix(rec)
-    return BridgeData.isMale(rec) and "VoiceMale" or "VoiceFemale"
+    return BridgeData.voiceOf(rec).prefix
 end
 
 
