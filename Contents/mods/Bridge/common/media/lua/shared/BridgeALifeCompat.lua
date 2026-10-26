@@ -10,8 +10,10 @@ M.checks = {}
 M.ticks = 0
 
 local filteredSnaps = setmetatable({}, { __mode = "k" })
+local rescued = setmetatable({}, { __mode = "k" })
+local RESCUE_FIELDS = { "ALifeContactSinceMs", "ALifeContactUID", "ALifeNextBitePoseAtMs",
+    "ALifeStunUntilMs", "ProjectALifeNextBiteAtMs", "ProjectALifeBiterKey" }
 local summary = nil
-local externalSaid = false
 
 local function say(text)
     if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeALifeCompat] " .. tostring(text)) end
@@ -136,6 +138,67 @@ function M.peaceful(z, player)
     return nil
 end
 
+function M.rescue(body)
+    if body == nil or rescued[body] then return false end
+    rescued[body] = true
+    local changed = false
+    local alife = rawget(_G, "ProjectALife")
+    local horde = type(alife) == "table" and alife.HordeRelations or nil
+    if type(horde) == "table" then
+        for _, name in ipairs({ "cancelBite", "stopAggro", "release", "endChase",
+                "dropSprint", "dropLunge" }) do
+            local call = horde[name]
+            if type(call) == "function" then
+                local ok, acted = pcall(call, body)
+                if ok and acted == true then changed = true end
+            end
+        end
+    end
+    local data = nil
+    pcall(function() data = body:getModData() end)
+    if type(data) == "table" then
+        for index = 1, #RESCUE_FIELDS do
+            if data[RESCUE_FIELDS[index]] ~= nil then
+                data[RESCUE_FIELDS[index]] = nil
+                changed = true
+            end
+        end
+    end
+    pcall(function()
+        if type(body.getVariableBoolean) ~= "function" then return end
+        if body:getVariableBoolean("ALifeHordeChase") == true then
+            body:setVariable("ALifeHordeChase", false)
+            changed = true
+        end
+        if body:getVariableBoolean("ALifeHordeLunge") == true then
+            body:setVariable("ALifeHordeLunge", false)
+            changed = true
+        end
+    end)
+    pcall(function()
+        if type(horde) ~= "table" or type(horde.isBiteName) ~= "function" then return end
+        if not horde.isBiteName(body:getBumpType()) then return end
+        body:setBumpType("")
+        body:setBumpDone(true)
+        body:setVariable("BumpDone", true)
+        body:setVariable("BumpAnimFinished", true)
+        body:setVariable("AttackType", "")
+        body:setVariable("AttackOutcome", "")
+        changed = true
+    end)
+    pcall(function()
+        if body:getEatBodyTarget() ~= nil then
+            body:setBodyToEat(nil)
+            changed = true
+        end
+    end)
+    if changed then
+        M.rescues = (M.rescues or 0) + 1
+        say("rescued companion from leftover A-Life state")
+    end
+    return changed
+end
+
 local function installOne(tbl, name, label, make)
     if type(tbl) ~= "table" then return "absent" end
     if type(tbl[name]) ~= "function" then return "missing" end
@@ -161,6 +224,15 @@ local function firstBodyOne(tbl, name, label, verdict, why)
         return function(first, ...)
             if isBody(first) then return verdict, why end
             return original(first, ...)
+        end
+    end)
+end
+
+local function secondBodyOne(tbl, name, label, verdict, why)
+    return installOne(tbl, name, label, function(original)
+        return function(first, second, ...)
+            if isBody(second) then return verdict, why end
+            return original(first, second, ...)
         end
     end)
 end
@@ -195,17 +267,14 @@ function M.install()
         return result
     end
 
-    local external = type(rawget(_G, "ALifeStayWithMeCompat")) == "table"
-    if external then
-        M.externalPresent = true
-        if not externalSaid then
-            externalSaid = true
-            say("ALifeStayWithMeCompat is also installed: its markedOurs hook enrolls her body as horde prey. Remove"
-                .. " that mod; the built-in horde safety hooks are installed on top meanwhile.")
-        end
-    else
-        M.externalPresent = false
+    local function hookSecond(tbl, name, label, verdict, why)
+        local result = secondBodyOne(tbl, name, label, verdict, why)
+        note(result, label)
+        return result
     end
+
+    local external = type(rawget(_G, "ALifeStayWithMeCompat")) == "table"
+    M.externalPresent = external
 
     local alife = rawget(_G, "ProjectALife")
     local jimmy = rawget(_G, "ProjectALifeJimmy")
@@ -292,12 +361,24 @@ function M.install()
     end
 
     if type(alife) == "table" then
+        hookSecond(alife.Perception, "comrade", "alife.comrade", true)
+        hookSecond(alife.Perception, "contactReachable", "alife.contact", false)
+        hook(alife.Perception, "lastKnownFor", "alife.lastknown", function(original)
+            return function(actor, ...)
+                local entry = original(actor, ...)
+                if type(entry) == "table" and isBody(entry.target) then
+                    local known = actor ~= nil and alife.Perception.lastKnown or nil
+                    if type(known) == "table" then known[actor.uid] = nil end
+                    return nil
+                end
+                return entry
+            end
+        end)
+    end
+
+    if type(alife) == "table" then
         local horde = alife.HordeRelations
         hookFirst(horde, "steersHere", "alife.horde.steers", false)
-        hookFirst(horde, "wake", "alife.horde.wake", nil)
-        hookFirst(horde, "settle", "alife.horde.settle", false)
-        hookFirst(horde, "settleFree", "alife.horde.settlefree", false)
-        hookFirst(horde, "applyHold", "alife.horde.hold", false)
         hook(horde, "preyRows", "alife.horde.prey", function(original)
             return function(...)
                 local rows = original(...)
@@ -309,15 +390,21 @@ function M.install()
                 return rows
             end
         end)
-        hook(horde, "startBite", "alife.horde.startbite", function(original)
-            return function(zombie, actor, ...)
-                if isBody(zombie) or isBody(actor) then return false end
-                return original(zombie, actor, ...)
-            end
-        end)
+        if not M.externalPresent then
+            hookFirst(horde, "wake", "alife.horde.wake", nil)
+            hookFirst(horde, "settle", "alife.horde.settle", false)
+            hookFirst(horde, "settleFree", "alife.horde.settlefree", false)
+            hookFirst(horde, "applyHold", "alife.horde.hold", false)
+            hook(horde, "startBite", "alife.horde.startbite", function(original)
+                return function(zombie, actor, ...)
+                    if isBody(zombie) or isBody(actor) then return false end
+                    return original(zombie, actor, ...)
+                end
+            end)
+        end
         hook(horde, "applyBiteDamage", "alife.horde.bite", function(original)
             return function(actor, zombie, ...)
-                if isBody(actor) then return false, "bridge_companion" end
+                if isBody(actor) or isBody(zombie) then return false, "bridge_companion" end
                 return original(actor, zombie, ...)
             end
         end)
@@ -326,6 +413,11 @@ function M.install()
     table.sort(missingLabels)
     M.installed = okCount
     M.missing = missingLabels
+    local module = companion()
+    if module ~= nil then
+        local list = module.bodies()
+        for index = 1, #list do pcall(M.rescue, list[index]) end
+    end
     local text = okCount .. " hook(s), " .. #missingLabels .. " missing"
     if text ~= summary then
         summary = text
@@ -355,11 +447,11 @@ function M.status()
         if ok then steers = value end
     end
     local missing = M.missing or {}
-    return string.format("compat: %s; hooks %d installed, %d missing%s; externalPresent=%s; hordePrey=%s; steersHere=%s",
+    return string.format("compat: %s; hooks %d installed, %d missing%s; externalPresent=%s; hordePrey=%s; steersHere=%s; rescues=%d",
         module ~= nil and module.status() or "BridgeCompanion missing",
         M.installed or 0, #missing,
         #missing > 0 and (" [" .. table.concat(missing, ", ") .. "]") or "",
-        tostring(M.externalPresent), tostring(hordePrey), tostring(steers))
+        tostring(M.externalPresent), tostring(hordePrey), tostring(steers), M.rescues or 0)
 end
 
 function M.selftest()
@@ -423,6 +515,8 @@ function M.selftest()
         check("hook " .. entry.label, entry.tbl[entry.name] == M.wrapped[entry.label])
     end
 
+    if body ~= nil then check("rescue ran", rescued[body] == true) end
+
     if #fails == 0 then return string.format("compat selftest PASS (%d checks)", ran) end
     return string.format("compat selftest FAIL (%d of %d): %s", #fails, ran, table.concat(fails, "; "))
 end
@@ -434,7 +528,10 @@ local function tick()
 end
 
 if type(Events) == "table" then
-    if Events.OnGameStart ~= nil then Events.OnGameStart.Add(function() pcall(M.install) end) end
+    if Events.OnGameStart ~= nil then Events.OnGameStart.Add(function()
+        rescued = setmetatable({}, { __mode = "k" })
+        pcall(M.install)
+    end) end
     if Events.OnServerStarted ~= nil then Events.OnServerStarted.Add(function() pcall(M.install) end) end
     if Events.OnTick ~= nil then Events.OnTick.Add(tick) end
 end

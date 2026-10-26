@@ -808,8 +808,8 @@ end
 
 
 local function checkInventoryWarning()
-    if BridgeInventoryWarn ~= nil and type(BridgeInventoryWarn.check) == "function" then
-        pcall(BridgeInventoryWarn.check, BridgeItems.lastLength, BridgeItems.MAX_LENGTH, BridgeItems.truncated == true)
+    if BridgeWarn ~= nil and type(BridgeWarn.checkInventory) == "function" then
+        pcall(BridgeWarn.checkInventory, BridgeItems.lastLength, BridgeItems.MAX_LENGTH, BridgeItems.truncated == true)
     end
 end
 
