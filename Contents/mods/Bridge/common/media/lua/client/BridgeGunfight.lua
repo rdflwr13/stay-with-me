@@ -1153,12 +1153,48 @@ local function hitBlood(target)
 end
 
 
+local function playGunshotAt(x, y, z, sound)
+    if type(sound) ~= "string" or sound == "" then return false end
+    local emitter = nil
+    pcall(function() emitter = getWorld():getFreeEmitter(x, y, z) end)
+    if emitter == nil then return false end
+    local handle = nil
+    pcall(function() handle = emitter:playSoundImpl(sound, false, nil) end)
+    if handle == nil or handle == 0 then return false end
+    pcall(function()
+        local player = getPlayer()
+        if player == nil then return end
+        local dx, dy = player:getX() - x, player:getY() - y
+        local dz = (player:getZ() - z) * 3.0
+        local inside, area = 0, 0
+        local square = getCell():getGridSquare(math.floor(x), math.floor(y), math.floor(z))
+        local room = square ~= nil and square:getRoom() or nil
+        if room ~= nil then
+            local here = player:getCurrentSquare()
+            inside = (here ~= nil and here:getRoom() == room) and 1 or -1
+            local def = room:getRoomDef()
+            if def ~= nil then area = def:getArea() end
+        end
+        local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+        emitter:setParameterValueByName(handle, "FirearmDistance", math.max(0, math.min(1000, distance)))
+        emitter:setParameterValueByName(handle, "FirearmInside", inside)
+        emitter:setParameterValueByName(handle, "FirearmRoomSize", math.max(0, math.min(1000, tonumber(area) or 0)))
+        emitter:setParameterValueByName(handle, "LocalPlayer", 0)
+    end)
+    return true
+end
+
+
 local function playShot(body, gun)
-    if gun == nil then return end
+    if body == nil or gun == nil then return end
     if gun.sound ~= nil then
-        pcall(function()
-            if BridgeSound ~= nil then BridgeSound.sfx(body, gun.sound) else body:getEmitter():playSound(gun.sound) end
-        end)
+        local played = false
+        pcall(function() played = playGunshotAt(body:getX(), body:getY(), body:getZ(), gun.sound) end)
+        if not played then
+            pcall(function()
+                if BridgeSound ~= nil then BridgeSound.sfx(body, gun.sound) else body:getEmitter():playSound(gun.sound) end
+            end)
+        end
     end
     pcall(function()
         local radius = (gun.soundRadius or 20) * noiseMultiplier()
@@ -1176,6 +1212,15 @@ local function retainBump(body, name)
     BridgeGunfight.bumps[#BridgeGunfight.bumps + 1] = {
         body = body, name = name, untilT = (Bridge.time or 0) + FIRE_TICKS,
     }
+end
+
+
+local function shotFx(body, gun, kind)
+    plant(body, "NA_Fire" .. kind)
+    pcall(function() body:setVariable(FIRE_VAR, false) end)
+    BridgeGunfight.fireUntil = (Bridge.time or 0) + FIRE_TICKS
+    retainBump(body, "NA_Aim" .. kind)
+    playShot(body, gun)
 end
 
 
@@ -1319,6 +1364,7 @@ local function fire(body)
         end
         local x, y, z = t:getX(), t:getY(), t:getZ()
         BridgeGunfight.pendingShot = { at = Bridge.time, chance = chance, dist = d, target = t }
+        shotFx(body, gun, kind)
         pcall(function()
             sendClientCommand(BridgeData.owner(), "Bridge", "gunShot",
                 { targetId = onlineId, npcId = npcId, x = x, y = y, z = z })
@@ -1333,11 +1379,7 @@ local function fire(body)
     if BridgeSkills ~= nil then
         pcall(function() BridgeSkills.add("Aiming", 0.5, "shot") end)
     end
-    plant(body, "NA_Fire" .. kind)
-    pcall(function() body:setVariable(FIRE_VAR, false) end)
-    BridgeGunfight.fireUntil = (Bridge.time or 0) + FIRE_TICKS
-    retainBump(body, "NA_Aim" .. kind)
-    playShot(body, gun)
+    shotFx(body, gun, kind)
 
     if instanceof(t, "IsoAnimal") then
         local roll = ZombRand(100)
@@ -3313,6 +3355,10 @@ end
 
 function BridgeGunfight.onFx(args)
     if type(args) ~= "table" then return end
+    if Bridge ~= nil and Bridge.mp and args.owner ~= nil
+        and tostring(args.owner) == tostring(BridgeData.me()) then
+        return
+    end
     local body = bodyById(args.id)
     if body == nil then return end
     local kind = args.kind
@@ -3323,9 +3369,13 @@ function BridgeGunfight.onFx(args)
     BridgeGunfight.fireUntil = (Bridge.time or 0) + FIRE_TICKS
     retainBump(body, "NA_Aim" .. kind)
     if type(args.sound) == "string" and args.sound ~= "" then
-        pcall(function()
-            if BridgeSound ~= nil then BridgeSound.sfx(body, args.sound) else body:getEmitter():playSound(args.sound) end
-        end)
+        local played = false
+        pcall(function() played = playGunshotAt(body:getX(), body:getY(), body:getZ(), args.sound) end)
+        if not played then
+            pcall(function()
+                if BridgeSound ~= nil then BridgeSound.sfx(body, args.sound) else body:getEmitter():playSound(args.sound) end
+            end)
+        end
     end
     flash(body)
 end
