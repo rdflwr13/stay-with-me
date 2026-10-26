@@ -161,6 +161,55 @@ function BridgeCompat.divgadgetsTick()
     BridgeCompat.divgadgetsInstall()
 end
 
-Events.OnTick.Add(function() pcall(BridgeCompat.tick) pcall(BridgeCompat.survivorsTick) pcall(BridgeCompat.divgadgetsTick) end)
-Events.OnGameStart.Add(function() BridgeCompat.ticks = 0 BridgeCompat.survivorsTicks = 0 BridgeCompat.divgadgetsTicks = 0 pcall(BridgeCompat.install) pcall(BridgeCompat.survivorsInstall) pcall(BridgeCompat.divgadgetsInstall) end)
-Events.OnServerStarted.Add(function() BridgeCompat.ticks = 0 BridgeCompat.survivorsTicks = 0 BridgeCompat.divgadgetsTicks = 0 pcall(BridgeCompat.install) pcall(BridgeCompat.survivorsInstall) pcall(BridgeCompat.divgadgetsInstall) end)
+BridgeCompat.dogsTicks = 0
+BridgeCompat.dogsWrapped = nil
+
+function BridgeCompat.dogsInstall()
+    local cd = rawget(_G, "CompanionDogs")
+    if type(cd) ~= "table" or type(cd.isFriendlyNPC) ~= "function" then return false end
+    if cd.isFriendlyNPC == BridgeCompat.dogsWrapped then return true end
+    local original = cd.isFriendlyNPC
+    local wrapper = function(z)
+        local md = nil
+        pcall(function() md = z:getModData() end)
+        if type(md) == "table" and md.notAloneBody == true then return true end
+        return original(z)
+    end
+    BridgeCompat.dogsWrapped = wrapper
+    cd.isFriendlyNPC = wrapper
+    log("CompanionDogs compat guard installed (Rin is not a dog target)")
+    return true
+end
+
+function BridgeCompat.dogsTick()
+    BridgeCompat.dogsTicks = BridgeCompat.dogsTicks + 1
+    if BridgeCompat.dogsTicks > 1 and BridgeCompat.dogsTicks % 60 ~= 0 then return end
+    BridgeCompat.dogsInstall()
+end
+
+Events.OnTick.Add(function()
+    pcall(BridgeCompat.tick)
+    pcall(BridgeCompat.survivorsTick)
+    pcall(BridgeCompat.divgadgetsTick)
+    pcall(BridgeCompat.dogsTick)
+end)
+Events.OnGameStart.Add(function()
+    BridgeCompat.ticks = 0
+    BridgeCompat.survivorsTicks = 0
+    BridgeCompat.divgadgetsTicks = 0
+    BridgeCompat.dogsTicks = 0
+    pcall(BridgeCompat.install)
+    pcall(BridgeCompat.survivorsInstall)
+    pcall(BridgeCompat.divgadgetsInstall)
+    pcall(BridgeCompat.dogsInstall)
+end)
+Events.OnServerStarted.Add(function()
+    BridgeCompat.ticks = 0
+    BridgeCompat.survivorsTicks = 0
+    BridgeCompat.divgadgetsTicks = 0
+    BridgeCompat.dogsTicks = 0
+    pcall(BridgeCompat.install)
+    pcall(BridgeCompat.survivorsInstall)
+    pcall(BridgeCompat.divgadgetsInstall)
+    pcall(BridgeCompat.dogsInstall)
+end)
