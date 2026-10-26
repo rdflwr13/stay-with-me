@@ -68,7 +68,8 @@ Bridge.red60 = 0
 Bridge.stuckCount = 0
 Bridge.wornSeen = nil
 Bridge.itemsSeen = nil
-Bridge.enginePos = nil
+Bridge.enginePosX = nil
+Bridge.enginePosY = nil
 Bridge.engineAcc = 0
 Bridge.engineWalk = 0
 Bridge.holdPos = nil
@@ -175,6 +176,9 @@ local HOME_FAR = 45
 local READ_EVERY = 10
 local WRITE_EVERY = 30
 local PATH_EVERY = 30
+local OUTFIT_EVERY = 5
+local HEALTH_EVERY = 10
+local VOICE_EVERY = 10
 local FOLLOW_DIST = 2.5
 local BODY_VAR = "NotAloneBody"
 Bridge.BODY_VAR = BODY_VAR
@@ -3539,13 +3543,19 @@ Bridge.lookShare = lookShare
 local function updateZombieBody(body)
     if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
     Bridge.zombieTicks = Bridge.zombieTicks + 1
+    local red = BridgeData.owner()
     Bridge.keepHidden(body)
 
-    local okGuard, errGuard = pcall(Bridge.guardOutfit, body)
+    local okGuard, errGuard = true, nil
+    if Bridge.wornKeepBody ~= body or Bridge.zombieTicks % OUTFIT_EVERY == 0 then
+        okGuard, errGuard = pcall(Bridge.guardOutfit, body)
+    end
     if not okGuard then warn("guardOutfit failed: " .. tostring(errGuard)) end
 
 
-    if not Bridge.mp and not Bridge.mortal then pcall(Bridge.keepHealth, body) end
+    if not Bridge.mp and not Bridge.mortal and Bridge.zombieTicks % HEALTH_EVERY == 5 then
+        pcall(Bridge.keepHealth, body)
+    end
     lookShare(body)
 
 
@@ -3650,15 +3660,11 @@ local function updateZombieBody(body)
 
 
     pcall(function()
-        if body:getEatBodyTarget() ~= nil then body:setEatBodyTarget(nil, false) end
-        if body:isFakeDead() then body:setFakeDead(false) end
         if body:isForceFakeDead() then body:setForceFakeDead(false) end
-        if body:isBecomeCrawler() then body:setBecomeCrawler(false) end
-        if body:isCrawling() then body:setCrawler(false) end
     end)
     if Bridge.zombieTicks % 15 == 0 then Bridge.weaponVar(body) end
     do
-        local red, sneak = BridgeData.owner(), false
+        local sneak = false
         pcall(function() sneak = Bridge.follow == true and red ~= nil and red:isSneaking() end)
         Bridge.sneakVar(body, sneak == true)
         pcall(function() Bridge.sneakTrace(body, red, sneak == true) end)
@@ -3704,11 +3710,12 @@ local function updateZombieBody(body)
         end
     end
     pcall(function() body:setAnimatingBackwards(false) end)
-    pcall(BridgeVoice.ensure, body)
+    pcall(BridgeVoice.applyPrefix, body)
+    if Bridge.zombieTicks % VOICE_EVERY == 3 then pcall(BridgeVoice.suppress, body) end
 
 
 
-    do
+    if Bridge.zombieTicks % 5 == 2 then
         local fewer = false
         pcall(function() fewer = body:getItemVisuals():size() < body:getWornItems():size() end)
         if fewer then
@@ -3799,15 +3806,16 @@ local function updateZombieBody(body)
 
     do
         local px, py = body:getX(), body:getY()
-        if Bridge.enginePos ~= nil then
-            local dx = px - Bridge.enginePos[1]
-            local dy = py - Bridge.enginePos[2]
+        if Bridge.enginePosX ~= nil then
+            local dx = px - Bridge.enginePosX
+            local dy = py - Bridge.enginePosY
             local step = math.sqrt(dx * dx + dy * dy)
             if step < 1 and not BridgeMove.pathing and not BridgeMove.moving then
                 Bridge.engineAcc = Bridge.engineAcc + step
             end
         end
-        Bridge.enginePos = { px, py }
+        Bridge.enginePosX = px
+        Bridge.enginePosY = py
     end
 
 
@@ -3845,7 +3853,7 @@ local function updateZombieBody(body)
         Bridge.quenched = (Bridge.quenched or 0) + 1
         if Bridge.verbose and Bridge.time - (Bridge.quenchLog or -9999) >= 120 then
             pcall(function()
-                local r = BridgeData.owner()
+                local r = red
                 local dx, dy = body:getX() - r:getX(), body:getY() - r:getY()
                 log(string.format("engine state quenched: %s x%d d=%.2f bump=%s", tostring(asn), Bridge.quenched,
                     math.sqrt(dx * dx + dy * dy), tostring(body:getBumpType())))
@@ -3945,7 +3953,7 @@ local function updateZombieBody(body)
     end
 
 
-    local ownerDead = Bridge.mourning ~= nil or Bridge.redDead(BridgeData.owner())
+    local ownerDead = Bridge.mourning ~= nil or Bridge.redDead(red)
     if not ownerDead then
         handProbe(body, "before weapon")
         if BridgeTask == nil or not BridgeTask.active then pcall(function() BridgeWeapon.update(body) end) end
@@ -3977,12 +3985,12 @@ local function updateZombieBody(body)
     pcall(function() BridgeWeapon.animStep(body) end)
 
 
-    pcall(function() BridgeMove.passTick(body, BridgeData.owner()) end)
+    pcall(function() BridgeMove.passTick(body, red) end)
 
-    if not ownerDead then pcall(function() BridgeMove.runGuard(body, BridgeData.owner()) end) end
+    if not ownerDead then pcall(function() BridgeMove.runGuard(body, red) end) end
 
     if (not Bridge.follow or Bridge.pose ~= nil) and not ownerDead then
-        pcall(function() BridgeMove.pushCheck(body, BridgeData.owner()) end)
+        pcall(function() BridgeMove.pushCheck(body, red) end)
     end
 
 
@@ -4014,7 +4022,7 @@ local function updateZombieBody(body)
         local shoved = bump == "left" or bump == "right"
         if not shoved and Bridge.pose == nil then
             pcall(function()
-                local r = BridgeData.owner()
+                local r = red
                 local rx, ry = r:getX() - body:getX(), r:getY() - body:getY()
                 local d2 = rx * rx + ry * ry
                 shoved = d2 < 1.3 * 1.3 and (r:isRunning() or r:isSprinting())
@@ -4065,7 +4073,6 @@ local function updateZombieBody(body)
         Bridge.holdPos = nil
     end
 
-    local red = BridgeData.owner()
     local redCar = red and red:getVehicle() or nil
 
 

@@ -64,13 +64,17 @@ function BridgeVoice.restore(body)
     return ok
 end
 
+local function stopAlias(emitter, alias)
+    emitter:stopSoundByName(alias)
+end
+
 function BridgeVoice.suppress(body)
     if body == nil then return false end
     local emitter = nil
     pcall(function() emitter = body:getEmitter() end)
     if emitter == nil then return false end
     for i = 1, #ALIASES do
-        pcall(function() emitter:stopSoundByName(ALIASES[i]) end)
+        pcall(stopAlias, emitter, ALIASES[i])
     end
     return true
 end
