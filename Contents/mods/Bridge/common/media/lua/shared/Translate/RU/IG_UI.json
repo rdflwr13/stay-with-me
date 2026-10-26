@@ -4122,7 +4122,7 @@
     "IGUI_NotAlone_GunMeleeOffTip": "Продолжает стрелять и отходит от близких зомби.",
     "IGUI_NotAlone_GunReloadIdle": "Перезарядка между боями",
     "IGUI_NotAlone_GunReloadIdleTip": "Перезаряжается, когда нет цели.",
-    "IGUI_NotAlone_GunReloadIdleOnTip": "Дозаряжает дробовики и револьверы. Меняет магазин при 25% и меньше.",
+    "IGUI_NotAlone_GunReloadIdleOnTip": "Дозаряжает дробовики и револьверы. Меняет магазин при 25%% и меньше.",
     "IGUI_NotAlone_GunReloadIdleOffTip": "Перезаряжает только пустое оружие во время боя.",
     "IGUI_NotAlone_GunMagCare": "Уход за магазинами",
     "IGUI_NotAlone_GunMagCareTip": "Вне боя наполняет пустые и частично полные запасные магазины из рассыпных патронов.",
@@ -4158,5 +4158,6 @@
     "IGUI_NotAlone_Soc_EvLineOfFire_Near_3": "Заблокировано. Найду угол.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_1": "Минус один.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_2": "Один выстрел — минус один.",
-    "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Цель упала. Следующий."
+    "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Цель упала. Следующий.",
+    "IGUI_ContainerTitle_BridgeParked": "Компаньон"
 }

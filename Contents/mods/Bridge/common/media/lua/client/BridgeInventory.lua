@@ -1470,10 +1470,14 @@ function BridgeInventory.addButton(page)
     end
     local ok, err = pcall(function()
         local inv = b:getInventory()
+        local name = companionName()
+        pcall(function()
+            if inv:getCustomName() ~= name then inv:setCustomName(name) end
+        end)
         if not has(inv) then
             inv:setExplored(true)
             local icon = getTexture("media/ui/Icon_InventoryBasic.png")
-            local button = page:addContainerButton(inv, icon, companionName(), companionName())
+            local button = page:addContainerButton(inv, icon, name, name)
 
 
 

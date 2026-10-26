@@ -1591,7 +1591,7 @@
     "IGUI_NotAlone_GunMeleeOffTip": "Keeps using the gun and backs away from close zombies.",
     "IGUI_NotAlone_GunReloadIdle": "Reload between fights",
     "IGUI_NotAlone_GunReloadIdleTip": "Reloads when there is no target.",
-    "IGUI_NotAlone_GunReloadIdleOnTip": "Tops up shotguns and revolvers. Swaps magazine guns at 25% or less.",
+    "IGUI_NotAlone_GunReloadIdleOnTip": "Tops up shotguns and revolvers. Swaps magazine guns at 25%% or less.",
     "IGUI_NotAlone_GunReloadIdleOffTip": "Only reloads an empty gun during a fight.",
     "IGUI_NotAlone_GunMagCare": "Magazine care",
     "IGUI_NotAlone_GunMagCareTip": "Fills empty or partial spare magazines from loose ammo out of combat.",
@@ -3992,5 +3992,6 @@
     "IGUI_NotAlone_Soc_EvLineOfFire_Near_3": "Blocked. I'll find an angle.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_1": "Dropped him.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_2": "One shot, one down.",
-    "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Target down. Next."
+    "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Target down. Next.",
+    "IGUI_ContainerTitle_BridgeParked": "Companion"
 }
