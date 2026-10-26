@@ -538,6 +538,7 @@ local function humanize(body)
     body:setVariable("SurvivorNPC", true)
     pcall(function() Bridge.touched[body] = body:getPersistentOutfitID() end)
     pcall(function() body:getModData().notAloneBody = true end)
+    if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
 
     pcall(function() body:getModData().arcadiaRVAuthorizedDiscoveryZombie = true end)
 
@@ -614,6 +615,8 @@ function Bridge.unhumanize(z, pooled)
     pcall(function() z:setVariable(BODY_VAR, false) end)
     pcall(function() if z:hasModData() then z:getModData().ST_Ignore = nil end end)
     pcall(function() if z:hasModData() then z:getModData().RandomZedsExcluded = nil end end)
+    pcall(function() if z:hasModData() then z:getModData().notAloneBody = nil end end)
+    if BridgeGore ~= nil then pcall(BridgeGore.release, z) end
 
     pcall(function() BridgeWeapon.release(z) end)
     pcall(function() z:clearAttachedItems() end)
@@ -3514,6 +3517,7 @@ end
 Bridge.lookShare = lookShare
 
 local function updateZombieBody(body)
+    if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
     Bridge.zombieTicks = Bridge.zombieTicks + 1
     Bridge.keepHidden(body)
 
@@ -4822,6 +4826,7 @@ function Bridge.onZombieUpdate(zombie)
 
 
                 if not ownerNearBody(zombie, BridgeData.owner()) then
+                    if BridgeGore ~= nil then pcall(BridgeGore.guard, zombie) end
                     pcall(function() applyLook(zombie, Bridge.body ~= zombie, rec, who) end)
 
                     Bridge.walkTypeSet = nil
@@ -4839,6 +4844,7 @@ function Bridge.onZombieUpdate(zombie)
             return
         end
         pcall(function() Bridge.watchGuest(zombie, who, remote) end)
+        if BridgeGore ~= nil then pcall(BridgeGore.guard, zombie) end
         if remote then
             pcall(function() applyLook(zombie, true, rec, who) end)
         else

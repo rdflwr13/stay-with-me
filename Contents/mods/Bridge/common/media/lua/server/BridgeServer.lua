@@ -119,6 +119,20 @@ local function issuedMap()
     return map
 end
 
+local function clearDeadWorksRecord(pid)
+    if pid == nil then return end
+    local on = false
+    pcall(function()
+        local mods = getActivatedMods()
+        on = mods ~= nil and (mods:contains("DeadWorksZeds") or mods:contains("\\DeadWorksZeds"))
+    end)
+    if not on then return end
+    pcall(function()
+        local store = ModData.getOrCreate("FPZombiesHD")
+        if store ~= nil then store[tostring(pid)] = nil end
+    end)
+end
+
 local function issue(id, who)
     local s = issuedStore()
     local map = issuedMap()
@@ -134,6 +148,7 @@ local function issue(id, who)
     end
     e.who = who
     pcall(function() e.t = getGameTime():getWorldAgeHours() end)
+    clearDeadWorksRecord(id)
 end
 
 
@@ -226,6 +241,9 @@ local function markHuman(body)
 
     pcall(function() body:getModData().RandomZedsExcluded = true end)
     pcall(function() body:getModData().tzCooldown = TRIP_IGNORE end)
+    if BridgeCompatRainingZombies ~= nil then
+        pcall(BridgeCompatRainingZombies.apply, body)
+    end
 end
 
 local function unmarkHuman(body)
@@ -236,6 +254,9 @@ local function unmarkHuman(body)
     pcall(function() body:getModData().ST_Ignore = nil end)
     pcall(function() body:getModData().RandomZedsExcluded = nil end)
     pcall(function() body:getModData().tzCooldown = nil end)
+    if BridgeCompatRainingZombies ~= nil then
+        pcall(BridgeCompatRainingZombies.clear, body)
+    end
 end
 
 
@@ -264,6 +285,9 @@ local function companionFlags(body)
     pcall(function() body:setGodMod(true, true) end)
     markHuman(body)
     pcall(BridgeVoice.ensure, body)
+    local pid = nil
+    pcall(function() pid = body:getPersistentOutfitID() end)
+    clearDeadWorksRecord(pid)
 end
 
 local function releaseBody(body)

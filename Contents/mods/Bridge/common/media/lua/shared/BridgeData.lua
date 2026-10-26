@@ -242,8 +242,59 @@ end
 
 
 
+BridgeData.NPCFW_ACTIVE = nil
+
+function BridgeData.npcfwActive()
+    local cached = BridgeData.NPCFW_ACTIVE
+    if cached ~= nil then return cached end
+    if getActivatedMods == nil then return false end
+    local ok, active = pcall(function()
+        local mods = getActivatedMods()
+        if mods == nil then return nil end
+        return mods:contains("ProjectRemnants") or mods:contains("\\ProjectRemnants")
+    end)
+    if not ok or active == nil then return false end
+    BridgeData.NPCFW_ACTIVE = active == true
+    return BridgeData.NPCFW_ACTIVE
+end
+
+function BridgeData.npcfwNpc(z)
+    if z == nil or type(npcfwIsNPC) ~= "function" then return false, nil end
+    local isNpc = false
+    pcall(function() isNpc = npcfwIsNPC(z) == true end)
+    if not isNpc then return false, nil end
+    local classification = nil
+    if type(npcfwGetClassificationOf) == "function" then
+        pcall(function() classification = npcfwGetClassificationOf(z) end)
+    end
+    return true, classification
+end
+
+function BridgeData.npcfwPeaceful(z)
+    if not BridgeData.npcfwActive() then return false end
+    if z == nil then return false end
+    if type(npcfwIsPlayerFactionMember) == "function" then
+        local member = false
+        pcall(function() member = npcfwIsPlayerFactionMember(z) == true end)
+        if member then return true end
+    end
+    local isNpc, classification = BridgeData.npcfwNpc(z)
+    if not isNpc then return false end
+    if classification == "COMPANION" or classification == "FACTION"
+            or classification == "BASE_RESIDENT" or classification == "NEUTRAL" then
+        return true
+    end
+    if type(npcfwGetAssignmentOf) == "function" then
+        local assignment = nil
+        pcall(function() assignment = npcfwGetAssignmentOf(z) end)
+        if assignment == "BASE_RESIDENT" then return true end
+    end
+    return false
+end
+
 function BridgeData.harmless(z)
     return BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.foreignPeaceful(z)
+        or BridgeData.npcfwPeaceful(z)
 end
 
 
