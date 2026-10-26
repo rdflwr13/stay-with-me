@@ -1775,7 +1775,7 @@ local function gunPeaceful(z, player)
     return nil
 end
 
-local function gunTarget(args)
+local function gunTarget(player, args)
     local target = nil
     local tid = tonumber(args and args.targetId)
     pcall(function()
@@ -1825,12 +1825,35 @@ local function gunTarget(args)
             end
         end)
     end
+    if target == nil and BridgeKnoxNpc ~= nil then
+        pcall(function()
+            local id = tonumber(args and args.npcId)
+            if id == nil then return end
+            local npc = BridgeKnoxNpc.byId(id)
+            if npc ~= nil and BridgeKnoxNpc.hostile(npc, player) then target = npc end
+            if target ~= nil then return end
+            local x, y, zz = tonumber(args.x), tonumber(args.y), tonumber(args.z)
+            if x == nil or y == nil or zz == nil then return end
+            local list = BridgeKnoxNpc.near(x, y, 1.5, player)
+            for i = 1, #list do
+                local n = list[i]
+                if n ~= nil and math.abs(n:getZ() - zz) < 0.5 and dist(n, x, y) <= 1.0 then
+                    target = n
+                    return
+                end
+            end
+        end)
+    end
     return target
 end
 
 
 local function applyGunHit(body, gun, target, damage, crit)
     if body == nil or gun == nil or target == nil then return false, 0, 0, false, nil end
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(target) then
+        local ok, hpB, hpA, killed = BridgeKnoxNpc.hit(target, body, gun, damage, crit)
+        return ok, hpB, hpA, killed, nil
+    end
     if instanceof(target, "IsoAnimal") then
         local hpBefore = 0
         pcall(function() hpBefore = target:getHealth() end)
@@ -1967,10 +1990,11 @@ BridgeServer.Commands.gunShot = function(player, args)
         return reject("out of ammo")
     end
 
-    local target = gunTarget(args)
+    local target = gunTarget(player, args)
     if target == nil then return reject("no target") end
     if target == body or BridgeServer.isCompanionBody(target) then return reject("companion target") end
-    if not BridgeGunRules.foreignGunAllowed(target, function(z) return gunPeaceful(z, player) end) then
+    local knoxTarget = BridgeKnoxNpc ~= nil and BridgeKnoxNpc.allowGunTarget(target, player)
+    if not knoxTarget and not BridgeGunRules.foreignGunAllowed(target, function(z) return gunPeaceful(z, player) end) then
         return reject("friendly npc")
     end
 

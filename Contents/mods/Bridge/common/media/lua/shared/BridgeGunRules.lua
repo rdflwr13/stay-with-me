@@ -794,7 +794,9 @@ function BridgeGunRules.isForeignNpc(z)
     local who = nil
     pcall(function()
         if z == nil then return end
-        if type(z.hasModData) == "function" and z:hasModData() == false then return end
+        local npc = false
+        pcall(function() npc = instanceof(z, "IsoNpcPlayer") end)
+        if not npc and type(z.hasModData) == "function" and z:hasModData() == false then return end
         local md = nil
         pcall(function() md = z:getModData() end)
         if md ~= nil then
@@ -817,6 +819,7 @@ function BridgeGunRules.isForeignNpc(z)
             pcall(function() ours = PS.Bodies.isOurs(z) == true end)
             if ours then who = "Project Survivors" end
         end
+        if who == nil and npc then who = "Knox Event Expanded" end
     end)
     return who
 end

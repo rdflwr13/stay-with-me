@@ -608,6 +608,29 @@ end
 
 local function hitTarget(body, item, victim, noMiss, fixedDmg)
     local isAnimal = instanceof(victim, "IsoAnimal")
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(victim) then
+        local range = item:getMaxRange()
+        local d = dist(body, victim)
+        if d >= range + 0.3 then return string.format("miss range d=%.2f r=%.2f", d, range) end
+        if wallBetween(body, victim) then return "miss wall" end
+        local miss = 0
+        if not noMiss then
+            miss = missChance(body)
+            if ZombRand(100) >= 100 - miss then
+                return string.format("miss roll (%.0f%% f=%.2f crowd=%d)", miss, BridgeFight.fatigue, BridgeFight.crowd)
+            end
+        end
+        local crit, critChance, critMult, dmg, rawDmg, headFloor = computeSwing(item, fixedDmg)
+        local hpBefore = 0
+        pcall(function() hpBefore = victim:getHealth() end)
+        BridgeKnoxNpc.hit(victim, body, item, dmg, crit)
+        combatTextHit(victim, item, crit)
+        tire(item, rawDmg, hpBefore, false, body)
+        pcall(function() if BridgeSkills ~= nil then BridgeSkills.add("Strength", 1, "hit") end end)
+        vlog(string.format("hit knox npc %s dmg=%.2f hp=%.2f crit=%.0f%%", tostring(item:getType()),
+            dmg, hpBefore, critChance))
+        return "hit"
+    end
     local fake = isAnimal and nil or getCell():getFakeZombieForHit()
     local range = item:getMaxRange()
     local d = dist(body, victim)
@@ -916,6 +939,29 @@ local function pickTarget(body, red, mode)
             end
         end)
     end
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.allowMelee() then
+        pcall(function()
+            local npcs = BridgeKnoxNpc.near(bx, by, maxNear, red)
+            for i = 1, #npcs do
+                local n = npcs[i]
+                local zz = n:getZ()
+                if math.abs(zz - rz) < 0.8 and BridgeFight.blacklist[n] == nil and visible(n, red) then
+                    local dSelf = dist(n, body)
+                    local dRed = dist(n, red)
+                    local near = dSelf < mode.engageSelf or (not BridgeFight.guardOnly and dRed < mode.engageRed)
+                    if near then
+                        local score = BridgeFight.threat(n, body, red, mode)
+                        if BridgeAim ~= nil and BridgeAim.zone.on and BridgeAim.inCone(n:getX(), n:getY(), n:getZ()) then
+                            score = score + (BridgeAim.TARGET_PENALTY or 30)
+                        end
+                        if score < bestD then
+                            best, bestD = n, score
+                        end
+                    end
+                end
+            end
+        end)
+    end
     return best
 end
 
@@ -932,6 +978,18 @@ end
 local function validTarget(z, body, red, mode)
     mode = mode or BridgeFight.mode()
     if z == nil then return false end
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(z) then
+        if not BridgeKnoxNpc.hostile(z, red) then return false end
+        local ok, alive = pcall(function() return z:isAlive() == true and z:isDead() ~= true end)
+        if not ok or not alive then return false end
+        if math.abs(z:getZ() - red:getZ()) >= 0.8 then return false end
+        if not visible(z, red) then return false end
+        if BridgeFight.guardOnly then
+            return dist(z, body) <= BridgeData.COMBAT.bodyguard.targetMax
+        end
+        local d = mode.rank == "self" and dist(z, body) or dist(z, red)
+        return d <= mode.targetMax
+    end
     if instanceof(z, "IsoAnimal") then
         if BridgeAnimals == nil or not BridgeAnimals.hostile(z) then return false end
         if not z:isAlive() then return false end
@@ -1311,6 +1369,7 @@ end
 local function wantShove(body, t, item)
     if SHOVE_ON ~= 1 then return false end
     if t == nil or instanceof(t, "IsoAnimal") then return false end
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(t) then return false end
     if isProne(t) then return false end
     if Bridge.time < (BridgeFight.shoveReadyAt or 0) then return false end
     if (BridgeFight.shoveStreak or 0) >= SHOVE_STREAK_MAX then return false end

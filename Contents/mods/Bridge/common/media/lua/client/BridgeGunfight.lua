@@ -709,6 +709,9 @@ end
 local function targetOk(z, body, red)
     if z == nil or body == nil or z == body then return false end
     if Bridge.body ~= nil and z == Bridge.body then return false end
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(z) then
+        return BridgeKnoxNpc.allowGunTarget(z, red)
+    end
     if companionBody(z) then return false end
     if not BridgeGunRules.foreignGunAllowed(z, BridgeData.foreignPeaceful) then return false end
     if instanceof(z, "IsoAnimal") then
@@ -784,6 +787,20 @@ local function pickTarget(body, red)
                 end
             end
         end
+    end
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.active() then
+        pcall(function()
+            local npcs = BridgeKnoxNpc.near(bx, by, range, red)
+            for i = 1, #npcs do
+                local n = npcs[i]
+                if math.abs(n:getZ() - bz) < 0.8 and targetOk(n, body, red) then
+                    local dS = dist(body, n)
+                    if dS <= range then
+                        cands[#cands + 1] = { z = n, score = dist(red, n) + dS * 0.01 }
+                    end
+                end
+            end
+        end)
     end
     if #cands == 0 then return nil end
     table.sort(cands, function(a, b) return a.score < b.score end)
@@ -1197,6 +1214,10 @@ local function applyGunHit(body, item, gun, target, damage, crit)
     if body == nil or item == nil or gun == nil or target == nil then
         return false, 0, 0, false, "ShotBelly", "missing argument"
     end
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(target) then
+        local ok, hpB, hpA, killed = BridgeKnoxNpc.hit(target, body, item, damage, crit)
+        return ok, hpB, hpA, killed, nil, nil
+    end
     local hpBefore = 0
     pcall(function() hpBefore = target:getHealth() end)
     local fake = nil
@@ -1291,11 +1312,16 @@ local function fire(body)
     if Bridge ~= nil and Bridge.mp then
         local onlineId = nil
         pcall(function() onlineId = t:getOnlineID() end)
+        local npcId = nil
+        if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(t) then
+            npcId = BridgeKnoxNpc.idOf(t)
+            if npcId ~= nil then onlineId = nil end
+        end
         local x, y, z = t:getX(), t:getY(), t:getZ()
         BridgeGunfight.pendingShot = { at = Bridge.time, chance = chance, dist = d, target = t }
         pcall(function()
             sendClientCommand(BridgeData.owner(), "Bridge", "gunShot",
-                { targetId = onlineId, x = x, y = y, z = z })
+                { targetId = onlineId, npcId = npcId, x = x, y = y, z = z })
         end)
         vlog(string.format("shot request -> %s d=%.1f chance=%.0f%%", tostring(item:getType()), d, chance))
         BridgeGunfight.info = string.format("request d=%.1f chance=%.0f", d, chance)
