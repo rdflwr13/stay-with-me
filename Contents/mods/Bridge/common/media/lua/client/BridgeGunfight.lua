@@ -2789,9 +2789,9 @@ function BridgeGunfight.update(body)
         reserveNeed = reserve == "conserve" and 4 or 13
         reserveBlocked = reserveN < reserveNeed
 
-        -- Upkeep (reload a magazine, open an ammo box) is preparation, not engagement.
-        -- Run it even while the reserve holds her on melee, otherwise she never reloads
-        -- until the horde arrives and then reloads mid-fight.
+
+
+
         if reserveBlocked and idleScan and BridgeGunfight.target == nil
             and (BridgeFight == nil or BridgeFight.target == nil) then
             if BridgeGunfight.gun ~= nil and BridgeGunfight.gun.magazineType ~= nil

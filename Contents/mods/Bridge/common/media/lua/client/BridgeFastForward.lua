@@ -259,7 +259,7 @@ function BridgeFastForward.animalsNear(b, every)
                 local dx, dy = o:getX() - bx, o:getY() - by
                 local d = math.sqrt(dx * dx + dy * dy)
                 if nearest == nil or d < nearest then nearest = d end
-                if d <= r and math.abs(o:getZ() - bz) <= 1 then
+                if d <= r and math.abs(o:getZ() - bz) <= 1 and BridgeFastForward.watchAnimal(o) then
                     found = true
 
                     if BridgeFastForward.flagged ~= nil and not BridgeFastForward.recentlyExposed(now) then
@@ -307,9 +307,9 @@ end
 
 
 local function companionAnimal(a)
-    local cd = false
-    pcall(function() cd = a:hasModData() and a:getModData().CompanionDogs ~= nil end)
-    return cd
+    local cd = nil
+    pcall(function() cd = a:hasModData() and a:getModData().CompanionDogs or nil end)
+    return type(cd) == "table" and cd.companion == true
 end
 
 
@@ -317,6 +317,34 @@ local function leashed(a)
     local on = false
     pcall(function() on = a:getData():getAttachedPlayer() ~= nil end)
     return on
+end
+
+
+function BridgeFastForward.watchFlags(hostile, animal, wild, zoned)
+    if hostile == true then return true end
+    return animal == true and wild == true and zoned ~= true
+end
+
+function BridgeFastForward.watchAnimal(a)
+    if a == nil then return false end
+    local hostile = false
+    if BridgeAnimals ~= nil and BridgeAnimals.hostile ~= nil then
+        pcall(function() hostile = BridgeAnimals.hostile(a) == true end)
+    end
+    if hostile then return true end
+    if companionAnimal(a) or leashed(a) then return false end
+    local animal, wild, zoned = false, false, false
+    pcall(function() animal = instanceof(a, "IsoAnimal") == true end)
+    if not animal then return false end
+    if a.isWild ~= nil then pcall(function() wild = a:isWild() == true end) end
+    if wild then
+        pcall(function()
+            if DesignationZoneAnimal ~= nil and DesignationZoneAnimal.getZone ~= nil then
+                zoned = DesignationZoneAnimal.getZone(a:getX(), a:getY(), a:getZ()) ~= nil
+            end
+        end)
+    end
+    return BridgeFastForward.watchFlags(false, animal, wild, zoned)
 end
 BridgeFastForward.FLEE_R = 6.5
 
@@ -341,7 +369,8 @@ function BridgeFastForward.noteScared(b, now)
             if not a:isDead() and not (BridgeAnimals ~= nil and BridgeAnimals.hostile(a)) then
                 local dx, dy = a:getX() - bx, a:getY() - by
                 local d2 = dx * dx + dy * dy
-                if d2 <= r2 and math.abs(a:getZ() - bz) <= 1 and not companionAnimal(a) then
+                if d2 <= r2 and math.abs(a:getZ() - bz) <= 1
+                        and not companionAnimal(a) and not leashed(a) then
                     local rec = BridgeFastForward.scared[a]
                     if rec == nil then
                         local base = BridgeFastForward.stress[a]
@@ -555,6 +584,7 @@ end
 
 function BridgeFastForward.tick()
     if not BridgeFastForward.enabled then return end
+    if Bridge == nil then return end
     local mp = false
     pcall(function() mp = isClient() or isServer() end)
     if mp then
@@ -750,6 +780,24 @@ function BridgeFastForward.sight()
         seen = sq ~= nil and (sq:isCanSee(pn) or sq:isCouldSee(pn))
         b:setAlphaAndTarget(pn, seen and 1 or 0)
     end)
+end
+
+
+function BridgeFastForward.selftest()
+    local checks, fails = 0, {}
+    local function check(name, got, want)
+        checks = checks + 1
+        if got ~= want then
+            fails[#fails + 1] = string.format("%s got=%s want=%s", name, tostring(got), tostring(want))
+        end
+    end
+    check("hostile zoned", BridgeFastForward.watchFlags(true, false, false, true), true)
+    check("wild free", BridgeFastForward.watchFlags(false, true, true, false), true)
+    check("wild zoned", BridgeFastForward.watchFlags(false, true, true, true), false)
+    check("companion", BridgeFastForward.watchFlags(false, true, false, false), false)
+    check("not animal", BridgeFastForward.watchFlags(false, false, true, false), false)
+    if #fails == 0 then return string.format("ffselftest PASS (%d checks)", checks) end
+    return string.format("ffselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
 end
 
 
