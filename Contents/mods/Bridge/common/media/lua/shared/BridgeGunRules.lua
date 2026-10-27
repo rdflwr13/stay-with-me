@@ -11,6 +11,14 @@ BridgeGunRules.MAX_CHANCE = 95
 BridgeGunRules.NPC_DAMAGE_SCALE = 3.0
 BridgeGunRules.FRIENDLY_RADIUS = 0.9
 BridgeGunRules.MARK = "bridgePrimaryGun"
+BridgeGunRules.ATY_CORRIDOR = 2.0
+BridgeGunRules.ATY_CORRIDOR_SHOTGUN = 4.6
+BridgeGunRules.ATY_DAMAGE_SCALE = 1.0
+BridgeGunRules.PLANT_TICKS = 60
+BridgeGunRules.TURN_TICKS_MAX = 24
+BridgeGunRules.RETARGET_TICKS = 30
+BridgeGunRules.MOVE_EPS = 0.02
+BridgeGunRules.MOVE_WINDOW = 6
 
 local function num(fn, fallback)
     local value = fallback
@@ -769,6 +777,140 @@ function BridgeGunRules.multiPlan(body, primary, desc, candidates, modeRange, op
         return plan
     end
     return plan
+end
+
+
+function BridgeGunRules.atyOn()
+    if BridgeGunRules.atyCache ~= nil then return BridgeGunRules.atyCache end
+    local on = false
+    pcall(function()
+        local mods = getActivatedMods()
+        for i = 0, mods:size() - 1 do
+            local id = string.lower(tostring(mods:get(i)))
+            if string.sub(id, 1, 1) == "\\" then id = string.sub(id, 2) end
+            if string.find(id, "trajector", 1, true) ~= nil
+                or string.sub(id, 1, 3) == "aty" then on = true end
+        end
+    end)
+    BridgeGunRules.atyCache = on
+    return on
+end
+
+
+function BridgeGunRules.atyShotgun(desc)
+    local key = string.lower(tostring(desc and desc.ammoTypeKey or ""))
+    return string.find(key, "shotgun", 1, true) ~= nil
+end
+
+
+function BridgeGunRules.atyShotgunnum(override)
+    if override ~= nil then return math.max(0, math.floor(tonumber(override) or 1)) end
+    if BridgeGunRules.atyNum ~= nil then return BridgeGunRules.atyNum end
+    local num = 1
+    pcall(function()
+        local opt = getSandboxOptions():getOptionByName("Advanced_trajectory.shotgunnum")
+        if opt ~= nil then num = math.max(0, math.floor(tonumber(opt:getValue()) or 1)) end
+    end)
+    BridgeGunRules.atyNum = num
+    return num
+end
+
+
+function BridgeGunRules.atyCap(desc, shotgunnum)
+    local mh = math.max(1, math.floor(tonumber(desc and desc.maxHitCount) or 1))
+    if BridgeGunRules.atyShotgun(desc) then
+        return math.max(1, math.floor(mh / 2) + BridgeGunRules.atyShotgunnum(shotgunnum))
+    end
+    return mh
+end
+
+
+function BridgeGunRules.atyScale(shotgun, lateral, dist, modeRange)
+    local scale
+    if shotgun then
+        local r = 0
+        if modeRange ~= nil and modeRange > 0 then
+            r = math.max(0, math.min(1, (tonumber(dist) or 0) / modeRange))
+        end
+        scale = 1 - 0.5 * r
+    else
+        scale = 1 - math.min(1, math.max(0, (tonumber(lateral) or 0) / 2))
+    end
+    return scale * BridgeGunRules.ATY_DAMAGE_SCALE
+end
+
+
+function BridgeGunRules.atyPlan(body, primary, desc, candidates, modeRange)
+    local plan = { kind = "aty", extras = {}, primaryShare = 1 }
+    if body == nil or primary == nil or type(desc) ~= "table" then return plan end
+    local shotgun = BridgeGunRules.atyShotgun(desc)
+    local cap = BridgeGunRules.atyCap(desc)
+    local half = shotgun and BridgeGunRules.ATY_CORRIDOR_SHOTGUN or BridgeGunRules.ATY_CORRIDOR
+    local range = tonumber(modeRange) or tonumber(desc.range) or 0
+    local bx, by = body:getX(), body:getY()
+    local px, py = primary:getX(), primary:getY()
+    local pdx, pdy = px - bx, py - by
+    local pd = math.sqrt(pdx * pdx + pdy * pdy)
+    if pd < 0.001 or range <= 0 then return plan end
+    local ux, uy = pdx / pd, pdy / pd
+    plan.primaryShare = BridgeGunRules.atyScale(shotgun, 0, pd, range)
+
+    local list = {}
+    if cap > 1 then
+        for _, z in ipairs(candidates or {}) do
+            if z ~= nil and z ~= body and z ~= primary then
+                local dx, dy = z:getX() - bx, z:getY() - by
+                local along = dx * ux + dy * uy
+                local lateral = math.abs(dx * uy - dy * ux)
+                if along > 0 and along <= range + 0.9 and lateral <= half then
+                    local scale = BridgeGunRules.atyScale(shotgun, lateral, along, range)
+                    if scale > 0.02 then
+                        list[#list + 1] = { target = z, share = scale, forceHit = true,
+                            dist = along, lateral = lateral }
+                    end
+                end
+            end
+        end
+        table.sort(list, function(a, b)
+            if math.abs(a.dist - b.dist) > 0.0001 then return a.dist < b.dist end
+            return a.lateral < b.lateral
+        end)
+        while #list > cap - 1 do table.remove(list) end
+    end
+    plan.extras = list
+    return plan
+end
+
+
+function BridgeGunRules.aimAngle(fx, fy, tx, ty)
+    local ax, ay = tonumber(fx) or 0, tonumber(fy) or 0
+    local bx, by = tonumber(tx) or 0, tonumber(ty) or 0
+    local la = math.sqrt(ax * ax + ay * ay)
+    local lb = math.sqrt(bx * bx + by * by)
+    if la < 0.001 or lb < 0.001 then return 0 end
+    local c = (ax * bx + ay * by) / (la * lb)
+    if c < -1 then c = -1 elseif c > 1 then c = 1 end
+    return math.acos(c)
+end
+
+
+function BridgeGunRules.turnTicks(angle)
+    local a = tonumber(angle) or 0
+    if a < 0 then a = 0 elseif a > math.pi then a = math.pi end
+    local x = a / math.pi * BridgeGunRules.TURN_TICKS_MAX
+    return math.floor(x + 0.5)
+end
+
+
+function BridgeGunRules.plantTicks(moving)
+    if moving == true then return BridgeGunRules.PLANT_TICKS end
+    return 0
+end
+
+
+function BridgeGunRules.retargetTicks(changed)
+    if changed == true then return BridgeGunRules.RETARGET_TICKS end
+    return 0
 end
 
 
@@ -1884,6 +2026,68 @@ function BridgeGunRules.selftest()
     if realPump ~= nil then check("talkKind Base.Shotgun", BridgeGunRules.talkKind(realPump), "Shotgun") end
     local realRifle = descOf("Base.HuntingRifle")
     if realRifle ~= nil then check("talkKind Base.HuntingRifle", BridgeGunRules.talkKind(realRifle), "Rifle") end
+
+    BridgeGunRules.atyCache = nil
+    BridgeGunRules.atyNum = nil
+    local fake = function(x, y)
+        return { getX = function() return x end, getY = function() return y end }
+    end
+    check("atyShotgun key", BridgeGunRules.atyShotgun({ ammoTypeKey = "Base.ShotgunShells" }), true)
+    check("atyShotgun pistol", BridgeGunRules.atyShotgun({ ammoTypeKey = "Base.Bullets45" }), false)
+    check("atyShotgun nil", BridgeGunRules.atyShotgun(nil), false)
+    local pump = { ammoTypeKey = "Base.ShotgunShells", maxHitCount = 9 }
+    check("atyCap shotgun 9 num1", BridgeGunRules.atyCap(pump, 1), 5)
+    check("atyCap shotgun 9 num0", BridgeGunRules.atyCap(pump, 0), 4)
+    check("atyCap pistol 1", BridgeGunRules.atyCap({ ammoTypeKey = "Base.Bullets45", maxHitCount = 1 }, 1), 1)
+    check("atyCap rifle 2", BridgeGunRules.atyCap({ ammoTypeKey = "Base.308", maxHitCount = 2 }, 1), 2)
+    check("atyScale lateral 0", BridgeGunRules.atyScale(false, 0, 10, 20), 1)
+    check("atyScale lateral 1", BridgeGunRules.atyScale(false, 1, 10, 20), 0.5)
+    check("atyScale lateral 2", BridgeGunRules.atyScale(false, 2, 10, 20), 0)
+    check("atyScale lateral 3", BridgeGunRules.atyScale(false, 3, 10, 20), 0)
+    check("atyScale shotgun near", BridgeGunRules.atyScale(true, 0, 0, 20), 1)
+    check("atyScale shotgun mid", BridgeGunRules.atyScale(true, 0, 10, 20), 0.75)
+    check("atyScale shotgun max", BridgeGunRules.atyScale(true, 0, 20, 20), 0.5)
+    check("atyScale shotgun over", BridgeGunRules.atyScale(true, 0, 40, 20), 0.5)
+    local shooter = fake(0, 0)
+    local primary = fake(5, 0)
+    local near = fake(2, 0.5)
+    local mid = fake(3, -1)
+    local far = fake(6, 0.2)
+    local wide = fake(1, 2.5)
+    local plan = BridgeGunRules.atyPlan(shooter, primary,
+        { ammoTypeKey = "Base.308", maxHitCount = 3 }, { far, wide, mid, near, primary }, 20)
+    check("atyPlan kind", plan.kind, "aty")
+    check("atyPlan primaryShare", plan.primaryShare, 1)
+    check("atyPlan extras", #plan.extras, 2)
+    check("atyPlan first", plan.extras[1] and plan.extras[1].target, near)
+    check("atyPlan second", plan.extras[2] and plan.extras[2].target, mid)
+    check("atyPlan forceHit", plan.extras[1] and plan.extras[1].forceHit, true)
+    check("atyPlan near share", plan.extras[1] and plan.extras[1].share, 0.75)
+    check("atyPlan wide skipped", plan.extras[1] and plan.extras[1].target ~= wide, true)
+    local solo = BridgeGunRules.atyPlan(shooter, primary,
+        { ammoTypeKey = "Base.Bullets45", maxHitCount = 1 }, { near }, 20)
+    check("atyPlan cap1 extras", #solo.extras, 0)
+    local sgPlan = BridgeGunRules.atyPlan(fake(0, 0), fake(10, 0), pump, {}, 20)
+    check("atyPlan shotgun share", sgPlan.primaryShare, 0.75)
+    check("atyPlan shotgun no extras", #sgPlan.extras, 0)
+    BridgeGunRules.atyCache = nil
+    BridgeGunRules.atyNum = nil
+
+    check("turnTicks 0", BridgeGunRules.turnTicks(0), 0)
+    check("turnTicks quarter", BridgeGunRules.turnTicks(math.pi / 2), 12)
+    check("turnTicks pi", BridgeGunRules.turnTicks(math.pi), 24)
+    check("turnTicks over", BridgeGunRules.turnTicks(5), 24)
+    check("turnTicks negative", BridgeGunRules.turnTicks(-1), 0)
+    check("turnTicks nil", BridgeGunRules.turnTicks(nil), 0)
+    check("plantTicks true", BridgeGunRules.plantTicks(true), 60)
+    check("plantTicks false", BridgeGunRules.plantTicks(false), 0)
+    check("plantTicks nil", BridgeGunRules.plantTicks(nil), 0)
+    check("retargetTicks true", BridgeGunRules.retargetTicks(true), 30)
+    check("retargetTicks false", BridgeGunRules.retargetTicks(false), 0)
+    check("retargetTicks nil", BridgeGunRules.retargetTicks(nil), 0)
+    check("aimAngle same", BridgeGunRules.aimAngle(1, 0, 1, 0), 0)
+    check("aimAngle quarter", string.format("%.2f", BridgeGunRules.aimAngle(1, 0, 0, 1)), "1.57")
+    check("aimAngle empty", BridgeGunRules.aimAngle(0, 0, 1, 1), 0)
 
     if #fails == 0 then return string.format("gunselftest PASS (%d checks)", checks) end
     return string.format("gunselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
