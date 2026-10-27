@@ -103,6 +103,86 @@ end
 BridgeItems.MD_MAX = 800
 BridgeItems.PAGES_MAX = 1500
 
+
+local function ammoNumber(fn)
+    local value = nil
+    pcall(function() value = fn() end)
+    if type(value) ~= "number" then return 0 end
+    return math.floor(value)
+end
+
+
+local function handWeapon(item)
+    if item == nil then return false end
+    local ok, value = pcall(function() return instanceof(item, "HandWeapon") end)
+    return ok and value == true
+end
+
+
+function BridgeItems.packAmmoList(list, item)
+    if type(list) ~= "table" then return nil end
+    local source = {}
+    for i = 1, #list do
+        local value = list[i]
+        if type(value) == "string" and value ~= "" then source[#source + 1] = value end
+    end
+    local target = #source
+    local chambered = false
+    local weapon = handWeapon(item)
+    if item ~= nil then
+        target = math.max(0, ammoNumber(function() return item:getCurrentAmmoCount() end))
+        if weapon then
+            pcall(function() chambered = item:isRoundChambered() == true end)
+        end
+        if chambered then target = target + 1 end
+    end
+    while #source > target do source[#source] = nil end
+    if #source < target then
+        local fill = source[#source]
+        if (type(fill) ~= "string" or fill == "") and weapon then
+            pcall(function()
+                local ammo = item:getAmmoType()
+                if ammo ~= nil then fill = ammo:getItemKey() end
+            end)
+        end
+        if type(fill) ~= "string" or fill == "" then return nil end
+        while #source < target do
+            if chambered and #source > 0 then
+                table.insert(source, #source, fill)
+            else
+                source[#source + 1] = fill
+            end
+        end
+    end
+    if #source == 0 then return nil end
+    local runs = {}
+    local last, count = nil, 0
+    for i = 1, #source do
+        local value = source[i]
+        if value == last then
+            count = count + 1
+        else
+            if last ~= nil then runs[#runs + 1] = last .. "*" .. count end
+            last, count = value, 1
+        end
+    end
+    if last ~= nil then runs[#runs + 1] = last .. "*" .. count end
+    return table.concat(runs, "+")
+end
+
+
+function BridgeItems.unpackAmmoList(text)
+    if type(text) ~= "string" or text == "" then return nil end
+    local out = {}
+    for entry in string.gmatch(text, "[^+]+") do
+        local itemType, count = string.match(entry, "^(.+)%*(%d+)$")
+        local n = tonumber(count)
+        if itemType == nil or itemType == "" or n == nil or n < 0 or n > 100000 then return nil end
+        for _ = 1, n do out[#out + 1] = itemType end
+    end
+    return out
+end
+
 local function warn(text) print("[BridgeItems] " .. tostring(text)) end
 local warned = {}
 local function warnOnce(key, text)
@@ -169,11 +249,21 @@ function BridgeItems.record(item, deep)
     end)
     try(function()
         if item:IsWeapon() then
+            local tw = nil
+            if BridgeGunRules ~= nil and type(BridgeGunRules.efzTreeString) == "function" then
+                tw = BridgeGunRules.efzTreeString(item)
+            end
+            if tw ~= nil then rec.tw = tw end
             local parts = item:getAllWeaponParts()
             if parts ~= nil and parts:size() > 0 then
                 local names = {}
                 for i = 0, parts:size() - 1 do names[#names + 1] = parts:get(i):getFullType() end
-                rec.wp = table.concat(names, "+")
+                local wpText = table.concat(names, "+")
+                if rec.tw == nil then
+                    rec.wp = wpText
+                else
+                    rec.legacyWpSize = #wpText
+                end
             end
         end
     end)
@@ -207,7 +297,11 @@ function BridgeItems.record(item, deep)
         if item:IsWeapon() then
             local n = item:getCurrentAmmoCount()
             if n ~= nil and n > 0 then rec.am = n end
-            if item:isContainsClip() then rec.cl = true end
+            if item:isContainsClip() then
+                rec.cl = true
+                local mag = item:getMagazineType()
+                if type(mag) == "string" and mag ~= "" then rec.mag = mag end
+            end
             if item:isRoundChambered() then rec.ch = true end
         end
     end)
@@ -269,10 +363,15 @@ function BridgeItems.record(item, deep)
 
 
     try(function()
+        local ammoList = nil
+        pcall(function()
+            local data = item:getModData()
+            if type(data) == "table" and type(data.AmmoList) == "table" then ammoList = data.AmmoList end
+        end)
+        if ammoList ~= nil then rec.al = BridgeItems.packAmmoList(ammoList, item) end
         if item.hasModData ~= nil and item:hasModData() == true then
             local md = plainCopy(item:getModData(), 1)
-
-
+            if md ~= nil and ammoList ~= nil then md.AmmoList = nil end
 
             if md ~= nil and not deep then
                 md.Tooltip = nil
@@ -289,6 +388,11 @@ function BridgeItems.record(item, deep)
                     warnOnce("md:" .. tostring(rec.t), "item data of " .. tostring(rec.t) .. " is too big for the snapshot, skipped")
                 end
             end
+        end
+    end)
+    try(function()
+        if BridgeGunRules ~= nil and type(BridgeGunRules.efzNoteSizes) == "function" then
+            BridgeGunRules.efzNoteSizes(rec)
         end
     end)
 
@@ -414,6 +518,18 @@ end
 
 
 function BridgeItems.apply(item, rec)
+    local efzTree = nil
+    if type(rec.tw) == "string" and rec.tw ~= "" then
+        if BridgeGunRules == nil or type(BridgeGunRules.efzParseTree) ~= "function"
+            or type(BridgeGunRules.efzApplyTree) ~= "function" then
+            return false, "efz-unavailable"
+        end
+        local tree = BridgeGunRules.efzParseTree(rec.tw)
+        if tree == nil then return false, "efz-tree" end
+        local ok, why = BridgeGunRules.efzApplyTree(item, tree)
+        if not ok then return false, tostring(why or "efz-apply") end
+        efzTree = tree
+    end
     if rec.c ~= nil then try(function() item:setCondition(rec.c) end) end
     if rec.hc ~= nil then try(function() if item.setHeadCondition ~= nil then item:setHeadCondition(rec.hc) end end) end
     if rec.sh ~= nil then try(function() if item.setSharpness ~= nil then item:setSharpness(rec.sh) end end) end
@@ -441,8 +557,15 @@ function BridgeItems.apply(item, rec)
             end
         end)
     end
-    if rec.cl then try(function() item:setContainsClip(true) end) end
+    if rec.cl and efzTree == nil then try(function() item:setContainsClip(true) end) end
     if rec.ch then try(function() item:setRoundChambered(true) end) end
+    if efzTree == nil and type(rec.mag) == "string" and rec.mag ~= "" then
+        try(function() item:setMagazineType(rec.mag) end)
+        try(function()
+            local mag = instanceItem(rec.mag)
+            if mag ~= nil then item:setMaxAmmo(mag:getMaxAmmo()) end
+        end)
+    end
     if rec.fl ~= nil and rec.fa ~= nil then
         try(function()
             local fc = item:getFluidContainer()
@@ -456,7 +579,7 @@ function BridgeItems.apply(item, rec)
             if fc ~= nil and not fc:isEmpty() then fc:Empty() end
         end)
     end
-    if rec.wp ~= nil then
+    if rec.wp ~= nil and efzTree == nil then
         try(function()
             for name in string.gmatch(rec.wp, "[^+]+") do
                 local part = instanceItem(name)
@@ -473,8 +596,28 @@ function BridgeItems.apply(item, rec)
     if type(rec.md) == "table" then
         try(function()
             local data = item:getModData()
-            for k, v in pairs(rec.md) do data[k] = v end
+            for k, v in pairs(rec.md) do
+                if efzTree == nil or (k ~= "MagazineType" and k ~= "MagazineTypeLastIndex") then
+                    data[k] = v
+                end
+            end
         end)
+    end
+    if type(rec.al) == "string" then
+        try(function()
+            local list = BridgeItems.unpackAmmoList(rec.al)
+            local data = item:getModData()
+            if list ~= nil and #list > 0 then data.AmmoList = list else data.AmmoList = nil end
+        end)
+    end
+    if efzTree ~= nil then
+        local runtime = BridgeGunRules.efzRuntime()
+        if runtime ~= nil and type(runtime.refresh) == "function" then pcall(runtime.refresh, item, nil) end
+        local mod = nil
+        pcall(function() mod = require("WeaponSystems/Utils/Magazine") end)
+        if type(mod) == "table" and type(mod.manageMagazineAttachment) == "function" then
+            pcall(mod.manageMagazineAttachment, item)
+        end
     end
     if rec.pg ~= nil then try(function() if item.setAlreadyReadPages ~= nil then item:setAlreadyReadPages(rec.pg) end end) end
     if rec.lk ~= nil then try(function() if item.setLockedBy ~= nil then item:setLockedBy(rec.lk) end end) end
@@ -505,13 +648,21 @@ function BridgeItems.apply(item, rec)
         end
         pcall(function() item:synchWithVisual() end)
     end)
+    return true
 end
 
 
 function BridgeItems.make(container, rec)
     local item = container:AddItem(rec.t)
     if item == nil then return nil end
-    BridgeItems.apply(item, rec)
+    local ok, why = BridgeItems.apply(item, rec)
+    if ok == false then
+        try(function()
+            local owner = item:getContainer()
+            if owner ~= nil then owner:Remove(item) end
+        end)
+        return nil, why
+    end
     if rec["in"] ~= nil then
         try(function()
             local inner = item:getInventory()
@@ -546,10 +697,10 @@ local NUM = { h = true, p = true, c = true, u = true, a = true, r = true, g = tr
               mi = true, pg = true, q = true, fp = true }
 local BOOL = { w = true, ck = true, bu = true, f = true, cl = true, ch = true, fe = true, as = true, cn = true }
 
-local TEXT = { n = true, lk = true, ga = true, gt = true, gp = true }
+local TEXT = { n = true, lk = true, ga = true, gt = true, gp = true, tw = true, al = true, mag = true }
 local PACKED = { md = true, cp = true }
 local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "fp", "r", "g", "b", "tc", "bt", "hue", "dec", "ho", "pa", "bl", "di", "k", "f", "ck", "bu",
-                "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp" }
+                "am", "cl", "ch", "fl", "fa", "fe", "wp", "tw", "al", "mag", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp" }
 local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", fa = "%.3f", sh = "%.3f", fp = "%.4f" }
 BridgeItems.MAX_LENGTH = 60000
 BridgeItems.BLOCK_RATIO = 0.92

@@ -585,6 +585,7 @@ end
 
 local function hands(body, item, on)
     if body == nil or item == nil then return end
+    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, body) end
     if Bridge.body ~= nil and body ~= Bridge.body then return end
     pcall(function()
         if on then
@@ -601,6 +602,7 @@ end
 
 function BridgeGunfight.syncHands(body)
     if body == nil or BridgeGunfight.drawn ~= true then return end
+    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, body) end
     if BridgeGunfight.magCareStage ~= nil then return end
     local item = BridgeGunfight.gunItem
     if item == nil then return end
@@ -2112,20 +2114,56 @@ local function refillNeed(body, gun)
 end
 
 
+local function ammoBoxProbe(body, gun)
+    local parts = {}
+    if body == nil or type(gun) ~= "table" then return "no gun" end
+    local efz = gun.efzAmmo
+    local efzBoxes = type(efz) == "table" and efz.boxSet or {}
+    local baseBox = gun.ammoBox
+    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+        local full = nil
+        pcall(function() full = item:getFullType() end)
+        if type(full) == "string" and (full == baseBox or efzBoxes[full] == true) then
+            local spec = efzBoxes[full] == true and BridgeGunRules.efzUnpackOf(full) or BridgeGunRules.unpackOf(full)
+            if spec ~= nil then
+                parts[#parts + 1] = string.format("%s -> %s x%s (%s)",
+                    full, tostring(spec.out and spec.out[1] or "?"), tostring(spec.amount), tostring(spec.recipe))
+            else
+                parts[#parts + 1] = full .. " -> unpack nil"
+            end
+        end
+    end
+    if #parts == 0 then return "none in inventory" end
+    return table.concat(parts, "; ")
+end
+
+
 local function startAmmoOpen(body)
     if body == nil or BridgeGunfight.gun == nil then return false end
     if BridgeGunfight.ammoItem ~= nil then return true end
-    if transferHoldsReload(body) then return false end
-    if BridgeGunfight.ammoCooldown ~= nil and (Bridge.time or 0) < BridgeGunfight.ammoCooldown then return false end
+    if transferHoldsReload(body) then
+        log("ammoOpen skip: inventory transfer holds reload")
+        return false
+    end
+    if BridgeGunfight.ammoCooldown ~= nil and (Bridge.time or 0) < BridgeGunfight.ammoCooldown then
+        log(string.format("ammoOpen skip: cooldown %s", tostring(BridgeGunfight.ammoCooldown - (Bridge.time or 0))))
+        return false
+    end
     if BridgeGunfight.gun.magazineType ~= nil and not BridgeData.optionOf(Bridge.store, "gunMagCare") then
         BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 600
-        vlog("ammo box skipped: magazine gun without magazine care")
+        log("ammoOpen skip: magazine gun without magazine care")
         return false
     end
     local need = refillNeed(body, BridgeGunfight.gun)
-    if need <= 0 then return false end
+    if need <= 0 then
+        log("ammoOpen skip: refill need 0")
+        return false
+    end
     local _, loose = BridgeGunRules.findLooseRounds(body, BridgeGunfight.gun, need)
-    if loose >= need then return false end
+    if loose >= need then
+        log(string.format("ammoOpen skip: loose rounds %d >= need %d", loose, need))
+        return false
+    end
     local danger = false
     pcall(function()
         local red = BridgeData.owner()
@@ -2143,7 +2181,7 @@ local function startAmmoOpen(body)
     end)
     if danger then
         BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 30
-        vlog("ammo box skipped: zombie at melee range")
+        log("ammoOpen skip: zombie at melee range")
         return false
     end
     local found, pick = pcall(BridgeGunRules.findAmmoBox, body, BridgeGunfight.gun)
@@ -2152,7 +2190,10 @@ local function startAmmoOpen(body)
         log("ammo box lookup failed: " .. tostring(pick))
         return false
     end
-    if pick == nil then return false end
+    if pick == nil then
+        log("ammoOpen none; boxes: " .. ammoBoxProbe(body, BridgeGunfight.gun))
+        return false
+    end
     BridgeGunfight.ammoItem = pick.item
     BridgeGunfight.ammoOut = pick.out
     BridgeGunfight.ammoAmount = pick.amount
@@ -2318,9 +2359,14 @@ local function outOfAmmo(body)
         local source = false
         local usable = BridgeGunfight.gun ~= nil
             and (BridgeGunfight.gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare"))
+        local found, pick = false, nil
         if usable then
-            pcall(function() source = BridgeGunRules.findAmmoBox(body, BridgeGunfight.gun) ~= nil end)
+            found, pick = pcall(BridgeGunRules.findAmmoBox, body, BridgeGunfight.gun)
+            source = found and pick ~= nil
         end
+        log(string.format("ammo out probe: usable=%s found=%s pick=%s out=%s; %s",
+            tostring(usable), tostring(found), tostring(pick and pick.type),
+            tostring(pick and pick.out), ammoBoxProbe(body, BridgeGunfight.gun)))
         local home = false
         pcall(function() home = BridgeFetch ~= nil and type(BridgeFetch.hasAmmoStock) == "function" and BridgeFetch.hasAmmoStock(BridgeGunfight.gun) end)
         if not source and not home then pcall(function() BridgeCallout.outOfAmmo() end) end

@@ -1071,6 +1071,10 @@ local function wearSaved(body)
     local list = BridgeInventory.decode(md.items)
     if #list == 0 then return nil end
     local worn, hands, bag = BridgeInventory.restore(body, list)
+    if worn == nil then
+        log("outfit restore aborted: " .. tostring(hands))
+        return nil
+    end
     return string.format("%d worn %d hands %d bag", worn, hands, bag)
 end
 
@@ -1517,6 +1521,7 @@ end
 
 
 function Bridge.adoptServerBody(zombie)
+    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, zombie) end
     pcall(function() humanize(zombie) end)
     pcall(function() BridgeWash.stop("new body") end)
     pcall(function() BridgeWeapon.reset() end)

@@ -1297,3 +1297,118 @@ Events.OnTick.Add(function()
     pcall(BridgeTetris.install)
 end)
 end
+
+do
+    BridgeEFZCompat = BridgeEFZCompat or {}
+    local installed = false
+    local reported = false
+
+    local function patch(body)
+        if installed or body == nil then return installed end
+        local zombie = false
+        pcall(function() zombie = instanceof(body, "IsoZombie") == true end)
+        if not zombie then return false end
+        local ok, mt = pcall(getmetatable, body)
+        if not ok or type(mt) ~= "table" then return false end
+        local index = mt.__index
+        if type(index) ~= "table" then return false end
+        if rawget(index, "isLocalPlayer") == nil then
+            rawset(index, "isLocalPlayer", function() return false end)
+        end
+        installed = true
+        if not reported then
+            reported = true
+            print("[BridgeCompat] installed IsoZombie.isLocalPlayer guard for EFZ equip events")
+        end
+        return true
+    end
+
+    function BridgeEFZCompat.patchBody(body) return patch(body) end
+    function BridgeEFZCompat.installed() return installed end
+
+    local function fromWorld()
+        if installed then return true end
+        local cell = nil
+        pcall(function() cell = getCell() end)
+        if cell == nil then return false end
+        local list = nil
+        pcall(function() list = cell:getZombieList() end)
+        if list == nil or list:size() == 0 then return false end
+        return patch(list:get(0))
+    end
+
+    Events.OnGameStart.Add(function()
+        pcall(fromWorld)
+        pcall(function() patch(Bridge ~= nil and Bridge.body or nil) end)
+    end)
+
+    local tries = 0
+    Events.OnTick.Add(function()
+        if installed then return end
+        tries = tries + 1
+        if tries % 30 ~= 0 then return end
+        pcall(fromWorld)
+        pcall(function() patch(Bridge ~= nil and Bridge.body or nil) end)
+    end)
+
+    local targets = nil
+    local targetsTried = false
+    local sentBody = nil
+
+    local function gripTargets()
+        if targets ~= nil then return targets end
+        if targetsTried then return nil end
+        targetsTried = true
+        local ok, mod = pcall(require, "TW/GripTargets")
+        if ok and type(mod) == "table" then targets = mod end
+        return targets
+    end
+
+    local function gripOff()
+        if sentBody ~= nil then
+            local zb = rawget(_G, "TWZB")
+            if zb ~= nil and type(zb.gripIKOff) == "function" then pcall(zb.gripIKOff, sentBody) end
+        end
+        sentBody = nil
+    end
+
+    local function gripBusy()
+        return BridgeGunfight ~= nil and (BridgeGunfight.reloadStage ~= nil or BridgeGunfight.magCareStage ~= nil)
+    end
+
+    local function gripUpdate()
+        local zb = rawget(_G, "TWZB")
+        local body = Bridge ~= nil and Bridge.body or nil
+        if body == nil or Bridge == nil or Bridge.kind ~= "zombie" or zb == nil or type(zb.gripIK) ~= "function" then
+            gripOff()
+            return
+        end
+        local zombie = false
+        pcall(function() zombie = instanceof(body, "IsoZombie") == true end)
+        if not zombie then gripOff() return end
+        local dead = false
+        pcall(function() dead = body:isDead() == true end)
+        if dead then gripOff() return end
+        local mods = gripTargets()
+        if mods == nil then gripOff() return end
+        local gun = nil
+        pcall(function() gun = body:getPrimaryHandItem() end)
+        local busy = gripBusy()
+        local value = nil
+        if gun ~= nil and not busy then
+            pcall(function() value = mods.forGun(gun, body:isFemale()) end)
+        end
+        if not value then gripOff() return end
+        if sentBody ~= nil and sentBody ~= body then gripOff() end
+        local moving = false
+        pcall(function() moving = body:isMoving() == true end)
+        local ok = pcall(zb.gripIK, body, gun, mods.carryParams(value, moving))
+        if not ok then gripOff() return end
+        if type(zb.gripIKActing) == "function" then pcall(zb.gripIKActing, body, false) end
+        sentBody = body
+    end
+
+    function BridgeEFZCompat.updateGrip() return gripUpdate() end
+
+    Events.OnTick.Add(function() pcall(gripUpdate) end)
+end
