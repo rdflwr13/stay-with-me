@@ -281,6 +281,13 @@ local function clearFields()
     BridgeGunfight.lastBump = nil
     BridgeGunfight.pendingShot = nil
     BridgeGunfight.moving = false
+    BridgeGunfight.stationarySince = 0
+    BridgeGunfight.lastX = nil
+    BridgeGunfight.lastY = nil
+    BridgeGunfight.walkingNow = false
+    BridgeGunfight.plantRequired = false
+    BridgeGunfight.retargetUntil = nil
+    BridgeGunfight.lastShotTarget = nil
     BridgeGunfight.missingSince = nil
     BridgeGunfight.rounds = 0
     BridgeGunfight.maxAmmo = 0
@@ -1078,6 +1085,14 @@ stopReposition = function(body)
 end
 
 
+local function stopForAim(body)
+    if body == nil then return end
+    pcall(function() if BridgeMove.onPath() then BridgeMove.stopPath(body) end end)
+    BridgeMove.moving = false
+    BridgeMove.steering = false
+end
+
+
 local function repositionTick(body, t, blocker)
     local gun = BridgeGunfight.gun
     if gun == nil then return false end
@@ -1460,6 +1475,9 @@ local function fire(body)
     BridgeGunfight.lastShotAt = Bridge.time
     BridgeGunfight.lastGunAt = Bridge.time
     BridgeGunfight.nextShotAt = (Bridge.time or 0) + math.max(24, (gun.recoilDelay or 24) + 6) + ZombRand(0, 6)
+    BridgeGunfight.lastShotTarget = t
+    BridgeGunfight.retargetUntil = (Bridge.time or 0) + BridgeGunRules.RETARGET_TICKS
+    BridgeGunfight.plantRequired = false
 
     if Bridge ~= nil and Bridge.mp then
         local onlineId = nil
@@ -1517,15 +1535,26 @@ local function fire(body)
     local shellDamage = 0
     local plan = { kind = nil, extras = {}, primaryShare = 1 }
     local range = BridgeGunfight.modeRange or gun.range or 0
+    local aty = BridgeGunRules.atyOn()
     if shotgun then
         pcall(function() crit = ZombRand(100) < (gun.critChance or 0) end)
         shellDamage = BridgeGunRules.rollDamage(gun)
         if crit then shellDamage = shellDamage * math.max(1, math.min(5, gun.critMult or 2)) end
-        plan = BridgeGunRules.multiPlan(body, t, gun, gunCandidates(body, red, t), range, {})
+        if not aty then
+            plan = BridgeGunRules.multiPlan(body, t, gun, gunCandidates(body, red, t), range, {})
+        end
     end
 
-    local roll = ZombRand(100)
-    local hit = roll < chance
+    local roll = 0
+    local hit = false
+    if aty then
+        plan = BridgeGunRules.atyPlan(body, t, gun, gunCandidates(body, red, t), range)
+        hit = true
+        chance = 100
+    else
+        roll = ZombRand(100)
+        hit = roll < chance
+    end
     local primaryDamage = 0
     local primaryShare = tonumber(plan.primaryShare) or 1
     if hit then
@@ -1535,7 +1564,7 @@ local function fire(body)
             pcall(function() crit = ZombRand(100) < (gun.critChance or 0) end)
             primaryDamage = BridgeGunRules.rollDamage(gun)
             if crit then primaryDamage = primaryDamage * math.max(1, math.min(5, gun.critMult or 2)) end
-            if gun.piercingBullets == true then
+            if gun.piercingBullets == true and not aty then
                 plan = BridgeGunRules.multiPlan(body, t, gun, gunCandidates(body, red, t), range, {})
                 primaryShare = tonumber(plan.primaryShare) or 1
             end
@@ -1576,6 +1605,7 @@ local function fire(body)
                 * (ex.chanceScale or 1), BridgeGunRules.MIN_CHANCE, BridgeGunRules.MAX_CHANCE)
             ehit = ZombRand(100) < echance
         end
+        if ex.forceHit == true then ehit = true end
         local edmg = 0
         local ok, dead = false, false
         if ehit then
@@ -2894,7 +2924,15 @@ function BridgeGunfight.update(body)
             BridgeGunfight.ammoItem, BridgeGunfight.ammoOut, BridgeGunfight.ammoAmount = nil, nil, 0
             BridgeGunfight.ammoUntil = nil
             BridgeGunfight.ammoStageAt = nil
-            BridgeGunfight.ammoStageTicks = 0
+BridgeGunfight.ammoStageTicks = 0
+BridgeGunfight.stationarySince = 0
+BridgeGunfight.lastX = nil
+BridgeGunfight.lastY = nil
+BridgeGunfight.walkingNow = false
+BridgeGunfight.plantRequired = false
+BridgeGunfight.retargetUntil = nil
+BridgeGunfight.lastShotTarget = nil
+
             BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 60
             magCareEnd(body)
             if BridgeWeapon ~= nil then pcall(function() BridgeWeapon.lost = nil end) end
@@ -3113,6 +3151,25 @@ function BridgeGunfight.update(body)
     end
 
     local t = BridgeGunfight.target
+    local nowTick = Bridge.time or 0
+    local bxNow, byNow = body:getX(), body:getY()
+    local moved = 0
+    if BridgeGunfight.lastX ~= nil and BridgeGunfight.lastY ~= nil then
+        local dx = bxNow - BridgeGunfight.lastX
+        local dy = byNow - BridgeGunfight.lastY
+        moved = math.sqrt(dx * dx + dy * dy)
+    end
+    local locomoting = BridgeMove ~= nil and (BridgeMove.moving == true
+        or BridgeMove.steering == true or BridgeMove.pathing == true)
+    if locomoting or moved > BridgeGunRules.MOVE_EPS then
+        BridgeGunfight.stationarySince = nowTick
+    end
+    BridgeGunfight.lastX = bxNow
+    BridgeGunfight.lastY = byNow
+    BridgeGunfight.walkingNow = locomoting or moved > BridgeGunRules.MOVE_EPS
+    if locomoting and t ~= nil and BridgeGunfight.state ~= "backstep" then
+        BridgeGunfight.plantRequired = true
+    end
     local pick = (Bridge.time - (BridgeGunfight.lastPick or 0)) >= RECHECK
     if t ~= nil and pick and not validTarget(t, body, red) then
         local lost = "body"
@@ -3127,20 +3184,39 @@ function BridgeGunfight.update(body)
         BridgeGunfight.lastPick = Bridge.time
         t = pickTarget(body, red)
         if t ~= nil then
-            if BridgeGunfight.peek ~= nil then
-                BridgeGunfight.peek = nil
-                pcall(function() if BridgeMove.onPath() then BridgeMove.stopPath(body) end end)
-                BridgeMove.moving = false
-                BridgeMove.steering = false
-            end
+            BridgeGunfight.peek = nil
+            stopForAim(body)
             BridgeGunfight.target = t
             BridgeGunfight.lastTargetAt = Bridge.time
             BridgeGunfight.stowAt = nil
+            local nowA = Bridge.time or 0
+            local fx, fy = 0, 1
+            pcall(function()
+                fx = tonumber(body:getForwardDirectionX()) or 0
+                fy = tonumber(body:getForwardDirectionY()) or 1
+            end)
+            local angle = BridgeGunRules.aimAngle(fx, fy, t:getX() - body:getX(), t:getY() - body:getY())
+            local moving = BridgeGunfight.walkingNow == true
+                or (nowA - (BridgeGunfight.stationarySince or 0)) <= BridgeGunRules.MOVE_WINDOW
+            local turn = BridgeGunRules.turnTicks(angle)
+            local plantAdd = 0
+            if moving then
+                BridgeGunfight.plantRequired = true
+                local plantAt = (BridgeGunfight.stationarySince or 0) + BridgeGunRules.PLANT_TICKS
+                if plantAt > nowA then plantAdd = plantAt - nowA end
+            end
+            local retargetAdd = 0
+            if BridgeGunfight.lastShotTarget ~= nil and BridgeGunfight.lastShotTarget ~= t then
+                local untilT = BridgeGunfight.retargetUntil or 0
+                if untilT > nowA then retargetAdd = untilT - nowA end
+            end
+            local start = nowA + math.max(plantAdd, turn, retargetAdd)
             local aim = BridgeGunRules.aimTicks(BridgeGunfight.gun, aimingLevel())
-            BridgeGunfight.aimUntil = Bridge.time + aim
+            BridgeGunfight.aimUntil = start + aim
             BridgeGunfight.nextShotAt = BridgeGunfight.aimUntil
             BridgeGunfight.state = "aim"
-            vlog(string.format("target acquired d=%.1f aim=%d ticks", dist(body, t), aim))
+            vlog(string.format("target acquired d=%.1f aim=%d plant=%d turn=%d retarget=%d",
+                dist(body, t), aim, plantAdd, turn, retargetAdd))
         end
     end
 
@@ -3290,9 +3366,26 @@ function BridgeGunfight.update(body)
         plant(body, (retreat and "NA_Backstep" or "NA_Aim") .. kind)
     end
 
-    if Bridge.time < (BridgeGunfight.aimUntil or 0) then
+    local readyAt = BridgeGunfight.aimUntil or 0
+    if BridgeGunfight.plantRequired and BridgeGunfight.state ~= "backstep" then
+        local plantAt = (BridgeGunfight.stationarySince or 0) + BridgeGunRules.PLANT_TICKS
+        if Bridge.time < plantAt then
+            local leashMode = BridgeData.COMBAT[BridgeData.combatOf(Bridge.store)] or BridgeData.COMBAT.bodyguard
+            local leash = tonumber(leashMode.leash) or 999
+            if dist(red, body) > leash then
+                BridgeGunfight.target = nil
+                BridgeGunfight.state = "idle"
+                BridgeGunfight.stowAt = Bridge.time + STOW_TICKS
+                BridgeGunfight.plantRequired = false
+                vlog("plant abort: player beyond leash")
+                return true
+            end
+        end
+        if plantAt > readyAt then readyAt = plantAt end
+    end
+    if Bridge.time < readyAt then
         BridgeGunfight.info = string.format("%s aiming d=%.1f in %d", tostring(item:getType()), d,
-            math.max(0, (BridgeGunfight.aimUntil or 0) - Bridge.time))
+            math.max(0, readyAt - Bridge.time))
         return true
     end
     if Bridge.time < (BridgeGunfight.nextShotAt or 0) then
@@ -3735,6 +3828,13 @@ function BridgeGunfight.reset()
     BridgeGunfight.lastBump = nil
     BridgeGunfight.pendingShot = nil
     BridgeGunfight.moving = false
+    BridgeGunfight.stationarySince = 0
+    BridgeGunfight.lastX = nil
+    BridgeGunfight.lastY = nil
+    BridgeGunfight.walkingNow = false
+    BridgeGunfight.plantRequired = false
+    BridgeGunfight.retargetUntil = nil
+    BridgeGunfight.lastShotTarget = nil
     BridgeGunfight.blockAt = nil
     BridgeGunfight.missingSince = nil
     BridgeGunfight.friendlies = nil

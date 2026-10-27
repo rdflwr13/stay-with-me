@@ -54,6 +54,10 @@ BridgeGun.ours = ours
 
 
 local function atActive()
+    if BridgeGunRules ~= nil and type(BridgeGunRules.atyOn) == "function" then
+        local ok, got = pcall(BridgeGunRules.atyOn)
+        if ok and type(got) == "boolean" then return got end
+    end
     local on = false
     pcall(function()
         local mods = getActivatedMods()

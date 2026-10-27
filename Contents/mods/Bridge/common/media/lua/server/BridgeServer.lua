@@ -2116,16 +2116,25 @@ BridgeServer.Commands.gunShot = function(player, args)
     if held ~= nil then BridgeGunRules.setRounds(held, rounds, true) end
 
     local chance = BridgeGunRules.hitChance(desc, d, false, aimLevel)
-    local hit = ZombRand(100) < chance
     local shotgun = (tonumber(desc.projectileCount) or 1) > 1
+    local aty = BridgeGunRules.atyOn()
+    local hit = false
+    local plan = { kind = nil, extras = {}, primaryShare = 1 }
+    if aty then
+        plan = BridgeGunRules.atyPlan(body, target, desc,
+            gunExtraCandidates(body, player, target, modeRange), modeRange)
+        hit = true
+        chance = 100
+    else
+        hit = ZombRand(100) < chance
+        if shotgun or (hit and desc.piercingBullets == true) then
+            plan = BridgeGunRules.multiPlan(body, target, desc,
+                gunExtraCandidates(body, player, target, modeRange), modeRange, {})
+        end
+    end
     local crit = false
     if shotgun or hit then
         crit = ZombRand(100) < (desc.critChance or 0)
-    end
-    local plan = { kind = nil, extras = {}, primaryShare = 1 }
-    if shotgun or (hit and desc.piercingBullets == true) then
-        plan = BridgeGunRules.multiPlan(body, target, desc,
-            gunExtraCandidates(body, player, target, modeRange), modeRange, {})
     end
     local extras = {}
     local extraHits, extraKills, glass = 0, 0, 0
@@ -2159,6 +2168,7 @@ BridgeServer.Commands.gunShot = function(player, args)
                 if echance > BridgeGunRules.MAX_CHANCE then echance = BridgeGunRules.MAX_CHANCE end
                 ehit = ZombRand(100) < echance
             end
+            if ex.forceHit == true then ehit = true end
             local entry = { x = z:getX(), y = z:getY(), z = z:getZ(), hit = ehit, crit = false,
                 damage = 0, killed = false, hpAfter = 0, reaction = nil }
             pcall(function() entry.id = z:getOnlineID() end)
