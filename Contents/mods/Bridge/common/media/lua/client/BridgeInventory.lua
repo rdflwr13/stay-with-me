@@ -303,7 +303,6 @@ end
 
 
 function BridgeInventory.skin(b, rec)
-    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, b) end
     local female = BridgeData.isFemale(rec)
     pcall(function() b:setFemaleEtc(female) end)
     pcall(function() b:setFemale(female) end)
@@ -3729,25 +3728,6 @@ function BridgeInventory.applyRecord(item, rec) BridgeItems.apply(item, rec) end
 
 
 function BridgeInventory.restore(b, list)
-    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, b) end
-    if BridgeGunRules ~= nil and type(BridgeGunRules.efzParseTree) == "function" then
-        for _, rec in ipairs(list or {}) do
-            if type(rec.tw) == "string" and rec.tw ~= "" then
-                local parsed, tree = pcall(BridgeGunRules.efzParseTree, rec.tw)
-                if not parsed or tree == nil then
-                    note("restore aborted: malformed EFZ tree for " .. tostring(rec.t))
-                    return nil, "efz-tree:" .. tostring(rec.t)
-                end
-                if type(BridgeGunRules.efzCanRebuild) == "function" then
-                    local checked, ok, why = pcall(BridgeGunRules.efzCanRebuild, rec.t, tree)
-                    if not checked or not ok then
-                        note("restore aborted: EFZ tree rejected for " .. tostring(rec.t) .. " " .. tostring(why))
-                        return nil, "efz-tree:" .. tostring(rec.t)
-                    end
-                end
-            end
-        end
-    end
     note("restore " .. tostring(#list))
     BridgeInventory.restoring = true
     local worn, hands, bag = 0, 0, 0
@@ -3761,7 +3741,6 @@ function BridgeInventory.restore(b, list)
     BridgeWeapon.assignedId = nil
     local made = {}
     local pendingAttach = {}
-    local rebuildFailure = nil
     for i, rec in ipairs(list) do
         pcall(function()
             local container = inv
@@ -3769,14 +3748,9 @@ function BridgeInventory.restore(b, list)
                 local parent = made[rec.p]
                 if parent ~= nil and parent:IsInventoryContainer() then container = parent:getInventory() end
             end
-            local item, why = BridgeItems.make(container, rec)
+            local item = BridgeItems.make(container, rec)
             made[i] = item
-            if item == nil then
-                if type(rec.tw) == "string" and rec.tw ~= "" then
-                    rebuildFailure = why or rec.t
-                end
-                return
-            end
+            if item == nil then return end
             if rec.ga ~= nil then
                 pendingAttach[#pendingAttach + 1] = { item = item, loc = rec.ga, type = rec.gt, ptype = rec.gp }
             end
@@ -3813,11 +3787,6 @@ function BridgeInventory.restore(b, list)
                 bag = bag + 1
             end
         end)
-    end
-    if rebuildFailure ~= nil then
-        BridgeInventory.restoring = nil
-        note("restore stopped: EFZ rebuild failed for " .. tostring(rebuildFailure))
-        return nil, "efz-rebuild:" .. tostring(rebuildFailure)
     end
     redress(b)
     pcall(function() BridgeInventory.custom(b, Bridge.store) end)

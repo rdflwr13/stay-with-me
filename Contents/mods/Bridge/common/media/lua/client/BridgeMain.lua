@@ -1071,10 +1071,6 @@ local function wearSaved(body)
     local list = BridgeInventory.decode(md.items)
     if #list == 0 then return nil end
     local worn, hands, bag = BridgeInventory.restore(body, list)
-    if worn == nil then
-        log("outfit restore aborted: " .. tostring(hands))
-        return nil
-    end
     return string.format("%d worn %d hands %d bag", worn, hands, bag)
 end
 
