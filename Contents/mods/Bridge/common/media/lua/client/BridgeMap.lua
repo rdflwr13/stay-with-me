@@ -47,8 +47,6 @@ function BridgeMap.draw(ui)
     local c = BridgeMap.COLOR
     ui:drawRect(sx - 3, sy - 3, 6, 6, 1, c[1], c[2], c[3])
     local name = BridgeData.nameOf(Bridge.store)
-
-    if not BridgeData.overheadOk(name) then name = BridgeData.DEFAULT_NAME end
     local tm = getTextManager()
     local tw, fh = 0, 14
     pcall(function() tw = tm:MeasureStringX(UIFont.Small, name) end)

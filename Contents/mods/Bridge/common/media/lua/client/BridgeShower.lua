@@ -482,6 +482,10 @@ function BridgeShower.start(showerObj, sq)
     if Bridge == nil or not Bridge.alive() or Bridge.kind ~= "zombie" then return "no body" end
     if Bridge.drivable ~= nil and not Bridge.drivable() then return "not drivable" end
     if not BridgeShower.isTabas() then return "no tabas" end
+    if BridgeBath ~= nil and BridgeBath.showerUsable ~= nil
+            and not BridgeBath.showerUsable(showerObj) then
+        return "no shower fixture"
+    end
     local busy = false
     if BridgeExercise ~= nil and BridgeExercise.hardBusy ~= nil then
         pcall(function() busy = BridgeExercise.hardBusy() == true end)

@@ -331,7 +331,7 @@ function BridgeAppearance.fixFurVariant()
     if t ~= typeShort(id) then BridgeAppearance.setFur(species) end
 end
 
-BridgeAppearance.candidate = { skin = nil, hair = nil, hairColor = nil, face = nil, details = {}, muscle = 0, makeup = {}, beard = "", beardColor = nil, fur = nil }
+BridgeAppearance.candidate = { skin = nil, hair = nil, hairColor = nil, face = nil, details = {}, muscle = 0, makeup = {}, beard = "", beardColor = nil, fur = nil, voice = nil }
 
 function BridgeAppearance.makePreviewDesc()
     local st = Bridge.store or {}
@@ -552,6 +552,21 @@ function BridgeAppearanceBody:createChildren()
         end
         self:addChild(self.furCombo)
     end
+
+    self.voiceCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceBody.onVoice)
+    self.voiceCombo:initialise()
+    local styles = {}
+    if BridgeVoice ~= nil and type(BridgeVoice.stylesFor) == "function" then
+        pcall(function() styles = BridgeVoice.stylesFor(BridgeData.genderOf(Bridge.store)) end)
+    end
+    if type(styles) ~= "table" or #styles == 0 then styles = { BridgeData.defaultVoice(Bridge.store) } end
+    for i = 1, #styles do
+        local s = styles[i]
+        local label = vanillaText("IGUI_Voice_" .. tostring(s.name), tostring(s.name))
+        self.voiceCombo:addOptionWithData(label, s)
+    end
+    self:addChild(self.voiceCombo)
+
     self:layout()
 end
 
@@ -596,6 +611,18 @@ function BridgeAppearanceBody:layout()
         self.furCombo:setHeight(BTN_H)
         y = y + BTN_H + PAD
     end
+
+    self.voiceLabelY = nil
+    if self.voiceCombo ~= nil then
+        self.voiceLabelY = y
+        y = y + FONT_S + 4
+        self.voiceCombo:setVisible(true)
+        self.voiceCombo:setX(PAD)
+        self.voiceCombo:setY(y)
+        self.voiceCombo:setWidth(cw)
+        self.voiceCombo:setHeight(BTN_H)
+        y = y + BTN_H + PAD
+    end
 end
 
 function BridgeAppearanceBody:minHeight()
@@ -605,6 +632,7 @@ function BridgeAppearanceBody:minHeight()
         if self.muscleCombo ~= nil then rows = rows + 1 end
     end
     if self.furCombo ~= nil then rows = rows + 1 end
+    if self.voiceCombo ~= nil then rows = rows + 1 end
     if rows < 1 then rows = 1 end
     return PAD + rows * (FONT_S + 4 + BTN_H + PAD)
 end
@@ -618,6 +646,9 @@ function BridgeAppearanceBody:render()
     end
     if self.furLabelY ~= nil then
         self:drawText(gameText("IGUI_NotAlone_AppearanceFur", "Species"), PAD, self.furLabelY, 1, 1, 1, 1, UIFont.Small)
+    end
+    if self.voiceLabelY ~= nil then
+        self:drawText(gameText("UI_characreation_voicetype", "Voice type"), PAD, self.voiceLabelY, 1, 1, 1, 1, UIFont.Small)
     end
 end
 
@@ -637,6 +668,48 @@ function BridgeAppearanceBody:onFur(combo)
     BridgeAppearance.refreshViews()
 end
 
+function BridgeAppearanceBody:onVoice(combo)
+    local sel = combo:getSelectedData()
+    if type(sel) ~= "table" then return end
+    local voice = {
+        name = tostring(sel.name),
+        prefix = tostring(sel.prefix),
+        type = tonumber(sel.type) or 0,
+        pitch = math.floor((tonumber(sel.pitch) or 0) + 0.5),
+    }
+    BridgeAppearance.candidate.voice = voice
+    if Bridge.alive() and Bridge.body ~= nil then
+        pcall(function() BridgeSound.preview(Bridge.body, voice, "ShoutHey") end)
+    end
+end
+
+function BridgeAppearanceBody:refreshVoice()
+    local combo = self.voiceCombo
+    if combo == nil then return end
+    local voice = BridgeAppearance.candidate.voice
+    if type(voice) ~= "table" then voice = BridgeData.voiceOf(Bridge.store) end
+    local ty = tonumber(voice.type) or 0
+    local idx = nil
+    if type(combo.options) == "table" then
+        for i = 1, #combo.options do
+            local data = combo:getOptionData(i)
+            if type(data) == "table" and tostring(data.prefix) == tostring(voice.prefix)
+                and (tonumber(data.type) or 0) == ty
+                and tostring(data.name) == tostring(voice.name) then
+                idx = i
+                break
+            end
+        end
+    end
+    if idx == nil then
+        combo:addOptionWithData(tostring(voice.name or voice.prefix) .. " (missing)",
+            { name = voice.name, prefix = voice.prefix, type = ty,
+              pitch = tonumber(voice.pitch) or 0, bodyType = 0 })
+        idx = #combo.options
+    end
+    combo.selected = idx
+end
+
 function BridgeAppearanceBody:refresh()
     self.skinCombo:selectData(BridgeAppearance.candidate.skin)
     if self.muscleCombo ~= nil then
@@ -647,6 +720,7 @@ function BridgeAppearanceBody:refresh()
         if fur == nil then fur = BridgeAppearance.furSpeciesOf(Bridge.body) end
         self.furCombo:selectData(fur)
     end
+    self:refreshVoice()
 end
 
 function BridgeAppearanceBody:new(x, y, width, height)
@@ -1733,6 +1807,7 @@ function BridgeAppearance.Window:onApply()
             pcall(function() Bridge.setBeardColor(c.beardColor.r, c.beardColor.g, c.beardColor.b) end)
         end
     end
+    if c.voice ~= nil then pcall(function() Bridge.setVoice(c.voice) end) end
     if BridgeAppearance.furOn() and c.fur ~= nil then
         local worn = BridgeAppearance.furSpeciesOf(Bridge.body)
         if c.fur ~= worn then pcall(function() BridgeAppearance.setFur(c.fur) end) end
@@ -1831,6 +1906,7 @@ function BridgeAppearance.open(tab)
     c.beard = BridgeData.beardOf(Bridge.store)
     c.beardColor = BridgeData.beardColorOf(Bridge.store)
     c.fur = BridgeAppearance.furOn() and BridgeAppearance.furSpeciesOf(Bridge.body) or nil
+    c.voice = BridgeData.voiceOf(Bridge.store)
 
     local sw, sh = 800, 600
     pcall(function() sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight() end)

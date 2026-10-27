@@ -104,103 +104,6 @@ function BridgeCompat.tick()
     BridgeCompat.install()
 end
 
-
-
-
-
-
-BridgeCompat.alifeWanted = nil
-BridgeCompat.alifeTicks = 0
-BridgeCompat.alifeMarked = nil
-BridgeCompat.alifeCanAttack = nil
-BridgeCompat.alifeStrikeZombie = nil
-BridgeCompat.alifeOurBody = nil
-
-local function alifeOurs(z)
-    return markedOurs(z)
-end
-
-function BridgeCompat.alifeInstall()
-    if BridgeCompat.alifeWanted == nil then BridgeCompat.alifeWanted = modActive("ProjectALifeNPCs") end
-    if not BridgeCompat.alifeWanted then return false end
-    local mod = rawget(_G, "ProjectALife")
-    if type(mod) ~= "table" then return false end
-    local installed = false
-
-
-    local guard = mod.OrphanGuard
-    if type(guard) == "table" and type(guard.markedWith) == "function"
-            and guard.markedWith ~= BridgeCompat.alifeMarked then
-        local original = guard.markedWith
-        BridgeCompat.alifeMarked = function(shell, data)
-            if alifeOurs(shell) then return true end
-            return original(shell, data)
-        end
-        guard.markedWith = BridgeCompat.alifeMarked
-        installed = true
-    end
-
-
-    local policy = mod.TargetPolicy
-    if type(policy) == "table" and type(policy.canAttack) == "function"
-            and policy.canAttack ~= BridgeCompat.alifeCanAttack then
-        local original = policy.canAttack
-        BridgeCompat.alifeCanAttack = function(target, stamp)
-            if alifeOurs(target) then return false, "bridge_companion" end
-            return original(target, stamp)
-        end
-        policy.canAttack = BridgeCompat.alifeCanAttack
-        installed = true
-    end
-
-
-
-    local combat = mod.Combat
-    if type(combat) == "table" and type(combat.strikeZombie) == "function"
-            and combat.strikeZombie ~= BridgeCompat.alifeStrikeZombie then
-        local original = combat.strikeZombie
-        BridgeCompat.alifeStrikeZombie = function(shell, zombie, weapon, reaction, share)
-            if alifeOurs(zombie) then return false end
-            return original(shell, zombie, weapon, reaction, share)
-        end
-        combat.strikeZombie = BridgeCompat.alifeStrikeZombie
-        installed = true
-    end
-
-
-    local withdraw = mod.ModuleWithdraw
-    if type(withdraw) == "table" and type(withdraw.ours) == "function"
-            and withdraw.ours ~= BridgeCompat.alifeOurBody then
-        local original = withdraw.ours
-        BridgeCompat.alifeOurBody = function(body)
-            if alifeOurs(body) then return true end
-            return original(body)
-        end
-        withdraw.ours = BridgeCompat.alifeOurBody
-        installed = true
-    end
-
-    if installed then log("A-Life: her body is left alone (weapons kept, not a target)") end
-    return installed
-end
-
-function BridgeCompat.alifeTick()
-    if BridgeCompat.alifeWanted == nil then BridgeCompat.alifeWanted = modActive("ProjectALifeNPCs") end
-    if not BridgeCompat.alifeWanted then return end
-    BridgeCompat.alifeTicks = BridgeCompat.alifeTicks + 1
-    if BridgeCompat.alifeTicks > 1 and BridgeCompat.alifeTicks % 60 ~= 0 then return end
-    BridgeCompat.alifeInstall()
-end
-
-
-
-
-
-
-
-
-
-
 BridgeCompat.survivorsWanted = nil
 BridgeCompat.survivorsTicks = 0
 BridgeCompat.survivorsOurs = nil
@@ -258,49 +161,110 @@ function BridgeCompat.divgadgetsTick()
     BridgeCompat.divgadgetsInstall()
 end
 
-BridgeCompat.jimmyWanted = nil
-BridgeCompat.jimmyTicks = 0
-BridgeCompat.jimmyLiveZombies = nil
+BridgeCompat.dogsTicks = 0
+BridgeCompat.dogsWrapped = nil
 
-
-
-
-
-
-
-
-function BridgeCompat.jimmyInstall()
-    if BridgeCompat.jimmyWanted == nil then BridgeCompat.jimmyWanted = modActive("ProjectALifeJimmy") end
-    if not BridgeCompat.jimmyWanted then return false end
-    local mod = rawget(_G, "ProjectALifeJimmy")
-    local residents = type(mod) == "table" and mod.Residents or nil
-    local sweep = type(residents) == "table" and residents.sweep or nil
-    if type(sweep) ~= "table" or type(sweep.liveZombies) ~= "function" then return false end
-    if sweep.liveZombies == BridgeCompat.jimmyLiveZombies then return true end
-    local original = sweep.liveZombies
-    BridgeCompat.jimmyLiveZombies = function()
-        local list = original()
-        if type(list) ~= "table" then return list end
-        local out = {}
-        for i = 1, #list do
-            local e = list[i]
-            if e == nil or not BridgeCompat.isOurBody(e.obj) then out[#out + 1] = e end
-        end
-        return out
+function BridgeCompat.dogsInstall()
+    local cd = rawget(_G, "CompanionDogs")
+    if type(cd) ~= "table" or type(cd.isFriendlyNPC) ~= "function" then return false end
+    if cd.isFriendlyNPC == BridgeCompat.dogsWrapped then return true end
+    local original = cd.isFriendlyNPC
+    local wrapper = function(z)
+        local md = nil
+        pcall(function() md = z:getModData() end)
+        if type(md) == "table" and md.notAloneBody == true then return true end
+        return original(z)
     end
-    sweep.liveZombies = BridgeCompat.jimmyLiveZombies
-    log("Jeem compat guard installed (her body is not a zombie in the base)")
+    BridgeCompat.dogsWrapped = wrapper
+    cd.isFriendlyNPC = wrapper
+    log("CompanionDogs compat guard installed (Rin is not a dog target)")
     return true
 end
 
-function BridgeCompat.jimmyTick()
-    if BridgeCompat.jimmyWanted == nil then BridgeCompat.jimmyWanted = modActive("ProjectALifeJimmy") end
-    if not BridgeCompat.jimmyWanted then return end
-    BridgeCompat.jimmyTicks = BridgeCompat.jimmyTicks + 1
-    if BridgeCompat.jimmyTicks > 1 and BridgeCompat.jimmyTicks % 60 ~= 0 then return end
-    BridgeCompat.jimmyInstall()
+function BridgeCompat.dogsTick()
+    BridgeCompat.dogsTicks = BridgeCompat.dogsTicks + 1
+    if BridgeCompat.dogsTicks > 1 and BridgeCompat.dogsTicks % 60 ~= 0 then return end
+    BridgeCompat.dogsInstall()
 end
 
-Events.OnTick.Add(function() pcall(BridgeCompat.tick) pcall(BridgeCompat.alifeTick) pcall(BridgeCompat.survivorsTick) pcall(BridgeCompat.divgadgetsTick) pcall(BridgeCompat.jimmyTick) end)
-Events.OnGameStart.Add(function() BridgeCompat.ticks = 0 BridgeCompat.survivorsTicks = 0 BridgeCompat.divgadgetsTicks = 0 BridgeCompat.jimmyTicks = 0 pcall(BridgeCompat.install) pcall(BridgeCompat.alifeInstall) pcall(BridgeCompat.survivorsInstall) pcall(BridgeCompat.divgadgetsInstall) pcall(BridgeCompat.jimmyInstall) end)
-Events.OnServerStarted.Add(function() BridgeCompat.ticks = 0 BridgeCompat.survivorsTicks = 0 BridgeCompat.divgadgetsTicks = 0 BridgeCompat.jimmyTicks = 0 pcall(BridgeCompat.install) pcall(BridgeCompat.alifeInstall) pcall(BridgeCompat.survivorsInstall) pcall(BridgeCompat.divgadgetsInstall) pcall(BridgeCompat.jimmyInstall) end)
+BridgeCompat.rainingWanted = nil
+BridgeCompat.rainingTicks = 0
+BridgeCompat.rainingLogged = false
+
+local RAINING_RETRY_EVERY = 30
+
+function BridgeCompat.rainingModActive()
+    if BridgeCompat.rainingWanted == nil then BridgeCompat.rainingWanted = modActive("RainingZombies") end
+    return BridgeCompat.rainingWanted
+end
+
+function BridgeCompat.rainingApply(body)
+    if body == nil then return end
+    local want = BridgeCompat.rainingModActive()
+    local ok, current = pcall(function() return body:getVariableBoolean("ClimbWindow") end)
+    if not ok then return end
+    if current == want then return end
+    if want then
+        pcall(function() body:setVariable("ClimbWindow", true) end)
+        if not BridgeCompat.rainingLogged then
+            BridgeCompat.rainingLogged = true
+            log("RainingZombies fall guard active")
+        end
+    else
+        pcall(function() body:clearVariable("ClimbWindow") end)
+    end
+end
+
+function BridgeCompat.rainingClear(body)
+    if body == nil then return end
+    pcall(function() body:clearVariable("ClimbWindow") end)
+end
+
+local function eachRainingBody()
+    local server = rawget(_G, "BridgeServer")
+    if type(server) ~= "table" or type(server.bodies) ~= "table" then return end
+    for _, body in pairs(server.bodies) do BridgeCompat.rainingApply(body) end
+end
+
+function BridgeCompat.rainingTick()
+    BridgeCompat.rainingTicks = BridgeCompat.rainingTicks + 1
+    if BridgeCompat.rainingTicks < RAINING_RETRY_EVERY then return end
+    BridgeCompat.rainingTicks = 0
+    eachRainingBody()
+end
+
+function BridgeCompat.rainingStart()
+    BridgeCompat.rainingWanted = nil
+    BridgeCompat.rainingTicks = 0
+    eachRainingBody()
+end
+
+Events.OnTick.Add(function()
+    pcall(BridgeCompat.tick)
+    pcall(BridgeCompat.survivorsTick)
+    pcall(BridgeCompat.divgadgetsTick)
+    pcall(BridgeCompat.dogsTick)
+    pcall(BridgeCompat.rainingTick)
+end)
+Events.OnGameStart.Add(function()
+    BridgeCompat.ticks = 0
+    BridgeCompat.survivorsTicks = 0
+    BridgeCompat.divgadgetsTicks = 0
+    BridgeCompat.dogsTicks = 0
+    pcall(BridgeCompat.install)
+    pcall(BridgeCompat.survivorsInstall)
+    pcall(BridgeCompat.divgadgetsInstall)
+    pcall(BridgeCompat.dogsInstall)
+    pcall(BridgeCompat.rainingStart)
+end)
+Events.OnServerStarted.Add(function()
+    BridgeCompat.ticks = 0
+    BridgeCompat.survivorsTicks = 0
+    BridgeCompat.divgadgetsTicks = 0
+    BridgeCompat.dogsTicks = 0
+    pcall(BridgeCompat.install)
+    pcall(BridgeCompat.survivorsInstall)
+    pcall(BridgeCompat.divgadgetsInstall)
+    pcall(BridgeCompat.dogsInstall)
+    pcall(BridgeCompat.rainingStart)
+end)

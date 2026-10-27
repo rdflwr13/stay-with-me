@@ -9,6 +9,7 @@ BridgeChat = BridgeChat or {}
 BridgeChat.file = "bridge/chat.txt"
 BridgeChat.seq = 0
 BridgeChat.ready = false
+BridgeChat.own = false
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeChat] " .. tostring(text)) end end
 local function warn(text) print("[BridgeChat] " .. tostring(text)) end
@@ -103,6 +104,27 @@ end
 
 
 
+function BridgeChat.show()
+    if BridgeChat.own ~= true then return false end
+    if ISChat == nil or ISChat.chat == nil then return false end
+    local ok = pcall(function()
+        ISChat.chat:setVisible(true)
+        ISChat.chat:bringToTop()
+    end)
+    return ok == true
+end
+
+
+function BridgeChat.visible()
+    if BridgeChat.own ~= true then return false end
+    if ISChat == nil or ISChat.chat == nil then return false end
+    local vis = false
+    pcall(function() vis = ISChat.chat:getIsVisible() == true end)
+    return vis
+end
+
+
+
 function BridgeChat.bridgeOn()
     local on = false
     pcall(function()
@@ -154,7 +176,7 @@ function BridgeChat.onCommandEntered()
     local name = "Player"
     pcall(function() name = red:getDisplayName() end)
     BridgeChat.addLine(name, text, 0.75, 0.85, 1.0)
-    if BridgeData.overheadOk(text) then pcall(function() red:Say(text) end) end
+    pcall(function() red:Say(text) end)
 
     BridgeChat.seq = BridgeChat.seq + 1
     local ok, err = pcall(function()
@@ -214,6 +236,7 @@ function BridgeChat.create()
         return
     end
     BridgeChat.ready = true
+    BridgeChat.own = true
     log("chat window created")
 end
 

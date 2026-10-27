@@ -56,6 +56,7 @@ BridgeTorchShared.CFG = {
 
     DARK_LO = 0.45,
     DARK_HI = 0.55,
+    DARK_LO_IN = 0.50,
 
 
     INDOOR_DAY = 0.35,
@@ -480,13 +481,13 @@ end
 
 
 
-function BridgeTorchShared.isDark(lvl, external, why)
+function BridgeTorchShared.isDark(lvl, external, why, lo)
     if lvl == nil then return false end
     if external == true and why ~= nil
         and (why == "daylight" or startsWith(why, "foreignLight") or why == "vehicleLight") then
         return false
     end
-    return lvl < BridgeTorchShared.CFG.DARK_LO
+    return lvl < (lo or BridgeTorchShared.CFG.DARK_LO)
 end
 
 
@@ -523,12 +524,18 @@ function BridgeTorchShared.wantOn(body, red, lvl, external, why)
 
     if lvl == nil then lvl = BridgeTorchShared.darkAt(body) end
 
+    local lo = BridgeTorchShared.CFG.DARK_LO
+    pcall(function()
+        local sq = body:getCurrentSquare()
+        if sq ~= nil and sq:isOutside() == false then lo = BridgeTorchShared.CFG.DARK_LO_IN end
+    end)
 
 
 
 
 
-    return BridgeTorchShared.isDark(lvl, external, why)
+
+    return BridgeTorchShared.isDark(lvl, external, why, lo)
 end
 
 

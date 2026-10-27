@@ -27,6 +27,8 @@ BridgeGunfight.friendlies = nil
 BridgeGunfight.friendliesAt = nil
 BridgeGunfight.flashes = {}
 BridgeGunfight.bumps = {}
+BridgeGunfight.standHold = setmetatable({}, { __mode = "k" })
+BridgeGunfight.standHoldTicks = 180
 BridgeGunfight.handSyncAt = nil
     BridgeGunfight.rounds = keepRounds
     BridgeGunfight.maxAmmo = 0
@@ -112,6 +114,9 @@ local reloadFactor
 local tellLoadOne
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeGunfight] " .. tostring(text)) end end
+local function logf(fmt, ...)
+    if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeGunfight] " .. string.format(fmt, ...)) end
+end
 local function warn(text) print("[BridgeGunfight] " .. tostring(text)) end
 local function vlog(text) if Bridge ~= nil and Bridge.verbose then log(text) end end
 
@@ -224,8 +229,16 @@ local function ensureInMain(body, item)
 end
 
 
+local function clearNeedCache()
+    BridgeGunfight.needAmmo = nil
+    BridgeGunfight.needAmmoAt = nil
+    BridgeGunfight.needRounds = nil
+end
+
+
 local function setFields(item)
     BridgeGunfight.gunItem = item
+    BridgeGunfight.gunItemAt = nil
     BridgeGunfight.assignedId = item:getID()
     BridgeGunfight.gun = BridgeGunRules.describe(item)
     BridgeGunfight.maxAmmo = tonumber(BridgeGunfight.gun.maxAmmo) or 0
@@ -237,12 +250,23 @@ local function setFields(item)
     BridgeGunfight.reloadMissingCount = 0
 BridgeGunfight.reserveAt = nil
 BridgeGunfight.reserveN = 0
+    clearNeedCache()
+    BridgeGunfight.hasAmmoAt = nil
+    BridgeGunfight.hasAmmoValue = nil
+    BridgeGunfight.lowCheckAt = nil
 end
 
 local function clearFields()
     BridgeGunfight.assignedId = nil
     BridgeGunfight.gunItem = nil
+    BridgeGunfight.gunItemAt = nil
     BridgeGunfight.gun = nil
+    BridgeGunfight.needAmmo = nil
+    BridgeGunfight.needAmmoAt = nil
+    BridgeGunfight.needRounds = nil
+    BridgeGunfight.hasAmmoAt = nil
+    BridgeGunfight.hasAmmoValue = nil
+    BridgeGunfight.lowCheckAt = nil
     BridgeGunfight.target = nil
     BridgeGunfight.state = "idle"
     BridgeGunfight.drawn = false
@@ -362,6 +386,29 @@ function BridgeGunfight.assignedItem(body)
 end
 
 
+local function transferPendingNow(body)
+    if BridgeInventory == nil or type(BridgeInventory.transferPending) ~= "function" then return false end
+    local pending = false
+    pcall(function() pending = BridgeInventory.transferPending(body) == true end)
+    return pending
+end
+
+
+local function cachedGunItem(body)
+    local now = Bridge.time or 0
+    local item = BridgeGunfight.gunItem
+    if item ~= nil and BridgeGunfight.gunItemAt ~= nil
+        and now - BridgeGunfight.gunItemAt < 60 then
+        local alive = false
+        pcall(function() alive = item:getContainer() ~= nil end)
+        if alive and not transferPendingNow(body) then return item end
+    end
+    local found = BridgeGunfight.assignedItem(body)
+    BridgeGunfight.gunItemAt = now
+    return found
+end
+
+
 local function tellServer(gunType, gunId, gunRounds)
     if Bridge == nil or not Bridge.mp then return end
     pcall(function()
@@ -461,6 +508,10 @@ function BridgeGunfight.recover(body)
     if found ~= nil then
         setMark(found, true)
         setFields(found)
+        if BridgeGear ~= nil and BridgeGear.isGear(body, found) then
+            pcall(function() BridgeGear.release(body, found) end)
+            pcall(function() body:resetModelNextFrame() end)
+        end
         tellServer(BridgeGunfight.gun.fullType, BridgeGunfight.assignedId, BridgeGunfight.rounds)
         log("recovered primary gun " .. BridgeGunRules.summary(BridgeGunfight.gun))
         logGunState("gun state at recover", body)
@@ -494,6 +545,10 @@ function BridgeGunfight.assign(body, item)
         log("assign refused: gun could not move to her main inventory")
         return false
     end
+    if BridgeGear ~= nil and BridgeGear.isGear(body, item) then
+        pcall(function() BridgeGear.release(body, item) end)
+        pcall(function() body:resetModelNextFrame() end)
+    end
     BridgeGunfight.cancelMagCare(body)
     setMark(item, true)
     setFields(item)
@@ -511,21 +566,6 @@ function BridgeGunfight.assign(body, item)
     BridgeGunfight.peekCooldown = nil
     BridgeGunfight.magCareLogged = nil
     pcall(function() BridgeWeapon.putAway(body) end)
-    pcall(function()
-        if BridgeGear ~= nil and BridgeGear.attached ~= nil then
-            local drop = {}
-            for other, info in pairs(BridgeGear.attached) do
-                if info.body == body and BridgeGunRules.isGun(other) then
-                    local oid = nil
-                    pcall(function() oid = other:getID() end)
-                    if oid ~= BridgeGunfight.assignedId then drop[#drop + 1] = other end
-                end
-            end
-            for _, other in ipairs(drop) do
-                pcall(function() BridgeGear.release(body, other) end)
-            end
-        end
-    end)
     tellServer(BridgeGunfight.gun.fullType, BridgeGunfight.assignedId, BridgeGunfight.rounds)
     log("assigned primary gun " .. BridgeGunRules.summary(BridgeGunfight.gun))
     logGunState("gun state at assign", body)
@@ -575,6 +615,9 @@ local function attachGun(body, item)
     local slot, set, defType = nil, nil, nil
     pcall(function() slot, set, defType = BridgeWeapon.slotFor(body, item) end)
     if slot == nil then return false end
+    local taken = nil
+    pcall(function() taken = body:getAttachedItem(slot) end)
+    if taken ~= nil and taken ~= item then return false end
     detachGun(body)
     local ok = pcall(function()
         body:setAttachedItem(slot, item)
@@ -589,6 +632,7 @@ end
 
 local function hands(body, item, on)
     if body == nil or item == nil then return end
+    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, body) end
     if Bridge.body ~= nil and body ~= Bridge.body then return end
     pcall(function()
         if on then
@@ -605,6 +649,7 @@ end
 
 function BridgeGunfight.syncHands(body)
     if body == nil or BridgeGunfight.drawn ~= true then return end
+    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, body) end
     if BridgeGunfight.magCareStage ~= nil then return end
     local item = BridgeGunfight.gunItem
     if item == nil then return end
@@ -689,6 +734,16 @@ local function plant(body, name)
     BridgeGunfight.lastBump = name
 end
 
+local MOVEMENT_BUMPS = { FollowWalk = true, FollowRun = true, StartMove = true }
+
+local function plantMaintenance(body, name)
+    if body == nil or name == nil then return end
+    local cur = nil
+    pcall(function() cur = tostring(body:getBumpType()) end)
+    if MOVEMENT_BUMPS[cur] then return end
+    plant(body, name)
+end
+
 clearBump = function(body)
     if body == nil then return end
     local cur = nil
@@ -701,6 +756,10 @@ end
 
 
 local function companionBody(z)
+    if BridgeZScan ~= nil and type(BridgeZScan.isCompanion) == "function" then
+        local ok, v = pcall(BridgeZScan.isCompanion, z)
+        if ok then return v == true end
+    end
     local ok, v = pcall(function() return z:getVariableBoolean("NotAloneBody") end)
     return ok and v == true
 end
@@ -709,8 +768,19 @@ end
 local function targetOk(z, body, red)
     if z == nil or body == nil or z == body then return false end
     if Bridge.body ~= nil and z == Bridge.body then return false end
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(z) then
+        return BridgeKnoxNpc.allowGunTarget(z, red)
+    end
     if companionBody(z) then return false end
-    if BridgeGunRules.isForeignNpc(z) ~= nil then return false end
+    if not BridgeGunRules.foreignGunAllowed(z, BridgeData.foreignPeaceful)
+        and not (BridgeBandits ~= nil and BridgeBandits.hostileTarget(z)) then
+        return false
+    end
+    if instanceof(z, "IsoAnimal") then
+        if BridgeAnimals == nil or BridgeAnimals.wanted ~= true or not BridgeAnimals.hostile(z) then return false end
+        local ok, alive = pcall(function() return z:isAlive() and z:getHealth() > 0 end)
+        return ok and alive
+    end
     local ok, alive = pcall(function() return z:isAlive() and z:getHealth() > 0 and not z:isOnKillDone() end)
     if not ok or not alive then return false end
     if BridgeData.harmless(z) then return false end
@@ -726,11 +796,20 @@ local function validTarget(z, body, red)
     local range = BridgeGunfight.modeRange or BridgeGunfight.gun.range
     if range <= 0 or dist(body, z) > range + 0.9 then return false end
     local cell = getCell()
+    local nowT = Bridge.time or 0
+    local cached = BridgeGunfight.lineTarget == z
+        and BridgeGunfight.lineAt ~= nil
+        and nowT - BridgeGunfight.lineAt < 6
     local clear = false
-    pcall(function()
-        clear = BridgeGunRules.fireLineClear(cell, body:getX(), body:getY(), body:getZ(),
-            z:getX(), z:getY(), z:getZ()) == true
-    end)
+    if cached then
+        clear = BridgeGunfight.lineOk == true
+    else
+        pcall(function()
+            clear = BridgeGunRules.fireLineClear(cell, body:getX(), body:getY(), body:getZ(),
+                z:getX(), z:getY(), z:getZ()) == true
+        end)
+        BridgeGunfight.lineTarget, BridgeGunfight.lineAt, BridgeGunfight.lineOk = z, nowT, clear
+    end
     if not clear then return false end
     if not BridgeGunRules.targetVisible(body, red, z) then return false end
     return true
@@ -745,7 +824,7 @@ local function pickTarget(body, red)
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
     local range2 = range * range
     local list = nil
-    if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.2) end
+    if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.2, { tag = "gun.pick" }) end
     if list == nil then list = cell:getZombieList() end
     local cands = {}
     for i = 0, list:size() - 1 do
@@ -760,6 +839,39 @@ local function pickTarget(body, red)
                 end
             end
         end
+    end
+    if BridgeAnimals ~= nil and BridgeAnimals.wanted then
+        local animals = nil
+        pcall(function() animals = cell:getAnimals() end)
+        if animals ~= nil then
+            for i = 0, animals:size() - 1 do
+                local a = animals:get(i)
+                if a ~= nil and math.abs(a:getZ() - bz) < 0.8 then
+                    local dx, dy = a:getX() - bx, a:getY() - by
+                    local d2 = dx * dx + dy * dy
+                    if d2 <= range2 and targetOk(a, body, red) then
+                        local dSelf = math.sqrt(d2)
+                        if dSelf <= range then
+                            cands[#cands + 1] = { z = a, score = dist(red, a) + dSelf * 0.01 }
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.active() then
+        pcall(function()
+            local npcs = BridgeKnoxNpc.near(bx, by, range, red)
+            for i = 1, #npcs do
+                local n = npcs[i]
+                if math.abs(n:getZ() - bz) < 0.8 and targetOk(n, body, red) then
+                    local dS = dist(body, n)
+                    if dS <= range then
+                        cands[#cands + 1] = { z = n, score = dist(red, n) + dS * 0.01 }
+                    end
+                end
+            end
+        end)
     end
     if #cands == 0 then return nil end
     table.sort(cands, function(a, b) return a.score < b.score end)
@@ -790,7 +902,7 @@ local function peekTarget(body, red)
     local min2 = BridgeGunRules.MIN_RANGE * BridgeGunRules.MIN_RANGE
     pcall(function()
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.2) end
+        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.2, { tag = "gun.pick" }) end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
@@ -901,7 +1013,11 @@ end
 
 
 local function friendlies(body)
+    local reach = BridgeGunfight.modeRange or 0
+    if reach <= 0 then reach = (BridgeGunfight.gun and BridgeGunfight.gun.range) or 20 end
+    local radius = math.max(20, reach + 1)
     if BridgeGunfight.friendlies ~= nil and BridgeGunfight.friendliesAt ~= nil
+        and BridgeGunfight.friendliesRadius == radius
         and Bridge.time - BridgeGunfight.friendliesAt < FRIENDLY_TTL then
         return BridgeGunfight.friendlies
     end
@@ -912,13 +1028,19 @@ local function friendlies(body)
     add(BridgeData.owner())
     add(Bridge.body)
     pcall(function()
-        local zombies = getCell():getZombieList()
+        local zombies = nil
+        if BridgeZS ~= nil then
+            zombies = BridgeZS.near(body:getX(), body:getY(), radius, { tag = "gun.friendlies" })
+        end
+        if zombies == nil then zombies = getCell():getZombieList() end
+        if zombies == nil then return end
         for i = 0, zombies:size() - 1 do
             local z = zombies:get(i)
             if z ~= nil and z ~= body then
                 if companionBody(z) then
                     add(z)
-                elseif BridgeGunRules.isForeignNpc(z) ~= nil and dist(body, z) <= 20 then
+                elseif BridgeGunRules.isForeignNpc(z) ~= nil and dist(body, z) <= 20
+                    and not (BridgeBandits ~= nil and BridgeBandits.hostileTarget(z)) then
                     add(z)
                 end
             end
@@ -926,6 +1048,7 @@ local function friendlies(body)
     end)
     BridgeGunfight.friendlies = list
     BridgeGunfight.friendliesAt = Bridge.time
+    BridgeGunfight.friendliesRadius = radius
     return list
 end
 
@@ -1112,22 +1235,56 @@ local function hitBlood(target)
 end
 
 
+local function playGunshotAt(x, y, z, sound)
+    if type(sound) ~= "string" or sound == "" then return false end
+    local emitter = nil
+    pcall(function() emitter = getWorld():getFreeEmitter(x, y, z) end)
+    if emitter == nil then return false end
+    local handle = nil
+    pcall(function() handle = emitter:playSoundImpl(sound, false, nil) end)
+    if handle == nil or handle == 0 then return false end
+    pcall(function()
+        local player = getPlayer()
+        if player == nil then return end
+        local dx, dy = player:getX() - x, player:getY() - y
+        local dz = (player:getZ() - z) * 3.0
+        local inside, area = 0, 0
+        local square = getCell():getGridSquare(math.floor(x), math.floor(y), math.floor(z))
+        local room = square ~= nil and square:getRoom() or nil
+        if room ~= nil then
+            local here = player:getCurrentSquare()
+            inside = (here ~= nil and here:getRoom() == room) and 1 or -1
+            local def = room:getRoomDef()
+            if def ~= nil then area = def:getArea() end
+        end
+        local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+        emitter:setParameterValueByName(handle, "FirearmDistance", math.max(0, math.min(1000, distance)))
+        emitter:setParameterValueByName(handle, "FirearmInside", inside)
+        emitter:setParameterValueByName(handle, "FirearmRoomSize", math.max(0, math.min(1000, tonumber(area) or 0)))
+        emitter:setParameterValueByName(handle, "LocalPlayer", 0)
+    end)
+    return true
+end
+
+
 local function playShot(body, gun)
-    if gun == nil then return end
+    if body == nil or gun == nil then return end
     if gun.sound ~= nil then
-        pcall(function()
-            if BridgeSound ~= nil then BridgeSound.sfx(body, gun.sound) else body:getEmitter():playSound(gun.sound) end
-        end)
+        local played = false
+        pcall(function() played = playGunshotAt(body:getX(), body:getY(), body:getZ(), gun.sound) end)
+        if not played then
+            pcall(function()
+                if BridgeSound ~= nil then BridgeSound.sfx(body, gun.sound) else body:getEmitter():playSound(gun.sound) end
+            end)
+        end
     end
     pcall(function()
         local radius = (gun.soundRadius or 20) * noiseMultiplier()
         local outside = true
         pcall(function() outside = body:isOutside() ~= false end)
         if not outside then radius = radius * 0.5 end
-        local ok = pcall(function() body:addWorldSoundUnlessInvisible(radius, gun.soundVolume, true) end)
-        if not ok then
-            addSound(body, body:getX(), body:getY(), body:getZ(), radius, gun.soundVolume)
-        end
+        pcall(addSound, nil, math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()),
+            math.floor(radius), math.floor(gun.soundVolume or 10))
     end)
     flash(body)
 end
@@ -1137,6 +1294,28 @@ local function retainBump(body, name)
     BridgeGunfight.bumps[#BridgeGunfight.bumps + 1] = {
         body = body, name = name, untilT = (Bridge.time or 0) + FIRE_TICKS,
     }
+end
+
+
+local function markStandHold(body)
+    if body == nil then return end
+    local hold = tonumber(BridgeGunfight.standHoldTicks) or 0
+    if hold <= 0 then return end
+    BridgeGunfight.standHold[body] = (Bridge.time or 0) + hold
+end
+
+
+local function shotFx(body, gun, kind, target)
+    plant(body, "NA_Fire" .. kind)
+    pcall(function() body:setVariable(FIRE_VAR, false) end)
+    BridgeGunfight.fireUntil = (Bridge.time or 0) + FIRE_TICKS
+    retainBump(body, "NA_Aim" .. kind)
+    markStandHold(body)
+    playShot(body, gun)
+    local fx = rawget(_G, "BridgeShotFx")
+    if fx ~= nil and type(fx.shot) == "function" then
+        pcall(fx.shot, body, target, gun, kind)
+    end
 end
 
 
@@ -1151,21 +1330,33 @@ local function checkLowAmmo()
         return
     end
     local threshold = math.max(1, math.ceil(maxAmmo * 0.2))
-    if rounds <= threshold then
-        if BridgeGunfight.hasAmmo(BridgeGunfight.body) then return end
-        local usable = BridgeGunfight.gun ~= nil
-            and (BridgeGunfight.gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare"))
-        if usable and BridgeGunfight.body ~= nil
-            and BridgeGunRules.findAmmoBox(BridgeGunfight.body, BridgeGunfight.gun) ~= nil then return end
-        local home = false
-        pcall(function() home = BridgeFetch ~= nil and type(BridgeFetch.hasAmmoStock) == "function" and BridgeFetch.hasAmmoStock(BridgeGunfight.gun) end)
-        if home then
-            BridgeGunfight.lowSaid = true
-            return
-        end
-        BridgeGunfight.lowSaid = true
-        pcall(function() BridgeCallout.lowAmmo() end)
+    if rounds > threshold then return end
+    local now = Bridge.time or 0
+    if BridgeGunfight.lowCheckAt ~= nil and now - BridgeGunfight.lowCheckAt < 30 then return end
+    BridgeGunfight.lowCheckAt = now
+    local hasAmmo = nil
+    if BridgeGunfight.hasAmmoAt ~= nil and now - BridgeGunfight.hasAmmoAt < 30 then
+        hasAmmo = BridgeGunfight.hasAmmoValue
+    else
+        hasAmmo = BridgeGunfight.hasAmmo(BridgeGunfight.body) == true
+        BridgeGunfight.hasAmmoAt = now
+        BridgeGunfight.hasAmmoValue = hasAmmo
     end
+    if hasAmmo then return end
+    local usable = BridgeGunfight.gun ~= nil
+        and (BridgeGunfight.gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare"))
+    if usable and BridgeGunfight.body ~= nil then
+        local items = BridgeGunRules.itemsOf(BridgeGunfight.body)
+        if BridgeGunRules.findAmmoBox(BridgeGunfight.body, BridgeGunfight.gun, items) ~= nil then return end
+    end
+    local home = false
+    pcall(function() home = BridgeFetch ~= nil and type(BridgeFetch.hasAmmoStock) == "function" and BridgeFetch.hasAmmoStock(BridgeGunfight.gun) end)
+    if home then
+        BridgeGunfight.lowSaid = true
+        return
+    end
+    BridgeGunfight.lowSaid = true
+    pcall(function() BridgeCallout.lowAmmo() end)
 end
 
 
@@ -1174,6 +1365,10 @@ local aimingLevel
 local function applyGunHit(body, item, gun, target, damage, crit)
     if body == nil or item == nil or gun == nil or target == nil then
         return false, 0, 0, false, "ShotBelly", "missing argument"
+    end
+    if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(target) then
+        local ok, hpB, hpA, killed = BridgeKnoxNpc.hit(target, body, item, damage, crit)
+        return ok, hpB, hpA, killed, nil, nil
     end
     local hpBefore = 0
     pcall(function() hpBefore = target:getHealth() end)
@@ -1216,7 +1411,7 @@ local function gunCandidates(body, red, primary)
     local friends = friendlies(body)
     local bx, by = body:getX(), body:getY()
     local list = nil
-    if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 1.0) end
+    if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 1.0, { tag = "gun.candidates" }) end
     if list == nil then list = cell:getZombieList() end
     for i = 0, list:size() - 1 do
         local z = list:get(i)
@@ -1269,11 +1464,17 @@ local function fire(body)
     if Bridge ~= nil and Bridge.mp then
         local onlineId = nil
         pcall(function() onlineId = t:getOnlineID() end)
+        local npcId = nil
+        if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(t) then
+            npcId = BridgeKnoxNpc.idOf(t)
+            if npcId ~= nil then onlineId = nil end
+        end
         local x, y, z = t:getX(), t:getY(), t:getZ()
         BridgeGunfight.pendingShot = { at = Bridge.time, chance = chance, dist = d, target = t }
+        shotFx(body, gun, kind, t)
         pcall(function()
             sendClientCommand(BridgeData.owner(), "Bridge", "gunShot",
-                { targetId = onlineId, x = x, y = y, z = z })
+                { targetId = onlineId, npcId = npcId, x = x, y = y, z = z })
         end)
         vlog(string.format("shot request -> %s d=%.1f chance=%.0f%%", tostring(item:getType()), d, chance))
         BridgeGunfight.info = string.format("request d=%.1f chance=%.0f", d, chance)
@@ -1285,11 +1486,30 @@ local function fire(body)
     if BridgeSkills ~= nil then
         pcall(function() BridgeSkills.add("Aiming", 0.5, "shot") end)
     end
-    plant(body, "NA_Fire" .. kind)
-    pcall(function() body:setVariable(FIRE_VAR, false) end)
-    BridgeGunfight.fireUntil = (Bridge.time or 0) + FIRE_TICKS
-    retainBump(body, "NA_Aim" .. kind)
-    playShot(body, gun)
+    shotFx(body, gun, kind, t)
+
+    if instanceof(t, "IsoAnimal") then
+        local roll = ZombRand(100)
+        local hit = roll < chance
+        if hit then
+            local crit = ZombRand(100) < (tonumber(gun.critChance) or 0)
+            local dmg = BridgeGunRules.rollDamage(gun)
+            if crit then dmg = dmg * math.max(1, math.min(5, gun.critMult or 2)) end
+            if BridgeAnimals ~= nil then BridgeAnimals.attack(t, dmg, body) end
+            if BridgeSkills ~= nil then pcall(function() BridgeSkills.add("Aiming", 1, "hit") end) end
+            BridgeGunfight.info = string.format("hit d=%.1f dmg=%.1f%s", d, dmg, crit and " crit" or "")
+            vlog(string.format("shot animal d=%.1f chance=%.0f%% dmg=%.2f%s", d, chance, dmg, crit and " CRIT" or ""))
+        else
+            pcall(function()
+                local sq = t:getSquare()
+                if sq ~= nil then sq:playSound(gun.impactSound or "BulletImpact") end
+            end)
+            BridgeGunfight.info = string.format("miss d=%.1f chance=%.0f", d, chance)
+            vlog(string.format("shot animal miss d=%.1f chance=%.0f%% roll=%d", d, chance, roll + 1))
+        end
+        checkLowAmmo()
+        return
+    end
 
     local shotgun = (tonumber(gun.projectileCount) or 1) > 1
     local red = BridgeData.owner()
@@ -1463,15 +1683,53 @@ local function liveThreat(body, target, maxRange)
 end
 
 
+local nearestCache = { body = nil, at = nil, threat = nil }
+
+local function nearestMeleeThreat(body, maxRange)
+    if body == nil then return nil end
+    local now = Bridge.time or 0
+    local c = nearestCache
+    local hit = nil
+    if c.body == body and c.at ~= nil and now - c.at < 5 then
+        hit = c.threat
+    else
+        local best, bestD = nil, MELEE_RELEASE_RANGE
+        local red = BridgeData.owner()
+        pcall(function()
+            local list = nil
+            if BridgeZS ~= nil then
+                list = BridgeZS.near(body:getX(), body:getY(), MELEE_RELEASE_RANGE, { tag = "gun.target" })
+            end
+            if list == nil then list = getCell():getZombieList() end
+            if list == nil then return end
+            for i = 0, list:size() - 1 do
+                local z = list:get(i)
+                if z ~= nil and z ~= body and targetOk(z, body, red)
+                    and math.abs(z:getZ() - body:getZ()) < 0.8 then
+                    local d = dist(body, z)
+                    if d <= bestD then best, bestD = z, d end
+                end
+            end
+        end)
+        c.body, c.at, c.threat = body, now, best
+        hit = best
+    end
+    return liveThreat(body, hit, maxRange or BridgeGunRules.MIN_RANGE)
+end
+
+
 local function meleeThreat(body)
     if not BridgeData.optionOf(Bridge.store, "gunMelee") or not meleeReady(body) then return nil end
-    return liveThreat(body, BridgeFight.target, BridgeGunRules.MIN_RANGE)
+    local target = liveThreat(body, BridgeFight.target, BridgeGunRules.MIN_RANGE)
+    if target ~= nil then return target end
+    return nearestMeleeThreat(body, BridgeGunRules.MIN_RANGE)
 end
 
 
 local function meleeReleaseReady(body)
     if not BridgeData.optionOf(Bridge.store, "gunMelee") or not meleeReady(body) then return true end
-    if liveThreat(body, BridgeFight.target, MELEE_RELEASE_RANGE) ~= nil then
+    if liveThreat(body, BridgeFight.target, MELEE_RELEASE_RANGE) ~= nil
+        or nearestMeleeThreat(body, MELEE_RELEASE_RANGE) ~= nil then
         BridgeGunfight.meleeClearAt = nil
         return false
     end
@@ -1490,6 +1748,18 @@ local function swingRecoveryReady()
     return (Bridge.time or 0) >= at + len + MELEE_TO_GUN
 end
 
+
+local function transferHoldsReload(body)
+    if BridgeGunfight.reloadHoldUntil ~= nil and (Bridge.time or 0) < BridgeGunfight.reloadHoldUntil then
+        return true
+    end
+    if BridgeInventory ~= nil and type(BridgeInventory.transferPending) == "function" then
+        local pending = false
+        pcall(function() pending = BridgeInventory.transferPending(body) == true end)
+        if pending then return true end
+    end
+    return false
+end
 
 local function idleReloadWanted(body, gun)
     if body == nil or gun == nil then return false end
@@ -1522,7 +1792,7 @@ local function handAlive(item)
 end
 
 
-local function magCareBegin(body, magazine)
+local function magCareBegin(body, magazine, skipAnim)
     BridgeGunfight.magCareHand1 = nil
     BridgeGunfight.magCareHand2 = nil
     pcall(function() BridgeGunfight.magCareHand1 = body:getPrimaryHandItem() end)
@@ -1534,7 +1804,7 @@ local function magCareBegin(body, magazine)
     end
     pcall(function() body:setVariable(RELOAD_VAR, reloadFactor()) end)
     pcall(function() body:resetEquippedHandsModels() end)
-    plant(body, "NA_InsertBullets")
+    if not skipAnim then plantMaintenance(body, "NA_InsertBullets") end
 end
 
 
@@ -1573,7 +1843,7 @@ local function advanceMagCare(body, gun)
     local now = Bridge.time or 0
     showGunBar(magCareProgress())
     if not actionElapsed(BridgeGunfight.magCareStageAt, BridgeGunfight.magCareStageTicks) then
-        plant(body, "NA_InsertBullets")
+        plantMaintenance(body, "NA_InsertBullets")
         return true
     end
     local magazine = nil
@@ -1609,7 +1879,7 @@ local function advanceMagCare(body, gun)
     end
     BridgeGunfight.magCareRounds = rounds
     BridgeGunfight.info = "loading magazine " .. tostring(rounds) .. "/" .. tostring(maxAmmo)
-    log("magazine care loaded " .. tostring(rounds) .. "/" .. tostring(maxAmmo))
+    logf("magazine care loaded %s/%s", tostring(rounds), tostring(maxAmmo))
     if maxAmmo > 0 and rounds >= maxAmmo then
         finishMagCare(body, "magazine full")
         return false
@@ -1623,7 +1893,7 @@ local function advanceMagCare(body, gun)
     BridgeGunfight.magCareStageAt = now
     BridgeGunfight.magCareStageTicks = nextTicks
     BridgeGunfight.magCareUntil = now + (nextTicks / speedMult())
-    plant(body, "NA_InsertBullets")
+    plantMaintenance(body, "NA_InsertBullets")
     return true
 end
 
@@ -1638,6 +1908,7 @@ local function magazineCare(body, gun)
         end
         return advanceMagCare(body, gun)
     end
+    if transferHoldsReload(body) then return false end
     if not BridgeData.optionOf(Bridge.store, "gunMagCare") then return false end
     if BridgeFight == nil or BridgeFight.target ~= nil or BridgeFight.state == "swing" then return false end
     if BridgeGunfight.reloadStage ~= nil or BridgeGunfight.state ~= "idle" then return false end
@@ -1645,9 +1916,10 @@ local function magazineCare(body, gun)
     if Bridge.time - (BridgeGunfight.magCareAt or 0) < magCareTicks(gun) then return false end
     local maxAmmo = tonumber(gun.maxAmmo) or 0
     if maxAmmo <= 0 then return false end
-    local _, total = BridgeGunRules.findLooseRounds(body, gun, 1)
+    local items = BridgeGunRules.itemsOf(body)
+    local _, total = BridgeGunRules.findLooseRounds(body, gun, 1, items)
     if total <= 0 then return false end
-    local magazine = BridgeGunRules.findPartialMagazine(body, gun)
+    local magazine = BridgeGunRules.findPartialMagazine(body, gun, items)
     if magazine == nil and BridgeGunfight.gunItem ~= nil then
         local inserted = false
         local clipType = nil
@@ -1656,25 +1928,25 @@ local function magazineCare(body, gun)
             local part = BridgeGunfight.gunItem:getWeaponPart("Clip")
             if part ~= nil then clipType = part:getFullType() end
         end)
-        local loaded = BridgeGunRules.findLoadedMagazine(body, gun)
+        local loaded = BridgeGunRules.findLoadedMagazine(body, gun, items)
         if loaded == nil and inserted and BridgeGunRules.roundsOf(BridgeGunfight.gunItem) <= 0 then
             magazine = BridgeGunRules.ejectMagazine(body, gun, 0)
             if magazine ~= nil then
                 BridgeGunRules.setRounds(BridgeGunfight.gunItem, 0, false)
                 BridgeGunfight.rounds = 0
-                log(string.format("magazine care: ejected inserted magazine id=%s type=%s rounds=%d clipPart=%s",
+                logf("magazine care: ejected inserted magazine id=%s type=%s rounds=%d clipPart=%s",
                     tostring(magazine:getID()), tostring(gun.magazineType), BridgeGunRules.roundsOf(magazine),
-                    tostring(clipType or "-")))
+                    tostring(clipType or "-"))
             else
-                log(string.format("magazine care: eject failed type=%s clipPart=%s",
-                    tostring(gun.magazineType), tostring(clipType or "-")))
+                logf("magazine care: eject failed type=%s clipPart=%s",
+                    tostring(gun.magazineType), tostring(clipType or "-"))
             end
         elseif not inserted and loaded == nil then
             local key = tostring(clipType)
             if BridgeGunfight.magCareLogged ~= key then
                 BridgeGunfight.magCareLogged = key
-                log(string.format("magazine care: no magazine (containsClip=false clipPart=%s spareMags=0)",
-                    tostring(clipType or "-")))
+                logf("magazine care: no magazine (containsClip=false clipPart=%s spareMags=0)",
+                    tostring(clipType or "-"))
             end
         end
     end
@@ -1696,8 +1968,8 @@ local function magazineCare(body, gun)
     BridgeGunfight.info = "loading magazine"
     BridgeGunfight.magCareLogged = nil
     magCareBegin(body, magazine)
-    log(string.format("magazine care start type=%s rounds=%d cap=%d",
-        tostring(startType or "-"), BridgeGunfight.magCareRounds or 0, startCap))
+    logf("magazine care start type=%s rounds=%d cap=%d",
+        tostring(startType or "-"), BridgeGunfight.magCareRounds or 0, startCap)
     return true
 end
 
@@ -1852,15 +2124,19 @@ local function finishReload(body)
     BridgeGunfight.reloadBaseRounds = 0
     BridgeGunfight.reloadCancel = false
     BridgeGunfight.reloadDoneAt = Bridge.time
+    clearNeedCache()
+    BridgeGunfight.hasAmmoAt = nil
+    BridgeGunfight.hasAmmoValue = nil
+    BridgeGunfight.lowCheckAt = nil
     clearReloadSpeed(body)
     BridgeGunfight.lowSaid = false
     BridgeGunfight.aimUntil = (Bridge.time or 0) + BridgeGunRules.aimTicks(BridgeGunfight.gun, aimingLevel())
     BridgeGunfight.nextShotAt = BridgeGunfight.aimUntil
     BridgeGunfight.state = "aim"
     plant(body, "NA_Aim" .. ((BridgeGunfight.gun and BridgeGunfight.gun.kind) or "Handgun"))
-    log(string.format("reload done rounds=%d/%d base=%d need=%d taken=%d clientAmmo=%s",
+    logf("reload done rounds=%d/%d base=%d need=%d taken=%d clientAmmo=%s",
         BridgeGunfight.rounds or 0, BridgeGunfight.maxAmmo or 0, baseLog, needLog,
-        taken, tostring(clientAmmo)))
+        taken, tostring(clientAmmo))
     return false
 end
 
@@ -1886,14 +2162,48 @@ local function cancelReload(body, reason)
     return false
 end
 
-local function refillNeed(body, gun)
+function BridgeGunfight.interruptReload(body, reason)
+    local stopped = false
+    clearNeedCache()
+    BridgeGunfight.hasAmmoAt = nil
+    BridgeGunfight.hasAmmoValue = nil
+    if BridgeGunfight.magCareStage ~= nil then
+        pcall(function() BridgeGunfight.cancelMagCare(body) end)
+        stopped = true
+    end
+    if BridgeGunfight.reloadStage ~= nil then
+        pcall(function() cancelReload(body, reason or "inventory transfer") end)
+        stopped = true
+    end
+    if BridgeGunfight.ammoItem ~= nil then
+        BridgeGunfight.ammoItem, BridgeGunfight.ammoOut, BridgeGunfight.ammoAmount = nil, nil, 0
+        BridgeGunfight.ammoUntil = nil
+        BridgeGunfight.ammoStageAt = nil
+        BridgeGunfight.ammoStageTicks = 0
+        BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 60
+        pcall(function() magCareEnd(body) end)
+        if BridgeWeapon ~= nil then pcall(function() BridgeWeapon.lost = nil end) end
+        stopped = true
+    end
+    if stopped then
+        BridgeGunfight.reloadHoldUntil = math.max(tonumber(BridgeGunfight.reloadHoldUntil) or 0,
+            (Bridge.time or 0) + 120)
+        if BridgeMove ~= nil then BridgeMove.forcedWalk = nil end
+        pcall(function() clearBump(body) end)
+        BridgeGunfight.state = "idle"
+        BridgeGunfight.info = "reload interrupted: " .. tostring(reason or "inventory transfer")
+    end
+    return stopped
+end
+
+local function refillNeed(body, gun, items)
     if body == nil or gun == nil then return 0 end
     local cap = tonumber(gun.maxAmmo) or 0
     if cap <= 0 then return 0 end
     if gun.magazineType == nil then
         return math.max(0, cap - (BridgeGunfight.rounds or 0))
     end
-    local mag = BridgeGunRules.findPartialMagazine(body, gun)
+    local mag = BridgeGunRules.findPartialMagazine(body, gun, items)
     if mag ~= nil then
         local magCap = 0
         pcall(function() magCap = math.floor(tonumber(mag:getMaxAmmo()) or 0) end)
@@ -1907,25 +2217,85 @@ local function refillNeed(body, gun)
 end
 
 
+local function needOf(body, gun, items)
+    local now = Bridge.time or 0
+    local rounds = BridgeGunfight.rounds or 0
+    if BridgeGunfight.needAmmo ~= nil and BridgeGunfight.needAmmoAt ~= nil
+        and BridgeGunfight.needRounds == rounds
+        and now - BridgeGunfight.needAmmoAt < 30 then
+        return BridgeGunfight.needAmmo
+    end
+    local need = refillNeed(body, gun, items)
+    BridgeGunfight.needAmmo = need
+    BridgeGunfight.needAmmoAt = now
+    BridgeGunfight.needRounds = rounds
+    return need
+end
+
+
+local function ammoBoxProbe(body, gun)
+    local parts = {}
+    if body == nil or type(gun) ~= "table" then return "no gun" end
+    local efz = gun.efzAmmo
+    local efzBoxes = type(efz) == "table" and efz.boxSet or {}
+    local baseBox = gun.ammoBox
+    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+        local full = nil
+        pcall(function() full = item:getFullType() end)
+        if type(full) == "string" and (full == baseBox or efzBoxes[full] == true) then
+            local spec = efzBoxes[full] == true and BridgeGunRules.efzUnpackOf(full) or BridgeGunRules.unpackOf(full)
+            if spec ~= nil then
+                parts[#parts + 1] = string.format("%s -> %s x%s (%s)",
+                    full, tostring(spec.out and spec.out[1] or "?"), tostring(spec.amount), tostring(spec.recipe))
+            else
+                parts[#parts + 1] = full .. " -> unpack nil"
+            end
+        end
+    end
+    if #parts == 0 then return "none in inventory" end
+    return table.concat(parts, "; ")
+end
+
+
 local function startAmmoOpen(body)
     if body == nil or BridgeGunfight.gun == nil then return false end
     if BridgeGunfight.ammoItem ~= nil then return true end
-    if BridgeGunfight.ammoCooldown ~= nil and (Bridge.time or 0) < BridgeGunfight.ammoCooldown then return false end
-    if BridgeGunfight.gun.magazineType ~= nil and not BridgeData.optionOf(Bridge.store, "gunMagCare") then
-        BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 600
-        vlog("ammo box skipped: magazine gun without magazine care")
+    if transferHoldsReload(body) then
+        log("ammoOpen skip: inventory transfer holds reload")
         return false
     end
-    local need = refillNeed(body, BridgeGunfight.gun)
-    if need <= 0 then return false end
-    local _, loose = BridgeGunRules.findLooseRounds(body, BridgeGunfight.gun, need)
-    if loose >= need then return false end
+    if BridgeGunfight.ammoCooldown ~= nil and (Bridge.time or 0) < BridgeGunfight.ammoCooldown then
+        log(string.format("ammoOpen skip: cooldown %s", tostring(BridgeGunfight.ammoCooldown - (Bridge.time or 0))))
+        return false
+    end
+    if BridgeGunfight.gun.magazineType ~= nil and not BridgeData.optionOf(Bridge.store, "gunMagCare") then
+        BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 600
+        log("ammoOpen skip: magazine gun without magazine care")
+        return false
+    end
+    local max = tonumber(BridgeGunfight.maxAmmo) or 0
+    if max <= 0 then max = tonumber(BridgeGunfight.gun.maxAmmo) or 0 end
+    if max > 0 and (BridgeGunfight.rounds or 0) >= max and BridgeGunfight.magCareStage == nil then
+        return false
+    end
+    local items = BridgeGunRules.itemsOf(body)
+    local gun = BridgeGunfight.gun
+    local need = needOf(body, gun, items)
+    if need <= 0 then
+        log("ammoOpen skip: refill need 0")
+        return false
+    end
+    local _, loose = BridgeGunRules.findLooseRounds(body, gun, need, items)
+    if loose >= need then
+        log(string.format("ammoOpen skip: loose rounds %d >= need %d", loose, need))
+        return false
+    end
     local danger = false
     pcall(function()
         local red = BridgeData.owner()
         local bx, by = body:getX(), body:getY()
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, BridgeGunRules.MIN_RANGE) end
+        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, BridgeGunRules.MIN_RANGE, { tag = "gun.target" }) end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
@@ -1937,16 +2307,21 @@ local function startAmmoOpen(body)
     end)
     if danger then
         BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 30
-        vlog("ammo box skipped: zombie at melee range")
+        log("ammoOpen skip: zombie at melee range")
         return false
     end
-    local found, pick = pcall(BridgeGunRules.findAmmoBox, body, BridgeGunfight.gun)
+    local found, pick = pcall(BridgeGunRules.findAmmoBox, body, gun, items)
     if not found then
         BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 600
         log("ammo box lookup failed: " .. tostring(pick))
         return false
     end
-    if pick == nil then return false end
+    if pick == nil then
+        local probe = ""
+        if BridgeLog ~= nil and BridgeLog.on() then probe = ammoBoxProbe(body, gun) end
+        log("ammoOpen none; boxes: " .. probe)
+        return false
+    end
     BridgeGunfight.ammoItem = pick.item
     BridgeGunfight.ammoOut = pick.out
     BridgeGunfight.ammoAmount = pick.amount
@@ -1959,10 +2334,10 @@ local function startAmmoOpen(body)
     BridgeGunfight.info = "opening " .. tostring(pick.type)
     BridgeGunfight.canMelee = false
     if BridgeGunfight.drawn then BridgeGunfight.stow(body) end
-    magCareBegin(body, pick.item)
-    plant(body, "NA_OpenAmmoBox")
-    log(string.format("ammoOpen start box=%s out=%s n=%d ticks=%d",
-        tostring(pick.type), tostring(pick.out), pick.amount, pick.ticks or 75))
+    magCareBegin(body, pick.item, true)
+    plantMaintenance(body, "NA_OpenAmmoBox")
+    logf("ammoOpen start box=%s out=%s n=%d ticks=%d",
+        tostring(pick.type), tostring(pick.out), pick.amount, pick.ticks or 75)
     return true
 end
 
@@ -1971,6 +2346,20 @@ local function homeAmmo(body)
     if body == nil or BridgeGunfight.gun == nil then return false end
     if BridgeFetch == nil or type(BridgeFetch.pullAmmo) ~= "function" then return false end
     local now = Bridge.time or 0
+    local gun = BridgeGunfight.gun
+    local max = tonumber(BridgeGunfight.maxAmmo) or 0
+    if max <= 0 then max = tonumber(gun.maxAmmo) or 0 end
+    if max > 0 and (BridgeGunfight.rounds or 0) >= max and BridgeGunfight.magCareStage == nil then
+        BridgeGunfight.homeAmmoAt = now + 300
+        return false
+    end
+    if BridgeGunfight.needAmmo == false then return false end
+    if BridgeGunfight.needAmmo ~= nil and BridgeGunfight.needAmmo <= 0
+        and BridgeGunfight.needRounds == (BridgeGunfight.rounds or 0)
+        and BridgeGunfight.needAmmoAt ~= nil
+        and now - BridgeGunfight.needAmmoAt < 30 then
+        return false
+    end
     if BridgeGunfight.ammoBorrow ~= nil then
         local held = nil
         pcall(function() held = BridgeGunRules.findItemById(body, BridgeGunfight.ammoBorrow.itemId) end)
@@ -1981,12 +2370,13 @@ local function homeAmmo(body)
     end
     if BridgeGunfight.homeAmmoAt ~= nil and now < BridgeGunfight.homeAmmoAt then return false end
     if not BridgeFetch.availableAmmo() then return false end
-    local need = refillNeed(body, BridgeGunfight.gun)
+    local items = BridgeGunRules.itemsOf(body)
+    local need = needOf(body, gun, items)
     local minRounds = 0
-    if BridgeGunfight.gun.magazineType ~= nil then
-        local cap = tonumber(BridgeGunfight.gun.maxAmmo) or 0
-        local partial = BridgeGunRules.findPartialMagazine(body, BridgeGunfight.gun)
-        local _, best = BridgeGunRules.findLoadedMagazine(body, BridgeGunfight.gun)
+    if gun.magazineType ~= nil then
+        local cap = tonumber(gun.maxAmmo) or 0
+        local partial = BridgeGunRules.findPartialMagazine(body, gun, items)
+        local _, best = BridgeGunRules.findLoadedMagazine(body, gun, items)
         local inserted = 0
         if BridgeGunfight.gunItem ~= nil then inserted = BridgeGunRules.roundsOf(BridgeGunfight.gunItem) end
         inserted = tonumber(inserted) or 0
@@ -1998,13 +2388,19 @@ local function homeAmmo(body)
             if need <= 0 and inserted > 0 and inserted < cap then need = cap - inserted end
         end
     end
-    if need <= 0 then return false end
-    local _, loose = BridgeGunRules.findLooseRounds(body, BridgeGunfight.gun, need)
-    if loose >= need then return false end
-    if BridgeGunRules.findAmmoBox(body, BridgeGunfight.gun) ~= nil then return false end
+    if need <= 0 then
+        BridgeGunfight.homeAmmoAt = now + 300
+        return false
+    end
+    local _, loose = BridgeGunRules.findLooseRounds(body, gun, need, items)
+    if loose >= need then
+        BridgeGunfight.homeAmmoAt = now + 300
+        return false
+    end
+    if BridgeGunRules.findAmmoBox(body, gun, items) ~= nil then return false end
     local pull = need - loose
     if pull < 1 then pull = 1 end
-    local res = BridgeFetch.pullAmmo(BridgeGunfight.gun, minRounds, pull)
+    local res = BridgeFetch.pullAmmo(gun, minRounds, pull)
     if res == "requested" or res == "moved" then
         BridgeGunfight.homeAmmoAt = now + 120
         BridgeGunfight.info = "taking ammo from home"
@@ -2012,7 +2408,7 @@ local function homeAmmo(body)
         return true
     end
     if res == "absent" then
-        log("home ammo: no matching ammo for " .. tostring(BridgeGunfight.gun and BridgeGunfight.gun.fullType or "?"))
+        log("home ammo: no matching ammo for " .. tostring(gun.fullType))
     end
     if res == "unsupported" then
         log("home ammo: unsupported carton breakdown")
@@ -2033,6 +2429,7 @@ local function finishAmmoOpen(body)
     BridgeGunfight.ammoStageTicks = 0
     BridgeGunfight.state = "idle"
     magCareEnd(body)
+    BridgeGunfight.magCareAt = Bridge.time or 0
     if BridgeWeapon ~= nil then pcall(function() BridgeWeapon.lost = nil end) end
     local opened = false
     if item ~= nil and out ~= nil then
@@ -2043,7 +2440,7 @@ local function finishAmmoOpen(body)
         end
         opened = ok == true
         BridgeGunfight.info = opened and ("opened box: +" .. tostring(amount) .. " " .. tostring(out)) or "ammo box failed"
-        log(string.format("ammoOpen done ok=%s out=%s n=%d", tostring(opened), tostring(out), amount))
+        logf("ammoOpen done ok=%s out=%s n=%d", tostring(opened), tostring(out), amount)
         local borrow = BridgeGunfight.ammoBorrow
         if borrow ~= nil and openedId ~= nil and openedId == borrow.itemId then
             local calledReturn, moved, available, reason =
@@ -2054,9 +2451,9 @@ local function finishAmmoOpen(body)
             moved = tonumber(moved) or 0
             available = tonumber(available) or 0
             local created = opened and amount or 0
-            log(string.format("home ammo: carton %s opened, created=%s, returned=%d, kept=%d, source=%s%s",
+            logf("home ammo: carton %s opened, created=%s, returned=%d, kept=%d, source=%s%s",
                 tostring(borrow.cartonType), tostring(created), moved, math.max(0, available - moved),
-                tostring(borrow.src), reason and (" reason=" .. tostring(reason)) or ""))
+                tostring(borrow.src), reason and (" reason=" .. tostring(reason)) or "")
             if not opened then
                 log("home ammo: carton open failed, return result=" .. tostring(moved) .. "/" .. tostring(available))
             end
@@ -2074,7 +2471,7 @@ end
 local function ammoOpenTick(body)
     if BridgeGunfight.ammoItem == nil then return false end
     if not actionElapsed(BridgeGunfight.ammoStageAt, BridgeGunfight.ammoStageTicks) then
-        plant(body, "NA_OpenAmmoBox")
+        plantMaintenance(body, "NA_OpenAmmoBox")
         return true
     end
     return finishAmmoOpen(body)
@@ -2084,6 +2481,10 @@ end
 local function outOfAmmo(body)
     BridgeGunfight.peek = nil
     if BridgeMove ~= nil then BridgeMove.forcedWalk = nil end
+    clearNeedCache()
+    BridgeGunfight.hasAmmoAt = nil
+    BridgeGunfight.hasAmmoValue = nil
+    BridgeGunfight.lowCheckAt = nil
     local first = BridgeGunfight.suspended ~= true
     BridgeGunfight.rounds = 0
     if BridgeGunfight.gunItem ~= nil then
@@ -2111,9 +2512,17 @@ local function outOfAmmo(body)
         local source = false
         local usable = BridgeGunfight.gun ~= nil
             and (BridgeGunfight.gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare"))
+        local found, pick = false, nil
         if usable then
-            pcall(function() source = BridgeGunRules.findAmmoBox(body, BridgeGunfight.gun) ~= nil end)
+            local items = BridgeGunRules.itemsOf(body)
+            found, pick = pcall(BridgeGunRules.findAmmoBox, body, BridgeGunfight.gun, items)
+            source = found and pick ~= nil
         end
+        local probe = ""
+        if BridgeLog ~= nil and BridgeLog.on() then probe = ammoBoxProbe(body, BridgeGunfight.gun) end
+        logf("ammo out probe: usable=%s found=%s pick=%s out=%s; %s",
+            tostring(usable), tostring(found), tostring(pick and pick.type),
+            tostring(pick and pick.out), probe)
         local home = false
         pcall(function() home = BridgeFetch ~= nil and type(BridgeFetch.hasAmmoStock) == "function" and BridgeFetch.hasAmmoStock(BridgeGunfight.gun) end)
         if not source and not home then pcall(function() BridgeCallout.outOfAmmo() end) end
@@ -2160,6 +2569,7 @@ end
 
 local function startReload(body, t, idle)
     if BridgeGunfight.reloadStage ~= nil then return true end
+    if transferHoldsReload(body) then return false end
     if BridgeGunfight.reloadDoneAt ~= nil and (Bridge.time or 0) - BridgeGunfight.reloadDoneAt < 30 then
         return false
     end
@@ -2187,8 +2597,9 @@ local function startReload(body, t, idle)
     end
     local external = gun.magazineType ~= nil
     local available = 0
+    local items = BridgeGunRules.itemsOf(body)
     if external then
-        local magazine, count = BridgeGunRules.findLoadedMagazine(body, gun)
+        local magazine, count = BridgeGunRules.findLoadedMagazine(body, gun, items)
         if magazine == nil then return outOfAmmo(body) end
         if rounds > 0 and count <= rounds then return false end
         BridgeGunfight.reloadMagId = magazine:getID()
@@ -2196,7 +2607,7 @@ local function startReload(body, t, idle)
         BridgeGunfight.reloadNeed = count
         available = count
     else
-        local _, total = BridgeGunRules.findLooseRounds(body, gun, maxAmmo)
+        local _, total = BridgeGunRules.findLooseRounds(body, gun, maxAmmo, items)
         if total <= 0 then return outOfAmmo(body) end
         available = math.min(total, math.max(1, maxAmmo - rounds))
         if available <= 0 then return false end
@@ -2230,8 +2641,8 @@ local function startReload(body, t, idle)
         pcall(function() BridgeCallout.reloading(gun.magazineType ~= nil) end)
         BridgeGunfight.state = "reload"
     end
-    log(string.format("reload start %s family=%s need=%d rounds=%d", tostring(gun.fullType),
-        tostring(gun.reloadFamily), available, BridgeGunfight.rounds or 0))
+    logf("reload start %s family=%s need=%d rounds=%d", tostring(gun.fullType),
+        tostring(gun.reloadFamily), available, BridgeGunfight.rounds or 0)
     return true
 end
 
@@ -2294,8 +2705,8 @@ local function advanceReload(body)
                         pcall(function() BridgeGunfight.gunItem:setMagazineType(magType) end)
                     end
                 end
-                log(string.format("reload: inserted magazine id=%s type=%s rounds=%d cap=%d",
-                    tostring(magId), tostring(magType or "-"), magRounds, magCap))
+                logf("reload: inserted magazine id=%s type=%s rounds=%d cap=%d",
+                    tostring(magId), tostring(magType or "-"), magRounds, magCap)
             end
             BridgeGunfight.reloadMagId = nil
             local base = (gun.reloadFamily == "rifle") and RELOAD_RACK_RIFLE or RELOAD_RACK_HANDGUN
@@ -2405,7 +2816,7 @@ function BridgeGunfight.update(body)
     end
     BridgeGunfight.body = body
     if BridgeGunfight.assignedId == nil then return false end
-    local item = BridgeGunfight.assignedItem(body)
+    local item = cachedGunItem(body)
     if item == nil then
         local gone = BridgeGunfight.gunItem
         BridgeGunfight.gunItem = nil
@@ -2512,7 +2923,10 @@ function BridgeGunfight.update(body)
         and BridgeData.optionOf(Bridge.store, "gunMagCare")
         and (BridgeFight == nil or BridgeFight.target == nil)
         and BridgeGunfight.state == "idle"
-        and (BridgeTask == nil or not BridgeTask.active) then
+        and (BridgeTask == nil or not BridgeTask.active)
+        and ((BridgeGunfight.maxAmmo or 0) <= 0
+            or (BridgeGunfight.rounds or 0) < (BridgeGunfight.maxAmmo or 0)
+            or BridgeGunfight.magCareStage ~= nil) then
         local _, loose = BridgeGunRules.findLooseRounds(body, BridgeGunfight.gun, 1)
         if loose <= 0 and (BridgeGunRules.findPartialMagazine(body, BridgeGunfight.gun) ~= nil
             or refillNeed(body, BridgeGunfight.gun) > 0) then
@@ -2590,20 +3004,39 @@ function BridgeGunfight.update(body)
     end
 
     local reserve = BridgeData.ammoReserveOf(Bridge.store)
+    local reserveBlocked, reserveN, reserveNeed = false, 0, 0
     if reserve ~= "free" then
-        local n = reserveNear(body)
-        local need = reserve == "conserve" and 4 or 13
-        if n < need then
-            if BridgeGunfight.drawn then BridgeGunfight.stow(body) end
-            BridgeGunfight.stance = "melee"
-            BridgeGunfight.meleeClearAt = nil
-            BridgeGunfight.meleeFallback = true
-            BridgeGunfight.canMelee = true
-            BridgeGunfight.target = nil
-            BridgeGunfight.state = "idle"
-            BridgeGunfight.info = string.format("ammo reserve %s: %d/%d", reserve, n, need)
-            return false
+        reserveN = reserveNear(body)
+        reserveNeed = reserve == "conserve" and 4 or 13
+        reserveBlocked = reserveN < reserveNeed
+
+
+
+
+        if reserveBlocked and idleScan and BridgeGunfight.target == nil
+            and (BridgeFight == nil or BridgeFight.target == nil) then
+            if BridgeGunfight.gun ~= nil and BridgeGunfight.gun.magazineType ~= nil
+                and startAmmoOpen(body) then return false end
+
+            if idleReloadWanted(body, BridgeGunfight.gun) then
+                if not BridgeGunfight.drawn then BridgeGunfight.draw(body) end
+                if BridgeGunfight.drawn and startReload(body, nil, true) then return true end
+            end
+
+            if (BridgeGunfight.gun == nil or BridgeGunfight.gun.magazineType == nil)
+                and startAmmoOpen(body) then return false end
         end
+    end
+    if reserveBlocked then
+        if BridgeGunfight.drawn then BridgeGunfight.stow(body) end
+        BridgeGunfight.stance = "melee"
+        BridgeGunfight.meleeClearAt = nil
+        BridgeGunfight.meleeFallback = true
+        BridgeGunfight.canMelee = true
+        BridgeGunfight.target = nil
+        BridgeGunfight.state = "idle"
+        BridgeGunfight.info = string.format("ammo reserve %s: %d/%d", reserve, reserveN, reserveNeed)
+        return false
     end
     BridgeGunfight.meleeFallback = false
 
@@ -2682,7 +3115,9 @@ function BridgeGunfight.update(body)
     local t = BridgeGunfight.target
     local pick = (Bridge.time - (BridgeGunfight.lastPick or 0)) >= RECHECK
     if t ~= nil and pick and not validTarget(t, body, red) then
-        vlog("target lost: " .. tostring(t:getType()))
+        local lost = "body"
+        pcall(function() lost = tostring(t:getType()) end)
+        vlog("target lost: " .. lost)
         t = nil
         BridgeGunfight.target = nil
         BridgeGunfight.state = "idle"
@@ -2905,9 +3340,15 @@ local function extraTarget(e)
     if type(e) ~= "table" then return nil end
     local found = nil
     local eid = tonumber(e.id)
-    if eid ~= nil and eid ~= 0 then
-        pcall(function()
-            local list = getCell():getZombieList()
+    local ex, ey, ez = tonumber(e.x), tonumber(e.y), tonumber(e.z)
+    local list = nil
+    if ex ~= nil and ey ~= nil and BridgeZS ~= nil then
+        list = BridgeZS.near(ex, ey, 1.0, { tag = "gun.extra" })
+    end
+    if list == nil then pcall(function() list = getCell():getZombieList() end) end
+    pcall(function()
+        if list == nil then return end
+        if eid ~= nil and eid ~= 0 then
             for i = 0, list:size() - 1 do
                 local z = list:get(i)
                 if z ~= nil then
@@ -2916,24 +3357,18 @@ local function extraTarget(e)
                     if oid == eid then found = z break end
                 end
             end
-        end)
-    end
-    if found == nil then
-        local ex, ey, ez = tonumber(e.x), tonumber(e.y), tonumber(e.z)
-        if ex ~= nil and ey ~= nil then
-            pcall(function()
-                local list = getCell():getZombieList()
-                for i = 0, list:size() - 1 do
-                    local z = list:get(i)
-                    if z ~= nil and (ez == nil or math.abs(z:getZ() - ez) < 0.8)
-                        and BridgeGunRules.dist2(z:getX(), z:getY(), ex, ey) <= 1.2 then
-                        found = z
-                        break
-                    end
-                end
-            end)
         end
-    end
+        if found == nil and ex ~= nil and ey ~= nil then
+            for i = 0, list:size() - 1 do
+                local z = list:get(i)
+                if z ~= nil and (ez == nil or math.abs(z:getZ() - ez) < 0.8)
+                    and BridgeGunRules.dist2(z:getX(), z:getY(), ex, ey) <= 1.2 then
+                    found = z
+                    break
+                end
+            end
+        end
+    end)
     return found
 end
 
@@ -3183,6 +3618,14 @@ end
 
 function BridgeGunfight.onFx(args)
     if type(args) ~= "table" then return end
+    if Bridge ~= nil and Bridge.mp and args.owner ~= nil
+        and tostring(args.owner) == tostring(BridgeData.me()) then
+        return
+    end
+    local fx = rawget(_G, "BridgeShotFx")
+    if fx ~= nil and type(fx.shotAt) == "function" then
+        pcall(fx.shotAt, args)
+    end
     local body = bodyById(args.id)
     if body == nil then return end
     local kind = args.kind
@@ -3192,12 +3635,25 @@ function BridgeGunfight.onFx(args)
     pcall(function() body:setBumpType("NA_Fire" .. kind) end)
     BridgeGunfight.fireUntil = (Bridge.time or 0) + FIRE_TICKS
     retainBump(body, "NA_Aim" .. kind)
+    markStandHold(body)
     if type(args.sound) == "string" and args.sound ~= "" then
-        pcall(function()
-            if BridgeSound ~= nil then BridgeSound.sfx(body, args.sound) else body:getEmitter():playSound(args.sound) end
-        end)
+        local played = false
+        pcall(function() played = playGunshotAt(body:getX(), body:getY(), body:getZ(), args.sound) end)
+        if not played then
+            pcall(function()
+                if BridgeSound ~= nil then BridgeSound.sfx(body, args.sound) else body:getEmitter():playSound(args.sound) end
+            end)
+        end
     end
     flash(body)
+end
+
+
+function BridgeGunfight.setSneakHold(value)
+    local n = tonumber(value)
+    if n == nil then return "sneakhold " .. tostring(BridgeGunfight.standHoldTicks) end
+    BridgeGunfight.standHoldTicks = math.max(0, math.floor(n))
+    return "sneakhold " .. tostring(BridgeGunfight.standHoldTicks)
 end
 
 
@@ -3283,6 +3739,14 @@ function BridgeGunfight.reset()
     BridgeGunfight.missingSince = nil
     BridgeGunfight.friendlies = nil
     BridgeGunfight.friendliesAt = nil
+    BridgeGunfight.friendliesRadius = nil
+    BridgeGunfight.gunItemAt = nil
+    BridgeGunfight.needAmmo = nil
+    BridgeGunfight.needAmmoAt = nil
+    BridgeGunfight.needRounds = nil
+    BridgeGunfight.hasAmmoAt = nil
+    BridgeGunfight.hasAmmoValue = nil
+    BridgeGunfight.lowCheckAt = nil
     BridgeGunfight.handSyncAt = nil
     BridgeGunfight.sideAt = nil
     BridgeGunfight.rounds = 0

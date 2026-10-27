@@ -569,7 +569,6 @@
     "IGUI_NotAlone_MenuTakeOff": "Сними",
     "IGUI_NotAlone_MenuAssign": "Назначь оружием",
     "IGUI_NotAlone_MenuUnassign": "Убери оружие",
-    "IGUI_NotAlone_OverheadCyrillic": "1",
     "IGUI_NotAlone_Soc_Chat_Good_5": "У меня была собака. До всего. Надеюсь, кто-то её выпустил.",
     "IGUI_NotAlone_Soc_Chat_Good_6": "У тебя бывает, что на секунду забываешь? А потом вспоминаешь.",
     "IGUI_NotAlone_Soc_Chat_Good_7": "Скучаю по глупостям. По льду. По пробкам. По рекламе.",
@@ -1515,6 +1514,10 @@
     "IGUI_NotAlone_ReportLogNote": "Включите подробный лог перед тем, как воспроизвести баг, затем нажмите «Создать отчёт».",
     "IGUI_NotAlone_ReportDone": "Сохранено в %1 (скопировано в буфер обмена)",
     "IGUI_NotAlone_ZombieOffWarn": "Появление зомби отключено в этом мире (Sandbox: Zombies = Нет), поэтому %1 не может появиться. Установите Zombies выше Нет и перезагрузите сохранение. Это предупреждение показывается только один раз.",
+    "IGUI_NotAlone_InvWarnNear": "%1 несёт слишком много. Инвентарь близок к лимиту сохранения (%2 / %3 символов). Новые передачи остановятся на %4. Уберите или сохраните часть вещей.",
+    "IGUI_NotAlone_InvWarnTruncated": "%1 несёт слишком много. Сохранённый инвентарь достиг лимита сохранения (%2 / %3 символов). Последние изменения инвентаря могут не сохраниться. Уберите или сохраните часть вещей.",
+    "IGUI_NotAlone_CompatWarnOne": "%1 больше не требуется. Stay With Me теперь включает эту защиту от A-Life, поэтому патч можно отключить или удалить.",
+    "IGUI_NotAlone_CompatWarnMany": "%1 больше не требуются. Stay With Me теперь включает эту защиту от A-Life, поэтому патчи можно отключить или удалить.",
     "IGUI_NotAlone_MenuFollow": "Ждать / Следовать",
     "IGUI_NotAlone_MenuOrderHint": "Перетащите пункт или используйте стрелки, чтобы изменить порядок контекстного меню %1. Снимите галочку, чтобы скрыть пункт.",
     "IGUI_NotAlone_MenuReset": "Сбросить порядок",
@@ -4122,7 +4125,7 @@
     "IGUI_NotAlone_GunMeleeOffTip": "Продолжает стрелять и отходит от близких зомби.",
     "IGUI_NotAlone_GunReloadIdle": "Перезарядка между боями",
     "IGUI_NotAlone_GunReloadIdleTip": "Перезаряжается, когда нет цели.",
-    "IGUI_NotAlone_GunReloadIdleOnTip": "Дозаряжает дробовики и револьверы. Меняет магазин при 25% и меньше.",
+    "IGUI_NotAlone_GunReloadIdleOnTip": "Дозаряжает дробовики и револьверы. Меняет магазин при 25%% и меньше.",
     "IGUI_NotAlone_GunReloadIdleOffTip": "Перезаряжает только пустое оружие во время боя.",
     "IGUI_NotAlone_GunMagCare": "Уход за магазинами",
     "IGUI_NotAlone_GunMagCareTip": "Вне боя наполняет пустые и частично полные запасные магазины из рассыпных патронов.",
@@ -4158,5 +4161,6 @@
     "IGUI_NotAlone_Soc_EvLineOfFire_Near_3": "Заблокировано. Найду угол.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_1": "Минус один.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_2": "Один выстрел — минус один.",
-    "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Цель упала. Следующий."
+    "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Цель упала. Следующий.",
+    "IGUI_ContainerTitle_BridgeParked": "Компаньон"
 }

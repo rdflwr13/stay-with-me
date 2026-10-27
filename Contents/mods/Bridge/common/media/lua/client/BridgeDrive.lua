@@ -37,6 +37,7 @@ BridgeDrive.ON = {
 
 
 BridgeDrive.GAP = 12
+BridgeDrive.HORDE_CD = 60
 
 BridgeDrive.FAST_KMH     = 70 * 1.609344
 BridgeDrive.RECKLESS_KMH = 90 * 1.609344
@@ -279,10 +280,10 @@ BridgeDrive.EVENTS = {
     EvCarAhead     = { slot = "DriveAhead",     cooldown = 45,  urgent = true,  cat = "AHEAD" },
     EvCarZombie    = { slot = "DriveZombie",    cooldown = 40,  urgent = false, cat = "ZOMBIE" },
     EvCarZombieClose = { slot = "DriveZombieClose", cooldown = 60, urgent = true, cat = "ZOMBIE" },
-    EvCarHorde4    = { slot = "DriveHorde4",    cooldown = 90,  urgent = true, cat = "ZOMBIE" },
-    EvCarHorde8    = { slot = "DriveHorde8",    cooldown = 90,  urgent = true, cat = "ZOMBIE" },
-    EvCarHorde16   = { slot = "DriveHorde16",   cooldown = 120, urgent = true, cat = "ZOMBIE" },
-    EvCarHorde32   = { slot = "DriveHorde32",   cooldown = 150, urgent = true, cat = "ZOMBIE" },
+    EvCarHorde4    = { slot = "DriveHorde",    cooldown = BridgeDrive.HORDE_CD, urgent = true, cat = "ZOMBIE" },
+    EvCarHorde8    = { slot = "DriveHorde",    cooldown = BridgeDrive.HORDE_CD, urgent = true, cat = "ZOMBIE" },
+    EvCarHorde16   = { slot = "DriveHorde",    cooldown = BridgeDrive.HORDE_CD, urgent = true, cat = "ZOMBIE" },
+    EvCarHorde32   = { slot = "DriveHorde",    cooldown = BridgeDrive.HORDE_CD, urgent = true, cat = "ZOMBIE" },
     EvCarFast      = { slot = "DriveFast",      cooldown = 120, urgent = false, cat = "FAST" },
     EvCarReckless  = { slot = "DriveReckless",  cooldown = 120, urgent = false, cat = "FAST" },
     EvCarGreetClear   = { slot = "DriveGreetClear",   cooldown = 300, urgent = true, cat = "GREET" },

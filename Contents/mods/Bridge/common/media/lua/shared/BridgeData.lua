@@ -43,18 +43,6 @@ end
 
 
 
-function BridgeData.overheadOk(text)
-    if text == nil then return false end
-    text = tostring(text)
-    local plain = true
-    for i = 1, #text do
-        if string.byte(text, i) > 127 then plain = false break end
-    end
-    if plain then return true end
-    local ok = false
-    pcall(function() ok = getTextOrNull("IGUI_NotAlone_OverheadCyrillic") == "1" end)
-    return ok
-end
 
 
 
@@ -231,7 +219,12 @@ end
 
 
 
-function BridgeData.foreignPeaceful(z)
+function BridgeData.foreignPeaceful(z, player)
+    local dt = rawget(_G, "BridgeDT")
+    if type(dt) == "table" and type(dt.peaceful) == "function" then
+        local ok, answer = pcall(dt.peaceful, z, player)
+        if ok and answer ~= nil then return answer end
+    end
     local npc, hostile = BridgeData.bandit(z)
     if npc then return hostile ~= true end
     if not markedForeign(z) then return false end
@@ -242,8 +235,59 @@ end
 
 
 
+BridgeData.NPCFW_ACTIVE = nil
+
+function BridgeData.npcfwActive()
+    local cached = BridgeData.NPCFW_ACTIVE
+    if cached ~= nil then return cached end
+    if getActivatedMods == nil then return false end
+    local ok, active = pcall(function()
+        local mods = getActivatedMods()
+        if mods == nil then return nil end
+        return mods:contains("ProjectRemnants") or mods:contains("\\ProjectRemnants")
+    end)
+    if not ok or active == nil then return false end
+    BridgeData.NPCFW_ACTIVE = active == true
+    return BridgeData.NPCFW_ACTIVE
+end
+
+function BridgeData.npcfwNpc(z)
+    if z == nil or type(npcfwIsNPC) ~= "function" then return false, nil end
+    local isNpc = false
+    pcall(function() isNpc = npcfwIsNPC(z) == true end)
+    if not isNpc then return false, nil end
+    local classification = nil
+    if type(npcfwGetClassificationOf) == "function" then
+        pcall(function() classification = npcfwGetClassificationOf(z) end)
+    end
+    return true, classification
+end
+
+function BridgeData.npcfwPeaceful(z)
+    if not BridgeData.npcfwActive() then return false end
+    if z == nil then return false end
+    if type(npcfwIsPlayerFactionMember) == "function" then
+        local member = false
+        pcall(function() member = npcfwIsPlayerFactionMember(z) == true end)
+        if member then return true end
+    end
+    local isNpc, classification = BridgeData.npcfwNpc(z)
+    if not isNpc then return false end
+    if classification == "COMPANION" or classification == "FACTION"
+            or classification == "BASE_RESIDENT" or classification == "NEUTRAL" then
+        return true
+    end
+    if type(npcfwGetAssignmentOf) == "function" then
+        local assignment = nil
+        pcall(function() assignment = npcfwGetAssignmentOf(z) end)
+        if assignment == "BASE_RESIDENT" then return true end
+    end
+    return false
+end
+
 function BridgeData.harmless(z)
     return BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.foreignPeaceful(z)
+        or BridgeData.npcfwPeaceful(z)
 end
 
 
@@ -750,8 +794,84 @@ function BridgeData.isMale(rec)
     return BridgeData.genderOf(rec) == "male"
 end
 
+BridgeData.VOICE_TYPE_MAX = 15
+BridgeData.VOICE_PITCH_MIN = -100
+BridgeData.VOICE_PITCH_MAX = 100
+BridgeData.VOICE_NAME_MAX = 48
+BridgeData.VOICE_PREFIX_MAX = 48
+
+local function voiceGender(value)
+    if value == "male" or value == "female" then return value end
+    return BridgeData.genderOf(value)
+end
+
+function BridgeData.defaultVoice(rec)
+    if voiceGender(rec) == "male" then
+        return { name = "Bob", prefix = "VoiceMale", type = 0, pitch = 0 }
+    end
+    return { name = "Kate", prefix = "VoiceFemale", type = 0, pitch = 0 }
+end
+
+function BridgeData.cleanVoice(value, gender)
+    if type(value) ~= "table" then return nil end
+    local def = BridgeData.defaultVoice(gender or "female")
+    local out = { name = def.name, prefix = def.prefix, type = 0, pitch = 0 }
+
+    if value.name ~= nil then
+        if type(value.name) ~= "string" then return nil end
+        if value.name ~= "" then
+            if #value.name > BridgeData.VOICE_NAME_MAX then return nil end
+            if string.find(value.name, "[%z\1-\31]") ~= nil then return nil end
+            out.name = value.name
+        end
+    end
+
+    if value.prefix ~= nil then
+        if type(value.prefix) ~= "string" then return nil end
+        if value.prefix ~= "" then
+            if #value.prefix > BridgeData.VOICE_PREFIX_MAX then return nil end
+            if string.find(value.prefix, "[^%w_]") ~= nil then return nil end
+            out.prefix = value.prefix
+        end
+    end
+
+    if value.type ~= nil then
+        local v = tonumber(value.type)
+        if v == nil or v ~= v then return nil end
+        v = math.floor(v)
+        if v < 0 then v = 0 end
+        if v > BridgeData.VOICE_TYPE_MAX then v = BridgeData.VOICE_TYPE_MAX end
+        out.type = v
+    end
+
+    if value.pitch ~= nil then
+        local v = tonumber(value.pitch)
+        if v == nil or v ~= v then return nil end
+        v = math.floor(v + 0.5)
+        if v < BridgeData.VOICE_PITCH_MIN then v = BridgeData.VOICE_PITCH_MIN end
+        if v > BridgeData.VOICE_PITCH_MAX then v = BridgeData.VOICE_PITCH_MAX end
+        out.pitch = v
+    end
+
+    return out
+end
+
+function BridgeData.voiceOf(rec)
+    local app = BridgeData.appearanceOf(rec)
+    local voice = nil
+    if app ~= nil then voice = BridgeData.cleanVoice(app.voice, BridgeData.genderOf(rec)) end
+    if voice ~= nil then return voice end
+    return BridgeData.defaultVoice(rec)
+end
+
+function BridgeData.voiceText(rec)
+    local voice = BridgeData.voiceOf(rec)
+    return string.format("name=%s prefix=%s type=%d pitch=%d",
+        tostring(voice.name), tostring(voice.prefix), voice.type, voice.pitch)
+end
+
 function BridgeData.voicePrefix(rec)
-    return BridgeData.isMale(rec) and "VoiceMale" or "VoiceFemale"
+    return BridgeData.voiceOf(rec).prefix
 end
 
 

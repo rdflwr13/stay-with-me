@@ -618,7 +618,6 @@
     "IGUI_NotAlone_MenuAssignGun": "Assign as primary gun",
     "IGUI_NotAlone_MenuUnassignGun": "Unassign primary gun",
     "IGUI_NotAlone_EquipGun": "Primary gun",
-    "IGUI_NotAlone_OverheadCyrillic": "0",
     "IGUI_NotAlone_Soc_Chat_Good_5": "I had a dog. Before. I hope someone let him out.",
     "IGUI_NotAlone_Soc_Chat_Good_6": "Do you ever forget, for a second? And then you remember.",
     "IGUI_NotAlone_Soc_Chat_Good_7": "I miss stupid things. Ice. Traffic. Commercials.",
@@ -1591,7 +1590,7 @@
     "IGUI_NotAlone_GunMeleeOffTip": "Keeps using the gun and backs away from close zombies.",
     "IGUI_NotAlone_GunReloadIdle": "Reload between fights",
     "IGUI_NotAlone_GunReloadIdleTip": "Reloads when there is no target.",
-    "IGUI_NotAlone_GunReloadIdleOnTip": "Tops up shotguns and revolvers. Swaps magazine guns at 25% or less.",
+    "IGUI_NotAlone_GunReloadIdleOnTip": "Tops up shotguns and revolvers. Swaps magazine guns at 25%% or less.",
     "IGUI_NotAlone_GunReloadIdleOffTip": "Only reloads an empty gun during a fight.",
     "IGUI_NotAlone_GunMagCare": "Magazine care",
     "IGUI_NotAlone_GunMagCareTip": "Fills empty or partial spare magazines from loose ammo out of combat.",
@@ -1683,6 +1682,10 @@
     "IGUI_NotAlone_ReportLogNote": "Turn detailed logging on before you reproduce the bug, then press Generate report.",
     "IGUI_NotAlone_ReportDone": "Saved to %1 (copied to clipboard)",
     "IGUI_NotAlone_ZombieOffWarn": "Zombie spawning is disabled in this world (Sandbox: Zombies = None), so %1 cannot appear. Set Zombies above None and reload the save. This warning is shown only once.",
+    "IGUI_NotAlone_InvWarnNear": "%1 is carrying too much. The inventory is near the save limit (%2 / %3 characters). New transfers will stop at %4. Store or remove some items before that.",
+    "IGUI_NotAlone_InvWarnTruncated": "%1 is carrying too much. The saved inventory has reached the save limit (%2 / %3 characters). Recent inventory changes may not be saved. Store or remove some items.",
+    "IGUI_NotAlone_CompatWarnOne": "%1 is no longer required. Stay With Me now includes this A-Life protection, so you can disable or remove it.",
+    "IGUI_NotAlone_CompatWarnMany": "%1 are no longer required. Stay With Me now includes this A-Life protection, so you can disable or remove them.",
     "IGUI_NotAlone_MenuFollow": "Wait / Follow",
     "IGUI_NotAlone_MenuOrderHint": "Drag an entry, or use the arrows, to change the order of %1's right-click menu. Uncheck a row to hide that item.",
     "IGUI_NotAlone_MenuReset": "Reset order",
@@ -3992,5 +3995,6 @@
     "IGUI_NotAlone_Soc_EvLineOfFire_Near_3": "Blocked. I'll find an angle.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_1": "Dropped him.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_2": "One shot, one down.",
-    "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Target down. Next."
+    "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Target down. Next.",
+    "IGUI_ContainerTitle_BridgeParked": "Companion"
 }

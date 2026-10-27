@@ -125,6 +125,7 @@ BridgeCallout.SAY = {
 
 
 BridgeCallout.REPEAT_GAP = 8
+BridgeCallout.HORDE_CD = 60
 
 BridgeCallout.MILESTONES = { [1] = true, [5] = true, [10] = true, [25] = true, [50] = true,
     [100] = true, [250] = true, [500] = true, [1000] = true }
@@ -136,10 +137,10 @@ BridgeCallout.EVENTS = {
     EvBehind     = { slot = "Behind",     cooldown = 45 },
     EvEngage     = { slot = "Engage",     cooldown = 25 },
     EvKill       = { slot = "Kill",       cooldown = 20 },
-    EvHorde4     = { slot = "Horde4",     cooldown = 75 },
-    EvHorde8     = { slot = "Horde8",     cooldown = 90 },
-    EvHorde16    = { slot = "Horde16",    cooldown = 120 },
-    EvHorde32    = { slot = "Horde32",    cooldown = 150 },
+    EvHorde4     = { slot = "Horde",      cooldown = BridgeCallout.HORDE_CD },
+    EvHorde8     = { slot = "Horde",      cooldown = BridgeCallout.HORDE_CD },
+    EvHorde16    = { slot = "Horde",      cooldown = BridgeCallout.HORDE_CD },
+    EvHorde32    = { slot = "Horde",      cooldown = BridgeCallout.HORDE_CD },
     EvBreakOff   = { slot = "BreakOff",   cooldown = 30 },
     EvSpot       = { slot = "Spot",       cooldown = 120 },
     EvLull       = { slot = "Lull",       cooldown = 150 },

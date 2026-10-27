@@ -134,6 +134,18 @@ function BridgeBath.sinkFor(worldobjects)
     return BridgeBath.sinkProxy(sourceObj), sourceObj, btype
 end
 
+function BridgeBath.showerUsable(obj)
+    local iso = tabas()
+    if iso == nil or iso.isBathObject == nil or iso.isBathWithShower == nil then return true end
+    local usable = true
+    pcall(function()
+        if iso.isBathObject(obj) == true and iso.isBathWithShower(obj) ~= true then
+            usable = false
+        end
+    end)
+    return usable
+end
+
 function BridgeBath.onWashSinkMenu(playerNum, context, worldobjects, test)
     if test then return end
     if not BridgeBath.active() then return end
@@ -180,10 +192,46 @@ function BridgeBath.onWashSinkMenu(playerNum, context, worldobjects, test)
     if dupe ~= nil then return end
 
     BridgeMenu.addRinActions(rinMenu, sink)
-    if (btype == "Shower" or btype == "Bathtub") and BridgeMenu.addShowerAction ~= nil then
+    if BridgeBath.showerUsable(faucetObj) and BridgeMenu.addShowerAction ~= nil then
         BridgeMenu.addShowerAction(rinMenu, faucetObj)
     end
     log("tabas bath sink menu obj=" .. tostring(rootName) .. " type=" .. tostring(btype))
+end
+
+function BridgeBath.selftest()
+    local savedIso, savedWater = BridgeBath._iso, BridgeBath._water
+    local checks, fails = 0, {}
+    local function check(name, cond)
+        checks = checks + 1
+        if not cond then fails[#fails + 1] = name end
+    end
+    local function fakeIso(isBath, hasShower)
+        return {
+            isBathObject = function() return isBath end,
+            isBathWithShower = function() return hasShower end,
+        }
+    end
+
+    BridgeBath._water = false
+    BridgeBath._iso = fakeIso(false, false)
+    check("plain shower allowed", BridgeBath.showerUsable({}) == true)
+
+    BridgeBath._iso = fakeIso(true, true)
+    check("tub with shower allowed", BridgeBath.showerUsable({}) == true)
+
+    BridgeBath._iso = fakeIso(true, false)
+    check("showerless tub blocked", BridgeBath.showerUsable({}) == false)
+
+    BridgeBath._iso = { isBathObject = function() error("x") end,
+                        isBathWithShower = function() return false end }
+    check("lookup failure keeps old behavior", BridgeBath.showerUsable({}) == true)
+
+    BridgeBath._iso = false
+    check("no tabas keeps old behavior", BridgeBath.showerUsable({}) == true)
+
+    BridgeBath._iso, BridgeBath._water = savedIso, savedWater
+    if #fails == 0 then return string.format("bathselftest PASS (%d checks)", checks) end
+    return string.format("bathselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
 end
 
 Events.OnGameStart.Add(function()

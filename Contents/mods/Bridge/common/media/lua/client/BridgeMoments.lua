@@ -120,7 +120,14 @@ function BridgeMoments.say(event, cooldown, urgent, slot)
         return true
     end
     Bridge.speakText(text)
-    BridgeMoments.info = event
+    local where = Bridge.lastSpokeWhere
+    if where == "blocked" then
+        BridgeMoments.info = event .. " hidden"
+    elseif where == "grace" then
+        BridgeMoments.info = event .. " held"
+    else
+        BridgeMoments.info = event
+    end
     log(event .. " " .. BridgeMoments.group())
     return true
 end

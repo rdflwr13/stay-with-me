@@ -598,6 +598,33 @@ function BridgeTorch.clearAll()
     BridgeTorch.lamps = {}
 end
 
+function BridgeTorch.offForCar(body, why)
+    if body == nil then return false end
+    local key = BridgeTorchShared.keyOf(body)
+    local on = BridgeTorchShared.isOn(body)
+    local lamp = BridgeTorch.lamps[key] ~= nil
+    local sent = BridgeTorch.sent[key] == true
+    local pending = BridgeTorch.pending[key] ~= nil
+
+    if not on and not lamp and not sent and not pending then return false end
+
+    if on or lamp then
+        pcall(push, body, false, nil)
+    end
+
+    BridgeTorch.sent[key] = false
+    BridgeTorch.pending[key] = nil
+    BridgeTorch.probe[key] = nil
+    BridgeTorch.litStreak[key] = 0
+
+    local cell = getCell()
+    if cell ~= nil then releaseEntry(cell, key) end
+    pcall(invalidateLights)
+
+    BridgeTorch.info = "off: " .. tostring(why or "car")
+    return true
+end
+
 
 local function quantize(a)
     return math.floor((a + 22.5) / 45) * 45
@@ -967,27 +994,31 @@ function BridgeTorch.renderFrame()
                 end
                 if marked and on then
                     local key = BridgeTorchShared.keyOf(z)
-                    live[key] = true
+                    local inCar = false
+                    pcall(function() inCar = z:getVehicle() ~= nil end)
+                    if not inCar then
+                        live[key] = true
 
-                    local px, py, zz = nil, nil, nil
-                    pcall(function() px, py, zz = math.floor(z:getX()), math.floor(z:getY()), math.floor(z:getZ()) end)
-                    if px ~= nil then
-                        local dir = 0
-                        pcall(function() dir = quantize(z:getDirectionAngle()) end)
+                        local px, py, zz = nil, nil, nil
+                        pcall(function() px, py, zz = math.floor(z:getX()), math.floor(z:getY()), math.floor(z:getZ()) end)
+                        if px ~= nil then
+                            local dir = 0
+                            pcall(function() dir = quantize(z:getDirectionAngle()) end)
 
-                        local e = BridgeTorch.lamps[key]
+                            local e = BridgeTorch.lamps[key]
 
 
-                        if BridgeTorch.probe[key] == nil and (e == nil or (now - (e.at or 0)) >= BridgeTorch.BEAM_MS) then
-                            releaseEntry(cell, key)
-                            placeBeam(cell, z, key, px, py, zz, dir, now)
+                            if BridgeTorch.probe[key] == nil and (e == nil or (now - (e.at or 0)) >= BridgeTorch.BEAM_MS) then
+                                releaseEntry(cell, key)
+                                placeBeam(cell, z, key, px, py, zz, dir, now)
 
-                            if Bridge ~= nil and Bridge.verbose and now - lastTraceMs > 2000 then
-                                lastTraceMs = now
-                                local red = BridgeData.owner()
-                                local rx, ry = -1, -1
-                                if red ~= nil then rx, ry = math.floor(red:getX()), math.floor(red:getY()) end
-                                log(string.format("beam tile=%d,%d z=%s dir=%d | player tile=%d,%d", px, py, tostring(zz), dir, rx, ry))
+                                if Bridge ~= nil and Bridge.verbose and now - lastTraceMs > 2000 then
+                                    lastTraceMs = now
+                                    local red = BridgeData.owner()
+                                    local rx, ry = -1, -1
+                                    if red ~= nil then rx, ry = math.floor(red:getX()), math.floor(red:getY()) end
+                                    log(string.format("beam tile=%d,%d z=%s dir=%d | player tile=%d,%d", px, py, tostring(zz), dir, rx, ry))
+                                end
                             end
                         end
                     end

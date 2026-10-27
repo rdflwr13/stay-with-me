@@ -292,6 +292,7 @@ local function syncModel(body)
 end
 
 local function clearHands(body)
+    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, body) end
     BridgeWeapon.heldId = nil
     pcall(function()
         local p = body:getPrimaryHandItem()
@@ -302,6 +303,7 @@ end
 
 
 function BridgeWeapon.draw(body)
+    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, body) end
     BridgeWeapon.cancelMove(body)
     local item = BridgeWeapon.assigned(body)
     if item == nil then return false end
