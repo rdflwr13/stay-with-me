@@ -176,7 +176,7 @@ function BridgeChat.onCommandEntered()
     local name = "Player"
     pcall(function() name = red:getDisplayName() end)
     BridgeChat.addLine(name, text, 0.75, 0.85, 1.0)
-    if BridgeData.overheadOk(text) then pcall(function() red:Say(text) end) end
+    pcall(function() red:Say(text) end)
 
     BridgeChat.seq = BridgeChat.seq + 1
     local ok, err = pcall(function()

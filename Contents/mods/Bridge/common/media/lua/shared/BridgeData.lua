@@ -43,18 +43,6 @@ end
 
 
 
-function BridgeData.overheadOk(text)
-    if text == nil then return false end
-    text = tostring(text)
-    local plain = true
-    for i = 1, #text do
-        if string.byte(text, i) > 127 then plain = false break end
-    end
-    if plain then return true end
-    local ok = false
-    pcall(function() ok = getTextOrNull("IGUI_NotAlone_OverheadCyrillic") == "1" end)
-    return ok
-end
 
 
 

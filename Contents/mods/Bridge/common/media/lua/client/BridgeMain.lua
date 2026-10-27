@@ -2190,9 +2190,7 @@ function Bridge.carLine(text)
     local red = BridgeData.owner()
     if BridgeCar == nil or red == nil or not BridgeCar.withRed(red) then return false end
     local name = tostring(Bridge.companionName())
-    if not BridgeData.overheadOk(name) then name = BridgeData.DEFAULT_NAME end
     local line = name .. ": " .. tostring(text)
-    if not BridgeData.overheadOk(line) then return false end
     return (pcall(function() red:addLineChatElement(line, 0.95, 0.55, 0.75) end))
 end
 
@@ -2211,7 +2209,6 @@ function Bridge.speakText(text)
     Bridge.lastSpokeText = tostring(text)
     Bridge.lastSpokeWhere = "none"
     Bridge.lastSpokeShown = false
-    Bridge.lastOverheadOk = BridgeData.overheadOk(Bridge.lastSpokeText)
 
     if Bridge.speechGraced() then
         Bridge.lastSpokeWhere = "grace"
@@ -2235,7 +2232,7 @@ function Bridge.speakText(text)
     if inCar then
         shown = Bridge.carLine(text) == true
         where = shown and "car" or "blocked"
-    elseif Bridge.alive() and Bridge.lastOverheadOk then
+    elseif Bridge.alive() then
         local okLine, lineErr = pcall(function() Bridge.body:addLineChatElement(text, 0.95, 0.55, 0.75) end)
         if not okLine then warn("overhead line failed: " .. tostring(lineErr)) end
         shown = okLine == true
@@ -2247,17 +2244,7 @@ function Bridge.speakText(text)
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "say", { text = text, chat = false, car = inCar or nil }) end)
         shown, where = true, "mp"
     elseif BridgeChat ~= nil and BridgeChat.sayCompanion ~= nil then
-        local said = false
-        pcall(function() said = BridgeChat.sayCompanion(text) == true end)
-        if not shown and said and BridgeChat.show ~= nil then
-            local popped = false
-            pcall(function() popped = BridgeChat.show() == true end)
-            if popped then
-                shown, where = true, "chat"
-            else
-                where = where .. "+chat-failed"
-            end
-        end
+        pcall(function() BridgeChat.sayCompanion(text) end)
     end
     Bridge.lastSpokeShown = shown == true
     Bridge.lastSpokeWhere = where
@@ -2967,16 +2954,12 @@ end
 
 function Bridge.say(text)
     Bridge.lastSpokeText = tostring(text)
-    Bridge.lastOverheadOk = BridgeData.overheadOk(Bridge.lastSpokeText)
     Bridge.lastSpokeWhere = "none"
     Bridge.lastSpokeShown = false
     local said = "none"
     if BridgeCar ~= nil and BridgeCar.holdHidden() and Bridge.carLine(text) then
 
         said = "car"
-    elseif Bridge.alive() and not BridgeData.overheadOk(text) then
-
-        said = "chat only"
     elseif Bridge.alive() then
         local ok = pcall(function() Bridge.body:addLineChatElement(text, 0.95, 0.55, 0.75) end)
         if not ok then warn("overhead line failed, falling back to Say") end
@@ -2996,11 +2979,6 @@ function Bridge.say(text)
     end
     local visible = (said == "car" or said == "line" or said == "say")
     local shown, where = visible == true, visible and "overhead" or "blocked"
-    if not visible and inChat and not Bridge.mp and BridgeChat ~= nil and BridgeChat.show ~= nil then
-        local popped = false
-        pcall(function() popped = BridgeChat.show() == true end)
-        if popped then shown, where = true, "chat" end
-    end
     Bridge.lastSpokeShown = shown == true
     Bridge.lastSpokeWhere = where
     return "say body=" .. said .. " chat=" .. tostring(inChat)
@@ -6399,17 +6377,12 @@ function Bridge.diagLines()
         pcall(function() add("chat_ready", tostring(BridgeChat ~= nil and BridgeChat.ready)) end)
         pcall(function() add("chat_seq", tostring(BridgeChat and BridgeChat.seq or 0)) end)
         pcall(function()
-            local cjk = "?"
-            pcall(function()
-                local val = getTextOrNull("IGUI_NotAlone_OverheadCyrillic")
-                if val == "1" then cjk = "1" elseif val ~= nil then cjk = "0" end
-            end)
             local own = BridgeChat ~= nil and BridgeChat.own == true
             local vis = false
             if BridgeChat ~= nil and BridgeChat.visible ~= nil then pcall(function() vis = BridgeChat.visible() == true end) end
-            add("speech", string.format("shown=%s where=%s overhead_ok=%s cjk=%s chat_own=%s chat_vis=%s grace=%s",
+            add("speech", string.format("shown=%s where=%s chat_own=%s chat_vis=%s grace=%s",
                 tostring(Bridge.lastSpokeShown == true), tostring(Bridge.lastSpokeWhere or "none"),
-                tostring(Bridge.lastOverheadOk == true), tostring(cjk), tostring(own), tostring(vis),
+                tostring(own), tostring(vis),
                 tostring(Bridge.speechGraced() == true)))
         end)
         pcall(function()
@@ -7589,7 +7562,7 @@ function Bridge.onServerCommand(module, command, args)
             for z, info in pairs(Bridge.bodiesSeen()) do
                 local hidden = false
                 pcall(function() hidden = z:isInvisible() end)
-                if info.who == args.owner and not hidden and BridgeData.overheadOk(args.text) then
+                if info.who == args.owner and not hidden then
                     pcall(function() z:addLineChatElement(args.text, 0.95, 0.55, 0.75) end)
                     if BridgeName ~= nil then BridgeName.spoke(z) end
                     shown = true
@@ -7597,11 +7570,10 @@ function Bridge.onServerCommand(module, command, args)
             end
 
             if not shown and args.car then
-                if not BridgeData.overheadOk(name) then name = BridgeData.DEFAULT_NAME end
                 local line = tostring(name) .. ": " .. tostring(args.text)
                 local p = nil
                 pcall(function() p = getPlayerFromUsername(args.owner) end)
-                if p ~= nil and BridgeData.overheadOk(line) then
+                if p ~= nil then
                     pcall(function() p:addLineChatElement(line, 0.95, 0.55, 0.75) end)
                 end
             end
