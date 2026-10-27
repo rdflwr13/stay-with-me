@@ -1221,12 +1221,16 @@ local function retainBump(body, name)
 end
 
 
-local function shotFx(body, gun, kind)
+local function shotFx(body, gun, kind, target)
     plant(body, "NA_Fire" .. kind)
     pcall(function() body:setVariable(FIRE_VAR, false) end)
     BridgeGunfight.fireUntil = (Bridge.time or 0) + FIRE_TICKS
     retainBump(body, "NA_Aim" .. kind)
     playShot(body, gun)
+    local fx = rawget(_G, "BridgeShotFx")
+    if fx ~= nil and type(fx.shot) == "function" then
+        pcall(fx.shot, body, target, gun, kind)
+    end
 end
 
 
@@ -1370,7 +1374,7 @@ local function fire(body)
         end
         local x, y, z = t:getX(), t:getY(), t:getZ()
         BridgeGunfight.pendingShot = { at = Bridge.time, chance = chance, dist = d, target = t }
-        shotFx(body, gun, kind)
+        shotFx(body, gun, kind, t)
         pcall(function()
             sendClientCommand(BridgeData.owner(), "Bridge", "gunShot",
                 { targetId = onlineId, npcId = npcId, x = x, y = y, z = z })
@@ -1385,7 +1389,7 @@ local function fire(body)
     if BridgeSkills ~= nil then
         pcall(function() BridgeSkills.add("Aiming", 0.5, "shot") end)
     end
-    shotFx(body, gun, kind)
+    shotFx(body, gun, kind, t)
 
     if instanceof(t, "IsoAnimal") then
         local roll = ZombRand(100)
@@ -3411,6 +3415,10 @@ function BridgeGunfight.onFx(args)
     if Bridge ~= nil and Bridge.mp and args.owner ~= nil
         and tostring(args.owner) == tostring(BridgeData.me()) then
         return
+    end
+    local fx = rawget(_G, "BridgeShotFx")
+    if fx ~= nil and type(fx.shotAt) == "function" then
+        pcall(fx.shotAt, args)
     end
     local body = bodyById(args.id)
     if body == nil then return end

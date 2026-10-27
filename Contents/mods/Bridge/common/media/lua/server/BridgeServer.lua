@@ -2168,7 +2168,13 @@ BridgeServer.Commands.gunShot = function(player, args)
             extras = extras })
 
     local fx = { owner = who, id = rec.bodyId, kind = desc.kind, sound = desc.sound,
-        radius = desc.soundRadius, volume = desc.soundVolume }
+        radius = desc.soundRadius, volume = desc.soundVolume,
+        sx = body:getX(), sy = body:getY(), sz = body:getZ(),
+        ax = target:getX(), ay = target:getY(), az = target:getZ(),
+        pellets = tonumber(desc.projectileCount) or 1,
+        spread = tonumber(desc.projectileSpread) or 1,
+        ammoType = desc.ammoTypeKey,
+        ammoTypeId = desc.ammoTypeId }
     for _, p in pairs(BridgeServer.online) do
         if p ~= nil then
             local near = true

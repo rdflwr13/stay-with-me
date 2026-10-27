@@ -49,11 +49,26 @@ local function clamp(v, lo, hi)
     return v
 end
 
-local function ammoKeyOf(item)
+local function ammoTypeOf(item)
+    local ammo = nil
+    pcall(function() ammo = item:getAmmoType() end)
+    return ammo
+end
+
+local function ammoIdOf(ammo)
+    if ammo == nil then return nil end
+    local id = nil
+    pcall(function() id = tostring(ammo) end)
+    if type(id) ~= "string" or id == "" or id == "null" then return nil end
+    return id
+end
+
+local function ammoKeyOf(item, ammo)
     local key = nil
     pcall(function()
-        local ammo = item:getAmmoType()
-        if ammo ~= nil then key = ammo:getItemKey() end
+        local found = ammo
+        if found == nil then found = item:getAmmoType() end
+        if found ~= nil then key = found:getItemKey() end
     end)
     if type(key) ~= "string" or key == "" or key == "null" then return nil end
     return key
@@ -261,6 +276,7 @@ end
 function BridgeGunRules.describe(item)
     local maxAmmo = num(function() return item:getMaxAmmo() end, 0)
     if maxAmmo <= 0 then maxAmmo = num(function() return item:getClipSize() end, 0) end
+    local ammo = ammoTypeOf(item)
     local out = {
         fullType = text(function() return item:getFullType() end, "?"),
         name = text(function() return item:getName() end, "gun"),
@@ -288,7 +304,8 @@ function BridgeGunRules.describe(item)
         maxAmmo = maxAmmo,
         reloadType = typeText(function() return item:getWeaponReloadType() end),
         magazineType = typeText(function() return item:getMagazineType() end),
-        ammoTypeKey = ammoKeyOf(item),
+        ammoTypeKey = ammoKeyOf(item, ammo),
+        ammoTypeId = ammoIdOf(ammo),
         ammoBox = typeText(function() return item:getAmmoBox() end),
         insertAll = flag(function() return item:isInsertAllBulletsReload() end),
         insertSound = typeText(function() return item:getInsertAmmoSound() end),
