@@ -21,11 +21,33 @@ local function warnOnce(text)
     warn(text)
 end
 
+local oursMemo = setmetatable({}, { __mode = "k" })
+local oursMemoTick = nil
+
+local function oursTick()
+    if Bridge ~= nil and tonumber(Bridge.tick) ~= nil then return tonumber(Bridge.tick) end
+    if BridgeServer ~= nil and tonumber(BridgeServer.tick) ~= nil then return tonumber(BridgeServer.tick) end
+    return 0
+end
+
 local function ours(z)
     if z == nil then return false end
     if Bridge ~= nil and Bridge.body ~= nil and z == Bridge.body then return true end
+    local tick = oursTick()
+    if oursMemoTick ~= tick then
+        oursMemo = setmetatable({}, { __mode = "k" })
+        oursMemoTick = tick
+    end
+    local hit = oursMemo[z]
+    if hit ~= nil then return hit end
     local marked = false
-    pcall(function() marked = z.getVariableBoolean ~= nil and z:getVariableBoolean("NotAloneBody") == true end)
+    local fn = nil
+    pcall(function() fn = z.getVariableBoolean end)
+    if type(fn) == "function" then
+        local ok, v = pcall(fn, z, "NotAloneBody")
+        marked = ok and v == true
+    end
+    oursMemo[z] = marked
     return marked
 end
 BridgeGun.ours = ours
@@ -170,13 +192,28 @@ function BridgeGun.install()
             local wrapper
             wrapper = function(weapon, player)
                 local list = search(weapon, player)
-                if type(list) == "table" then
-                    for i = #list, 1, -1 do
+                if type(list) ~= "table" then return list end
+                local any = false
+                pcall(function()
+                    for i = 1, #list do
                         local v = list[i]
                         local z = (type(v) == "table" and v[1]) or v
-                        if ours(z) then table.remove(list, i) end
+                        if ours(z) then any = true break end
                     end
-                end
+                end)
+                if not any then return list end
+                local keep = 0
+                pcall(function()
+                    for i = 1, #list do
+                        local v = list[i]
+                        local z = (type(v) == "table" and v[1]) or v
+                        if not ours(z) then
+                            keep = keep + 1
+                            list[keep] = v
+                        end
+                    end
+                    for i = #list, keep + 1, -1 do list[i] = nil end
+                end)
                 return list
             end
             BridgeGun.guardShot = wrapper
@@ -188,10 +225,27 @@ function BridgeGun.install()
             wrapper = function(character, handWeapon)
                 local rank = g.zombierank
                 if type(rank) == "table" then
-                    for i = #rank, 1, -1 do
-                        local v = rank[i]
-                        local z = (type(v) == "table" and v[1]) or v
-                        if ours(z) then table.remove(rank, i) end
+                    local any = false
+                    pcall(function()
+                        for i = 1, #rank do
+                            local v = rank[i]
+                            local z = (type(v) == "table" and v[1]) or v
+                            if ours(z) then any = true break end
+                        end
+                    end)
+                    if any then
+                        local keep = 0
+                        pcall(function()
+                            for i = 1, #rank do
+                                local v = rank[i]
+                                local z = (type(v) == "table" and v[1]) or v
+                                if not ours(z) then
+                                    keep = keep + 1
+                                    rank[keep] = v
+                                end
+                            end
+                            for i = #rank, keep + 1, -1 do rank[i] = nil end
+                        end)
                     end
                 end
                 return swing(character, handWeapon)

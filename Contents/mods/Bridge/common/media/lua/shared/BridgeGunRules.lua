@@ -807,7 +807,30 @@ function BridgeGunRules.friendlyInLine(body, target, friendlies)
 end
 
 
+local foreignMemo = setmetatable({}, { __mode = "k" })
+local foreignMemoTick = nil
+
+local function foreignTickNow()
+    local f = nil
+    if BridgeZScan ~= nil and type(BridgeZScan.tickOf) == "function" then f = BridgeZScan.tickOf end
+    if type(f) == "function" then
+        local ok, v = pcall(f)
+        if ok and tonumber(v) ~= nil then return tonumber(v) end
+    end
+    if Bridge ~= nil and tonumber(Bridge.tick) ~= nil then return tonumber(Bridge.tick) end
+    if BridgeServer ~= nil and tonumber(BridgeServer.tick) ~= nil then return tonumber(BridgeServer.tick) end
+    return 0
+end
+
 function BridgeGunRules.isForeignNpc(z)
+    if z == nil then return nil end
+    local tick = foreignTickNow()
+    if foreignMemoTick ~= tick then
+        foreignMemo = setmetatable({}, { __mode = "k" })
+        foreignMemoTick = tick
+    end
+    local hit = foreignMemo[z]
+    if hit ~= nil then return hit or nil end
     local who = nil
     pcall(function()
         if z == nil then return end
@@ -838,6 +861,7 @@ function BridgeGunRules.isForeignNpc(z)
         end
         if who == nil and npc then who = "Knox Event Expanded" end
     end)
+    foreignMemo[z] = who or false
     return who
 end
 
@@ -1135,10 +1159,10 @@ function BridgeGunRules.isMagazineType(desc, fullType)
 end
 
 
-function BridgeGunRules.findLoadedMagazine(body, desc)
+function BridgeGunRules.findLoadedMagazine(body, desc, items)
     if body == nil or type(desc) ~= "table" or desc.magazineType == nil then return nil, 0 end
     local best, bestCount = nil, 0
-    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+    for _, item in ipairs(items or BridgeGunRules.itemsOf(body)) do
         local full = nil
         pcall(function() full = item:getFullType() end)
         if BridgeGunRules.isMagazineType(desc, full) then
@@ -1166,11 +1190,11 @@ function BridgeGunRules.magazineCount(body, desc)
 end
 
 
-function BridgeGunRules.findLooseRounds(body, desc, need)
+function BridgeGunRules.findLooseRounds(body, desc, need, items)
     local out, total = {}, 0
     if body == nil or type(desc) ~= "table" or desc.ammoTypeKey == nil then return out, total end
     local want = math.floor(tonumber(need) or 1)
-    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+    for _, item in ipairs(items or BridgeGunRules.itemsOf(body)) do
         if total >= want then break end
         local full = nil
         pcall(function() full = item:getFullType() end)
@@ -1186,7 +1210,7 @@ function BridgeGunRules.findLooseRounds(body, desc, need)
 end
 
 
-function BridgeGunRules.removeOneLooseRound(body, desc)
+function BridgeGunRules.removeOneLooseRound(body, desc, items)
     local key = type(desc) == "table" and desc.ammoTypeKey or nil
     if body == nil or key == nil then return nil end
     local removed = nil
@@ -1288,11 +1312,11 @@ function BridgeGunRules.findEmptyMagazine(body, desc)
 end
 
 
-function BridgeGunRules.findPartialMagazine(body, desc)
+function BridgeGunRules.findPartialMagazine(body, desc, items)
     if body == nil or type(desc) ~= "table" or desc.magazineType == nil then return nil end
     local gunMax = tonumber(desc.maxAmmo) or 0
     local best, bestRounds = nil, nil
-    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+    for _, item in ipairs(items or BridgeGunRules.itemsOf(body)) do
         local full = nil
         pcall(function() full = item:getFullType() end)
         if BridgeGunRules.isMagazineType(desc, full) then
@@ -1585,7 +1609,7 @@ function BridgeGunRules.ammoAccept(desc)
 end
 
 
-function BridgeGunRules.findAmmoBox(body, gun)
+function BridgeGunRules.findAmmoBox(body, gun, items)
     local want = type(gun) == "table" and gun.ammoTypeKey or nil
     if body == nil or want == nil then return nil end
     local box = gun.ammoBox
@@ -1593,7 +1617,7 @@ function BridgeGunRules.findAmmoBox(body, gun)
         box = resolveItemType(want .. "Box", moduleOf(gun.fullType), moduleOf(want), "Base")
     end
     local best, bestDepth = nil, 99
-    for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+    for _, item in ipairs(items or BridgeGunRules.itemsOf(body)) do
         local full = nil
         pcall(function() full = item:getFullType() end)
         if type(full) == "string" and full ~= want then
@@ -2197,35 +2221,49 @@ if BridgeGunRules.efzAmmoWrapped ~= true then
     end
 
     local baseFindLooseRounds = BridgeGunRules.findLooseRounds
-    function BridgeGunRules.findLooseRounds(body, desc, need)
-        local out, total = baseFindLooseRounds(body, desc, need)
-        if body == nil or type(desc) ~= "table" or desc.efzAmmo == nil then return out, total end
+    function BridgeGunRules.findLooseRounds(body, desc, need, items)
+        if body == nil or type(desc) ~= "table" then return {}, 0 end
+        local list = items or BridgeGunRules.itemsOf(body)
+        if desc.efzAmmo == nil then return baseFindLooseRounds(body, desc, need, list) end
+        local out, total = {}, 0
+        local extras, extraTotal = {}, 0
         local want = math.floor(tonumber(need) or 1)
-        if total >= want then return out, total end
-        local seen = {}
-        for _, entry in ipairs(out) do seen[entry.item] = true end
-        for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
-            if total >= want then break end
-            if not seen[item] then
-                local full = nil
-                pcall(function() full = item:getFullType() end)
-                if type(full) == "string" and desc.efzAmmo.typeSet[full] then
+        local key = desc.ammoTypeKey
+        local typeSet = desc.efzAmmo.typeSet
+        for _, item in ipairs(list) do
+            local full = nil
+            pcall(function() full = item:getFullType() end)
+            if type(full) == "string" then
+                if full == key then
                     local n = BridgeGunRules.itemCount(item)
-                    if n > 0 then
+                    if n > 0 and total < want then
                         out[#out + 1] = { item = item, count = n }
                         total = total + n
                     end
+                elseif typeSet[full] then
+                    local n = BridgeGunRules.itemCount(item)
+                    if n > 0 then
+                        extras[#extras + 1] = { item = item, count = n }
+                        extraTotal = extraTotal + n
+                    end
                 end
             end
+        end
+        if total >= want or extraTotal <= 0 then return out, total end
+        for i = 1, #extras do
+            if total >= want then break end
+            local entry = extras[i]
+            out[#out + 1] = entry
+            total = total + entry.count
         end
         return out, total
     end
 
     local baseRemoveOneLooseRound = BridgeGunRules.removeOneLooseRound
-    function BridgeGunRules.removeOneLooseRound(body, desc)
-        local removed = baseRemoveOneLooseRound(body, desc)
+    function BridgeGunRules.removeOneLooseRound(body, desc, items)
+        local removed = baseRemoveOneLooseRound(body, desc, items)
         if removed ~= nil or body == nil or type(desc) ~= "table" or desc.efzAmmo == nil then return removed end
-        for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+        for _, item in ipairs(items or BridgeGunRules.itemsOf(body)) do
             local full = nil
             pcall(function() full = item:getFullType() end)
             if type(full) == "string" and desc.efzAmmo.typeSet[full] then
@@ -2239,10 +2277,10 @@ if BridgeGunRules.efzAmmoWrapped ~= true then
     end
 
     local baseFindAmmoBox = BridgeGunRules.findAmmoBox
-    function BridgeGunRules.findAmmoBox(body, gun)
-        local best = baseFindAmmoBox(body, gun)
+    function BridgeGunRules.findAmmoBox(body, gun, items)
+        local best = baseFindAmmoBox(body, gun, items)
         if best ~= nil or body == nil or type(gun) ~= "table" or gun.efzAmmo == nil then return best end
-        for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
+        for _, item in ipairs(items or BridgeGunRules.itemsOf(body)) do
             local full = nil
             pcall(function() full = item:getFullType() end)
             if type(full) == "string" and gun.efzAmmo.boxSet[full] then

@@ -58,6 +58,16 @@ end
 
 
 
+function BridgeBandits.hostileTarget(z)
+    if z == nil then return false end
+    if BridgeBandits.wanted ~= true then return false end
+    if type(BridgeData) ~= "table" or type(BridgeData.bandit) ~= "function" then return false end
+    local npc, hostile = false, nil
+    local ok = pcall(function() npc, hostile = BridgeData.bandit(z) end)
+    return ok and npc == true and hostile == true
+end
+
+
 function BridgeBandits.windowClose(z)
     local near = false
     pcall(function()
@@ -211,4 +221,52 @@ if BridgeBandits.wanted and not BridgeBandits.eventsAdded and Events ~= nil then
             if not isServer() then pcall(BridgeBandits.check) end
         end)
     end
+end
+
+
+function BridgeBandits.selftest()
+    local checks, fails = 0, {}
+    local function check(name, cond)
+        checks = checks + 1
+        if not cond then fails[#fails + 1] = name end
+    end
+
+    local savedWanted = BridgeBandits.wanted
+    local savedBandit = BridgeData ~= nil and BridgeData.bandit or nil
+    local savedForeign = BridgeGunRules ~= nil and BridgeGunRules.isForeignNpc or nil
+
+    check("nil is not a target", BridgeBandits.hostileTarget(nil) == false)
+
+    BridgeBandits.wanted = false
+    BridgeData.bandit = function() return true, true end
+    check("inactive mod never allows", BridgeBandits.hostileTarget({}) == false)
+
+    BridgeBandits.wanted = true
+    BridgeData.bandit = function() return true, true end
+    check("hostile bandit allowed", BridgeBandits.hostileTarget({}) == true)
+
+    BridgeData.bandit = function() return true, false end
+    check("peaceful bandit blocked", BridgeBandits.hostileTarget({}) == false)
+
+    BridgeData.bandit = function() return true, nil end
+    check("unknown hostility blocked", BridgeBandits.hostileTarget({}) == false)
+
+    BridgeData.bandit = function() return false, true end
+    check("non-bandit blocked", BridgeBandits.hostileTarget({}) == false)
+
+    BridgeData.bandit = function() error("boom") end
+    check("error is safe", BridgeBandits.hostileTarget({}) == false)
+
+    if savedForeign ~= nil then
+        BridgeGunRules.isForeignNpc = function() return "Bandits" end
+        local allowed = BridgeGunRules.foreignGunAllowed({}, function() return false end)
+        BridgeGunRules.isForeignNpc = savedForeign
+        check("shared foreign gate unchanged", allowed == false)
+    end
+
+    BridgeBandits.wanted = savedWanted
+    if savedBandit ~= nil then BridgeData.bandit = savedBandit end
+
+    if #fails == 0 then return string.format("banditselftest PASS (%d checks)", checks) end
+    return string.format("banditselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
 end
