@@ -6411,6 +6411,9 @@ function BridgeMove.set(name, value)
     elseif name == "speedmod" then
         BridgeMove.speedModOverride = (value ~= "auto") and tonumber(value) or nil
         return "speedmod " .. tostring(BridgeMove.speedModOverride or "auto")
+    elseif name == "sneakhold" then
+        if BridgeGunfight == nil then return "sneakhold unavailable" end
+        return BridgeGunfight.setSneakHold(value)
     end
     if name == "replan" then BridgeMove.replanDist = tonumber(value) or BridgeMove.replanDist
     elseif name == "every" then BridgeMove.pathEvery = tonumber(value) or BridgeMove.pathEvery

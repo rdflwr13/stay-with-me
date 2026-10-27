@@ -27,6 +27,8 @@ BridgeGunfight.friendlies = nil
 BridgeGunfight.friendliesAt = nil
 BridgeGunfight.flashes = {}
 BridgeGunfight.bumps = {}
+BridgeGunfight.standHold = setmetatable({}, { __mode = "k" })
+BridgeGunfight.standHoldTicks = 180
 BridgeGunfight.handSyncAt = nil
     BridgeGunfight.rounds = keepRounds
     BridgeGunfight.maxAmmo = 0
@@ -1223,11 +1225,20 @@ local function retainBump(body, name)
 end
 
 
+local function markStandHold(body)
+    if body == nil then return end
+    local hold = tonumber(BridgeGunfight.standHoldTicks) or 0
+    if hold <= 0 then return end
+    BridgeGunfight.standHold[body] = (Bridge.time or 0) + hold
+end
+
+
 local function shotFx(body, gun, kind, target)
     plant(body, "NA_Fire" .. kind)
     pcall(function() body:setVariable(FIRE_VAR, false) end)
     BridgeGunfight.fireUntil = (Bridge.time or 0) + FIRE_TICKS
     retainBump(body, "NA_Aim" .. kind)
+    markStandHold(body)
     playShot(body, gun)
     local fx = rawget(_G, "BridgeShotFx")
     if fx ~= nil and type(fx.shot) == "function" then
@@ -3475,6 +3486,7 @@ function BridgeGunfight.onFx(args)
     pcall(function() body:setBumpType("NA_Fire" .. kind) end)
     BridgeGunfight.fireUntil = (Bridge.time or 0) + FIRE_TICKS
     retainBump(body, "NA_Aim" .. kind)
+    markStandHold(body)
     if type(args.sound) == "string" and args.sound ~= "" then
         local played = false
         pcall(function() played = playGunshotAt(body:getX(), body:getY(), body:getZ(), args.sound) end)
@@ -3485,6 +3497,14 @@ function BridgeGunfight.onFx(args)
         end
     end
     flash(body)
+end
+
+
+function BridgeGunfight.setSneakHold(value)
+    local n = tonumber(value)
+    if n == nil then return "sneakhold " .. tostring(BridgeGunfight.standHoldTicks) end
+    BridgeGunfight.standHoldTicks = math.max(0, math.floor(n))
+    return "sneakhold " .. tostring(BridgeGunfight.standHoldTicks)
 end
 
 

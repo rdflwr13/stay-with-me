@@ -454,6 +454,16 @@ end
 
 
 function Bridge.sneakVar(z, on)
+    if on and z ~= nil and BridgeGunfight ~= nil and BridgeGunfight.standHold ~= nil then
+        local untilT = BridgeGunfight.standHold[z]
+        if untilT ~= nil then
+            if (Bridge.time or 0) < untilT then
+                on = false
+            else
+                BridgeGunfight.standHold[z] = nil
+            end
+        end
+    end
     pcall(function()
         if z:getVariableBoolean("NotAloneSneak") ~= on then z:setVariable("NotAloneSneak", on) end
     end)
@@ -4948,7 +4958,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
-    gunselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true,
+    gunselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
 
 
@@ -5636,6 +5646,11 @@ function Bridge.run(line)
 
 
     if cmd == "itemselftest" then return Bridge.itemselftest() end
+
+    if cmd == "bathselftest" then
+        if BridgeBath == nil then return "bath not loaded" end
+        return BridgeBath.selftest()
+    end
 
     if cmd == "gunselftest" then return BridgeGunRules.selftest() end
 

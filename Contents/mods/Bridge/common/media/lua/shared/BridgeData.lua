@@ -219,7 +219,12 @@ end
 
 
 
-function BridgeData.foreignPeaceful(z)
+function BridgeData.foreignPeaceful(z, player)
+    local dt = rawget(_G, "BridgeDT")
+    if type(dt) == "table" and type(dt.peaceful) == "function" then
+        local ok, answer = pcall(dt.peaceful, z, player)
+        if ok and answer ~= nil then return answer end
+    end
     local npc, hostile = BridgeData.bandit(z)
     if npc then return hostile ~= true end
     if not markedForeign(z) then return false end

@@ -843,6 +843,11 @@ end
 
 
 function BridgeGunRules.foreignGunAllowed(z, peacefulOf)
+    local dt = rawget(_G, "BridgeDT")
+    if type(dt) == "table" and type(dt.gunAllowed) == "function" then
+        local answer = dt.gunAllowed(z, peacefulOf)
+        if answer ~= nil then return answer end
+    end
     local who = BridgeGunRules.isForeignNpc(z)
     if who == nil then return true end
     if who ~= "Project A-Life" then return false end

@@ -1810,7 +1810,7 @@ local function gunPeaceful(z, player)
         local ok, answer = pcall(compat.peaceful, z, player)
         if ok then return answer end
     end
-    local ok, answer = pcall(BridgeData.foreignPeaceful, z)
+    local ok, answer = pcall(BridgeData.foreignPeaceful, z, player)
     if ok then return answer end
     return nil
 end
