@@ -128,7 +128,7 @@ end
 
 
 
-function BridgeWindow.makeDesc(st, furSpecies)
+function BridgeWindow.makeDesc(st, furSpecies, starterOutfit)
     local desc = SurvivorFactory.CreateSurvivor()
     desc:setFemale(BridgeData.isFemale(st))
     pcall(function() desc:getWornItems():clear() end)
@@ -153,6 +153,32 @@ function BridgeWindow.makeDesc(st, furSpecies)
                 if type(t) == "string" and string.sub(t, 1, 6) == "Furry_" then return end
             end
             BridgeItems.apply(item, rec)
+            local loc = nil
+            if item:IsClothing() then loc = item:getBodyLocation() end
+            if loc == nil then loc = item:canBeEquipped() end
+            if loc ~= nil then desc:setWornItem(loc, item) end
+        end)
+    end
+    local clothing = nil
+    if starterOutfit == true then
+        clothing = BridgeData.STARTER[BridgeData.genderOf(st)] or {}
+    elseif type(starterOutfit) == "table" then
+        clothing = starterOutfit
+    end
+    for _, e in ipairs(clothing or {}) do
+        pcall(function()
+            local item = instanceItem(e.t)
+            local tint = e.tint
+            if item == nil and e.alt ~= nil then
+                item = instanceItem(e.alt)
+                tint = e.altTint or e.tint
+            end
+            if item == nil then return end
+            if e.tc ~= nil then pcall(function() item:getVisual():setTextureChoice(e.tc) end) end
+            if e.bt ~= nil then pcall(function() item:getVisual():setBaseTexture(e.bt) end) end
+            if tint ~= nil then
+                pcall(function() item:getVisual():setTint(ImmutableColor.new(tint[1], tint[2], tint[3], 1)) end)
+            end
             local loc = nil
             if item:IsClothing() then loc = item:getBodyLocation() end
             if loc == nil then loc = item:canBeEquipped() end
@@ -195,7 +221,9 @@ function BridgeWindow.addCustomDesc(desc, st)
             desc:setWornItem(item:getBodyLocation(), item)
         end)
     end
-    if BridgeData.spnccOn(BridgeData.genderOf(st)) then
+    local gender = BridgeData.genderOf(st)
+    local muscleOn = BridgeData.muscleOf(st) > 0 and BridgeData.spnccMuscle(gender) ~= nil
+    if BridgeData.spnccOn(gender) or muscleOn then
         local face = BridgeData.faceEntry(st)
         if face ~= nil then add(face.id, BridgeData.spnccTexture(face, idx)) end
         for _, d in ipairs(BridgeData.detailEntries(st)) do
@@ -203,7 +231,7 @@ function BridgeWindow.addCustomDesc(desc, st)
         end
         local m = BridgeData.muscleOf(st)
         if m > 0 then
-            local mid = BridgeData.spnccMuscle(BridgeData.genderOf(st))
+            local mid = BridgeData.spnccMuscle(gender)
             if mid ~= nil then add(mid, idx + (m == 2 and 5 or 0)) end
         end
     end

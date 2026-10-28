@@ -1195,8 +1195,13 @@ local function dressBody(body)
     if Bridge.dressFresh == true and st ~= nil then st.items, st.saved = nil, nil end
     Bridge.dressFresh = nil
     local outfit = {}
-    for _, e in ipairs(BridgeData.STARTER[gender]) do
-        if first or not e.first then outfit[#outfit + 1] = e end
+    local custom = (first and type(st) == "table" and type(st.pregameOutfit) == "table") and st.pregameOutfit or nil
+    if custom ~= nil then
+        outfit = custom
+    else
+        for _, e in ipairs(BridgeData.STARTER[gender]) do
+            if first or not e.first then outfit[#outfit + 1] = e end
+        end
     end
     local worn = 0
     for i = 1, #outfit do
@@ -1205,7 +1210,7 @@ local function dressBody(body)
             local tint = outfit[i].tint
             if item == nil and outfit[i].alt ~= nil then
                 item = inv:AddItem(outfit[i].alt)
-                tint = outfit[i].altTint
+                tint = outfit[i].altTint or outfit[i].tint
             end
             if item == nil then return end
             if outfit[i].tc ~= nil then
@@ -1217,32 +1222,38 @@ local function dressBody(body)
             if tint ~= nil then
                 pcall(function() item:getVisual():setTint(ImmutableColor.new(tint[1], tint[2], tint[3], 1)) end)
             end
-            body:setWornItem(item:getBodyLocation(), item)
+            local loc = nil
+            if item:IsClothing() then loc = item:getBodyLocation() end
+            if loc == nil then loc = item:canBeEquipped() end
+            if loc ~= nil then body:setWornItem(loc, item) end
 
             if BridgeSocial ~= nil and BridgeSocial.markGiven ~= nil then BridgeSocial.markGiven(item) end
             worn = worn + 1
         end)
     end
+    if custom ~= nil and st ~= nil then st.pregameOutfit = nil end
     if first then
-        pcall(function()
-            local weapon = inv:AddItem(BridgeData.STARTER_WEAPON[gender])
-            if weapon ~= nil and gender == "male" then
+        if not BridgeData.optionOf(st, "startUnarmed") then
+            pcall(function()
+                local weapon = inv:AddItem(BridgeData.STARTER_WEAPON[gender])
+                if weapon ~= nil and gender == "male" then
 
-                body:setPrimaryHandItem(weapon)
-                BridgeWeapon.assignedId = weapon:getID()
-            elseif weapon ~= nil then
+                    body:setPrimaryHandItem(weapon)
+                    BridgeWeapon.assignedId = weapon:getID()
+                elseif weapon ~= nil then
 
 
 
 
-                pcall(function() weapon:setCondition(START_AXE.condition) end)
-                pcall(function() if weapon.setHeadCondition ~= nil then weapon:setHeadCondition(START_AXE.head) end end)
-                pcall(function() if weapon.setSharpness ~= nil then weapon:setSharpness(START_AXE.sharpness) end end)
-                body:setPrimaryHandItem(weapon)
-                body:setSecondaryHandItem(weapon)
-                BridgeWeapon.assignedId = weapon:getID()
-            end
-        end)
+                    pcall(function() weapon:setCondition(START_AXE.condition) end)
+                    pcall(function() if weapon.setHeadCondition ~= nil then weapon:setHeadCondition(START_AXE.head) end end)
+                    pcall(function() if weapon.setSharpness ~= nil then weapon:setSharpness(START_AXE.sharpness) end end)
+                    body:setPrimaryHandItem(weapon)
+                    body:setSecondaryHandItem(weapon)
+                    BridgeWeapon.assignedId = weapon:getID()
+                end
+            end)
+        end
         if st ~= nil then st.outfitGiven = true end
         if Bridge.mp then
             pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { outfitGiven = true }) end)
@@ -1714,6 +1725,14 @@ function Bridge.spawnZombie(px, py, pz)
 
     local okDress, dressRes = pcall(function() return dress(Bridge.body) end)
     if not okDress then dressRes = "dress failed: " .. tostring(dressRes) end
+    if okDress and type(Bridge.store) == "table" then
+        local fur = Bridge.store.pregameFur
+        if type(fur) == "string" and fur ~= "" and fur ~= "Hooman"
+            and BridgeAppearance ~= nil and type(BridgeAppearance.setFur) == "function" then
+            pcall(BridgeAppearance.setFur, fur)
+        end
+        if fur ~= nil then Bridge.store.pregameFur = nil end
+    end
 
     return string.format("spawned zombie at %d %d %d, %s", x, y, z, tostring(dressRes))
 end
@@ -2971,6 +2990,10 @@ end
 
 function Bridge.pickStartGender()
     local st = Bridge.store
+    if not Bridge.mp and st ~= nil and BridgePregame ~= nil
+        and type(BridgePregame.consumeInto) == "function" then
+        pcall(BridgePregame.consumeInto, st)
+    end
     if st == nil or not Bridge.gotData or not BridgeData.neverSpawned(st) then return false end
     local owner = BridgeData.owner()
     if owner == nil then return false end
@@ -8256,3 +8279,12 @@ Bridge.checked = setmetatable({}, { __mode = "k" })
 end)
 
 log("subscribed")
+
+pcall(function() require "BridgePregame" end)
+if type(Events) == "table" and Events.OnGameBoot ~= nil and type(Events.OnGameBoot.Add) == "function" then
+    Events.OnGameBoot.Add(function()
+        if BridgePregame == nil then
+            print("[Stay With Me] BridgePregame.lua did not load from the active mod copy")
+        end
+    end)
+end

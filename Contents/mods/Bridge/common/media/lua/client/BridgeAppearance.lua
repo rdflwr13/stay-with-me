@@ -125,7 +125,7 @@ end
 
 function BridgeAppearance.Catalog.bodyEntries()
     local out = {}
-    local skins = BridgeData.skinsFor(BridgeData.genderOf(Bridge.store))
+    local skins = BridgeData.skinsFor(BridgeData.genderOf(BridgeAppearance.uiStore()))
     for i, id in ipairs(skins) do
         out[#out + 1] = { id = id, label = tr("SkinTone", i) }
     end
@@ -135,7 +135,7 @@ end
 function BridgeAppearance.Catalog.hairEntries()
     local out = {}
     local styles = (BridgeWindow ~= nil and BridgeWindow.hairStyles ~= nil)
-        and BridgeWindow.hairStyles(BridgeData.genderOf(Bridge.store)) or {}
+        and BridgeWindow.hairStyles(BridgeData.genderOf(BridgeAppearance.uiStore())) or {}
     for _, s in ipairs(styles) do
         out[#out + 1] = { name = s.id, label = s.label }
     end
@@ -144,7 +144,7 @@ end
 
 function BridgeAppearance.Catalog.faceEntries()
     local out = { { name = "", label = tr("AppearanceDefaultFace") } }
-    for _, e in ipairs(BridgeData.spnccFaces(BridgeData.genderOf(Bridge.store)) or {}) do
+    for _, e in ipairs(BridgeData.spnccFaces(BridgeData.genderOf(BridgeAppearance.uiStore())) or {}) do
         local label = gameText("IGUI_Face_" .. tostring(e.display or e.name), tostring(e.display or e.name))
         out[#out + 1] = { name = e.name, label = label }
     end
@@ -153,9 +153,18 @@ end
 
 function BridgeAppearance.Catalog.detailEntries()
     local out = {}
-    for _, e in ipairs(BridgeData.spnccDetails(BridgeData.genderOf(Bridge.store)) or {}) do
+    for _, e in ipairs(BridgeData.spnccDetails(BridgeData.genderOf(BridgeAppearance.uiStore())) or {}) do
         local label = gameText("IGUI_Detail_" .. tostring(e.display or e.name), tostring(e.display or e.name))
-        out[#out + 1] = { name = e.name, label = label }
+        out[#out + 1] = { name = e.name, label = tostring(label) }
+    end
+    local totals = {}
+    for _, e in ipairs(out) do totals[e.label] = (totals[e.label] or 0) + 1 end
+    local seen = {}
+    for _, e in ipairs(out) do
+        if totals[e.label] > 1 then
+            seen[e.label] = (seen[e.label] or 0) + 1
+            e.label = e.label .. " " .. tostring(seen[e.label])
+        end
     end
     return out
 end
@@ -296,7 +305,7 @@ function BridgeAppearance.setFur(speciesName)
     end)
 
     if speciesName ~= "Hooman" and type(fm.determineFurClothingName) == "function" then
-        local isFemale = BridgeData.genderOf(Bridge.store) ~= "male"
+        local isFemale = BridgeData.genderOf(BridgeAppearance.uiStore()) ~= "male"
         local id = nil
         pcall(function() id = fm.determineFurClothingName(isFemale, speciesName) end)
         if type(id) == "string" and id ~= "" then
@@ -321,7 +330,7 @@ function BridgeAppearance.fixFurVariant()
     if type(fm.determineFurClothingName) ~= "function" then return end
     local species = BridgeAppearance.furSpeciesOf(b)
     if species == "Hooman" then return end
-    local isFemale = BridgeData.genderOf(Bridge.store) ~= "male"
+    local isFemale = BridgeData.genderOf(BridgeAppearance.uiStore()) ~= "male"
     local id = nil
     pcall(function() id = fm.determineFurClothingName(isFemale, species) end)
     if type(id) ~= "string" or id == "" then return end
@@ -333,13 +342,287 @@ end
 
 BridgeAppearance.candidate = { skin = nil, hair = nil, hairColor = nil, face = nil, details = {}, muscle = 0, makeup = {}, beard = "", beardColor = nil, fur = nil, voice = nil }
 
-function BridgeAppearance.makePreviewDesc()
-    local st = Bridge.store or {}
+function BridgeAppearance.uiStore()
+    if BridgeAppearance.draftStore ~= nil then return BridgeAppearance.draftStore end
+    if type(Bridge) ~= "table" then return nil end
+    return Bridge.store
+end
+
+function BridgeAppearance.defaultCandidate(gender)
+    local male = gender == "male"
+    local color = male and BridgeData.DEFAULT_MALE_HAIR_COLOR or BridgeData.DEFAULT_HAIR_COLOR
+    local beardColor = nil
+    if male then beardColor = copyColor(BridgeData.DEFAULT_MALE_HAIR_COLOR) end
+    return {
+        skin = male and BridgeData.DEFAULT_MALE_SKIN or BridgeData.DEFAULT_SKIN,
+        hair = male and BridgeData.DEFAULT_MALE_HAIR or BridgeData.DEFAULT_HAIR,
+        hairColor = copyColor(color),
+        face = nil,
+        details = {},
+        muscle = 0,
+        makeup = {},
+        beard = male and BridgeData.DEFAULT_MALE_BEARD or "",
+        beardColor = beardColor,
+        fur = nil,
+        voice = BridgeData.defaultVoice(gender),
+    }
+end
+
+function BridgeAppearance.initCandidate(gender)
+    local g = gender == "male" and "male" or "female"
     local c = BridgeAppearance.candidate
+    local defaults = BridgeAppearance.defaultCandidate(g)
+    c.face = nil
+    c.fur = nil
+    c.beardColor = nil
+    for k, v in pairs(defaults) do c[k] = v end
+    c.gender = g
+    if g == "male" then c.male = c else c.male = nil end
+    return c
+end
+
+function BridgeAppearance.loadCandidate(draft)
+    local g = nil
+    if type(draft) == "table" and (draft.gender == "male" or draft.gender == "female") then
+        g = draft.gender
+    else
+        g = BridgeData.genderOf(BridgeAppearance.uiStore())
+    end
+    local c = BridgeAppearance.initCandidate(g)
+    local look = nil
+    if type(draft) == "table" then
+        look = (g == "male") and draft.maleLook or draft.femaleLook
+    end
+    if look ~= nil then
+        local ok, err = pcall(BridgeLooks.applyTo, look, c, g)
+        if not ok then warn("load candidate failed: " .. tostring(err)) end
+    end
+    if type(draft) == "table" then
+        local voice = (g == "male") and draft.voiceMale or draft.voiceFemale
+        local cleaned = BridgeData.cleanVoice(voice, g)
+        if cleaned ~= nil then c.voice = cleaned end
+        local species = (g == "male") and draft.speciesMale or draft.speciesFemale
+        if type(species) == "string" and species ~= "" and species ~= "Hooman" then
+            c.fur = species
+        else
+            c.fur = nil
+        end
+    end
+    c.face = BridgeData.cleanFace(c.face, g)
+    c.details = BridgeData.cleanDetails(c.details, g) or {}
+    return c
+end
+
+function BridgeAppearance.voiceToken(voice, gender)
+    local cleaned = BridgeData.cleanVoice(voice, gender)
+    if cleaned == nil then return nil end
+    return string.format("%s|%s|%d|%d", cleaned.name, cleaned.prefix, cleaned.type, cleaned.pitch)
+end
+
+function BridgeAppearance.voiceFromToken(text, gender)
+    if type(text) ~= "string" or text == "" or #text > 200 then return nil end
+    local name, prefix, ty, pitch = string.match(text, "^(.-)|(.-)|(%-?%d+)|(%-?%d+)$")
+    if name == nil then return nil end
+    return BridgeData.cleanVoice({
+        name = name,
+        prefix = prefix,
+        type = tonumber(ty),
+        pitch = tonumber(pitch),
+    }, gender)
+end
+
+function BridgeAppearance.speciesName(text)
+    if type(text) ~= "string" then return nil end
+    if #text == 0 or #text > 64 then return nil end
+    if string.find(text, "[^%w_%- ]") ~= nil then return nil end
+    return text
+end
+
+function BridgeAppearance.copyClothing(list)
+    local out = {}
+    if type(list) ~= "table" then return out end
+    for i = 1, #list do
+        local e = list[i]
+        if type(e) == "table" and type(e.loc) == "string" and type(e.t) == "string" then
+            local tint = nil
+            if type(e.tint) == "table" then
+                tint = { tonumber(e.tint[1]) or 0, tonumber(e.tint[2]) or 0, tonumber(e.tint[3]) or 0 }
+            end
+            out[#out + 1] = {
+                loc = e.loc,
+                t = e.t,
+                alt = e.alt,
+                tc = tonumber(e.tc),
+                bt = tonumber(e.bt),
+                tint = tint,
+                altTint = type(e.altTint) == "table" and { tonumber(e.altTint[1]) or 0, tonumber(e.altTint[2]) or 0, tonumber(e.altTint[3]) or 0 } or nil,
+            }
+        end
+    end
+    return out
+end
+
+function BridgeAppearance.clothingAt(list, loc)
+    if type(list) ~= "table" or type(loc) ~= "string" then return nil, nil end
+    for i = 1, #list do
+        if type(list[i]) == "table" and list[i].loc == loc then return list[i], i end
+    end
+    return nil, nil
+end
+
+local function clothNumber(value, maxValue)
+    local n = tonumber(value)
+    if n == nil or n ~= n then return nil end
+    n = math.floor(n)
+    if n < 0 then n = 0 end
+    if n > maxValue then n = maxValue end
+    return n
+end
+
+function BridgeAppearance.clothToken(list)
+    if type(list) ~= "table" then return "" end
+    local parts = {}
+    for i = 1, #list do
+        local e = list[i]
+        if #parts >= 32 then break end
+        if type(e) == "table" and type(e.loc) == "string" and type(e.t) == "string"
+            and string.find(e.loc, "^[%w_]+$") ~= nil and #e.t <= 128 then
+            local tint = ""
+            if type(e.tint) == "table" then
+                tint = string.format("%.3f,%.3f,%.3f", tonumber(e.tint[1]) or 0, tonumber(e.tint[2]) or 0, tonumber(e.tint[3]) or 0)
+            end
+            local tcNumber = clothNumber(e.tc, 64)
+            local btNumber = clothNumber(e.bt, 64)
+            local tc = tcNumber ~= nil and tostring(tcNumber) or ""
+            local bt = btNumber ~= nil and tostring(btNumber) or ""
+            local part = e.loc .. ":" .. e.t .. ":" .. tc .. ":" .. bt .. ":" .. tint
+            if #table.concat(parts, "|") + #part + 1 > 1800 then break end
+            parts[#parts + 1] = part
+        end
+    end
+    return table.concat(parts, "|")
+end
+
+function BridgeAppearance.clothFromToken(text)
+    local out = {}
+    if type(text) ~= "string" then return out end
+    if text == "" then return out end
+    if #text > 1800 then return nil end
+    local start = 1
+    while start <= #text and #out < 32 do
+        local sep = string.find(text, "|", start, true)
+        local part = nil
+        if sep == nil then
+            part = string.sub(text, start)
+            start = #text + 1
+        else
+            part = string.sub(text, start, sep - 1)
+            start = sep + 1
+        end
+        if part ~= "" then
+            local loc, item, tc, bt, tint = string.match(part, "^([^:]*):([^:]*):([^:]*):([^:]*):(.*)$")
+            if loc ~= nil and string.find(loc, "^[%w_]+$") ~= nil and item ~= "" and #item <= 128 then
+                local color = nil
+                if tint ~= "" then
+                    local r, g, b = string.match(tint, "^([^,]*),([^,]*),([^,]*)$")
+                    if r ~= nil then
+                        local function clamp(v)
+                            local n = tonumber(v)
+                            if n == nil or n ~= n then return 0 end
+                            if n < 0 then return 0 end
+                            if n > 1 then return 1 end
+                            return n
+                        end
+                        color = { clamp(r), clamp(g), clamp(b) }
+                    end
+                end
+                out[#out + 1] = { loc = loc, t = item, tc = clothNumber(tc, 64), bt = clothNumber(bt, 64), tint = color }
+            end
+        end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
+function BridgeAppearance.snapshotCandidate(draft)
+    local g = nil
+    if type(draft) == "table" and (draft.gender == "male" or draft.gender == "female") then
+        g = draft.gender
+    else
+        g = BridgeData.genderOf(BridgeAppearance.uiStore())
+    end
+    local snap = BridgeLooks.capture(BridgeAppearance.candidate)
+    snap.name = BridgeLooks.defaultName(g)
+    snap.builtin = false
+    if type(draft) == "table" then
+        local voice = (g == "male") and draft.voiceMale or draft.voiceFemale
+        local voiceText = BridgeAppearance.voiceToken(voice, g)
+        if voiceText ~= nil then
+            snap.has.voice = true
+            snap.raw.voice = voiceText
+        end
+        local species = (g == "male") and draft.speciesMale or draft.speciesFemale
+        if type(species) == "string" and species ~= "" then
+            snap.has.species = true
+            snap.raw.species = species
+        end
+        local cloth = (g == "male") and draft.clothMale or draft.clothFemale
+        if type(cloth) == "table" then
+            snap.has.clothing = true
+            snap.raw.clothing = BridgeAppearance.clothToken(cloth)
+        end
+        if g == "male" then draft.maleLook = snap else draft.femaleLook = snap end
+    end
+    return snap
+end
+
+function BridgeAppearance.applyToRecord(rec, c, gender)
+    if type(rec) ~= "table" or type(c) ~= "table" then return false end
+    local g = gender
+    if g ~= "male" and g ~= "female" then g = BridgeData.genderOf(rec) end
+    local target = rec
+    if g == "male" then
+        if type(rec.male) ~= "table" then rec.male = {} end
+        target = rec.male
+    end
+    local skin = BridgeData.cleanSkinFor(c.skin, g)
+    if skin ~= nil then target.skin = skin end
+    local hair = BridgeData.cleanHair(c.hair)
+    if hair ~= nil then target.hair = hair end
+    local color = BridgeData.cleanHairColor(c.hairColor)
+    if color ~= nil then target.hairColor = copyColor(color) end
+    if BridgeData.spnccFaces(g) ~= nil then
+        if c.face == nil or c.face == "" then
+            target.face = nil
+        else
+            local face = BridgeData.cleanFace(c.face, g)
+            if face ~= nil then target.face = face end
+        end
+    end
+    local details = BridgeData.cleanDetails(c.details, g)
+    if details ~= nil then target.details = details end
+    local muscle = tonumber(c.muscle)
+    if muscle ~= nil and muscle == muscle then target.muscle = BridgeData.muscleOf({ muscle = muscle }) end
+    local makeup = BridgeData.cleanMakeup(c.makeup)
+    if makeup ~= nil then target.makeup = makeup end
+    if g == "male" then
+        local beard = BridgeData.cleanBeard(c.beard)
+        if beard ~= nil then target.beard = beard end
+        local beardColor = BridgeData.cleanHairColor(c.beardColor)
+        if beardColor ~= nil then target.beardColor = copyColor(beardColor) end
+    end
+    return true
+end
+
+function BridgeAppearance.makePreviewDesc(starterOutfit, clothing)
+    local st = BridgeAppearance.uiStore() or {}
+    local c = BridgeAppearance.previewOverride or BridgeAppearance.candidate
     local gender = BridgeData.genderOf(st)
 
 
-    local tmp = { gender = gender, items = st.items }
+    local items = st.items
+    if BridgeAppearance.previewClothing ~= nil then items = "" end
+    local tmp = { gender = gender, items = items }
     local target = tmp
     if gender == "male" then
         tmp.male = {}
@@ -354,13 +637,17 @@ function BridgeAppearance.makePreviewDesc()
     target.makeup = c.makeup
     target.beard = c.beard
     target.beardColor = c.beardColor
-    return BridgeWindow.makeDesc(tmp, c.fur)
+    local cloth = clothing
+    if type(cloth) ~= "table" then cloth = starterOutfit == true end
+    return BridgeWindow.makeDesc(tmp, c.fur, cloth)
 end
 
 function BridgeAppearance.refreshPreview()
     local w = BridgeAppearance.instance
     if w == nil or w.preview == nil then return end
-    local ok, err = pcall(function() w.preview:setSurvivorDesc(BridgeAppearance.makePreviewDesc()) end)
+    local starter = BridgeAppearance.previewStarter == true
+    local clothing = BridgeAppearance.previewClothing
+    local ok, err = pcall(function() w.preview:setSurvivorDesc(BridgeAppearance.makePreviewDesc(starter, clothing)) end)
     if not ok then warn("preview failed: " .. tostring(err)) end
 end
 
@@ -418,7 +705,7 @@ end
 
 function BridgeAppearance.toggleDetail(name)
     local valid = false
-    for _, e in ipairs(BridgeData.spnccDetails(BridgeData.genderOf(Bridge.store)) or {}) do
+    for _, e in ipairs(BridgeData.spnccDetails(BridgeData.genderOf(BridgeAppearance.uiStore())) or {}) do
         if e.name == name then valid = true break end
     end
     if not valid then return end
@@ -471,24 +758,58 @@ function BridgeAppearance.setBeardColor(c)
     BridgeAppearance.refreshViews()
 end
 
-function BridgeAppearance.openColorPicker(button, mode)
+local function rgbToHsb(r, g, b)
+    r, g, b = tonumber(r) or 0, tonumber(g) or 0, tonumber(b) or 0
+    local cMax = math.max(r, g, b)
+    local cMin = math.min(r, g, b)
+    local delta = cMax - cMin
+    local h = 0
+    if delta ~= 0 then
+        if cMax == r then
+            h = 60 * ((g - b) / delta)
+        elseif cMax == g then
+            h = 60 * (((b - r) / delta) + 2)
+        else
+            h = 60 * (((r - g) / delta) + 4)
+        end
+    end
+    h = math.fmod(1 + h / 360, 1)
+    local s = (cMax == 0) and 0 or (delta / cMax)
+    return h, s, cMax
+end
+
+function BridgeAppearance.openColorPicker(button, mode, loc, initial)
     mode = mode or "hair"
     BridgeAppearance.pickerMode = mode
+    BridgeAppearance.pickerLoc = loc
     local cur
     if mode == "beard" then
-        cur = BridgeAppearance.candidate.beardColor or BridgeData.beardColorOf(Bridge.store)
+        cur = BridgeAppearance.candidate.beardColor or BridgeData.beardColorOf(BridgeAppearance.uiStore())
+    elseif mode == "cloth" then
+        cur = initial or { r = 1, g = 1, b = 1 }
     else
         cur = BridgeAppearance.candidate.hairColor or BridgeData.DEFAULT_HAIR_COLOR
     end
     local picker = nil
     local ok, err = pcall(function()
-        picker = ISColorPickerHSB:new(0, 0, ColorInfo.new(cur.r, cur.g, cur.b, 1))
+        local info = ColorInfo.new(cur.r, cur.g, cur.b, 1)
+        picker = ISColorPickerHSB:new(0, 0, info)
         picker:initialise()
         picker.keepOnScreen = true
         picker.pickedTarget = BridgeAppearance
         picker.resetFocusTo = BridgeAppearance.instance
         picker:setPickedFunc(BridgeAppearance.onCustomColor)
-        picker:setInitialColor(ColorInfo.new(cur.r, cur.g, cur.b, 1))
+        picker:setInitialColor(info)
+        local h, s, v = rgbToHsb(cur.r, cur.g, cur.b)
+        picker.h, picker.s, picker.b = h, s, v
+        if picker.pickedRGB ~= nil then
+            picker.pickedRGB.r = cur.r
+            picker.pickedRGB.g = cur.g
+            picker.pickedRGB.b = cur.b
+        end
+        if picker.valSlider ~= nil and picker.hueSlider ~= nil and picker.satSlider ~= nil then
+            picker:setCurrentColor(h, s, v)
+        end
         if button ~= nil then
             picker:setX(button:getAbsoluteX())
             picker:setY(button:getAbsoluteY() + button:getHeight())
@@ -506,11 +827,16 @@ function BridgeAppearance.onCustomColor(target, color, mouseUp)
         local c = { r = color.r, g = color.g, b = color.b }
         if BridgeAppearance.pickerMode == "beard" then
             BridgeAppearance.setBeardColor(c)
+        elseif BridgeAppearance.pickerMode == "cloth" then
+            if type(BridgeAppearance.onClothingColor) == "function" then
+                BridgeAppearance.onClothingColor(BridgeAppearance.pickerLoc, c)
+            end
         else
             BridgeAppearance.setColor(c)
         end
     end
     BridgeAppearance.pickerMode = nil
+    BridgeAppearance.pickerLoc = nil
     local picker = BridgeAppearance.picker
     BridgeAppearance.picker = nil
     if picker ~= nil then pcall(function() picker:removeSelf() end) end
@@ -524,7 +850,7 @@ function BridgeAppearanceBody:createChildren()
     ISPanel.createChildren(self)
     self.skinCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceBody.onSkin)
     self.skinCombo:initialise()
-    local skins = BridgeData.skinsFor(BridgeData.genderOf(Bridge.store))
+    local skins = BridgeData.skinsFor(BridgeData.genderOf(BridgeAppearance.uiStore()))
     for i, id in ipairs(skins) do
         self.skinCombo:addOptionWithData(tr("SkinTone", i), id)
     end
@@ -532,7 +858,7 @@ function BridgeAppearanceBody:createChildren()
 
     self.muscleLabelY = nil
     self.muscleCombo = nil
-    if BridgeData.spnccMuscle(BridgeData.genderOf(Bridge.store)) ~= nil then
+    if BridgeData.spnccMuscle(BridgeData.genderOf(BridgeAppearance.uiStore())) ~= nil then
         self.muscleCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceBody.onMuscle)
         self.muscleCombo:initialise()
         self.muscleCombo:addOptionWithData(tr("Muscle_0"), 0)
@@ -543,7 +869,7 @@ function BridgeAppearanceBody:createChildren()
 
     self.furLabelY = nil
     self.furCombo = nil
-    if BridgeAppearance.furOn() then
+    if self.hideFur ~= true and BridgeAppearance.furOn() then
         self.furCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceBody.onFur)
         self.furCombo:initialise()
         self.furCombo:addOptionWithData(gameText("IGUI_NotAlone_AppearanceHuman", "Human"), "Hooman")
@@ -553,19 +879,22 @@ function BridgeAppearanceBody:createChildren()
         self:addChild(self.furCombo)
     end
 
-    self.voiceCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceBody.onVoice)
-    self.voiceCombo:initialise()
-    local styles = {}
-    if BridgeVoice ~= nil and type(BridgeVoice.stylesFor) == "function" then
-        pcall(function() styles = BridgeVoice.stylesFor(BridgeData.genderOf(Bridge.store)) end)
+    self.voiceCombo = nil
+    if self.hideVoice ~= true then
+        self.voiceCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceBody.onVoice)
+        self.voiceCombo:initialise()
+        local styles = {}
+        if BridgeVoice ~= nil and type(BridgeVoice.stylesFor) == "function" then
+            pcall(function() styles = BridgeVoice.stylesFor(BridgeData.genderOf(BridgeAppearance.uiStore())) end)
+        end
+        if type(styles) ~= "table" or #styles == 0 then styles = { BridgeData.defaultVoice(BridgeAppearance.uiStore()) } end
+        for i = 1, #styles do
+            local s = styles[i]
+            local label = vanillaText("IGUI_Voice_" .. tostring(s.name), tostring(s.name))
+            self.voiceCombo:addOptionWithData(label, s)
+        end
+        self:addChild(self.voiceCombo)
     end
-    if type(styles) ~= "table" or #styles == 0 then styles = { BridgeData.defaultVoice(Bridge.store) } end
-    for i = 1, #styles do
-        local s = styles[i]
-        local label = vanillaText("IGUI_Voice_" .. tostring(s.name), tostring(s.name))
-        self.voiceCombo:addOptionWithData(label, s)
-    end
-    self:addChild(self.voiceCombo)
 
     self:layout()
 end
@@ -687,7 +1016,7 @@ function BridgeAppearanceBody:refreshVoice()
     local combo = self.voiceCombo
     if combo == nil then return end
     local voice = BridgeAppearance.candidate.voice
-    if type(voice) ~= "table" then voice = BridgeData.voiceOf(Bridge.store) end
+    if type(voice) ~= "table" then voice = BridgeData.voiceOf(BridgeAppearance.uiStore()) end
     local ty = tonumber(voice.type) or 0
     local idx = nil
     if type(combo.options) == "table" then
@@ -1145,7 +1474,7 @@ function BridgeAppearanceBeard:onNext() self.page = self.page + 1 self:refresh()
 
 function BridgeAppearanceBeard:refresh()
     pagerRefresh(self, nil, function(name) return BridgeAppearance.candidate.beard == name end)
-    local cur = BridgeAppearance.candidate.beardColor or BridgeData.beardColorOf(Bridge.store)
+    local cur = BridgeAppearance.candidate.beardColor or BridgeData.beardColorOf(BridgeAppearance.uiStore())
     for _, b in ipairs(self.swatches) do
         mark(b, sameColor(b.colorValue, cur))
     end
@@ -1260,6 +1589,59 @@ local function zoomY(zoom)
 end
 
 
+function BridgeAppearance.buildTabs(host, opts)
+    if host == nil then return end
+    host.panel = ISTabPanel:new(0, 0, 10, 10)
+    host.panel:initialise()
+    host.panel.tabPadX = PAD
+    host.panel.equalTabWidth = false
+    host:addChild(host.panel)
+
+    host.bodyView = BridgeAppearanceBody:new(0, 0, 10, 10)
+    host.bodyView.tabKey = "body"
+    if type(opts) == "table" and opts.noVoice == true then host.bodyView.hideVoice = true end
+    if type(opts) == "table" and opts.noFur == true then host.bodyView.hideFur = true end
+    host.bodyView:initialise()
+    host.panel:addView(tr("AppearanceBody"), host.bodyView)
+
+    host.faceView = nil
+    if BridgeData.spnccFaces(BridgeData.genderOf(BridgeAppearance.uiStore())) ~= nil then
+        host.faceView = BridgeAppearanceFace:new(0, 0, 10, 10)
+        host.faceView.tabKey = "face"
+        host.faceView:initialise()
+        host.panel:addView(tr("AppearanceFace"), host.faceView)
+    end
+
+    host.hairView = BridgeAppearanceHair:new(0, 0, 10, 10)
+    host.hairView.tabKey = "hair"
+    host.hairView:initialise()
+    host.panel:addView(tr("AppearanceHair"), host.hairView)
+
+    host.beardView = nil
+    if BridgeData.isMale(BridgeAppearance.uiStore()) then
+        host.beardView = BridgeAppearanceBeard:new(0, 0, 10, 10)
+        host.beardView.tabKey = "beard"
+        host.beardView:initialise()
+        host.panel:addView(tr("AppearanceBeard"), host.beardView)
+    end
+
+    host.detailView = nil
+    if BridgeData.spnccDetails(BridgeData.genderOf(BridgeAppearance.uiStore())) ~= nil then
+        host.detailView = BridgeAppearanceDetails:new(0, 0, 10, 10)
+        host.detailView.tabKey = "details"
+        host.detailView:initialise()
+        host.panel:addView(tr("AppearanceDetails"), host.detailView)
+    end
+
+    host.makeupView = nil
+    if BridgeData.makeupList() ~= nil then
+        host.makeupView = BridgeAppearanceMakeup:new(0, 0, 10, 10)
+        host.makeupView.tabKey = "makeup"
+        host.makeupView:initialise()
+        host.panel:addView(tr("AppearanceMakeup"), host.makeupView)
+    end
+end
+
 function BridgeAppearance.Window:createChildren()
     ISCollapsableWindow.createChildren(self)
 
@@ -1295,53 +1677,7 @@ function BridgeAppearance.Window:createChildren()
     pcall(function() self.preview:setIsometric(false) end)
     self.previewBack = getTexture("media/ui/avatarBackgroundWhite.png")
 
-    self.panel = ISTabPanel:new(0, 0, 10, 10)
-    self.panel:initialise()
-    self.panel.tabPadX = PAD
-    self.panel.equalTabWidth = false
-    self:addChild(self.panel)
-
-    self.bodyView = BridgeAppearanceBody:new(0, 0, 10, 10)
-    self.bodyView.tabKey = "body"
-    self.bodyView:initialise()
-    self.panel:addView(tr("AppearanceBody"), self.bodyView)
-
-    self.faceView = nil
-    if BridgeData.spnccFaces(BridgeData.genderOf(Bridge.store)) ~= nil then
-        self.faceView = BridgeAppearanceFace:new(0, 0, 10, 10)
-        self.faceView.tabKey = "face"
-        self.faceView:initialise()
-        self.panel:addView(tr("AppearanceFace"), self.faceView)
-    end
-
-    self.hairView = BridgeAppearanceHair:new(0, 0, 10, 10)
-    self.hairView.tabKey = "hair"
-    self.hairView:initialise()
-    self.panel:addView(tr("AppearanceHair"), self.hairView)
-
-    self.beardView = nil
-    if BridgeData.isMale(Bridge.store) then
-        self.beardView = BridgeAppearanceBeard:new(0, 0, 10, 10)
-        self.beardView.tabKey = "beard"
-        self.beardView:initialise()
-        self.panel:addView(tr("AppearanceBeard"), self.beardView)
-    end
-
-    self.detailView = nil
-    if BridgeData.spnccDetails(BridgeData.genderOf(Bridge.store)) ~= nil then
-        self.detailView = BridgeAppearanceDetails:new(0, 0, 10, 10)
-        self.detailView.tabKey = "details"
-        self.detailView:initialise()
-        self.panel:addView(tr("AppearanceDetails"), self.detailView)
-    end
-
-    self.makeupView = nil
-    if BridgeData.makeupList() ~= nil then
-        self.makeupView = BridgeAppearanceMakeup:new(0, 0, 10, 10)
-        self.makeupView.tabKey = "makeup"
-        self.makeupView:initialise()
-        self.panel:addView(tr("AppearanceMakeup"), self.makeupView)
-    end
+    BridgeAppearance.buildTabs(self)
 
     self.zoomOutBtn = ISButton:new(PAD, 0, 30, BTN_H, "-", self, BridgeAppearance.Window.onZoomOut)
     self.zoomOutBtn:initialise()
@@ -1610,7 +1946,7 @@ function BridgeAppearance.Window:refreshLooks()
     combo.options = {}
     combo.selected = 0
     local list = BridgeLooks.all()
-    local wantGender = BridgeData.genderOf(Bridge.store)
+    local wantGender = BridgeData.genderOf(BridgeAppearance.uiStore())
     if type(list) == "table" then
         for i = 1, #list do
             local look = list[i]
@@ -1652,7 +1988,8 @@ end
 
 function BridgeAppearance.Window:syncLook()
     if BridgeLooks == nil or self.lookCombo == nil then return end
-    local rec = Bridge.store or BridgeAppearance.candidate
+    local rec = BridgeAppearance.candidate
+    if BridgeAppearance.draftStore == nil then rec = Bridge.store or BridgeAppearance.candidate end
     self:selectLook(BridgeLooks.current(rec))
     self:refreshLookButtons()
 end
@@ -1664,8 +2001,8 @@ function BridgeAppearance.Window:onLook(combo)
     if type(name) ~= "string" or BridgeAppearance.candidate == nil then return end
     local look = BridgeLooks.find(name)
     if look == nil then return end
-    if BridgeLooks.genderOf(look) ~= BridgeData.genderOf(Bridge.store) then return end
-    BridgeLooks.applyTo(look, BridgeAppearance.candidate)
+    if BridgeLooks.genderOf(look) ~= BridgeData.genderOf(BridgeAppearance.uiStore()) then return end
+    BridgeLooks.applyTo(look, BridgeAppearance.candidate, BridgeData.genderOf(BridgeAppearance.uiStore()))
     BridgeAppearance.refreshPreview()
     BridgeAppearance.refreshViews()
     self:refreshLookButtons()
@@ -1696,7 +2033,13 @@ function BridgeAppearance.Window:onSaveDone(button)
     if button.parent ~= nil and button.parent.entry ~= nil and button.parent.entry.getText ~= nil then
         text = button.parent.entry:getText()
     end
-    local look = BridgeLooks.save(text, BridgeAppearance.candidate)
+    local extras = nil
+    if type(self.lookExtras) == "function" then
+        local got = nil
+        pcall(function() got = self:lookExtras() end)
+        if type(got) == "table" then extras = got end
+    end
+    local look = BridgeLooks.save(text, BridgeAppearance.candidate, extras)
     if look == nil then return end
     self:refreshLooks()
     self:selectLook(look.name)
@@ -1789,19 +2132,19 @@ function BridgeAppearance.Window:onApply()
     if c.hairColor ~= nil then
         pcall(function() Bridge.setHairColor(c.hairColor.r, c.hairColor.g, c.hairColor.b) end)
     end
-    if BridgeData.spnccFaces(BridgeData.genderOf(Bridge.store)) ~= nil then
+    if BridgeData.spnccFaces(BridgeData.genderOf(BridgeAppearance.uiStore())) ~= nil then
         pcall(function() Bridge.setFace(c.face) end)
     end
-    if BridgeData.spnccMuscle(BridgeData.genderOf(Bridge.store)) ~= nil then
+    if BridgeData.spnccMuscle(BridgeData.genderOf(BridgeAppearance.uiStore())) ~= nil then
         pcall(function() Bridge.setMuscle(c.muscle) end)
     end
-    if BridgeData.spnccDetails(BridgeData.genderOf(Bridge.store)) ~= nil then
+    if BridgeData.spnccDetails(BridgeData.genderOf(BridgeAppearance.uiStore())) ~= nil then
         pcall(function() Bridge.setDetails(c.details) end)
     end
     if BridgeData.makeupList() ~= nil then
         pcall(function() Bridge.setMakeup(c.makeup) end)
     end
-    if BridgeData.isMale(Bridge.store) then
+    if BridgeData.isMale(BridgeAppearance.uiStore()) then
         pcall(function() Bridge.setBeard(c.beard) end)
         if c.beardColor ~= nil then
             pcall(function() Bridge.setBeardColor(c.beardColor.r, c.beardColor.g, c.beardColor.b) end)
@@ -1894,8 +2237,10 @@ function BridgeAppearance.open(tab)
     end
     refreshFonts()
     local c = BridgeAppearance.candidate
+    c.gender = nil
+    c.male = nil
     local app = BridgeData.appearanceOf(Bridge.store)
-    local gender = BridgeData.genderOf(Bridge.store)
+    local gender = BridgeData.genderOf(BridgeAppearance.uiStore())
     c.skin = BridgeData.skinOf(Bridge.store)
     c.hair = BridgeData.hairOf(Bridge.store)
     c.hairColor = copyColor(BridgeData.hairColorOf(Bridge.store))
@@ -1904,9 +2249,9 @@ function BridgeAppearance.open(tab)
     c.muscle = BridgeData.muscleOf(Bridge.store)
     c.makeup = BridgeData.makeupOf(Bridge.store)
     c.beard = BridgeData.beardOf(Bridge.store)
-    c.beardColor = BridgeData.beardColorOf(Bridge.store)
+    c.beardColor = BridgeData.beardColorOf(BridgeAppearance.uiStore())
     c.fur = BridgeAppearance.furOn() and BridgeAppearance.furSpeciesOf(Bridge.body) or nil
-    c.voice = BridgeData.voiceOf(Bridge.store)
+    c.voice = BridgeData.voiceOf(BridgeAppearance.uiStore())
 
     local sw, sh = 800, 600
     pcall(function() sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight() end)
