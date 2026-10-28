@@ -14,6 +14,7 @@ end
 local lastItem, lastVersion, lastInfo = nil, nil, nil
 
 local function previewFor(item)
+    if item == nil or not instanceof(item, "InventoryItem") then return nil end
     local version = BridgeSocial ~= nil and (BridgeSocial.giftVersion or 0) or 0
     if item == lastItem and version == lastVersion then return lastInfo end
     lastItem, lastVersion = item, version
