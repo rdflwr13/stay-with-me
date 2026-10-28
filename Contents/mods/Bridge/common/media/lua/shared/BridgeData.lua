@@ -671,7 +671,7 @@ function BridgeData.lootMaxWeight(rec)
 end
 
 
-BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "fight", "torch", "jobs", "keep", "cancel" }
+BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs", "keep", "cancel" }
 BridgeData.MENU_ORDER_SET = {}
 for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do BridgeData.MENU_ORDER_SET[id] = true end
 

@@ -4162,5 +4162,9 @@
     "IGUI_NotAlone_Soc_EvGunKill_Near_1": "Минус один.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_2": "Один выстрел — минус один.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Цель упала. Следующий.",
-    "IGUI_ContainerTitle_BridgeParked": "Компаньон"
+    "IGUI_ContainerTitle_BridgeParked": "Компаньон",
+    "IGUI_NotAlone_RadialSelf": "Себя",
+    "IGUI_NotAlone_RadialGear": "Снаряжение и Внешность",
+      "IGUI_NotAlone_RadialStayCloser": "Держись ближе",
+      "IGUI_NotAlone_RadialStayFurther": "Держись дальше"
 }

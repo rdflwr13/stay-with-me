@@ -574,6 +574,7 @@ BridgeMenu.ORDERABLE = {
     { id = "wait", label = "MenuFollow", build = buildWait },
     { id = "actions", label = "Actions", build = buildActions },
     { id = "fight", label = "Combat", build = buildFight },
+    { id = "guns", label = "GunMenu", radialOnly = true },
     { id = "torch", label = "OptTorch", build = buildTorch },
     { id = "jobs", label = "Jobs", build = buildJobs },
     { id = "keep", label = "Keep", build = buildKeep },
@@ -612,7 +613,9 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
     local order = BridgeData.menuOrder(st)
     for _, id in ipairs(order) do
         local entry = BridgeMenu.ORDERABLE_BY_ID[id]
-        if entry ~= nil and BridgeData.menuShown(st, id) then entry.build(context, playerNum, env) end
+        if entry ~= nil and entry.radialOnly ~= true and BridgeData.menuShown(st, id) then
+            entry.build(context, playerNum, env)
+        end
     end
     if BridgeShower ~= nil and BridgeShower.hasPreShower ~= nil and BridgeShower.hasPreShower()
             and not (BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "shower") then
@@ -935,27 +938,31 @@ function BridgeMenu.onJobMoveCorpses()
 end
 
 
-function BridgeMenu.addCancelTask(context)
-    if context == nil then return end
-    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+function BridgeMenu.cancelEntry()
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return nil end
     if BridgeTask.isLying ~= nil and BridgeTask.isLying() then
-        context:addOption(tr("GetUp"), nil, BridgeMenu.onLayGetUp)
-        return
+        return { key = "GetUp", handler = BridgeMenu.onLayGetUp }
     end
     if BridgeTask.isSeated ~= nil and BridgeTask.isSeated() then
-        context:addOption(tr("StandUp"), nil, BridgeMenu.onSitStandUp)
-        return
+        return { key = "StandUp", handler = BridgeMenu.onSitStandUp }
     end
     local task = BridgeTask.active == true
     local transfers = BridgeQueue ~= nil and BridgeQueue.jobs ~= nil and #BridgeQueue.jobs > 0
-    if not task and not transfers then return end
+    if not task and not transfers then return nil end
     local key = "CancelTask"
     if task and BridgeTask.kind == "exercise" then
         key = "CancelExercise"
     elseif task and BridgeTask.kind == "shower" then
         key = "CancelShower"
     end
-    context:addOption(tr(key), nil, BridgeMenu.onCancelTask)
+    return { key = key, handler = BridgeMenu.onCancelTask }
+end
+
+function BridgeMenu.addCancelTask(context)
+    if context == nil then return end
+    local entry = BridgeMenu.cancelEntry()
+    if entry == nil then return end
+    context:addOption(tr(entry.key), nil, entry.handler)
 end
 
 function BridgeMenu.onCancelTask()

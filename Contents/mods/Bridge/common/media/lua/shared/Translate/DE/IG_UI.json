@@ -3997,5 +3997,9 @@
     "IGUI_NotAlone_InvWarnTruncated": "%1 trägt zu viel. Das gespeicherte Inventar hat das Speicherlimit erreicht (%2 / %3 Zeichen). Letzte Inventaränderungen werden möglicherweise nicht gespeichert. Lagere oder entferne einige Gegenstände.",
     "IGUI_NotAlone_CompatWarnOne": "%1 wird nicht mehr benötigt. Stay With Me enthält jetzt diesen A-Life-Schutz, du kannst ihn deaktivieren oder entfernen.",
     "IGUI_NotAlone_CompatWarnMany": "%1 werden nicht mehr benötigt. Stay With Me enthält jetzt diesen A-Life-Schutz, du kannst sie deaktivieren oder entfernen.",
-    "IGUI_ContainerTitle_BridgeParked": "Begleiter"
+    "IGUI_ContainerTitle_BridgeParked": "Begleiter",
+    "IGUI_NotAlone_RadialSelf": "Selbst",
+    "IGUI_NotAlone_RadialGear": "Ausrüstung & Aussehen",
+      "IGUI_NotAlone_RadialStayCloser": "Näher bleiben",
+      "IGUI_NotAlone_RadialStayFurther": "Weiter weg bleiben"
 }

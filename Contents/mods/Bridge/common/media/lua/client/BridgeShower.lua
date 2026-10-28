@@ -346,9 +346,9 @@ function BridgeShower.showing()
 end
 
 
-function BridgeShower.startAtNearest()
+function BridgeShower.findNearest()
     local red = owner()
-    if red == nil then return "no player" end
+    if red == nil then return nil end
     local best, bestD = nil, nil
     pcall(function()
         local iso = require("TABAS_Iso")
@@ -368,6 +368,14 @@ function BridgeShower.startAtNearest()
             end
         end
     end)
+    return best
+end
+
+
+function BridgeShower.startAtNearest()
+    local red = owner()
+    if red == nil then return "no player" end
+    local best = BridgeShower.findNearest()
     if best == nil then return "no shower nearby" end
     return BridgeShower.start(best)
 end

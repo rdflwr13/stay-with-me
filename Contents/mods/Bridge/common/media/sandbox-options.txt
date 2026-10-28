@@ -76,3 +76,18 @@ option StayWithMe.MoodEffectMultiplier
     page = StayWithMe,
     translation = StayWithMe_MoodEffectMultiplier,
 }
+
+option StayWithMe.CompanionWheelKey
+{
+    type = enum, numValues = 139, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_CompanionWheelKey,
+    valueTranslation = StayWithMe_CompanionWheelKey_Values,
+}
+
+option StayWithMe.CompanionWheelController
+{
+    type = boolean, default = true,
+    page = StayWithMe,
+    translation = StayWithMe_CompanionWheelController,
+}

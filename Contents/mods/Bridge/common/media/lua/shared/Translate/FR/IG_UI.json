@@ -3714,5 +3714,9 @@
     "IGUI_NotAlone_Soc_City_fallas_lake_Near_1": "Fallas Lake. De l'eau, des chalets, et beaucoup de calme.",
     "IGUI_NotAlone_Soc_City_fallas_lake_Near_2": "Fallas Lake. Le genre d'endroit où les gens partaient à la retraite.",
     "IGUI_NotAlone_Soc_City_fallas_lakeAgain_Near_1": "Encore Fallas Lake. Je m'y reposerais, si on pouvait.",
-    "IGUI_NotAlone_Soc_City_fallas_lakeAgain_Near_2": "De retour au lac. Toujours beau. Toujours anormal."
+    "IGUI_NotAlone_Soc_City_fallas_lakeAgain_Near_2": "De retour au lac. Toujours beau. Toujours anormal.",
+    "IGUI_NotAlone_RadialSelf": "Soi",
+    "IGUI_NotAlone_RadialGear": "Équipement et Apparence",
+      "IGUI_NotAlone_RadialStayCloser": "Restez proche",
+      "IGUI_NotAlone_RadialStayFurther": "Restez plus loin"
 }

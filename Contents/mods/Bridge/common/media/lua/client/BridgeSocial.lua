@@ -2063,6 +2063,40 @@ local function menuTip(option, text)
 end
 
 
+function BridgeSocial.talkOptions(r, calm, busy)
+    local list = {}
+    for _, a in ipairs(BridgeSocial.ACTIONS) do
+        if a.gate(r) then
+            list[#list + 1] = {
+                id = a.id,
+                label = "Talk_" .. a.id,
+                romantic = a.romantic == true,
+                blocked = BridgeSocial.talkBlock(a.id, r, calm, busy),
+            }
+        end
+    end
+    if r.f >= 20 then
+        list[#list + 1] = {
+            id = "Ask",
+            label = "Talk_Ask",
+            ask = true,
+            blocked = busy and "Busy" or nil,
+        }
+    end
+    return list
+end
+
+
+function BridgeSocial.menuTalkOptions()
+    local r = rel()
+    if r == nil then return nil end
+    rollDay(r)
+    local busy = zombiesNear(BUSY_DIST)
+    local calm = BridgeSocial.relaxed(r)
+    return BridgeSocial.talkOptions(r, calm, busy)
+end
+
+
 function BridgeSocial.fillMenu(context, tr)
     local r = rel()
     if r == nil then return end
@@ -2073,30 +2107,25 @@ function BridgeSocial.fillMenu(context, tr)
     local busy = zombiesNear(BUSY_DIST)
     local calm = BridgeSocial.relaxed(r)
     local romantic = nil
-    for _, a in ipairs(BridgeSocial.ACTIONS) do
-        if a.gate(r) then
-            local target = sub
-            if a.romantic then
-                if romantic == nil then
-                    local ro = sub:addOption(tr("Romance"))
-                    romantic = ISContextMenu:getNew(sub)
-                    sub:addSubMenu(ro, romantic)
-                end
-                target = romantic
+    for _, entry in ipairs(BridgeSocial.talkOptions(r, calm, busy)) do
+        local target = sub
+        if entry.romantic then
+            if romantic == nil then
+                local ro = sub:addOption(tr("Romance"))
+                romantic = ISContextMenu:getNew(sub)
+                sub:addSubMenu(ro, romantic)
             end
-            local opt = target:addOption(tr("Talk_" .. a.id), a.id, BridgeSocial.talk)
-            local reason = BridgeSocial.talkBlock(a.id, r, calm, busy)
-            if reason ~= nil then
-                opt.notAvailable = true
-                menuTip(opt, tr("TalkCant" .. reason))
-            end
+            target = romantic
         end
-    end
-    if r.f >= 20 then
-        local ask = sub:addOption(tr("Talk_Ask"), nil, BridgeSocial.ask)
-        if busy then
-            ask.notAvailable = true
-            menuTip(ask, tr("TalkCantBusy"))
+        local opt
+        if entry.ask then
+            opt = target:addOption(tr(entry.label), nil, BridgeSocial.ask)
+        else
+            opt = target:addOption(tr(entry.label), entry.id, BridgeSocial.talk)
+        end
+        if entry.blocked ~= nil then
+            opt.notAvailable = true
+            menuTip(opt, tr("TalkCant" .. entry.blocked))
         end
     end
 end

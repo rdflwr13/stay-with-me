@@ -3996,5 +3996,9 @@
     "IGUI_NotAlone_Soc_EvGunKill_Near_1": "Dropped him.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_2": "One shot, one down.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Target down. Next.",
-    "IGUI_ContainerTitle_BridgeParked": "Companion"
+    "IGUI_ContainerTitle_BridgeParked": "Companion",
+    "IGUI_NotAlone_RadialSelf": "Self",
+    "IGUI_NotAlone_RadialGear": "Equipment & Appearance",
+      "IGUI_NotAlone_RadialStayCloser": "Stay Closer",
+      "IGUI_NotAlone_RadialStayFurther": "Stay Further"
 }

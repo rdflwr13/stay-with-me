@@ -3715,5 +3715,9 @@
     "IGUI_NotAlone_Soc_City_fallas_lake_Near_1": "Fallas Lake. Agua, cabañas y mucho silencio.",
     "IGUI_NotAlone_Soc_City_fallas_lake_Near_2": "Fallas Lake. Un lugar al que la gente se retiraba.",
     "IGUI_NotAlone_Soc_City_fallas_lakeAgain_Near_1": "Otra vez en Fallas Lake. Descansaría aquí si pudiéramos.",
-    "IGUI_NotAlone_Soc_City_fallas_lakeAgain_Near_2": "De vuelta en el lago. Sigue siendo hermoso. Y sigue sintiéndose mal."
+    "IGUI_NotAlone_Soc_City_fallas_lakeAgain_Near_2": "De vuelta en el lago. Sigue siendo hermoso. Y sigue sintiéndose mal.",
+    "IGUI_NotAlone_RadialSelf": "Yo",
+    "IGUI_NotAlone_RadialGear": "Equipo y Aspecto",
+      "IGUI_NotAlone_RadialStayCloser": "Mantente cerca",
+      "IGUI_NotAlone_RadialStayFurther": "Mantente más lejos"
 }
