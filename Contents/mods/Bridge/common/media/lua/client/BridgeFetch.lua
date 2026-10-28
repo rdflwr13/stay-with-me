@@ -91,11 +91,31 @@ local function petrolAmt(it)
     return amt
 end
 
-local function bandageOk(it)
+local function bandagePower(it)
     local p = 0
     pcall(function() p = it:getBandagePower() or 0 end)
-    p = tonumber(p) or 0
-    return p > 0
+    return tonumber(p) or 0
+end
+
+
+local function bandageDirty(it)
+    local t = itemType(it) or ""
+    return string.find(t, "Dirty", 1, true) ~= nil
+end
+
+
+local function bandageOk(it)
+    return bandagePower(it) > 0 and not bandageDirty(it)
+end
+
+
+local function dirtyBandageOk(it)
+    return bandagePower(it) > 0 and bandageDirty(it)
+end
+
+
+local function burnBandageOk(it)
+    return bandagePower(it) >= 2 and not bandageDirty(it)
 end
 
 local function disinfectOk(it)
@@ -113,6 +133,49 @@ local function isBattery(it)
 end
 
 
+local function sutureNeedleOk(it)
+    return itemType(it) == "SutureNeedle"
+end
+
+
+local function needleOk(it)
+    return itemType(it) == "Needle" or tagOk(it, "SEWING_NEEDLE")
+end
+
+
+local function threadOk(it)
+    local t = itemType(it)
+    if t ~= "Thread" and not tagOk(it, "THREAD") then return false end
+    local uses = 0
+    pcall(function() uses = it:getCurrentUsesFloat() or 0 end)
+    return (tonumber(uses) or 0) > 0
+end
+
+
+local function tweezersOk(it)
+    local t = itemType(it)
+    return t == "Tweezers" or t == "SutureNeedleHolder"
+        or tagOk(it, "REMOVE_GLASS") or tagOk(it, "REMOVE_BULLET")
+end
+
+
+local function splintOk(it)
+    return itemType(it) == "Splint"
+end
+
+
+local function splintPlankOk(it)
+    local t = itemType(it)
+    return t == "Plank" or t == "TreeBranch" or t == "TreeBranch2"
+        or t == "WoodenStick" or t == "WoodenStick2"
+end
+
+
+local function splintSheetOk(it)
+    return itemType(it) == "RippedSheets"
+end
+
+
 BridgeFetch.NEEDS = {
     { id = "axe",            matches = usableAxe },
     { id = "cutTool",        matches = usableCutTool },
@@ -121,7 +184,16 @@ BridgeFetch.NEEDS = {
     { id = "cleanerFluid",   fluid = true, matches = cleanerFluidAmt },
     { id = "petrol",         fluid = true, matches = petrolAmt },
     { id = "bandage",        matches = bandageOk },
+    { id = "dirtyBandage",   matches = dirtyBandageOk },
+    { id = "burnBandage",    matches = burnBandageOk },
     { id = "disinfectant",   matches = disinfectOk },
+    { id = "sutureNeedle",   matches = sutureNeedleOk },
+    { id = "needle",         matches = needleOk },
+    { id = "thread",         matches = threadOk },
+    { id = "tweezers",       matches = tweezersOk },
+    { id = "splint",         matches = splintOk },
+    { id = "splintPlank",    matches = splintPlankOk },
+    { id = "splintSheet",    matches = splintSheetOk },
     { id = "battery",        matches = isBattery },
 }
 BridgeFetch.BY_ID = {}
@@ -140,11 +212,26 @@ function BridgeFetch.has(id)
         elseif id == "cleanerFluid" then ok = BridgeTask.findStainCleaner(b) ~= nil
         elseif id == "petrol" then ok = BridgeTask.findPetrol(b) ~= nil
         elseif id == "bandage" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "bandage") == true
+        elseif id == "dirtyBandage" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "dirtyBandage") == true
+        elseif id == "burnBandage" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "burnBandage") == true
         elseif id == "disinfectant" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "disinfect") == true
+        elseif id == "sutureNeedle" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "sutureNeedle") == true
+        elseif id == "needle" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "needle") == true
+        elseif id == "thread" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "thread") == true
+        elseif id == "tweezers" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "tweezers") == true
+        elseif id == "splint" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "splint") == true
+        elseif id == "splintPlank" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "plank") == true
+        elseif id == "splintSheet" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "sheet") == true
         elseif id == "battery" then ok = BridgeTorchShared.findBattery(b) ~= nil
         end
     end)
     return ok == true
+end
+
+
+local function allFloorsOn()
+    if BridgeData == nil or Bridge == nil then return false end
+    return BridgeData.optionOf(Bridge.store, "homeAllFloors") == true
 end
 
 
@@ -153,9 +240,7 @@ local function nearHome(b, h)
     local bx, by, bz = nil, nil, nil
     pcall(function() bx, by, bz = math.floor(b:getX()), math.floor(b:getY()), math.floor(b:getZ()) end)
     if bx == nil then return false end
-    if math.abs(bz - h.z) >= 1 then return false end
-    return bx >= (h.x - MARGIN) and bx <= (h.x + h.w - 1 + MARGIN)
-        and by >= (h.y - MARGIN) and by <= (h.y + h.h - 1 + MARGIN)
+    return BridgeData.homeHas(h, bx, by, bz, MARGIN, allFloorsOn())
 end
 BridgeFetch.nearHome = nearHome
 
@@ -180,17 +265,83 @@ function BridgeFetch.availableAmmo()
 end
 
 
-local function homeTargets(cap)
+local function bodyFloor()
+    local bz = nil
+    pcall(function()
+        local b = Bridge ~= nil and Bridge.body or nil
+        if b ~= nil then bz = math.floor(b:getZ()) end
+    end)
+    return bz
+end
+
+
+local function floorList(h)
+    local list = {}
+    if h == nil then return list end
+    local floors = nil
+    if BridgeHome ~= nil and type(BridgeHome.includedFloors) == "function" then
+        local ok, res = pcall(BridgeHome.includedFloors, h, allFloorsOn())
+        if ok and type(res) == "table" then floors = res end
+    end
+    if floors == nil or #floors == 0 then floors = { h.z } end
+    local base = bodyFloor() or h.z
+    for index = 1, #floors do list[#list + 1] = floors[index] end
+    table.sort(list, function(a, c)
+        local da, dc = math.abs(a - base), math.abs(c - base)
+        if da == dc then return a > c end
+        return da < dc
+    end)
+    return list
+end
+
+
+local function buildingOk(h, x, y, z, cache)
+    if h == nil or h.bld == nil then return true end
+    local key = tostring(x) .. ":" .. tostring(y) .. ":" .. tostring(z)
+    local hit = cache[key]
+    if hit ~= nil then return hit end
+    local sq = nil
+    pcall(function()
+        local cell = getCell()
+        if cell ~= nil then sq = cell:getGridSquare(x, y, z) end
+    end)
+    local ok = BridgeData.homeBuildingOk(h, sq)
+    cache[key] = ok
+    return ok
+end
+
+
+local function homeTargets(perFloorCap, totalCap)
     local h = nil
     pcall(function() h = BridgeHome ~= nil and BridgeHome.get() or nil end)
     if h == nil then return nil end
-    local rect = { x1 = h.x, y1 = h.y, x2 = h.x + h.w - 1, y2 = h.y + h.h - 1, z = h.z }
-    local targets = nil
-    if BridgeWorkSelect ~= nil and type(BridgeWorkSelect.lootTargets) == "function" then
-        local ok, res = pcall(BridgeWorkSelect.lootTargets, rect, cap)
-        if ok then targets = res end
+    local floors = floorList(h)
+    perFloorCap = tonumber(perFloorCap) or 80
+    totalCap = tonumber(totalCap) or (perFloorCap * math.max(1, #floors))
+    local out, seen, bldCache = {}, {}, {}
+    for index = 1, #floors do
+        if #out >= totalCap then break end
+        local z = floors[index]
+        local rect = { x1 = h.x, y1 = h.y, x2 = h.x + h.w - 1, y2 = h.y + h.h - 1, z = z }
+        local left = math.min(perFloorCap, totalCap - #out)
+        local targets = nil
+        if BridgeWorkSelect ~= nil and type(BridgeWorkSelect.lootTargets) == "function" then
+            local ok, res = pcall(BridgeWorkSelect.lootTargets, rect, left)
+            if ok then targets = res end
+        end
+        if type(targets) == "table" then
+            for j = 1, #targets do
+                local t = targets[j]
+                if #out >= totalCap then break end
+                if t ~= nil and t.cont ~= nil and not seen[t.cont]
+                        and buildingOk(h, t.x, t.y, t.z, bldCache) then
+                    seen[t.cont] = true
+                    out[#out + 1] = t
+                end
+            end
+        end
     end
-    return targets
+    return out
 end
 
 
@@ -200,8 +351,8 @@ function BridgeFetch.findItem(needId)
     if need == nil or b == nil then return nil end
     local targets = homeTargets()
     if targets == nil then return nil end
-    local bx, by = nil, nil
-    pcall(function() bx, by = b:getX(), b:getY() end)
+    local bx, by, bz = nil, nil, nil
+    pcall(function() bx, by, bz = b:getX(), b:getY(), math.floor(b:getZ()) end)
     local best, bestScore = nil, nil
     for i = 1, #targets do
         local t = targets[i]
@@ -212,6 +363,7 @@ function BridgeFetch.findItem(needId)
                 local dx, dy = bx - t.x, by - t.y
                 d = math.sqrt(dx * dx + dy * dy)
             end
+            if t.z ~= nil and bz ~= nil then d = d + 20 * math.abs(t.z - bz) end
             local list = nil
             pcall(function() list = c:getItems() end)
             if list ~= nil then
@@ -236,11 +388,11 @@ end
 function BridgeFetch.findAmmo(gun, minRounds)
     if gun == nil then return nil end
     minRounds = tonumber(minRounds) or 0
-    local targets = homeTargets(100000)
+    local targets = homeTargets(100000, 100000)
     if targets == nil then return nil end
     local b = Bridge.body
-    local bx, by = nil, nil
-    if b ~= nil then pcall(function() bx, by = b:getX(), b:getY() end) end
+    local bx, by, bz = nil, nil, nil
+    if b ~= nil then pcall(function() bx, by, bz = b:getX(), b:getY(), math.floor(b:getZ()) end) end
     local useBox = gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare")
     local useLoose = useBox
     local box = gun.ammoBox
@@ -260,6 +412,7 @@ function BridgeFetch.findAmmo(gun, minRounds)
                 local dx, dy = bx - t.x, by - t.y
                 d = math.sqrt(dx * dx + dy * dy)
             end
+            if t.z ~= nil and bz ~= nil then d = d + 20 * math.abs(t.z - bz) end
             local list = nil
             pcall(function() list = c:getItems() end)
             if list ~= nil then
@@ -320,10 +473,10 @@ local function homeLoose(gun, want)
     local b = Bridge.body
     local full = type(gun) == "table" and gun.ammoTypeKey or nil
     if b == nil or full == nil then return {}, 0 end
-    local targets = homeTargets(100000)
+    local targets = homeTargets(100000, 100000)
     if targets == nil then return {}, 0 end
-    local bx, by = nil, nil
-    pcall(function() bx, by = b:getX(), b:getY() end)
+    local bx, by, bz = nil, nil, nil
+    pcall(function() bx, by, bz = b:getX(), b:getY(), math.floor(b:getZ()) end)
     local order = {}
     for i = 1, #targets do
         local t = targets[i]
@@ -331,8 +484,9 @@ local function homeLoose(gun, want)
             local d = 0
             if bx ~= nil and t.x ~= nil then
                 local dx, dy = bx - t.x, by - t.y
-                d = dx * dx + dy * dy
+                d = math.sqrt(dx * dx + dy * dy)
             end
+            if t.z ~= nil and bz ~= nil then d = d + 20 * math.abs(t.z - bz) end
             order[#order + 1] = { cont = t.cont, d = d }
         end
     end

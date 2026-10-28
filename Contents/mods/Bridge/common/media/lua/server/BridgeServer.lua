@@ -1025,6 +1025,63 @@ local function syncGunState(who, rec)
 end
 
 
+local function serverHome(h)
+    if type(h) ~= "table" then return nil end
+    local z1, z2 = h.z1, h.z2
+    if type(z1) ~= "number" or type(z2) ~= "number" then
+        z1, z2 = h.z, h.z
+    end
+    z1, z2 = math.floor(z1), math.floor(z2)
+    if z1 > h.z then z1 = h.z end
+    if z2 < h.z then z2 = h.z end
+    if (z2 - z1 + 1) > BridgeData.HOME_MAX_FLOORS then z2 = z1 + BridgeData.HOME_MAX_FLOORS - 1 end
+    local out = { x = h.x, y = h.y, z = h.z, w = h.w, h = h.h }
+    if z1 < z2 then
+        out.z1, out.z2 = z1, z2
+    else
+        out.z1, out.z2 = h.z, h.z
+    end
+
+    local cell = nil
+    pcall(function() cell = getCell() end)
+    if cell ~= nil and h.bld ~= nil then
+        local sq = nil
+        pcall(function() sq = cell:getGridSquare(h.x, h.y, h.z) end)
+        local got = BridgeData.buildingIdOf(sq)
+        if got ~= nil and got == h.bld then
+            out.bld = h.bld
+            local def = nil
+            pcall(function()
+                local b = sq ~= nil and sq:getBuilding() or nil
+                def = b ~= nil and b:getDef() or nil
+            end)
+            if def ~= nil then
+                local minZ, maxZ = nil, nil
+                pcall(function() minZ, maxZ = def:getMinLevel(), def:getMaxLevel() end)
+                if minZ ~= nil and maxZ ~= nil then
+                    if out.z1 < minZ then out.z1 = minZ end
+                    if out.z2 > maxZ then out.z2 = maxZ end
+                end
+            end
+        end
+    end
+    if out.z1 > h.z or out.z2 < h.z or out.z1 >= out.z2 then
+        out.z1, out.z2 = h.z, h.z
+    end
+    local clean = BridgeData.cleanHome(out)
+    if clean ~= nil then
+        if clean.z1 ~= h.z1 or clean.z2 ~= h.z2 or clean.bld ~= h.bld then
+            log(string.format("home clamp %d,%d z%s..z%s bld=%s (was z%s..z%s bld=%s)",
+                clean.x, clean.y, tostring(clean.z1), tostring(clean.z2), tostring(clean.bld),
+                tostring(h.z1), tostring(h.z2), tostring(h.bld)))
+        end
+        return clean
+    end
+    log("home clamp failed: keeping the request")
+    return h
+end
+
+
 BridgeServer.Commands.state = function(player, args)
     local rec = record(player:getUsername())
     local changed = false
@@ -1538,11 +1595,14 @@ BridgeServer.Commands.state = function(player, args)
     if args.home ~= nil then
         local h = BridgeData.cleanHome(args.home)
         if h ~= nil then
-            rec.home = h
+            rec.home = serverHome(h) or h
             changed = true
+        else
+            log("home rejected: bad home from " .. tostring(player:getUsername()))
         end
     elseif args.clearHome then
         rec.home = nil
+        log("home cleared for " .. tostring(player:getUsername()))
         changed = true
     end
     if genderDenied ~= nil then
@@ -3182,59 +3242,83 @@ end
 local FETCH_MARGIN = 6
 
 
-local function homeRectOf(rec)
+local function homeRectOf(rec, allFloors)
     local h = rec ~= nil and rec.home or nil
     if type(h) ~= "table" then return nil end
     if type(h.x) ~= "number" or type(h.y) ~= "number" or type(h.z) ~= "number"
         or type(h.w) ~= "number" or type(h.h) ~= "number" then return nil end
-    return h.x, h.y, h.x + h.w - 1, h.y + h.h - 1, h.z
+    local z1, z2 = BridgeData.homeRange(h, allFloors == true)
+    if z1 == nil then z1, z2 = h.z, h.z end
+    return h, h.x, h.y, h.x + h.w - 1, h.y + h.h - 1, z1, z2
+end
+
+
+local function homeFloors(h, z1, z2, body)
+    local out = {}
+    if z1 == nil or z2 == nil then return out end
+    local base = nil
+    if body ~= nil then pcall(function() base = math.floor(body:getZ()) end) end
+    base = base or h.z
+    for z = z1, z2 do out[#out + 1] = z end
+    table.sort(out, function(a, c)
+        local da, dc = math.abs(a - base), math.abs(c - base)
+        if da == dc then return a > c end
+        return da < dc
+    end)
+    return out
 end
 
 
 local function findHomeItem(rec, body, player, wantId)
-    local x1, y1, x2, y2, z = homeRectOf(rec)
-    if x1 == nil or wantId == nil then return nil, nil end
+    local all = BridgeData.optionOf(rec, "homeAllFloors")
+    local h, x1, y1, x2, y2, z1, z2 = homeRectOf(rec, all)
+    if h == nil or wantId == nil then return nil, nil end
     local found, foundC = nil, nil
     local seen = {}
-    for x = x1, x2 do
+    local floors = homeFloors(h, z1, z2, body)
+    for fi = 1, #floors do
         if found ~= nil then break end
-        for y = y1, y2 do
+        local z = floors[fi]
+        for x = x1, x2 do
             if found ~= nil then break end
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
-            if sq ~= nil then
-                local function scan(objs)
-                    if objs == nil or found ~= nil then return end
-                    for i = 0, objs:size() - 1 do
-                        if found ~= nil then return end
-                        local o = objs:get(i)
-                        if o ~= nil then
-                            local n = 0
-                            pcall(function() n = o:getContainerCount() end)
-                            for j = 0, n - 1 do
-                                if found ~= nil then return end
-                                local c = nil
-                                pcall(function() c = o:getContainerByIndex(j) end)
-                                if c ~= nil and not seen[c] then
-                                    seen[c] = true
-                                    local skip = false
-                                    pcall(function() skip = body ~= nil and c == body:getInventory() end)
-                                    if not skip then
-                                        pcall(function()
-                                            if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
-                                        end)
-                                    end
-                                    if not skip then
-                                        local list = nil
-                                        pcall(function() list = c:getItems() end)
-                                        if list ~= nil then
-                                            for k = 0, list:size() - 1 do
-                                                local it = list:get(k)
-                                                local id = nil
-                                                pcall(function() if it ~= nil then id = it:getID() end end)
-                                                if id ~= nil and id == wantId then
-                                                    found, foundC = it, c
-                                                    return
+            for y = y1, y2 do
+                if found ~= nil then break end
+                local sq = nil
+                pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+                if sq ~= nil and BridgeData.homeBuildingOk(h, sq) then
+                    local function scan(objs)
+                        if objs == nil or found ~= nil then return end
+                        for i = 0, objs:size() - 1 do
+                            if found ~= nil then return end
+                            local o = objs:get(i)
+                            if o ~= nil then
+                                local n = 0
+                                pcall(function() n = o:getContainerCount() end)
+                                for j = 0, n - 1 do
+                                    if found ~= nil then return end
+                                    local c = nil
+                                    pcall(function() c = o:getContainerByIndex(j) end)
+                                    if c ~= nil and not seen[c] then
+                                        seen[c] = true
+                                        local skip = false
+                                        pcall(function() skip = body ~= nil and c == body:getInventory() end)
+                                        if not skip then
+                                            pcall(function()
+                                                if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
+                                            end)
+                                        end
+                                        if not skip then
+                                            local list = nil
+                                            pcall(function() list = c:getItems() end)
+                                            if list ~= nil then
+                                                for k = 0, list:size() - 1 do
+                                                    local it = list:get(k)
+                                                    local id = nil
+                                                    pcall(function() if it ~= nil then id = it:getID() end end)
+                                                    if id ~= nil and id == wantId then
+                                                        found, foundC = it, c
+                                                        return
+                                                    end
                                                 end
                                             end
                                         end
@@ -3243,10 +3327,10 @@ local function findHomeItem(rec, body, player, wantId)
                             end
                         end
                     end
+                    pcall(function() scan(sq:getObjects()) end)
+                    pcall(function() scan(sq:getSpecialObjects()) end)
+                    pcall(function() scan(sq:getStaticMovingObjects()) end)
                 end
-                pcall(function() scan(sq:getObjects()) end)
-                pcall(function() scan(sq:getSpecialObjects()) end)
-                pcall(function() scan(sq:getStaticMovingObjects()) end)
             end
         end
     end
@@ -3255,56 +3339,62 @@ end
 
 
 local function collectHomeItems(rec, body, player, fullType, want)
-    local x1, y1, x2, y2, z = homeRectOf(rec)
+    local all = BridgeData.optionOf(rec, "homeAllFloors")
+    local h, x1, y1, x2, y2, z1, z2 = homeRectOf(rec, all)
     local out, total = {}, 0
-    if x1 == nil or type(fullType) ~= "string" then return out, total end
+    if h == nil or type(fullType) ~= "string" then return out, total end
     local need = math.floor(tonumber(want) or 0)
     if need <= 0 then need = 1 end
     local seen = {}
-    for x = x1, x2 do
+    local floors = homeFloors(h, z1, z2, body)
+    for fi = 1, #floors do
         if total >= need then break end
-        for y = y1, y2 do
+        local z = floors[fi]
+        for x = x1, x2 do
             if total >= need then break end
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
-            if sq ~= nil then
-                local function scan(objs)
-                    if objs == nil or total >= need then return end
-                    for i = 0, objs:size() - 1 do
-                        if total >= need then return end
-                        local o = objs:get(i)
-                        if o ~= nil then
-                            local n = 0
-                            pcall(function() n = o:getContainerCount() end)
-                            for j = 0, n - 1 do
-                                if total >= need then return end
-                                local c = nil
-                                pcall(function() c = o:getContainerByIndex(j) end)
-                                if c ~= nil and not seen[c] then
-                                    seen[c] = true
-                                    local skip = false
-                                    pcall(function() skip = body ~= nil and c == body:getInventory() end)
-                                    if not skip then
-                                        pcall(function()
-                                            if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
-                                        end)
-                                    end
-                                    if not skip then
-                                        local list = nil
-                                        pcall(function() list = c:getItems() end)
-                                        if list ~= nil then
-                                            for k = 0, list:size() - 1 do
-                                                if total >= need then return end
-                                                local it = list:get(k)
-                                                local full = nil
-                                                pcall(function() if it ~= nil then full = it:getFullType() end end)
-                                                if full == fullType then
-                                                    local cnt = 0
-                                                    pcall(function() cnt = it:getCount() end)
-                                                    cnt = math.floor(tonumber(cnt) or 1)
-                                                    if cnt < 1 then cnt = 1 end
-                                                    out[#out + 1] = { item = it, container = c, count = cnt }
-                                                    total = total + cnt
+            for y = y1, y2 do
+                if total >= need then break end
+                local sq = nil
+                pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+                if sq ~= nil and BridgeData.homeBuildingOk(h, sq) then
+                    local function scan(objs)
+                        if objs == nil or total >= need then return end
+                        for i = 0, objs:size() - 1 do
+                            if total >= need then return end
+                            local o = objs:get(i)
+                            if o ~= nil then
+                                local n = 0
+                                pcall(function() n = o:getContainerCount() end)
+                                for j = 0, n - 1 do
+                                    if total >= need then return end
+                                    local c = nil
+                                    pcall(function() c = o:getContainerByIndex(j) end)
+                                    if c ~= nil and not seen[c] then
+                                        seen[c] = true
+                                        local skip = false
+                                        pcall(function() skip = body ~= nil and c == body:getInventory() end)
+                                        if not skip then
+                                            pcall(function()
+                                                if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
+                                            end)
+                                        end
+                                        if not skip then
+                                            local list = nil
+                                            pcall(function() list = c:getItems() end)
+                                            if list ~= nil then
+                                                for k = 0, list:size() - 1 do
+                                                    if total >= need then return end
+                                                    local it = list:get(k)
+                                                    local full = nil
+                                                    pcall(function() if it ~= nil then full = it:getFullType() end end)
+                                                    if full == fullType then
+                                                        local cnt = 0
+                                                        pcall(function() cnt = it:getCount() end)
+                                                        cnt = math.floor(tonumber(cnt) or 1)
+                                                        if cnt < 1 then cnt = 1 end
+                                                        out[#out + 1] = { item = it, container = c, count = cnt }
+                                                        total = total + cnt
+                                                    end
                                                 end
                                             end
                                         end
@@ -3313,10 +3403,10 @@ local function collectHomeItems(rec, body, player, fullType, want)
                             end
                         end
                     end
+                    pcall(function() scan(sq:getObjects()) end)
+                    pcall(function() scan(sq:getSpecialObjects()) end)
+                    pcall(function() scan(sq:getStaticMovingObjects()) end)
                 end
-                pcall(function() scan(sq:getObjects()) end)
-                pcall(function() scan(sq:getSpecialObjects()) end)
-                pcall(function() scan(sq:getStaticMovingObjects()) end)
             end
         end
     end
@@ -3334,16 +3424,15 @@ BridgeServer.Commands.fetchSupply = function(player, args)
             { id = wantId, ids = (wantId ~= nil) and { wantId } or {}, token = args.token, why = why })
     end
     if rec.bodyId == nil then return fail("no body") end
-    local x1, y1, x2, y2, z = homeRectOf(rec)
-    if x1 == nil then return fail("no home") end
+    local all = BridgeData.optionOf(rec, "homeAllFloors")
+    local h = homeRectOf(rec, all)
+    if h == nil then return fail("no home") end
     local body = BridgeServer.bodies[who] or currentBody(who, rec)
     if body == nil then return fail("no body") end
     local bx, by, bz = nil, nil, nil
     pcall(function() bx, by, bz = math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()) end)
     if bx == nil then return fail("no position") end
-    if math.abs((bz or 0) - z) >= 1
-            or bx < x1 - FETCH_MARGIN or bx > x2 + FETCH_MARGIN
-            or by < y1 - FETCH_MARGIN or by > y2 + FETCH_MARGIN then
+    if not BridgeData.homeHas(h, bx, by, bz, FETCH_MARGIN, all) then
         return fail("not at home")
     end
 

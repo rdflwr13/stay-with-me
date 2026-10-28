@@ -979,11 +979,12 @@ local function placeTick(body, red)
 end
 
 
-local function homeAreaHas(home, x, y, margin)
+local function homeAreaHas(home, x, y, z, margin)
     if home == nil then return false end
-    local x1, y1 = home.x - margin, home.y - margin
-    local x2, y2 = home.x + home.w - 1 + margin, home.y + home.h - 1 + margin
-    return x >= x1 and x <= x2 and y >= y1 and y <= y2
+    local module = rawget(_G, "BridgeHome")
+    if type(module) ~= "table" or type(module.contains) ~= "function" then return false end
+    local ok, yes = pcall(module.contains, x, y, z, margin)
+    return ok and yes == true
 end
 
 
@@ -1032,10 +1033,10 @@ function BridgeCallout.homeCanReturn(red, body)
     if BridgeCallout.homeHours < BridgeCallout.HOME_HOURS then return false end
     local home = BridgeHome ~= nil and BridgeHome.get() or nil
     if home == nil or body == nil or red == nil then return false end
-    local bx, by = nil, nil
-    pcall(function() bx, by = body:getX(), body:getY() end)
+    local bx, by, bz = nil, nil, nil
+    pcall(function() bx, by, bz = body:getX(), body:getY(), body:getZ() end)
     if bx == nil or by == nil then return false end
-    if not homeAreaHas(home, bx, by, BridgeCallout.HOME_NEAR) then return false end
+    if not homeAreaHas(home, bx, by, bz, BridgeCallout.HOME_NEAR) then return false end
     if not homeWithPlayer(red, bx, by) then return false end
     return homeCanSpeak(red)
 end
@@ -1076,11 +1077,11 @@ function BridgeCallout.homeTrack(body, red)
         return
     end
 
-    local bx, by = nil, nil
-    pcall(function() bx, by = body:getX(), body:getY() end)
+    local bx, by, bz = nil, nil, nil
+    pcall(function() bx, by, bz = body:getX(), body:getY(), body:getZ() end)
     if bx == nil or by == nil then return end
 
-    local atHome = homeAreaHas(home, bx, by, BridgeCallout.HOME_NEAR)
+    local atHome = homeAreaHas(home, bx, by, bz, BridgeCallout.HOME_NEAR)
 
     if atHome then
         BridgeCallout.homeInfo = "home"
@@ -1135,7 +1136,16 @@ end
 function BridgeCallout.homeStatus()
     local h = BridgeHome ~= nil and BridgeHome.get() or nil
     local loc = "none"
-    if h ~= nil then loc = string.format("%d,%d z%d %dx%d", h.x, h.y, h.z, h.w, h.h) end
+    local all = false
+    local pending = false
+    if h ~= nil then
+        all = BridgeHome ~= nil and type(BridgeHome.allFloorsOn) == "function" and BridgeHome.allFloorsOn() or false
+        local z1, z2 = BridgeData.homeRange(h, all)
+        pending = BridgeHome ~= nil and type(BridgeHome.allFloorsPending) == "function"
+            and BridgeHome.allFloorsPending(h) == true or false
+        loc = string.format("%d,%d z%d..z%d %dx%d all=%s pending=%s", h.x, h.y, z1, z2, h.w, h.h,
+            all and "on" or "off", tostring(pending))
+    end
     return string.format("%s away=%.2fh fired=%s suppress=%s info=%s",
         loc, BridgeCallout.homeHours, tostring(BridgeCallout.homeFired),
         tostring(BridgeCallout.homeSuppress), tostring(BridgeCallout.homeInfo))
@@ -1153,9 +1163,9 @@ function BridgeCallout.homeCommand(parts)
     if sub == "why" or sub == "diag" then
         local red = BridgeData.owner()
         local body = Bridge.body
-        local bx, by = nil, nil
-        if body ~= nil then pcall(function() bx, by = body:getX(), body:getY() end) end
-        local atHome = home ~= nil and bx ~= nil and homeAreaHas(home, bx, by, BridgeCallout.HOME_NEAR)
+        local bx, by, bz = nil, nil, nil
+        if body ~= nil then pcall(function() bx, by, bz = body:getX(), body:getY(), body:getZ() end) end
+        local atHome = home ~= nil and bx ~= nil and homeAreaHas(home, bx, by, bz, BridgeCallout.HOME_NEAR)
         local withYou = (bx ~= nil and red ~= nil) and homeWithPlayer(red, bx, by) or false
         local quiet = carQuiet()
         local asleep, fighting, ff, group = "?", "?", "?", "?"
@@ -1215,7 +1225,35 @@ function BridgeCallout.homeCommand(parts)
         end
         local got = BridgeHome ~= nil and BridgeHome.get() or nil
         if got == nil then return "home set failed: " .. tostring(res) end
-        return string.format("home set %d,%d z%d %dx%d", got.x, got.y, got.z, got.w, got.h)
+        local all = BridgeHome ~= nil and type(BridgeHome.allFloorsOn) == "function" and BridgeHome.allFloorsOn() or false
+        local z1, z2 = BridgeData.homeRange(got, all)
+        return string.format("home set %d,%d z%d..z%d %dx%d all=%s", got.x, got.y, z1, z2, got.w, got.h,
+            all and "on" or "off")
+    end
+
+    if sub == "all" then
+        if BridgeHome == nil then return "home all: home not loaded" end
+        local how = parts[4]
+        if how ~= "on" and how ~= "off" then return "home all [on | off]" end
+        if Bridge == nil or type(Bridge.setOption) ~= "function" then return "home all: no bridge" end
+        Bridge.setOption("homeAllFloors", how == "on")
+        pcall(function() BridgeHome.onAllFloorsChanged(how == "on") end)
+        local got = BridgeHome.get()
+        if got == nil then return string.format("home all=%s", how) end
+        local z1, z2 = BridgeData.homeRange(got, how == "on")
+        local pending = type(BridgeHome.allFloorsPending) == "function" and BridgeHome.allFloorsPending(got) or false
+        return string.format("home all=%s z%d..z%d pending=%s", how, z1, z2, tostring(pending))
+    end
+
+    if sub == "floors" then
+        if home == nil then return "home floors: none set" end
+        if BridgeHome == nil or type(BridgeHome.includedFloors) ~= "function" then return "home floors: home not loaded" end
+        local all = type(BridgeHome.allFloorsOn) == "function" and BridgeHome.allFloorsOn() or false
+        local floors = BridgeHome.includedFloors(home, all)
+        local partsOut = {}
+        for index = 1, #floors do partsOut[#partsOut + 1] = string.format("z%d", floors[index]) end
+        return string.format("home floors all=%s [%s] bld=%s", all and "on" or "off",
+            table.concat(partsOut, " "), tostring(home.bld))
     end
 
     if sub == "away" then
@@ -1253,7 +1291,7 @@ function BridgeCallout.homeCommand(parts)
         return "home state reset (suppressed until next arrival)"
     end
 
-    return "home [status | why | set [x y z w h] | clear | away <hours> | fire | exit | reset]"
+    return "home [status | why | set [x y z w h] | clear | away <hours> | fire | exit | reset | all on|off | floors]"
 end
 
 

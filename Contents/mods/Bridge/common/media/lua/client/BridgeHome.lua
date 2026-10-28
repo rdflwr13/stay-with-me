@@ -25,8 +25,12 @@ end
 
 
 BridgeHome.HANDLE_TYPE = "BridgeHome"
-BridgeHome.handle = nil
+BridgeHome.handles = {}
 BridgeHome.handleKey = nil
+BridgeHome.pendingAllFloors = false
+
+local floorCache = {}
+local includedCache = {}
 
 
 local function zoneAvailable()
@@ -34,12 +38,45 @@ local function zoneAvailable()
 end
 
 
-local function destroyHandle()
-    local handle = BridgeHome.handle
-    BridgeHome.handle = nil
+function BridgeHome.allFloorsOn()
+    if BridgeData == nil or Bridge == nil then return false end
+    return BridgeData.optionOf(Bridge.store, "homeAllFloors") == true
+end
+
+
+function BridgeHome.hasRange(h)
+    if type(h) ~= "table" then return false end
+    return type(h.z1) == "number" and type(h.z2) == "number"
+end
+
+
+function BridgeHome.allFloorsPending(h)
+    if h == nil or not BridgeHome.allFloorsOn() then return false end
+    if BridgeHome.pendingAllFloors == true then return true end
+    return not BridgeHome.hasRange(h)
+end
+
+
+function BridgeHome.homeKey(h)
+    if type(h) ~= "table" then return nil end
+    return string.format("%d:%d:%d:%d:%d:%s:%s:%s", h.x, h.y, h.z, h.w, h.h,
+        tostring(h.z1 or h.z), tostring(h.z2 or h.z), tostring(h.bld or ""))
+end
+
+
+function BridgeHome.invalidate()
+    floorCache = {}
+    includedCache = {}
+end
+
+
+local function destroyHandles()
+    local list = BridgeHome.handles or {}
+    BridgeHome.handles = {}
     BridgeHome.handleKey = nil
-    if handle == nil then return end
-    pcall(function() DesignationZone.removeZone(handle, false) end)
+    for _, handle in pairs(list) do
+        if handle ~= nil then pcall(function() DesignationZone.removeZone(handle, false) end) end
+    end
 end
 
 
@@ -47,20 +84,36 @@ function BridgeHome.syncHandle()
     local st = Bridge ~= nil and Bridge.store or nil
     local home = BridgeData ~= nil and BridgeData.homeOf(st) or nil
     local h = BridgeData ~= nil and BridgeData.cleanHome(home) or nil
+    local all = BridgeHome.allFloorsOn()
     local key = nil
-    if h ~= nil then key = string.format("%d:%d:%d:%d:%d", h.x, h.y, h.z, h.w, h.h) end
+    if h ~= nil then key = BridgeHome.homeKey(h) .. (all and ":1" or ":0") end
     if key == BridgeHome.handleKey then return end
-    destroyHandle()
-    if h == nil then return end
-    if not zoneAvailable() then return end
-    local ok, err = pcall(function()
-        local name = tr("Home")
-        local handle = DesignationZone.new(BridgeHome.HANDLE_TYPE, name,
-            h.x, h.y, h.z, h.x + h.w - 1, h.y + h.h - 1, false)
-        BridgeHome.handle = handle
-        BridgeHome.handleKey = key
-    end)
-    if not ok then log("handle failed: " .. tostring(err)) end
+    destroyHandles()
+    if h == nil then
+        log("zones cleared: no home")
+        return
+    end
+    BridgeHome.handleKey = key
+    if not zoneAvailable() then
+        log("zones skipped: DesignationZone unavailable")
+        return
+    end
+    local floors = BridgeHome.includedFloors(h, all)
+    local name = tr("Home")
+    local made = {}
+    for index = 1, #floors do
+        local z = floors[index]
+        local ok, err = pcall(function()
+            local handle = DesignationZone.new(BridgeHome.HANDLE_TYPE, name,
+                h.x, h.y, z, h.x + h.w - 1, h.y + h.h - 1, false)
+            BridgeHome.handles[z] = handle
+            made[#made + 1] = z
+        end)
+        if not ok then log("handle failed z" .. tostring(z) .. ": " .. tostring(err)) end
+    end
+    local z1, z2 = BridgeData.homeRange(h, all)
+    log(string.format("zones home z%s..z%s all=%s floors=%s", tostring(z1), tostring(z2),
+        all and "on" or "off", table.concat(made, ",")))
 end
 
 
@@ -70,11 +123,175 @@ function BridgeHome.get()
 end
 
 
-function BridgeHome.contains(x, y, z)
+function BridgeHome.hasFloor(h, z)
+    if type(h) ~= "table" or z == nil then return false end
+    local key = string.format("%d:%d:%d:%d:%d:%d", h.x, h.y, h.z, h.w, h.h, math.floor(z))
+    local hit = floorCache[key]
+    if hit ~= nil then return hit end
+    local cell = nil
+    pcall(function() cell = getCell() end)
+    if cell == nil then return false end
+    local yes = false
+    pcall(function()
+        for x = h.x, h.x + h.w - 1 do
+            if yes then return end
+            for y = h.y, h.y + h.h - 1 do
+                local sq = cell:getGridSquare(x, y, math.floor(z))
+                if sq ~= nil and sq:getFloor() then yes = true return end
+            end
+        end
+    end)
+    floorCache[key] = yes
+    return yes
+end
+
+
+function BridgeHome.includedFloors(h, allFloors)
+    if type(h) ~= "table" then return {} end
+    local key = BridgeHome.homeKey(h) .. (allFloors and ":1" or ":0")
+    local hit = includedCache[key]
+    if hit ~= nil then return hit end
+    local z1, z2 = BridgeData.homeRange(h, allFloors)
+    local out = {}
+    if z1 ~= nil then
+        for z = z1, z2 do
+            if z == h.z or BridgeHome.hasFloor(h, z) then out[#out + 1] = z end
+        end
+    end
+    includedCache[key] = out
+    return out
+end
+
+
+function BridgeHome.windowFor(minZ, maxZ, selectedZ, cap)
+    minZ = math.floor(tonumber(minZ) or 0)
+    maxZ = math.floor(tonumber(maxZ) or minZ)
+    selectedZ = math.floor(tonumber(selectedZ) or minZ)
+    cap = math.floor(tonumber(cap) or BridgeData.HOME_MAX_FLOORS)
+    if cap < 1 then cap = 1 end
+    if maxZ < minZ then return selectedZ, selectedZ end
+    local span = maxZ - minZ + 1
+    if span <= cap then return minZ, maxZ end
+    local low = selectedZ - math.floor((cap - 1) / 2)
+    local high = low + cap - 1
+    if low < minZ then
+        low = minZ
+        high = minZ + cap - 1
+    end
+    if high > maxZ then
+        high = maxZ
+        low = maxZ - cap + 1
+    end
+    return low, high
+end
+
+
+function BridgeHome.computeRange(h)
+    if type(h) ~= "table" then return nil end
+    local cell = nil
+    pcall(function() cell = getCell() end)
+    if cell == nil then
+        log(string.format("range: cell not loaded for %d,%d z%d, deferring", h.x, h.y, h.z))
+        return nil
+    end
+
+    local counts, order = {}, {}
+    for x = h.x, h.x + h.w - 1 do
+        for y = h.y, h.y + h.h - 1 do
+            local sq = nil
+            pcall(function() sq = cell:getGridSquare(x, y, h.z) end)
+            if sq ~= nil then
+                local b = nil
+                local doors = rawget(_G, "BridgeDoors")
+                if type(doors) == "table" and type(doors.buildingOf) == "function" then
+                    local ok, found = pcall(doors.buildingOf, sq)
+                    if ok then b = found end
+                end
+                if b == nil then pcall(function() b = sq:getBuilding() end) end
+                if b ~= nil then
+                    if counts[b] == nil then
+                        counts[b] = 0
+                        order[#order + 1] = b
+                    end
+                    counts[b] = counts[b] + 1
+                end
+            end
+        end
+    end
+
+    local best, bestCount = nil, 0
+    for index = 1, #order do
+        local b = order[index]
+        if (counts[b] or 0) > bestCount then
+            best, bestCount = b, counts[b]
+        end
+    end
+
+    local ownerBld = nil
+    pcall(function()
+        local red = BridgeData.owner()
+        local sq = red ~= nil and red:getCurrentSquare() or nil
+        if sq ~= nil and sq:getZ() == h.z
+                and sq:getX() >= h.x and sq:getX() <= h.x + h.w - 1
+                and sq:getY() >= h.y and sq:getY() <= h.y + h.h - 1 then
+            ownerBld = sq:getBuilding()
+        end
+    end)
+    if ownerBld ~= nil and counts[ownerBld] ~= nil then best = ownerBld end
+
+    if best ~= nil then
+        local def = nil
+        pcall(function() def = best:getDef() end)
+        if def ~= nil then
+            local minZ, maxZ = nil, nil
+            pcall(function() minZ, maxZ = def:getMinLevel(), def:getMaxLevel() end)
+            if minZ ~= nil and maxZ ~= nil and h.z >= minZ and h.z <= maxZ then
+                local z1, z2 = BridgeHome.windowFor(minZ, maxZ, h.z, BridgeData.HOME_MAX_FLOORS)
+                local id = nil
+                pcall(function() id = tostring(def:getIDString()) end)
+                if id == nil or id == "" or id == "0" or id == "nil" then
+                    id = nil
+                    pcall(function() id = tostring(best:getID()) end)
+                    if id == "0" or id == "nil" then id = nil end
+                end
+                log(string.format("range: building %s levels %s..%s -> z%d..z%d at z%d",
+                    tostring(id), tostring(minZ), tostring(maxZ), z1, z2, h.z))
+                return z1, z2, id
+            end
+            log(string.format("range: building levels %s..%s do not cover z%d, using floor scan",
+                tostring(minZ), tostring(maxZ), h.z))
+        else
+            log("range: building without a definition, using floor scan")
+        end
+    else
+        log("range: no building under the footprint, using floor scan")
+    end
+
+    local z1, z2 = h.z, h.z
+    local up, down = true, true
+    while (z2 - z1 + 1) < BridgeData.HOME_MAX_FLOORS and (up or down) do
+        if up then
+            if BridgeHome.hasFloor(h, z2 + 1) then z2 = z2 + 1 else up = false end
+        end
+        if (z2 - z1 + 1) < BridgeData.HOME_MAX_FLOORS and down then
+            if BridgeHome.hasFloor(h, z1 - 1) then z1 = z1 - 1 else down = false end
+        end
+    end
+    log(string.format("range: floor scan -> z%d..z%d (base z%d)", z1, z2, h.z))
+    return z1, z2, nil
+end
+
+
+function BridgeHome.contains(x, y, z, margin)
     local h = BridgeHome.get()
     if h == nil or x == nil or y == nil or z == nil then return false end
-    if math.floor(z) ~= h.z then return false end
-    return x >= h.x and x <= (h.x + h.w - 1) and y >= h.y and y <= (h.y + h.h - 1)
+    if not BridgeData.homeHas(h, x, y, z, margin, BridgeHome.allFloorsOn()) then return false end
+    local sq = nil
+    pcall(function()
+        local cell = getCell()
+        if cell ~= nil then sq = cell:getGridSquare(math.floor(x), math.floor(y), math.floor(z)) end
+    end)
+    return BridgeData.homeBuildingOk(h, sq)
 end
 
 
@@ -88,6 +305,24 @@ end
 function BridgeHome.statusText()
     local h = BridgeHome.get()
     if h == nil then return tr("HomeNone") end
+    local all = BridgeHome.allFloorsOn()
+    local z1, z2 = BridgeData.homeRange(h, all)
+    if BridgeHome.allFloorsPending(h) then
+        local out = nil
+        pcall(function() out = getText("IGUI_NotAlone_HomeAllFloorsPending") end)
+        if out == nil or out == "" or out == "IGUI_NotAlone_HomeAllFloorsPending" then
+            out = "All floors pending: reset the home to include every floor"
+        end
+        return out .. "  " .. string.format("%d, %d  z%d  %dx%d", h.x, h.y, h.z, h.w, h.h)
+    end
+    if all and z2 ~= nil and z2 > z1 then
+        local out = nil
+        pcall(function() out = getText("IGUI_NotAlone_HomeStatusRange", h.x, h.y, z1, z2, h.w, h.h) end)
+        if out == nil or out == "" or out == "IGUI_NotAlone_HomeStatusRange" then
+            out = string.format("Home: %d, %d  z%d..z%d  %dx%d", h.x, h.y, z1, z2, h.w, h.h)
+        end
+        return out
+    end
     local out = nil
     pcall(function() out = getText("IGUI_NotAlone_HomeStatus", h.x, h.y, h.z, h.w, h.h) end)
     if out == nil or out == "" or out == "IGUI_NotAlone_HomeStatus" then
@@ -300,6 +535,89 @@ function BridgeHome.requestSet(playerObj)
 end
 
 
+function BridgeHome.onAllFloorsChanged(selected)
+    BridgeHome.invalidate()
+    BridgeHome.pendingAllFloors = false
+    log("all floors " .. (selected == true and "on" or "off"))
+    if selected ~= true then
+        BridgeHome.syncHandle()
+        return true
+    end
+    local h = BridgeHome.get()
+    if h == nil then
+        BridgeHome.syncHandle()
+        return true
+    end
+    local stored = BridgeData.cleanHome(h) or h
+    local wide = type(stored.z1) == "number" and type(stored.z2) == "number" and stored.z2 > stored.z1
+    if not wide then
+        local z1, z2, bld = BridgeHome.computeRange(stored)
+        local clean = nil
+        if z1 ~= nil then
+            clean = BridgeData.cleanHome({ x = stored.x, y = stored.y, z = stored.z,
+                w = stored.w, h = stored.h, z1 = z1, z2 = z2, bld = bld })
+        end
+        if clean ~= nil and Bridge ~= nil and type(Bridge.saveHome) == "function" then
+            log(string.format("all floors: range z%s..z%s bld=%s", tostring(z1), tostring(z2), tostring(bld)))
+            Bridge.saveHome(clean)
+        else
+            log("all floors: no usable range, pending")
+            BridgeHome.pendingAllFloors = true
+        end
+    end
+    BridgeHome.syncHandle()
+    return true
+end
+
+
+function BridgeHome.selftest()
+    local fails, ran = {}, 0
+    local function check(name, condition)
+        ran = ran + 1
+        if not condition then fails[#fails + 1] = name end
+    end
+
+    local z1, z2 = BridgeHome.windowFor(-1, 2, 0, 6)
+    check("basement window start", z1 == -1)
+    check("basement window end", z2 == 2)
+
+    z1, z2 = BridgeHome.windowFor(0, 5, 0, 6)
+    check("six floor window", z1 == 0 and z2 == 5)
+
+    z1, z2 = BridgeHome.windowFor(0, 9, 0, 6)
+    check("bottom edge clipped", z1 == 0 and z2 == 5)
+    z1, z2 = BridgeHome.windowFor(0, 9, 9, 6)
+    check("top edge clipped", z1 == 4 and z2 == 9)
+    z1, z2 = BridgeHome.windowFor(0, 9, 4, 6)
+    check("selected inside window", z1 <= 4 and z2 >= 4 and (z2 - z1 + 1) == 6)
+
+    local old = BridgeData.cleanHome({ x = 1, y = 2, z = 3, w = 12, h = 12 })
+    check("old five field home", old ~= nil and old.z1 == nil and old.z2 == nil)
+    check("has range false", BridgeHome.hasRange({ x = 1, y = 2, z = 3, w = 12, h = 12 }) == false)
+    check("has range true", BridgeHome.hasRange({ x = 1, y = 2, z = 0, w = 12, h = 12, z1 = 0, z2 = 1 }) == true)
+
+    local range = BridgeData.cleanHome({ x = 1, y = 2, z = 0, w = 12, h = 12, z1 = -1, z2 = 2 })
+    check("range accepted", range ~= nil and range.z1 == -1 and range.z2 == 2)
+    check("base outside range rejected",
+        BridgeData.cleanHome({ x = 1, y = 2, z = 5, w = 12, h = 12, z1 = 0, z2 = 2 }) == nil)
+    check("span over six rejected",
+        BridgeData.cleanHome({ x = 1, y = 2, z = 0, w = 12, h = 12, z1 = -3, z2 = 3 }) == nil)
+    check("one range field rejected",
+        BridgeData.cleanHome({ x = 1, y = 2, z = 0, w = 12, h = 12, z1 = 0 }) == nil)
+
+    local home = { x = 10, y = 10, z = 0, w = 4, h = 4, z1 = -1, z2 = 2 }
+    check("off base floor", BridgeData.homeHas(home, 10, 10, 0, 0, false) == true)
+    check("off other floor", BridgeData.homeHas(home, 10, 10, 1, 0, false) == false)
+    check("on other floor", BridgeData.homeHas(home, 10, 10, 1, 0, true) == true)
+    check("on outside range", BridgeData.homeHas(home, 10, 10, 3, 0, true) == false)
+    check("margin edge", BridgeData.homeHas(home, 14, 10, 0, 1, false) == true)
+    check("margin outside", BridgeData.homeHas(home, 15, 10, 0, 1, false) == false)
+
+    if #fails == 0 then return string.format("homeselftest PASS (%d checks)", ran) end
+    return string.format("homeselftest FAIL (%d of %d): %s", #fails, ran, table.concat(fails, "; "))
+end
+
+
 local function clearDone(target, button)
     if button == nil or button.internal ~= "YES" then return end
     Bridge.clearHome()
@@ -323,7 +641,7 @@ function BridgeHomeTab.heightFor(width)
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
     local tickH = math.max(btnH, fontS) + (UI_BORDER_SPACING or 10)
-    return PAD + fontS + PAD + btnH + PAD + btnH + PAD + tickH + PAD + tickH + PAD
+    return PAD + fontS + PAD + btnH + PAD + btnH + PAD + tickH + PAD + tickH + PAD + tickH + PAD
 end
 
 function BridgeHomeTab:createChildren()
@@ -360,6 +678,14 @@ function BridgeHomeTab:createChildren()
     self.ammoTick.tooltip = tr("OptHomeAmmoTip")
     self:addChild(self.ammoTick)
     self.ammoTickY = y
+    y = y + btnH + PAD
+    self.allTick = ISTickBox:new(PAD, y, self.width - PAD * 2, btnH, "", self, BridgeHomeTab.onAllTick, "homeAllFloors")
+    self.allTick:initialise()
+    self.allTick:instantiate()
+    self.allTick:addOption(tr("OptHomeAllFloors"))
+    self.allTick.tooltip = tr("OptHomeAllFloorsTip")
+    self:addChild(self.allTick)
+    self.allTickY = y
 end
 
 function BridgeHomeTab:onResourceTick(index, selected, key)
@@ -368,6 +694,11 @@ end
 
 function BridgeHomeTab:onAmmoTick(index, selected, key)
     if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption(key, selected == true) end
+end
+
+function BridgeHomeTab:onAllTick(index, selected, key)
+    if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption(key, selected == true) end
+    pcall(BridgeHome.onAllFloorsChanged, selected == true)
 end
 
 function BridgeHomeTab:onSet()
@@ -392,13 +723,21 @@ function BridgeHomeTab:prerender()
         local want = BridgeData.optionOf(Bridge.store, "homeAmmo")
         if self.ammoTick:isSelected(1) ~= want then self.ammoTick:setSelected(1, want) end
     end
+    if self.allTick ~= nil then
+        local want = BridgeData.optionOf(Bridge.store, "homeAllFloors")
+        if self.allTick:isSelected(1) ~= want then self.allTick:setSelected(1, want) end
+    end
     if h ~= nil then
         local pn = 0
         pcall(function()
             local p = BridgeData.owner()
             if p ~= nil then pn = p:getPlayerNum() end
         end)
-        addAreaHighlightForPlayer(pn, h.x, h.y, h.x + h.w, h.y + h.h, h.z, HOME_R, HOME_G, HOME_B, HOME_A)
+        local floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn())
+        for index = 1, #floors do
+            addAreaHighlightForPlayer(pn, h.x, h.y, h.x + h.w, h.y + h.h, floors[index],
+                HOME_R, HOME_G, HOME_B, HOME_A)
+        end
     end
 end
 

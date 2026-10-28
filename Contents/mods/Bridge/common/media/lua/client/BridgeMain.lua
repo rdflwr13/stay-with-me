@@ -2130,23 +2130,60 @@ function Bridge.applyStoredMode()
 end
 
 
-function Bridge.setHome(rect)
-    local h = BridgeData.cleanHome(rect)
-    if h == nil then return "bad home" end
-    local st = Bridge.store
-    if st ~= nil then st.home = h end
-    if Bridge.mp then
-        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { home = h }) end)
+function Bridge.saveHome(h)
+    local clean = BridgeData.cleanHome(h)
+    if clean == nil then
+        log("home save rejected: bad home")
+        return "bad home"
     end
+    local st = Bridge.store
+    if st ~= nil then st.home = clean end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { home = clean }) end)
+    end
+    if BridgeHome ~= nil and type(BridgeHome.invalidate) == "function" then BridgeHome.invalidate() end
+    log(string.format("home saved %d,%d z%s..z%s %dx%d bld=%s mp=%s", clean.x, clean.y,
+        tostring(clean.z1 or clean.z), tostring(clean.z2 or clean.z), clean.w, clean.h,
+        tostring(clean.bld), tostring(Bridge.mp == true)))
     return "home set"
+end
+
+
+function Bridge.setHome(rect)
+    if type(rect) == "table" then
+        log(string.format("home set request %s,%s z%s %sx%s", tostring(rect.x), tostring(rect.y),
+            tostring(rect.z), tostring(rect.w), tostring(rect.h)))
+    end
+    local h = BridgeData.cleanHome(rect)
+    if h == nil then
+        log("home set rejected: bad home")
+        return "bad home"
+    end
+    if BridgeHome ~= nil and type(BridgeHome.computeRange) == "function" then
+        local z1, z2, bld = BridgeHome.computeRange(h)
+        if z1 ~= nil then
+            h.z1, h.z2, h.bld = z1, z2, bld
+        else
+            h.z1, h.z2, h.bld = h.z, h.z, nil
+            log(string.format("home set: no range for %d,%d z%d, saved as single floor", h.x, h.y, h.z))
+        end
+    end
+    return Bridge.saveHome(h)
 end
 
 
 function Bridge.clearHome()
     local st = Bridge.store
+    local prev = st ~= nil and st.home or nil
     if st ~= nil then st.home = nil end
     if Bridge.mp then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { clearHome = true }) end)
+    end
+    if type(prev) == "table" then
+        log(string.format("home cleared %s,%s z%s %sx%s", tostring(prev.x), tostring(prev.y),
+            tostring(prev.z), tostring(prev.w), tostring(prev.h)))
+    else
+        log("home cleared: none set")
     end
     return "home cleared"
 end
@@ -3187,13 +3224,6 @@ function Bridge.onHitZombie(zombie, attacker, bodyPart, weapon)
             if zombie == Bridge.body then Bridge.hitClean = { tick = Bridge.tick } else Bridge.copyHit[zombie] = Bridge.time end
         end
         log("body hit by player " .. tostring(attacker:getUsername()))
-
-
-        if zombie == Bridge.body and attacker == BridgeData.owner() and BridgeData.optionOf(Bridge.store, "hitMatters")
-            and (Bridge.time - (Bridge.hitDeedTick or -999)) > 60 then
-            Bridge.hitDeedTick = Bridge.time
-            pcall(function() BridgeSocial.deed("hit") end)
-        end
         return
     end
 
@@ -4959,6 +4989,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     gunselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
+    homeselftest = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
 
 
@@ -5650,6 +5681,11 @@ function Bridge.run(line)
     if cmd == "bathselftest" then
         if BridgeBath == nil then return "bath not loaded" end
         return BridgeBath.selftest()
+    end
+
+    if cmd == "homeselftest" then
+        if BridgeHome == nil then return "home not loaded" end
+        return BridgeHome.selftest()
     end
 
     if cmd == "gunselftest" then return BridgeGunRules.selftest() end

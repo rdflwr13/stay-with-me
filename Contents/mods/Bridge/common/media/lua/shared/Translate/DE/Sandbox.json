@@ -16,8 +16,6 @@
     "Sandbox_StayWithMe_RomanceRequirementFriend_tooltip": "Freundschaft, die sie benötigt, bevor die Romantik freigeschaltet werden kann (0-100). Standard 30.",
     "Sandbox_StayWithMe_RomanceRequirementDays": "Romantik: Erforderliche Tage",
     "Sandbox_StayWithMe_RomanceRequirementDays_tooltip": "Tage, die sie dich kennen muss, bevor die Romantik freigeschaltet werden kann. Standard 2.",
-    "Sandbox_StayWithMe_RelationshipLossOnHit": "Beziehungsverlust bei Treffer",
-    "Sandbox_StayWithMe_RelationshipLossOnHit_tooltip": "Freundschaftsverlust, wenn du sie triffst und die spielerspezifische Einstellung 'Treffer zählen' aktiv ist. Der Romantikverlust skaliert mit fünf Achteln dieses Wertes. 0 = kein Verlust. Standard 8.",
     "Sandbox_StayWithMe_CarryCapacityBonus": "Tragekapazitäts-Bonus",
     "Sandbox_StayWithMe_CarryCapacityBonus_tooltip": "Ein fester Bonus auf ihre Tragekapazität zusätzlich zu dem auf Stärke basierenden Wert (0-20). Standard 0.",
     "Sandbox_StayWithMe_MoodEffectMultiplier": "Stimmungseffekt-Multiplikator",

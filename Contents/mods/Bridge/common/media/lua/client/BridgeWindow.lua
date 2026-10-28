@@ -564,7 +564,6 @@ BridgeWindow.TICKS = {
     { key = "autoHeal", label = "OptAutoHeal", tip = "OptAutoHealTip" },
 
     { key = "redKit", label = "OptRedKit", tip = "OptRedKitTip" },
-    { key = "hitMatters", label = "OptHitMatters", tip = "OptHitMattersTip" },
     { key = "gifts", label = "OptGifts", tip = "OptGiftsTip" },
     { key = "romance", label = "OptRomance", tip = "OptRomanceTip" },
     { key = "mood", label = "OptMood", tip = "OptMoodTip" },
@@ -1336,6 +1335,7 @@ function BridgeWindow.neededSize()
     if BridgeHomeTab ~= nil then
         w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowHome")))
         w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr("OptHomeResources")) + PAD)
+        w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr("OptHomeAllFloors")) + PAD)
     end
     return math.max(BridgeWindow.WIDTH, math.ceil(w))
 end

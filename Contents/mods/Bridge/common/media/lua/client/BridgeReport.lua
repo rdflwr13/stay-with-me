@@ -281,7 +281,7 @@ function BridgeReport.generate()
     put("mode", tostring(Bridge ~= nil and Bridge.mode or "-"))
     put("mp", tostring(Bridge ~= nil and Bridge.mp or false))
     put("equip_scale", safeValue(function() return BridgeData.equipScale(store) end))
-    for _, key in ipairs({ "autoHeal", "redKit", "hitMatters", "gifts", "romance", "mood", "xpPopups", "relPopups", "fatigueBar" }) do
+    for _, key in ipairs({ "autoHeal", "redKit", "gifts", "romance", "mood", "xpPopups", "relPopups", "fatigueBar" }) do
         put(key, opt(key))
     end
 

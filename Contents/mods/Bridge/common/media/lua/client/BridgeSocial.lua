@@ -309,12 +309,6 @@ function BridgeSocial.deed(kind)
         local heal = mult(2, relMult())
         r.f = clamp(r.f + heal, -100, 100)
         popRel(heal, 0)
-    elseif kind == "hit" then
-        local v = BridgeData.sandboxNumber("RelationshipLossOnHit", 8, 0, 50)
-        local dr = math.floor(v * 5 / 8 + 0.5)
-        r.f = clamp(r.f - v, -100, 100)
-        r.r = clamp(r.r - dr, 0, 100)
-        popRel(-v, -dr)
     end
     BridgeSocial.save(true)
 end
@@ -1632,12 +1626,8 @@ function BridgeSocial.relaxed(r)
     pcall(function()
         local red = BridgeData.owner()
         local sq = red ~= nil and red:getCurrentSquare() or nil
-        local h = BridgeData.homeOf(Bridge.store)
-        if sq ~= nil and type(h) == "table" then
-            local x, y, z = sq:getX(), sq:getY(), sq:getZ()
-            if z == h.z and x >= h.x and x <= (h.x + h.w) and y >= h.y and y <= (h.y + h.h) then
-                home = true
-            end
+        if sq ~= nil and BridgeHome ~= nil and type(BridgeHome.contains) == "function" then
+            home = BridgeHome.contains(sq:getX(), sq:getY(), sq:getZ()) == true
         end
         if not home and sq ~= nil then fallback = sq:isInARoom() == true end
         if not home and not fallback then

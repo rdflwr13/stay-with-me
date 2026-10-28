@@ -16,8 +16,6 @@
     "Sandbox_StayWithMe_RomanceRequirementFriend_tooltip": "Сколько дружбы нужно, чтобы открылась романтика (0-100). Обычно 30.",
     "Sandbox_StayWithMe_RomanceRequirementDays": "Романтика: нужно дней",
     "Sandbox_StayWithMe_RomanceRequirementDays_tooltip": "Сколько дней знакомства, прежде чем откроется романтика. Обычно 2.",
-    "Sandbox_StayWithMe_RelationshipLossOnHit": "Потеря отношений от удара",
-    "Sandbox_StayWithMe_RelationshipLossOnHit_tooltip": "Сколько дружбы снимается за удар, если у игрока включено, что удары портят отношения. Романтика снимается на пять восьмых от этого числа. 0 значит без потери. Обычно 8.",
     "Sandbox_StayWithMe_CarryCapacityBonus": "Добавка к пределу веса",
     "Sandbox_StayWithMe_CarryCapacityBonus_tooltip": "Добавка к пределу веса сверх значения от силы (0-20). Обычно 0.",
     "Sandbox_StayWithMe_MoodEffectMultiplier": "Множитель настроения",

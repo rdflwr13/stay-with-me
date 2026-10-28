@@ -413,9 +413,9 @@ BridgeData.DEFAULT_GUN_USE = "always"
 BridgeData.AMMO_RESERVES = { free = true, conserve = true, emergency = true }
 BridgeData.DEFAULT_AMMO_RESERVE = "free"
 
-BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
+BridgeData.OPTIONS = { autoHeal = true, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
     relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true,
-    homeAmmo = false,
+    homeAmmo = false, homeAllFloors = false,
     collapseActions = true, gunMelee = true, gunReloadIdle = true, gunMagCare = false, gunUse = "always",
     ammoReserve = "free", lootMenu = true }
 BridgeData.HAIR_MAX = 40
@@ -738,6 +738,8 @@ end
 
 BridgeData.HOME_MIN = 4
 BridgeData.HOME_MAX = 40
+BridgeData.HOME_MAX_FLOORS = 6
+BridgeData.HOME_BLD_MAX = 64
 
 
 function BridgeData.cleanHome(t)
@@ -750,7 +752,72 @@ function BridgeData.cleanHome(t)
     end
     if out.w < BridgeData.HOME_MIN or out.w > BridgeData.HOME_MAX then return nil end
     if out.h < BridgeData.HOME_MIN or out.h > BridgeData.HOME_MAX then return nil end
+    local hasLow = t.z1 ~= nil
+    local hasHigh = t.z2 ~= nil
+    if hasLow ~= hasHigh then return nil end
+    if hasLow then
+        local z1 = tonumber(t.z1)
+        local z2 = tonumber(t.z2)
+        if z1 == nil or z2 == nil or z1 ~= z1 or z2 ~= z2 then return nil end
+        z1, z2 = math.floor(z1), math.floor(z2)
+        if z1 > out.z or out.z > z2 then return nil end
+        if z2 - z1 + 1 > BridgeData.HOME_MAX_FLOORS then return nil end
+        out.z1, out.z2 = z1, z2
+    end
+    if type(t.bld) == "string" and #t.bld > 0 and #t.bld <= BridgeData.HOME_BLD_MAX then
+        out.bld = t.bld
+    end
     return out
+end
+
+
+function BridgeData.homeRange(h, allFloors)
+    if type(h) ~= "table" then return nil, nil end
+    if allFloors and type(h.z1) == "number" and type(h.z2) == "number" then return h.z1, h.z2 end
+    return h.z, h.z
+end
+
+
+function BridgeData.homeHas(h, x, y, z, margin, allFloors)
+    if type(h) ~= "table" or x == nil or y == nil or z == nil then return false end
+    margin = tonumber(margin) or 0
+    local z1, z2 = BridgeData.homeRange(h, allFloors)
+    if z1 == nil then return false end
+    local fz = math.floor(z)
+    if fz < z1 or fz > z2 then return false end
+    return x >= (h.x - margin) and x <= (h.x + h.w - 1 + margin)
+        and y >= (h.y - margin) and y <= (h.y + h.h - 1 + margin)
+end
+
+
+function BridgeData.buildingIdOf(sq)
+    if sq == nil then return nil end
+    local b = nil
+    local doors = rawget(_G, "BridgeDoors")
+    if type(doors) == "table" and type(doors.buildingOf) == "function" then
+        local ok, found = pcall(doors.buildingOf, sq)
+        if ok then b = found end
+    end
+    if b == nil then pcall(function() b = sq:getBuilding() end) end
+    if b == nil then return nil end
+    local id = nil
+    pcall(function()
+        local def = b:getDef()
+        if def ~= nil and type(def.getIDString) == "function" then id = tostring(def:getIDString()) end
+        if id == nil or id == "" then id = tostring(b:getID()) end
+    end)
+    if id == nil or id == "" or id == "0" or id == "nil" then return nil end
+    return id
+end
+
+
+function BridgeData.homeBuildingOk(h, sq)
+    if type(h) ~= "table" then return false end
+    local want = h.bld
+    if want == nil then return true end
+    local got = BridgeData.buildingIdOf(sq)
+    if got == nil then return true end
+    return got == want
 end
 
 
@@ -882,7 +949,7 @@ BridgeData.GENDERED_KEYS = {
     Talk_Thanks = true, Talk_Comfort = true, Rel_Crush = true, InvAssign = true, LookDefault = true,
     TalkCantBusy = true, TalkCantRepeat = true, TalkCantFull = true, TalkCantAfterFight = true,
     CombatAggressive = true, CombatAggressiveTip = true, CombatGuardTip = true,
-    OptAutoHeal = true, OptAutoHealTip = true, OptHitMatters = true, OptGifts = true,
+    OptAutoHeal = true, OptAutoHealTip = true, OptGifts = true,
     OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRelPopupsTip = true, OptRomanceTip = true,
     OptFatigueBar = true, OptFatigueBarTip = true,
     OptSitWithRed = true, OptSitWithRedTip = true,

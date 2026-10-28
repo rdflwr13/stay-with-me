@@ -16,8 +16,6 @@
     "Sandbox_StayWithMe_RomanceRequirementFriend_tooltip": "Friendship she needs before romance can open (0-100). Default 30.",
     "Sandbox_StayWithMe_RomanceRequirementDays": "Romance: Days Required",
     "Sandbox_StayWithMe_RomanceRequirementDays_tooltip": "Days she must have known you before romance can open. Default 2.",
-    "Sandbox_StayWithMe_RelationshipLossOnHit": "Relationship Loss On Hit",
-    "Sandbox_StayWithMe_RelationshipLossOnHit_tooltip": "Friendship lost when you hit her and the per-player 'hits matter' setting is on. Romance loss scales at five eighths of this value. 0 = no loss. Default 8.",
     "Sandbox_StayWithMe_CarryCapacityBonus": "Carry Capacity Bonus",
     "Sandbox_StayWithMe_CarryCapacityBonus_tooltip": "Flat bonus to her carry capacity on top of the Strength-based value (0-20). Default 0.",
     "Sandbox_StayWithMe_MoodEffectMultiplier": "Mood Effect Multiplier",

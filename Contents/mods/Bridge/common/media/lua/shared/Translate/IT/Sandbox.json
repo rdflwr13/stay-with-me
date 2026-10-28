@@ -16,8 +16,6 @@
     "Sandbox_StayWithMe_RomanceRequirementFriend_tooltip": "Livello di amicizia necessario prima che lei possa sviluppare un legame romantico con te (0-100). Predefinito: 30.",
     "Sandbox_StayWithMe_RomanceRequirementDays": "Legame romantico: giorni richiesti",
     "Sandbox_StayWithMe_RomanceRequirementDays_tooltip": "Numero di giorni da cui deve conoscerti prima che possa sviluppare un legame romantico con te. Predefinito: 2.",
-    "Sandbox_StayWithMe_RelationshipLossOnHit": "Perdita di relazione quando viene colpita",
-    "Sandbox_StayWithMe_RelationshipLossOnHit_tooltip": "Punti amicizia persi quando la colpisci e l'impostazione individuale del giocatore che considera i colpi è attivata. La perdita del legame romantico equivale a cinque ottavi di questo valore. 0 = nessuna perdita. Predefinito: 8.",
     "Sandbox_StayWithMe_CarryCapacityBonus": "Bonus capacità di trasporto",
     "Sandbox_StayWithMe_CarryCapacityBonus_tooltip": "Bonus fisso alla sua capacità di trasporto, aggiunto al valore determinato dalla Forza (0-20). Predefinito: 0.",
     "Sandbox_StayWithMe_MoodEffectMultiplier": "Moltiplicatore effetti sull'umore",

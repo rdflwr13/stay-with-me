@@ -1411,4 +1411,141 @@ do
     function BridgeEFZCompat.updateGrip() return gripUpdate() end
 
     Events.OnTick.Add(function() pcall(gripUpdate) end)
+
+    local SWM_VAR = "NotAloneBody"
+    local SWM_NEAR2 = 20 * 20
+    local swmWrapped = {}
+
+    local function swmIsBody(z)
+        if z == nil then return false end
+
+        local yes = false
+        pcall(function()
+            if type(z.getVariableBoolean) == "function" then
+                yes = z:getVariableBoolean(SWM_VAR) == true
+            end
+        end)
+        if yes then return true end
+
+        pcall(function()
+            if type(z.hasModData) == "function" and z:hasModData() then
+                local md = z:getModData()
+                yes = type(md) == "table" and md.notAloneBody == true
+            end
+        end)
+
+        return yes == true
+    end
+
+    local function swmCountersFired(player)
+        local stats = player:getStats()
+        if stats == nil then return false end
+        return stats:getNumVisibleZombies() > 0
+                or stats:getNumChasingZombies() > 0
+                or stats:getNumVeryCloseZombies() > 0
+    end
+
+    local function swmOnlyOursNear(player)
+        if player == nil or not swmCountersFired(player) then return false end
+
+        local cell = getCell()
+        if cell == nil then return false end
+        local list = cell:getZombieList()
+        if list == nil then return false end
+
+        local px, py, pz = player:getX(), player:getY(), player:getZ()
+        local seen = 0
+
+        for i = 0, list:size() - 1 do
+            local z = list:get(i)
+            if z ~= nil and not z:isDead() then
+                local dx, dy = z:getX() - px, z:getY() - py
+                if (dx * dx + dy * dy) <= SWM_NEAR2
+                        and math.abs(z:getZ() - pz) < 1 then
+                    seen = seen + 1
+                    if not swmIsBody(z) then return false end
+                    if z:getTarget() == player then return false end
+                end
+            end
+        end
+
+        return seen > 0
+    end
+
+    local function swmBystander(z, player)
+        if not swmIsBody(z) then return nil end
+        return true
+    end
+
+    local function swmInstallHook()
+        local tests = AutoAll.bystanderTests
+        if type(tests) ~= "table" then return false end
+        for i = 1, #tests do
+            if tests[i] == swmBystander then return true end
+        end
+        table.insert(tests, swmBystander)
+        return true
+    end
+
+    local function swmWrapSafety(host, name)
+        if type(host) ~= "table" then return false end
+        local original = host[name]
+        if type(original) ~= "function" then return false end
+        if type(host.opt) ~= "function" then return false end
+
+        swmWrapped[host] = swmWrapped[host] or {}
+        if swmWrapped[host][name] then return true end
+        swmWrapped[host][name] = true
+
+        host[name] = function(state)
+            local player = state and state.player
+            if player == nil then return original(state) end
+
+            local stopOn = false
+            pcall(function() stopOn = host.opt("stopZombie") == true end)
+            if not stopOn then return original(state) end
+
+            local ok, ours = pcall(swmOnlyOursNear, player)
+            if not (ok and ours) then return original(state) end
+
+            local opt = host.opt
+            host.opt = function(key)
+                if key == "stopZombie" then return false end
+                return opt(key)
+            end
+
+            local okRun, reason = pcall(original, state)
+            host.opt = opt
+            if not okRun then error(reason, 0) end
+            return reason
+        end
+
+        return true
+    end
+
+    local function swmInstallAutoAll()
+        if type(AutoAll) ~= "table" then return end
+
+        if type(AutoAll.onlyBystandersNear) == "function"
+                and type(AutoAll.bystanderTests) == "table" then
+            if swmInstallHook() then
+                print("[Bridge] Auto All: companion added to bystander filter")
+            end
+            return
+        end
+
+        local wrapped = false
+        if type(AutoAll.checkSafety) == "function"
+                and type(AutoAll.opt) == "function" then
+            wrapped = swmWrapSafety(AutoAll, "checkSafety") or wrapped
+        end
+        if type(MuscleManager) == "table" then
+            wrapped = swmWrapSafety(MuscleManager, "checkSafety") or wrapped
+        end
+        if wrapped then
+            print("[Bridge] Auto All BETA: companion-safe zombie stop installed")
+        end
+    end
+
+    Events.OnGameStart.Add(swmInstallAutoAll)
 end
