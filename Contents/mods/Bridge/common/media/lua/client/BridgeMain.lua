@@ -5012,7 +5012,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     gunselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
-    homeselftest = true,
+    homeselftest = true, sleepselftest = true, sleepfix = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
 
 
@@ -5721,6 +5721,16 @@ function Bridge.run(line)
     if cmd == "ffselftest" then
         if BridgeFastForward == nil then return "fastforward not loaded" end
         return BridgeFastForward.selftest()
+    end
+
+    if cmd == "sleepselftest" then
+        if BridgeSleep == nil then return "sleep not loaded" end
+        return BridgeSleep.selftest()
+    end
+
+    if cmd == "sleepfix" then
+        if BridgeSleep == nil then return "sleep not loaded" end
+        return BridgeSleep.set(parts[3], parts[4])
     end
 
     if cmd == "guntalk" then

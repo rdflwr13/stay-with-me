@@ -446,6 +446,9 @@ function BridgeGear.sync(b)
         end
     end
     if changed then pcall(function() b:resetModelNextFrame() end) end
+    if BridgeGunfight ~= nil and type(BridgeGunfight.clearStaleAttachment) == "function" then
+        pcall(BridgeGunfight.clearStaleAttachment, b)
+    end
 end
 
 function BridgeGear.reset(b)

@@ -637,6 +637,23 @@ local function attachGun(body, item)
 end
 
 
+function BridgeGunfight.clearStaleAttachment(body)
+    local a = BridgeGunfight.attached
+    if body == nil or a == nil or a.item == nil or type(a.slot) ~= "string" or a.slot == "" then return false end
+    if Bridge.body ~= nil and body ~= Bridge.body then return false end
+    if BridgeInventory ~= nil and type(BridgeInventory.modelBusy) == "function"
+        and BridgeInventory.modelBusy(body) then return false end
+    if BridgeGear == nil or type(BridgeGear.slotStill) ~= "function" then return false end
+    if ISHotbarAttachDefinition == nil then return false end
+    local ok, still = pcall(BridgeGear.slotStill, body, a.item, a.slot)
+    if not ok or still == true then return false end
+    detachGun(body)
+    pcall(function() body:resetModelNextFrame() end)
+    log("gun attachment cleared: " .. tostring(a.item:getType()) .. " at " .. a.slot .. " (slot no longer available)")
+    return true
+end
+
+
 local function hands(body, item, on)
     if body == nil or item == nil then return end
     if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, body) end
