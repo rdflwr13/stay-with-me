@@ -120,7 +120,12 @@ function UI:start(b)
         return
     end
     BridgeWorkSelect.sortTargets(targets)
-    local res = BridgeTask.start(self.kind, targets)
+    local res = nil
+    if type(def.start) == "function" then
+        res = def.start(targets)
+    else
+        res = BridgeTask.start(self.kind, targets)
+    end
     log("area job " .. tostring(res) .. " kind=" .. tostring(self.kind) .. " targets=" .. tostring(#targets))
 end
 
@@ -224,10 +229,18 @@ function UI:prerender()
     local b = self:bounds()
     if b ~= nil then
         local ok, known = self:quickValid(b)
-        local r, g = 1.0, 1.0
-        if known then r, g = (ok and 0.1 or 1.0), (ok and 1.0 or 0.1) end
+        local vr, vg, vb = 0.1, 1.0, 0.1
+        local ir, ig, ib = 1.0, 0.1, 0.1
+        if self.kind == "depositArea" then
+            vr, vg, vb = 0.2, 0.5, 1.0
+            ir, ig, ib = 1.0, 0.6, 0.1
+        end
+        local r, g, bl = 1.0, 1.0, 1.0
+        if known then
+            if ok then r, g, bl = vr, vg, vb else r, g, bl = ir, ig, ib end
+        end
         addAreaHighlightForPlayer(self.playerNum, b.x1, b.y1, b.x2 + 1, b.y2 + 1, b.z,
-            r, g, 0.1, 0.35)
+            r, g, bl, 0.35)
     elseif sq ~= nil then
         addAreaHighlightForPlayer(self.playerNum, wx, wy, wx + 1, wy + 1, self.level, 0.1, 1.0, 0.1, 0.55)
     end
@@ -631,6 +644,20 @@ BridgeWorkSelect.kinds = {
         destination = true,
         noneSay = "JobNoCorpses",
     },
+    depositArea = {
+        collect = function(b)
+            if BridgeDeposit == nil or type(BridgeDeposit.targetsIn) ~= "function" then return {} end
+            return BridgeDeposit.targetsIn(b, BridgeWorkSelect.MAX_LOOT_ITEMS)
+        end,
+        start = function(targets)
+            if BridgeDeposit == nil or type(BridgeDeposit.start) ~= "function" then return "unavailable" end
+            return BridgeDeposit.start(targets)
+        end,
+        max = BridgeWorkSelect.MAX_LOOT_ITEMS,
+        maxSide = 8,
+        min = 1,
+        noneSay = "JobNoStorage",
+    },
 }
 
 function BridgeWorkSelect.sortTargets(targets)
@@ -679,6 +706,7 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "cleanUp" and BridgeTask.CLEANING_ENABLED ~= 1 then return nil end
     if kind == "clearPlants" and BridgeTask.CLEARING_ENABLED ~= 1 then return nil end
     if kind == "lootArea" and BridgeTask.LOOTING_ENABLED ~= 1 then return nil end
+    if kind == "depositArea" and (BridgeTask.DEPOSIT_ENABLED ~= 1 or BridgeDeposit == nil) then return nil end
     if kind == "moveCorpses" and BridgeTask.MOVE_CORPSES_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)

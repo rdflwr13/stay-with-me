@@ -4119,7 +4119,7 @@ function BridgeInventory.took(args)
     elseif args.token ~= nil and args.token >= 0 then
         BridgeInventory.answers[args.token] = { ok = args.ok == true, ids = args.ids, id = args.id, why = args.why, direct = args.direct == true }
     end
-    if not args.ok then log("take failed: " .. tostring(args.why)) end
+    if not args.ok then log("take failed: " .. tostring(args.why) .. " n=" .. tostring(#items)) end
 end
 
 
@@ -4446,7 +4446,8 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
                 end)
             end
             sendClientCommand(self.character, "Bridge", "take",
-                { recs = recs, token = self.token, dest = destId, w = w, h = h, top = top, drop = drop, destRef = self.bridgeDirect })
+                { recs = recs, token = self.token, dest = destId, w = w, h = h, top = top, drop = drop,
+                  destRef = self.bridgeDirect, home = self.bridgeHome == true, deposit = self.bridgeDeposit == true })
         end
         self.sent = true
         pcall(function() self.action:setWaitForFinished(true) end)
@@ -4481,6 +4482,7 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
             return
         end
         if not a.ok then
+            self.bridgeRefused = true
             BridgeInventory.answers[self.token] = nil
             pcall(function() self.action:forceStop() end)
             return
@@ -4502,6 +4504,9 @@ if ISInventoryTransferAction ~= nil and not ISInventoryTransferAction.bridgeWrap
             elseif (Bridge.time - self.sentTick) < WAIT_TICKS then
                 return
             end
+        end
+        if self.bridgeMinTime ~= nil then
+            if (Bridge.time - (self.sentTick or Bridge.time)) < self.bridgeMinTime then return end
         end
         BridgeInventory.answers[self.token] = nil
         pcall(function() self.action:forceComplete() end)

@@ -1266,6 +1266,55 @@ BridgeServer.Commands.state = function(player, args)
             end
         end
     end
+    if args.storeCats ~= nil then
+        local cats = BridgeData.cleanLootCats(args.storeCats)
+        if cats ~= nil then
+            local old = BridgeData.cleanLootCats(rec.storeCats) or {}
+            local same = true
+            for k, v in pairs(old) do if cats[k] ~= v then same = false break end end
+            for k, v in pairs(cats) do if old[k] ~= v then same = false break end end
+            if not same then
+                rec.storeCats = cats
+                changed = true
+            end
+        end
+    end
+    if args.storeRefs ~= nil then
+        local refs = BridgeData.cleanStoreRefs(args.storeRefs)
+        if refs ~= nil then
+            local all = BridgeData.optionOf(rec, "homeAllFloors")
+            local h = BridgeData.homeOf(rec)
+            if type(h) ~= "table" then
+                if #refs == 0 and type(rec.storeRefs) == "table" and #rec.storeRefs > 0 then
+                    rec.storeRefs = {}
+                    changed = true
+                    log("store refs cleared by " .. tostring(player:getUsername()))
+                else
+                    log("store refs ignored: no home")
+                end
+            else
+                local kept = {}
+                for i = 1, #refs do
+                    local r = refs[i]
+                    local inside = false
+                    pcall(function() inside = BridgeData.homeHas(h, r.x, r.y, r.z, 0, all) == true end)
+                    if inside then kept[#kept + 1] = r end
+                end
+                local old = BridgeData.cleanStoreRefs(rec.storeRefs) or {}
+                local same = #old == #kept
+                if same then
+                    for i = 1, #old do
+                        if BridgeData.storeRefKey(old[i]) ~= BridgeData.storeRefKey(kept[i]) then same = false break end
+                    end
+                end
+                if not same then
+                    rec.storeRefs = kept
+                    changed = true
+                    log(string.format("store refs %d by %s", #kept, tostring(player:getUsername())))
+                end
+            end
+        end
+    end
     if args.lootCorpses ~= nil and rec.lootCorpses ~= (args.lootCorpses == true) then
         rec.lootCorpses = args.lootCorpses == true
         changed = true
@@ -3608,15 +3657,121 @@ BridgeServer.Commands.take = function(player, args)
     local rec = record(who)
     local recs = args.recs
     if type(recs) ~= "table" then recs = (type(args.rec) == "table") and { args.rec } or {} end
-    local function answer(ok, ids, why, direct)
+    local function answer(ok, ids, why, direct, home)
         if args.token ~= nil then
             sendServerCommand(player, "Bridge", "took", { token = args.token, ok = ok, ids = ids, id = (ids and ids[1]) or nil,
-                why = why, iseq = rec.iseq, direct = direct == true })
+                why = why, iseq = rec.iseq, direct = direct == true, home = home == true })
         end
     end
     if #recs == 0 or type(recs[1]) ~= "table" or type(recs[1].t) ~= "string" then return answer(false, nil, "no record") end
     if rec.bodyId == nil and args.returnId == nil and not rec.parked then return answer(false, nil, "no body") end
     local list = BridgeItems.decode(rec.items or "")
+    if args.deposit == true then
+        local function refText()
+            local r = args.destRef
+            if type(r) ~= "table" then return "?" end
+            return string.format("%s@%s,%s,%s", tostring(r.kind), tostring(r.x), tostring(r.y), tostring(r.z))
+        end
+        local function fail(reason)
+            log(string.format("deposit refused: %s n=%d dest=%s home=%s", tostring(reason), #recs, refText(),
+                tostring(args.home == true)))
+            return answer(false, nil, reason)
+        end
+        if type(args.destRef) ~= "table" then return fail("no destination") end
+        local body = BridgeServer.bodies[who] or currentBody(who, rec)
+        if body == nil then return fail("no body") end
+        local ref = args.destRef
+        local destSq = nil
+        if args.home == true then
+            if ref.kind == "body" or ref.kind == "floor" then return fail("not a storage container") end
+            local member = BridgeData.storeRefInList(rec, ref)
+            log(string.format("deposit home ref=%s member=%s", refText(), tostring(member)))
+            if not member then return fail("not marked storage") end
+        end
+        if args.home == true then
+            local all = BridgeData.optionOf(rec, "homeAllFloors")
+            local h = homeRectOf(rec, all)
+            if h == nil then return fail("no home") end
+            local bx, by, bz = nil, nil, nil
+            pcall(function() bx, by, bz = math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()) end)
+            if bx == nil then return fail("no position") end
+            if not BridgeData.homeHas(h, bx, by, bz, 0, all) then return fail("not at home") end
+            if tonumber(ref.x) == nil or tonumber(ref.y) == nil or tonumber(ref.z) == nil then
+                return fail("bad destination")
+            end
+            if not BridgeData.homeHas(h, ref.x, ref.y, ref.z, 0, all) then
+                return fail("destination outside home")
+            end
+            pcall(function() destSq = getCell():getGridSquare(math.floor(ref.x), math.floor(ref.y), math.floor(ref.z)) end)
+        else
+            local _, sq = companionAtRelaxed(player, ref, 6)
+            destSq = sq
+        end
+        if destSq == nil then return fail("no destination square") end
+        local destC = BridgeServer.resolveRef(destSq, ref, player)
+        if destC == nil then return fail("no destination") end
+        local out = list
+        for i = 1, #recs do
+            local idx = matchRecord(out, recs[i], nil)
+            if idx == nil then return fail("not in body snapshot") end
+            out = removeSubtree(out, idx)
+        end
+        local wsum = 0
+        for i = 1, #recs do
+            local probe = instanceItem(recs[i].t)
+            if probe == nil then return fail("bad item") end
+            local allowed = true
+            pcall(function() allowed = destC:isItemAllowed(probe) ~= false end)
+            if not allowed then return fail("item not allowed") end
+            local w = 0
+            pcall(function() w = probe:getUnequippedWeight() or 0 end)
+            wsum = wsum + (tonumber(w) or 0)
+        end
+        local free = nil
+        pcall(function() free = destC:getEffectiveCapacity(player) - destC:getContentsWeight() end)
+        local cap, load = nil, nil
+        pcall(function()
+            cap = destC:getEffectiveCapacity(player)
+            load = destC:getContentsWeight()
+        end)
+        log(string.format("deposit check n=%d dest=%s type=%s wsum=%.2f free=%s cap=%s load=%s",
+            #recs, refText(), tostring(destC:getType()), wsum, tostring(free), tostring(cap), tostring(load)))
+        if type(free) ~= "number" or wsum > free + 0.001 then return fail("no room") end
+        local made = {}
+        local ok, err = pcall(function()
+            for i = 1, #recs do
+                local item = BridgeItems.make(destC, recs[i])
+                if item == nil then error("AddItem returned nil") end
+                pcall(function() sendAddItemToContainer(destC, item) end)
+                pcall(function() sendItemStats(item) end)
+                made[#made + 1] = item
+            end
+        end)
+        if not ok then
+            for i = 1, #made do
+                local item = made[i]
+                pcall(function() destC:Remove(item) end)
+                pcall(function() sendRemoveItemFromContainer(destC, item) end)
+            end
+            log("deposit take failed: " .. tostring(err))
+            return fail(tostring(err))
+        end
+        BridgeItems.set(rec, BridgeItems.encode(out))
+        rec.saved = 1
+        rec.iseq = (rec.iseq or 0) + 1
+        local outIds = {}
+        for i = 1, #made do
+            outIds[i] = made[i]:getID()
+            local gone = {}
+            flatten(recs[i], nil, gone)
+            journalNote("T", who, rec, outIds[i], gone)
+        end
+        transmit()
+        answer(true, outIds, nil, true, args.home == true)
+        log(string.format("deposit take %d item(s) by %s dest=%s home=%s", #made, tostring(who), refText(),
+            tostring(args.home == true)))
+        return
+    end
     local flags = { w = args.w == true, h = tonumber(args.h), top = args.top == true }
     local out = list
     for i = 1, #recs do

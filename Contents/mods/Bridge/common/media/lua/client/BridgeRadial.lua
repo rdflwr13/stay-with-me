@@ -250,7 +250,7 @@ local function jobsBusy()
 end
 
 local JOB_KINDS = {
-    lootArea = true, cleanUp = true, clearPlants = true, chopTree = true,
+    lootArea = true, depositArea = true, deposit = true, cleanUp = true, clearPlants = true, chopTree = true,
     moveCorpses = true, pryDoor = true, fillWater = true, emptyFluid = true,
     washSink = true,
 }
@@ -276,15 +276,22 @@ local function workEntries()
     end
     local defs = {
         { flag = "LOOTING_ENABLED", kind = "lootArea", key = "JobLootArea", handler = BridgeMenu.onJobLootArea, icon = ICONS.loot },
+        { flag = "DEPOSIT_ENABLED", kind = "depositArea", key = "JobDepositArea", handler = BridgeMenu.onJobDepositArea, icon = ICONS.loot },
+        { flag = "DEPOSIT_ENABLED", kind = "deposit", key = "DepositLootHome", handler = BridgeMenu.onDepositHome, icon = ICONS.work,
+            when = function() return BridgeDeposit ~= nil and BridgeDeposit.homeHere() end },
         { flag = "CLEANING_ENABLED", kind = "cleanUp", key = "JobCleanUp", handler = BridgeMenu.onJobCleanUp, icon = ICONS.clean },
         { flag = "CLEARING_ENABLED", kind = "clearPlants", key = "JobClearPlants", handler = BridgeMenu.onJobClearPlants, icon = ICONS.plants },
         { flag = "TREECUTTING_ENABLED", kind = "chopTree", key = "JobChopTree", handler = BridgeMenu.onJobChopTree, icon = ICONS.chop },
         { flag = "MOVE_CORPSES_ENABLED", kind = "moveCorpses", key = "JobMoveCorpses", handler = BridgeMenu.onJobMoveCorpses, icon = ICONS.corpses },
     }
     for _, def in ipairs(defs) do
-        if BridgeTask[def.flag] == 1 then
+        if BridgeTask[def.flag] == 1 and (def.when == nil or def.when() == true) then
             local ok = false
-            pcall(function() ok = BridgeTask.kinds[def.kind].available(Bridge.body) == true end)
+            if def.kind == "depositArea" then
+                ok = BridgeDeposit ~= nil and type(BridgeDeposit.start) == "function"
+            else
+                pcall(function() ok = BridgeTask.kinds[def.kind].available(Bridge.body) == true end)
+            end
             if ok then
                 out[#out + 1] = make(tr(def.key), def.icon, def.handler)
             end

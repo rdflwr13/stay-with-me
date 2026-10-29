@@ -2460,6 +2460,19 @@ function Bridge.setLootCat(cat, on)
     return tostring(cat) .. "=" .. tostring(on == true)
 end
 
+function Bridge.setStoreCat(cat, on)
+    if type(cat) ~= "string" or not BridgeData.LOOT_CAT_SET[cat] then
+        return "no such storage category: " .. tostring(cat)
+    end
+    local cats = BridgeData.storeCatsOf(Bridge.store)
+    if on == true then cats[cat] = nil else cats[cat] = false end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { storeCats = cats }) end)
+    end
+    log("storeCat " .. cat .. "=" .. tostring(on == true))
+    return tostring(cat) .. "=" .. tostring(on == true)
+end
+
 function Bridge.setLootOption(key, value)
     if key ~= "lootCorpses" and key ~= "lootVehicles" then
         return "no such loot option: " .. tostring(key)
@@ -5010,7 +5023,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     gunselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
-    homeselftest = true, sleepselftest = true, sleepfix = true,
+    homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
 
 
@@ -5707,6 +5720,11 @@ function Bridge.run(line)
     if cmd == "homeselftest" then
         if BridgeHome == nil then return "home not loaded" end
         return BridgeHome.selftest()
+    end
+
+    if cmd == "depositselftest" then
+        if BridgeDeposit == nil then return "deposit not loaded" end
+        return BridgeDeposit.selftest()
     end
 
     if cmd == "gunselftest" then return BridgeGunRules.selftest() end

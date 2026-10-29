@@ -373,16 +373,18 @@ function BridgeReportTab.heightFor(width)
     local stepH = #BridgeReport.stepLines(width) * (fontS + 2) + 4
     local noteH = #BridgeReport.logNoteLines(width) * (fontS + 2) + 4
     local btnH = fontS + 6
-    return PAD + stepH + PAD + btnH + PAD / 2 + btnH + PAD / 2 + btnH + PAD / 2 + noteH + PAD + 4 * (fontS + 2) + PAD
+    local _, hintH = BridgeWindow.hintLines(width, "ReportHint", Bridge.companionName())
+    return PAD + hintH + stepH + PAD + btnH + PAD / 2 + btnH + PAD / 2 + btnH + PAD / 2 + noteH + PAD + 4 * (fontS + 2) + PAD
 end
 
 function BridgeReportTab:createChildren()
     ISPanel.createChildren(self)
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
+    self.hintLines, self.hintH = BridgeWindow.hintLines(self.width, "ReportHint", Bridge.companionName())
     self.stepLines = BridgeReport.stepLines(self.width)
     local stepH = #self.stepLines * (fontS + 2) + 4
-    local btnY = PAD + stepH + PAD
+    local btnY = PAD + self.hintH + stepH + PAD
     self.btn = ISButton:new(PAD, btnY, self.width - PAD * 2, btnH, tr("ReportButton"), self, BridgeReportTab.onGenerate)
     self.btn:initialise()
     self.btn:instantiate()
@@ -457,6 +459,11 @@ function BridgeReportTab:render()
     if Bridge == nil or Bridge.store == nil then return end
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local y = PAD
+    for _, line in ipairs(self.hintLines or {}) do
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        y = y + fontS + 2
+    end
+    y = PAD + (self.hintH or 0)
     for _, line in ipairs(self.stepLines or {}) do
         self:drawText(line, PAD, y, 0.85, 0.85, 0.85, 1, UIFont.Small)
         y = y + fontS + 2

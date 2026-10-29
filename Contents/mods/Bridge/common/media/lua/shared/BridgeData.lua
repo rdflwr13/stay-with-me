@@ -416,8 +416,9 @@ BridgeData.DEFAULT_AMMO_RESERVE = "free"
 BridgeData.OPTIONS = { autoHeal = true, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
     relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true,
     homeAmmo = false, homeAllFloors = false, startUnarmed = false,
-    collapseActions = true, gunMelee = true, gunReloadIdle = true, gunMagCare = false, gunUse = "always",
-    ammoReserve = "free", lootMenu = true }
+    gunMelee = true, gunReloadIdle = true, gunMagCare = false, gunUse = "always",
+    ammoReserve = "free", lootMenu = true,
+    storeMatch = true, storeKeepTools = true, storeKeepMeds = true, storeKeepLight = true }
 BridgeData.HAIR_MAX = 40
 BridgeData.GENDER_SWAP_COOLDOWN = 60
 BridgeData.GENDER_COMBAT_GRACE = 15
@@ -466,10 +467,6 @@ function BridgeData.homeResources(rec)
     return BridgeData.optionOf(rec, "homeResources")
 end
 
-
-function BridgeData.collapseActions(rec)
-    return BridgeData.optionOf(rec, "collapseActions")
-end
 
 
 
@@ -649,6 +646,90 @@ function BridgeData.lootPoolAllowed(rec, pool, item)
     if cat == nil and pool ~= nil and BridgeData.LOOT_CAT_SET[pool] then cat = pool end
     if cat == nil then return true end
     return BridgeData.lootCatOn(rec, cat)
+end
+
+function BridgeData.storeCatsOf(rec)
+    if type(rec) ~= "table" then return {} end
+    if type(rec.storeCats) ~= "table" then rec.storeCats = {} end
+    return rec.storeCats
+end
+
+function BridgeData.storeCatOn(rec, pool)
+    if pool == nil or type(rec) ~= "table" or type(rec.storeCats) ~= "table" then return true end
+    return rec.storeCats[pool] ~= false
+end
+
+function BridgeData.storePoolAllowed(rec, pool, item)
+    if item ~= nil then
+        local food, water, booze = false, false, false
+        pcall(function() food = item:IsFood() == true end)
+        pcall(function() water = item:isWaterSource() == true end)
+        pcall(function() booze = item:isAlcoholic() == true end)
+        if food or water or booze then
+            return BridgeData.storeCatOn(rec, booze and "ReceiveBooze" or "ReceiveFood")
+        end
+    end
+    local cat = nil
+    if pool ~= nil and pool ~= "ReceiveItem" then
+        cat = BridgeData.LOOT_POOL_GROUP[pool]
+        if cat == nil and BridgeData.LOOT_CAT_SET[pool] then cat = pool end
+    end
+    if cat == nil and item ~= nil then cat = BridgeData.lootCatPrefix(item) end
+    if cat == nil and pool ~= nil and BridgeData.LOOT_CAT_SET[pool] then cat = pool end
+    if cat == nil then return true end
+    return BridgeData.storeCatOn(rec, cat)
+end
+
+function BridgeData.storeRefKey(ref)
+    if type(ref) ~= "table" then return nil end
+    local kind = ref.kind
+    if kind ~= "obj" and kind ~= "veh" then return nil end
+    local x, y, z = tonumber(ref.x), tonumber(ref.y), tonumber(ref.z)
+    if x == nil or y == nil or z == nil then return nil end
+    if kind == "obj" then
+        local o, c = tonumber(ref.o), tonumber(ref.c)
+        if o == nil or c == nil or o < 0 or c < -1 then return nil end
+        return string.format("obj:%d:%d:%d:%d:%d", math.floor(x), math.floor(y), math.floor(z), math.floor(o), math.floor(c))
+    end
+    if ref.v == nil or ref.p == nil or tostring(ref.p) == "" then return nil end
+    return string.format("veh:%s:%s", tostring(ref.v), tostring(ref.p))
+end
+
+function BridgeData.cleanStoreRefs(value)
+    if type(value) ~= "table" then return nil end
+    local out, seen = {}, {}
+    for i = 1, #value do
+        local ref = value[i]
+        local key = BridgeData.storeRefKey(ref)
+        if key ~= nil and not seen[key] then
+            seen[key] = true
+            local clean = {
+                kind = ref.kind,
+                x = math.floor(tonumber(ref.x)),
+                y = math.floor(tonumber(ref.y)),
+                z = math.floor(tonumber(ref.z)),
+            }
+            if ref.kind == "obj" then
+                clean.o = math.floor(tonumber(ref.o))
+                clean.c = math.floor(tonumber(ref.c))
+            else
+                clean.v = ref.v
+                clean.p = tostring(ref.p)
+            end
+            out[#out + 1] = clean
+            if #out >= 128 then break end
+        end
+    end
+    return out
+end
+
+function BridgeData.storeRefInList(rec, ref)
+    local key = BridgeData.storeRefKey(ref)
+    if key == nil or type(rec) ~= "table" or type(rec.storeRefs) ~= "table" then return false end
+    for i = 1, #rec.storeRefs do
+        if BridgeData.storeRefKey(rec.storeRefs[i]) == key then return true end
+    end
+    return false
 end
 
 function BridgeData.lootOption(rec, key)

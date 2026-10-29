@@ -8,6 +8,7 @@ BridgeTask.LOOTING_ENABLED = 1
 BridgeTask.SIT_ENABLED = 1
 BridgeTask.LAY_ENABLED = 1
 BridgeTask.MOVE_CORPSES_ENABLED = 1
+BridgeTask.DEPOSIT_ENABLED = 1
 
 
 
@@ -1762,6 +1763,7 @@ function BridgeTask.reset()
     BridgeTask.phase = nil
     BridgeTask.info = "reset"
     BridgeTask.pendingStart = nil
+    BridgeTask.depositFull, BridgeTask.depositCount = nil, nil
     BridgeTask.deferred = {}
     BridgeTask.needImplement, BridgeTask.needFluid = nil, nil
     BridgeTask.needPetrol, BridgeTask.needAshTool = nil, nil
@@ -2129,6 +2131,8 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     elseif kind == "shower" then
     elseif kind == "pryDoor" then
         Bridge.speak("PryStart")
+    elseif kind == "deposit" then
+        Bridge.speak("JobDepositStart")
     elseif startText ~= nil then
         Bridge.speakText(startText)
     else
@@ -2153,6 +2157,7 @@ function BridgeTask.cancel(reason)
     BridgeTask.phase = nil
     BridgeTask.info = "cancel " .. tostring(reason)
     BridgeTask.pendingStart = nil
+    BridgeTask.depositFull, BridgeTask.depositCount = nil, nil
     BridgeTask.target = nil
     BridgeTask.needImplement, BridgeTask.needFluid = nil, nil
     BridgeTask.needPetrol, BridgeTask.needAshTool = nil, nil
@@ -2264,6 +2269,10 @@ function BridgeTask.finish()
     Bridge.target = nil
     local wasLootFull = BridgeTask.lootFull == true
     local wasGrabOnly = BridgeTask.grabOnly == true
+    local depositFull = BridgeTask.depositFull == true
+    local depositCount = tonumber(BridgeTask.depositCount)
+    BridgeTask.depositFull = nil
+    BridgeTask.depositCount = nil
     BridgeTask.lootList = nil
     BridgeTask.lootIdx = nil
     BridgeTask.lootPending = nil
@@ -2297,7 +2306,13 @@ function BridgeTask.finish()
     end
 
 
-    if clearNeed then
+    if depositCount ~= nil and depositCount > 0 then
+        if depositFull then
+            Bridge.speak(depositCount == 1 and "JobDepositDoneFullOne" or "JobDepositDoneFull", depositCount)
+        else
+            Bridge.speak(depositCount == 1 and "JobDepositDoneOne" or "JobDepositDone", depositCount)
+        end
+    elseif clearNeed then
         Bridge.speak((BridgeTask.doneCount or 0) > 0 and "JobPartialNeedCutTool" or "JobNeedCutTool")
     elseif needText ~= nil then
         Bridge.speakText(needText)
@@ -2317,6 +2332,8 @@ function BridgeTask.finish()
         if finishKind == "sit" or finishKind == "lay" or finishKind == "exercise" or finishKind == "washSink"
                 or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor"
                 or finishKind == "shower" then
+        elseif depositFull then
+            Bridge.speak("JobLootFull")
         elseif wasLootFull then
             Bridge.speak("JobLootFull")
         elseif wasGrabOnly then
@@ -4726,6 +4743,28 @@ function BridgeTask.kinds.lootArea.leave(body)
     BridgeTask.lootPending = nil
     BridgeTask.lootPendingAt = nil
     BridgeTask.deferred = {}
+end
+
+
+BridgeTask.kinds.deposit = {}
+BridgeTask.kinds.deposit.noTargets = true
+
+function BridgeTask.kinds.deposit.available(body)
+    return BridgeTask.DEPOSIT_ENABLED == 1
+end
+
+function BridgeTask.kinds.deposit.missing(body)
+    return nil
+end
+
+function BridgeTask.kinds.deposit.update(body)
+    if BridgeTask.DEPOSIT_ENABLED ~= 1 then return BridgeTask.finish() end
+    if BridgeDeposit == nil or type(BridgeDeposit.update) ~= "function" then return BridgeTask.finish() end
+    return BridgeDeposit.update(body)
+end
+
+function BridgeTask.kinds.deposit.leave(body)
+    if BridgeDeposit ~= nil and type(BridgeDeposit.clear) == "function" then pcall(BridgeDeposit.clear) end
 end
 
 

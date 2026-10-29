@@ -1666,8 +1666,6 @@
     "IGUI_NotAlone_OptHomeAmmoTip": "Activado: cuando está en casa y fuera de combate, toma del almacén munición para el arma que lleva si le queda poca en las bolsas. Desactivado: nunca.",
     "IGUI_NotAlone_OptHomeAmmoMale": "Usar automáticamente la munición guardada en casa",
     "IGUI_NotAlone_OptHomeAmmoTipMale": "Activado: cuando está en casa y fuera de combate, el acompañante toma del almacén munición para el arma que lleva si le queda poca en las bolsas. Desactivado: nunca.",
-    "IGUI_NotAlone_OptCollapseActions": "Acciones en el menú del objeto",
-    "IGUI_NotAlone_OptCollapseActionsTip": "Activado: sentarse, tumbarse, forzar la puerta y talar el árbol aparecen dentro del menú de la silla, la cama, la puerta o el árbol. Desactivado: aparecen en el primer nivel del menú del clic derecho.",
     "IGUI_NotAlone_OptLootMenu": "Mostrar opciones de saqueo / regalo",
     "IGUI_NotAlone_OptLootMenuTip": "Muestra las opciones de saqueo, ropa y regalos en el menú contextual del acompañante.",
     "IGUI_NotAlone_Say_HomeSet": "Entonces, este es nuestro hogar.",

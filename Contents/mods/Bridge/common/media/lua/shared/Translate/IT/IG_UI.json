@@ -1670,8 +1670,6 @@
     "IGUI_NotAlone_OptHomeAmmoTip": "Attivo: quando Rin si trova a casa e non è in combattimento, recupera dai contenitori di casa le munizioni per l'arma che sta utilizzando, se quelle nel suo inventario non sono sufficienti. Disattivo: non recupera mai automaticamente le munizioni.",
     "IGUI_NotAlone_OptHomeAmmoMale": "Utilizzo automatico delle munizioni di casa",
     "IGUI_NotAlone_OptHomeAmmoTipMale": "Attivo: quando si trova a casa e non è in combattimento, recupera dai contenitori di casa le munizioni per l'arma che sta utilizzando, se quelle nel suo inventario non sono sufficienti. Disattivo: non recupera mai automaticamente le munizioni.",
-    "IGUI_NotAlone_OptCollapseActions": "Raggruppa le azioni del compagno",
-    "IGUI_NotAlone_OptCollapseActionsTip": "Attivato: le azioni Siediti, Sdraiati, Forza e Taglia albero compaiono nei rispettivi sottomenu di sedie, letti, porte o alberi. Disattivato: compaiono direttamente nel menu del clic destro.",
     "IGUI_NotAlone_OptLootMenu": "Mostra le opzioni di saccheggio e regalo",
     "IGUI_NotAlone_OptLootMenuTip": "Mostra nei menu del clic destro le opzioni per saccheggiare, indossare equipaggiamento e fare regali al compagno.",
     "IGUI_NotAlone_Say_HomeSet": "Allora questa è casa nostra.",

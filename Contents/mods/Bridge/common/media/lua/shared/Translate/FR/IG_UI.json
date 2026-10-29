@@ -1544,8 +1544,6 @@
     "IGUI_NotAlone_OptHomeResourcesTip": "Activé: dans la zone de la maison, quand elle commence une tâche ou qu'il lui faut un bandage, un désinfectant ou une pile qu'elle n'a pas, elle le prend dans un contenant de la zone. Désactivé: jamais.",
     "IGUI_NotAlone_OptHomeResourcesMale": "Prend les réserves de la maison",
     "IGUI_NotAlone_OptHomeResourcesTipMale": "Activé: dans la zone de la maison, quand il commence une tâche ou qu'il lui faut un bandage, un désinfectant ou une pile qu'il n'a pas, il le prend dans un contenant de la zone. Désactivé: jamais.",
-    "IGUI_NotAlone_OptCollapseActions": "Actions dans le menu de l'objet",
-    "IGUI_NotAlone_OptCollapseActionsTip": "Activé: s'asseoir, s'allonger, forcer la porte et abattre l'arbre apparaissent dans le menu de la chaise, du lit, de la porte ou de l'arbre. Désactivé: elles apparaissent au premier niveau du clic droit.",
     "IGUI_NotAlone_OptLootMenu": "Afficher les options de fouille / cadeau",
     "IGUI_NotAlone_OptLootMenuTip": "Affiche les options de fouille, d'habillement et de cadeau dans le menu contextuel du compagnon.",
     "IGUI_NotAlone_Say_HomeSet": "Ce sera notre foyer, alors.",

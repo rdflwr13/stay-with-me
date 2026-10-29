@@ -1524,8 +1524,6 @@
     "IGUI_NotAlone_OptHomeResourcesTip": "Ein: Befindet sie sich im Zuhause-Bereich und beginnt eine Aufgabe oder benötigt einen Verband, ein Desinfektionsmittel oder eine Batterie, die sie nicht bei sich trägt, nimmt sie diese direkt aus einem Behälter innerhalb des Zuhause-Bereichs. Aus: Niemals.",
     "IGUI_NotAlone_OptHomeResourcesMale": "Vorräte aus dem Zuhause automatisch nutzen",
     "IGUI_NotAlone_OptHomeResourcesTipMale": "Ein: Befindet er sich im Zuhause-Bereich und beginnt eine Aufgabe oder benötigt einen Verband, ein Desinfektionsmittel oder eine Batterie, die er nicht bei sich trägt, nimmt er diese direkt aus einem Behälter innerhalb des Zuhause-Bereichs. Aus: Niemals.",
-    "IGUI_NotAlone_OptCollapseActions": "Begleiteraktionen zusammenfassen",
-    "IGUI_NotAlone_OptCollapseActionsTip": "Ein: Sitzen, Hinlegen, Aufhebeln und Baum fällen erscheinen im Menü des Stuhls, Betts, der Tür oder des Baums. Aus: Sie erscheinen auf der obersten Ebene des Rechtsklick-Menüs.",
     "IGUI_NotAlone_OptLootMenu": "Plünder-/Geschenkmenü anzeigen",
     "IGUI_NotAlone_OptLootMenuTip": "Zeigt Plünder-, Anzieh- und Geschenkoptionen des Begleiters in Rechtsklick-Menüs an.",
     "IGUI_NotAlone_Say_HomeSet": "Dann ist das wohl unser Zuhause.",

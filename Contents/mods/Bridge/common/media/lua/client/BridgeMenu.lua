@@ -481,18 +481,37 @@ local function buildTorch(context, playerNum, env)
     end
 end
 
+local function addLootWorkMenu(parent)
+    local lootOption = parent:addOption(tr("WindowLoot"))
+    local loot = ISContextMenu:getNew(parent)
+    parent:addSubMenu(lootOption, loot)
+    if BridgeTask.LOOTING_ENABLED == 1 then
+        local okLoot = false
+        pcall(function() okLoot = BridgeTask.kinds.lootArea.available(Bridge.body) end)
+        local l = loot:addOption(tr("JobLootArea"), nil, BridgeMenu.onJobLootArea)
+        if not okLoot then jobTip(l, "lootArea") end
+        if not okLoot or BridgeTask.active then l.notAvailable = true end
+    end
+    if BridgeTask.DEPOSIT_ENABLED == 1 and BridgeDeposit ~= nil then
+        local area = loot:addOption(tr("JobDepositArea"), nil, BridgeMenu.onJobDepositArea)
+        if BridgeTask.active then area.notAvailable = true end
+        local home = loot:addOption(tr("DepositLootHome"), nil, BridgeMenu.onDepositHome)
+        local homeOk = false
+        pcall(function() homeOk = BridgeDeposit.homeHere() == true end)
+        local marksOk = false
+        pcall(function() marksOk = BridgeDeposit.hasValidMarks() == true end)
+        if not homeOk or not marksOk or BridgeTask.active then home.notAvailable = true end
+        if homeOk and not marksOk then tip(home, tr("DepositNeedsMarks")) end
+    end
+    return loot
+end
+
 local function buildJobs(context, playerNum, env)
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
     local jobsOption = context:addOption(tr("Jobs"))
     local jobs = ISContextMenu:getNew(context)
     context:addSubMenu(jobsOption, jobs)
-    if BridgeTask.LOOTING_ENABLED == 1 then
-        local okLoot = false
-        pcall(function() okLoot = BridgeTask.kinds.lootArea.available(Bridge.body) end)
-        local loot = jobs:addOption(tr("JobLootArea"), nil, BridgeMenu.onJobLootArea)
-        if not okLoot then jobTip(loot, "lootArea") end
-        if not okLoot or BridgeTask.active then loot.notAvailable = true end
-    end
+    addLootWorkMenu(jobs)
     if BridgeTask.CLEANING_ENABLED == 1 then
         local okClean = false
         pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
@@ -931,6 +950,18 @@ function BridgeMenu.onJobLootArea()
     BridgeWorkSelect.begin(BridgeData.owner(), "lootArea")
 end
 
+function BridgeMenu.onJobDepositArea()
+    if BridgeTask == nil or BridgeWorkSelect == nil or BridgeDeposit == nil then return end
+    if not Bridge.alive() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "depositArea")
+end
+
+function BridgeMenu.onDepositHome()
+    if BridgeDeposit == nil or type(BridgeDeposit.startHome) ~= "function" then return end
+    local res = BridgeDeposit.startHome()
+    log("deposit home from menu: " .. tostring(res))
+end
+
 function BridgeMenu.onJobMoveCorpses()
     if BridgeTask == nil or BridgeWorkSelect == nil then return end
     if not Bridge.alive() then return end
@@ -995,13 +1026,7 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     local jobsOption = sub:addOption(tr("Jobs"))
     local jobs = ISContextMenu:getNew(sub)
     sub:addSubMenu(jobsOption, jobs)
-    if BridgeTask.LOOTING_ENABLED == 1 then
-        local okLoot = false
-        pcall(function() okLoot = BridgeTask.kinds.lootArea.available(Bridge.body) end)
-        local loot = jobs:addOption(tr("JobLootArea"), nil, BridgeMenu.onJobLootArea)
-        if not okLoot then jobTip(loot, "lootArea") end
-        if not okLoot or BridgeTask.active then loot.notAvailable = true end
-    end
+    addLootWorkMenu(jobs)
     if BridgeTask.CLEANING_ENABLED == 1 then
         local okClean = false
         pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
@@ -1139,20 +1164,23 @@ local function addInObject(context, obj, label, target, fn)
     return menu:addOption(label, target, fn)
 end
 
-local function collapsed()
-    if BridgeData == nil or type(BridgeData.collapseActions) ~= "function" then return false end
-    return BridgeData.collapseActions(Bridge.store)
-end
-
-local function addFlat(context, label, target, fn)
-    local full = name() .. ": " .. label
-    if context:getOptionFromName(full) ~= nil then return nil end
-    return context:addOptionOnTop(full, target, fn)
+local function rinTopMenu(context)
+    local label = name()
+    local parent = nil
+    pcall(function() parent = context:getOptionFromName(label) end)
+    local sub = nil
+    if parent ~= nil and parent.subOption ~= nil then
+        pcall(function() sub = context:getSubMenu(parent.subOption) end)
+    end
+    if sub ~= nil then return sub end
+    if parent == nil then parent = context:addOptionOnTop(label) end
+    sub = ISContextMenu:getNew(context)
+    context:addSubMenu(parent, sub)
+    return sub
 end
 
 local function addCompanion(context, obj, label, target, fn)
-    if collapsed() then return addInObject(context, obj, label, target, fn) end
-    return addFlat(context, label, target, fn)
+    return addInObject(context, obj, label, target, fn)
 end
 
 function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
@@ -1162,15 +1190,7 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
     if not present() then return end
     local tree = treeUnder(worldobjects)
     if tree == nil then return end
-    local sub = nil
-    if collapsed() then
-        sub = rinInObject(context, tree)
-    else
-        if context:getOptionFromName(name()) ~= nil then return end
-        local option = context:addOptionOnTop(name())
-        sub = ISContextMenu:getNew(context)
-        context:addSubMenu(option, sub)
-    end
+    local sub = rinInObject(context, tree)
     if sub == nil then return end
     if sub:getOptionFromName(tr("CutTree")) ~= nil then return end
     local ok = false
@@ -1181,15 +1201,9 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
         local jobsOption = sub:addOption(tr("Jobs"))
         local jobs = ISContextMenu:getNew(sub)
         sub:addSubMenu(jobsOption, jobs)
+        addLootWorkMenu(jobs)
         local area = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
         if not ok or BridgeTask.active then area.notAvailable = true end
-        if BridgeTask.LOOTING_ENABLED == 1 then
-            local okLoot = false
-            pcall(function() okLoot = BridgeTask.kinds.lootArea.available(Bridge.body) end)
-            local loot = jobs:addOption(tr("JobLootArea"), nil, BridgeMenu.onJobLootArea)
-            if not okLoot then jobTip(loot, "lootArea") end
-            if not okLoot or BridgeTask.active then loot.notAvailable = true end
-        end
     end
     BridgeMenu.addCancelTask(sub)
 end
@@ -1221,6 +1235,12 @@ function BridgeMenu.onLootThis(targets)
     if BridgeTask == nil or targets == nil or #targets == 0 then return end
     local res = BridgeTask.start("lootArea", targets)
     log("loot this from menu: " .. tostring(res))
+end
+
+function BridgeMenu.onDepositThis(targets)
+    if BridgeDeposit == nil or targets == nil or #targets == 0 then return end
+    local res = BridgeDeposit.start(targets)
+    log("deposit here from menu: " .. tostring(res))
 end
 
 local function pryDoorAtObject(o)
@@ -1326,6 +1346,28 @@ local function lootIcon(option)
     end)
 end
 
+local function containerIcon(option, cont)
+    if option == nil or cont == nil then return end
+    local tex = nil
+    local parent = nil
+    pcall(function() parent = cont:getParent() end)
+    if parent ~= nil then
+        local name = nil
+        pcall(function() name = parent:getTextureName() end)
+        if name ~= nil and name ~= "" then pcall(function() tex = getTexture(name) end) end
+    end
+    if tex == nil then
+        local part = nil
+        pcall(function() part = cont:getVehiclePart() end)
+        if part ~= nil then
+            local name = nil
+            pcall(function() name = part:getTextureName() end)
+            if name ~= nil and name ~= "" then pcall(function() tex = getTexture(name) end) end
+        end
+    end
+    if tex ~= nil then option.iconTexture = tex end
+end
+
 function BridgeMenu.onLootMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -1333,15 +1375,71 @@ function BridgeMenu.onLootMenu(playerNum, context, worldobjects, test)
     if not BridgeData.optionOf(Bridge.store, "lootMenu") then return end
     if not present() then return end
     if BridgeWorkSelect == nil or BridgeWorkSelect.lootTargetFor == nil then return end
-    local label = name() .. ": " .. tr("LootContainer")
-    if context:getOptionFromName(label) ~= nil then return end
     local targets = lootTargetsUnder(worldobjects)
-    if targets == nil then return end
+    if targets == nil or #targets == 0 then return end
     local ok = false
     pcall(function() ok = BridgeTask.kinds.lootArea.available(Bridge.body) end)
-    local opt = context:addOptionOnTop(label, targets, BridgeMenu.onLootThis)
-    lootIcon(opt)
+    local sub = rinTopMenu(context)
+    local label = tr("LootContainer")
+    if sub:getOptionFromName(label) ~= nil then return end
+    local opt = sub:addOption(label, targets, BridgeMenu.onLootThis)
+    containerIcon(opt, targets[1] ~= nil and targets[1].cont or nil)
     if not ok or BridgeTask.active then opt.notAvailable = true end
+end
+
+function BridgeMenu.onDepositMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.DEPOSIT_ENABLED ~= 1 then return end
+    if BridgeDeposit == nil or type(BridgeDeposit.targetsUnder) ~= "function" then return end
+    if not BridgeData.optionOf(Bridge.store, "lootMenu") then return end
+    if not present() then return end
+    local targets = BridgeDeposit.targetsUnder(worldobjects)
+    if targets == nil or #targets == 0 then return end
+    local ok = false
+    pcall(function() ok = BridgeTask.kinds.deposit.available(Bridge.body) end)
+    local sub = rinTopMenu(context)
+    local label = tr("DepositLootHere")
+    if sub:getOptionFromName(label) == nil then
+        local opt = sub:addOption(label, targets, BridgeMenu.onDepositThis)
+        if not ok or BridgeTask.active then opt.notAvailable = true end
+    end
+    if BridgeDeposit.homeHere() then
+        local homeTargets = {}
+        for i = 1, #targets do
+            if BridgeDeposit.targetAtHome(targets[i]) then homeTargets[#homeTargets + 1] = targets[i] end
+        end
+        if #homeTargets == 1 then
+            local cont = homeTargets[1].cont
+            local marked = BridgeDeposit.isMarked(cont)
+            local mopt = sub:addOption(tr(marked and "UnmarkStorage" or "MarkStorage"), cont, BridgeMenu.onToggleMark)
+            if BridgeTask.active then mopt.notAvailable = true end
+        elseif #homeTargets > 1 then
+            local mopt = sub:addOption(tr("MarkStorageMenu"))
+            local menu = ISContextMenu:getNew(sub)
+            sub:addSubMenu(mopt, menu)
+            local seenTypes = {}
+            for i = 1, #homeTargets do
+                local t = homeTargets[i]
+                local typeName = "?"
+                pcall(function() typeName = tostring(t.cont:getType()) end)
+                local n = (seenTypes[typeName] or 0) + 1
+                seenTypes[typeName] = n
+                local label2 = typeName
+                if n > 1 then label2 = label2 .. " " .. tostring(n) end
+                local marked = BridgeDeposit.isMarked(t.cont)
+                local o = menu:addOption(tr(marked and "UnmarkStorage" or "MarkStorage") .. ": " .. label2, t.cont,
+                    BridgeMenu.onToggleMark)
+                if BridgeTask.active then o.notAvailable = true end
+            end
+        end
+    end
+end
+
+function BridgeMenu.onToggleMark(cont)
+    if BridgeDeposit == nil or type(BridgeDeposit.toggleMark) ~= "function" then return end
+    local state = BridgeDeposit.toggleMark(cont)
+    log("mark toggle " .. tostring(state))
 end
 
 local function lootTargetsForItems(list, playerNum, whole)
@@ -1809,6 +1907,7 @@ Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWorldMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onTreeMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onJobsMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLootMenu)
+Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onDepositMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onSitMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLayMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onPryMenu)

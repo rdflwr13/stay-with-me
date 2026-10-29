@@ -633,6 +633,19 @@ function BridgeHome.confirmClear(playerObj)
     modal.moveWithMouse = true
 end
 
+local function clearMarksDone(target, button)
+    if button == nil or button.internal ~= "YES" then return end
+    if BridgeDeposit ~= nil and type(BridgeDeposit.clearMarks) == "function" then BridgeDeposit.clearMarks() end
+end
+
+function BridgeHome.confirmClearMarks()
+    local modal = ISModalDialog:new(0, 0, 340, 140, tr("ClearMarksConfirm"), true, nil, clearMarksDone)
+    if modal == nil then return end
+    modal:initialise()
+    modal:addToUIManager()
+    modal.moveWithMouse = true
+end
+
 
 
 BridgeHomeTab = ISPanel:derive("BridgeHomeTab")
@@ -640,29 +653,64 @@ BridgeHomeTab = ISPanel:derive("BridgeHomeTab")
 function BridgeHomeTab.heightFor(width)
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
-    local tickH = math.max(btnH, fontS) + (UI_BORDER_SPACING or 10)
-    return PAD + fontS + PAD + btnH + PAD + btnH + PAD + tickH + PAD + tickH + PAD + tickH + PAD
+    local headerH = fontS + 4
+    local _, hintH = BridgeWindow.hintLines(width, "HomeHint", Bridge.companionName())
+    return PAD + hintH
+        + headerH + fontS + PAD
+        + btnH + PAD + PAD
+        + headerH
+        + fontS + 2
+        + btnH + PAD
+        + btnH + PAD + PAD
+        + headerH
+        + btnH * 3 + 4
+        + PAD
 end
 
 function BridgeHomeTab:createChildren()
     ISPanel.createChildren(self)
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
+    local headerH = fontS + 4
     self.btnH = btnH
-    self.statusY = PAD
-    local y = PAD + fontS + PAD
-    self.setBtn = ISButton:new(PAD, y, self.width - PAD * 2, btnH, tr("HomeSetHome"), self, BridgeHomeTab.onSet)
+    self.headerH = headerH
+    self.hintLines, self.hintH = BridgeWindow.hintLines(self.width, "HomeHint", Bridge.companionName())
+    local y = PAD + self.hintH
+    self.zoneHeaderY = y
+    self.statusY = y + headerH
+    y = self.statusY + fontS + PAD
+    local half = math.max(40, math.floor((self.width - PAD * 3) / 2))
+    self.setBtn = ISButton:new(PAD, y, half, btnH, tr("HomeSetHome"), self, BridgeHomeTab.onSet)
     self.setBtn:initialise()
     self.setBtn:instantiate()
     self.setBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.setBtn)
-    y = y + btnH + PAD
-    self.clearBtn = ISButton:new(PAD, y, self.width - PAD * 2, btnH, tr("HomeClear"), self, BridgeHomeTab.onClear)
+    self.clearBtn = ISButton:new(PAD + half + PAD, y, half, btnH, tr("HomeClear"), self, BridgeHomeTab.onClear)
     self.clearBtn:initialise()
     self.clearBtn:instantiate()
     self.clearBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.clearBtn)
+    y = y + btnH + PAD + PAD
+    self.storageHeaderY = y
+    y = y + headerH
+    self.markedY = y
+    y = y + fontS + 2
+    self.markAllBtn = ISButton:new(PAD, y, self.width - PAD * 2, btnH, tr("MarkAllHome"), self, BridgeHomeTab.onMarkAll)
+    self.markAllBtn:initialise()
+    self.markAllBtn:instantiate()
+    self.markAllBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+    self.markAllBtn.tooltip = tr("MarkAllHomeTip")
+    self:addChild(self.markAllBtn)
     y = y + btnH + PAD
+    self.clearMarksBtn = ISButton:new(PAD, y, self.width - PAD * 2, btnH, tr("ClearMarks"), self, BridgeHomeTab.onClearMarks)
+    self.clearMarksBtn:initialise()
+    self.clearMarksBtn:instantiate()
+    self.clearMarksBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+    self.clearMarksBtn.tooltip = tr("ClearMarksTip")
+    self:addChild(self.clearMarksBtn)
+    y = y + btnH + PAD + PAD
+    self.behaviorHeaderY = y
+    y = y + headerH
     self.resTick = ISTickBox:new(PAD, y, self.width - PAD * 2, btnH, "", self, BridgeHomeTab.onResourceTick, "homeResources")
     self.resTick:initialise()
     self.resTick:instantiate()
@@ -670,7 +718,7 @@ function BridgeHomeTab:createChildren()
     self.resTick.tooltip = tr("OptHomeResourcesTip")
     self:addChild(self.resTick)
     self.resTickY = y
-    y = y + btnH + PAD
+    y = y + btnH + 2
     self.ammoTick = ISTickBox:new(PAD, y, self.width - PAD * 2, btnH, "", self, BridgeHomeTab.onAmmoTick, "homeAmmo")
     self.ammoTick:initialise()
     self.ammoTick:instantiate()
@@ -678,7 +726,7 @@ function BridgeHomeTab:createChildren()
     self.ammoTick.tooltip = tr("OptHomeAmmoTip")
     self:addChild(self.ammoTick)
     self.ammoTickY = y
-    y = y + btnH + PAD
+    y = y + btnH + 2
     self.allTick = ISTickBox:new(PAD, y, self.width - PAD * 2, btnH, "", self, BridgeHomeTab.onAllTick, "homeAllFloors")
     self.allTick:initialise()
     self.allTick:instantiate()
@@ -709,12 +757,31 @@ function BridgeHomeTab:onClear()
     BridgeHome.confirmClear(BridgeData.owner())
 end
 
+function BridgeHomeTab:onMarkAll()
+    if BridgeDeposit ~= nil and type(BridgeDeposit.seedMarks) == "function" then BridgeDeposit.seedMarks() end
+end
+
+function BridgeHomeTab:onClearMarks()
+    BridgeHome.confirmClearMarks()
+end
+
 function BridgeHomeTab:prerender()
     ISPanel.prerender(self)
     if Bridge == nil or Bridge.store == nil then return end
     local h = BridgeHome.get()
     local has = h ~= nil
     if self.clearBtn ~= nil and self.clearBtn.enable ~= has then self.clearBtn:setEnable(has) end
+    local marked = 0
+    if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then marked = BridgeDeposit.markedCount() end
+    if self.markAllBtn ~= nil then
+        local canMark = has
+        if BridgeDeposit ~= nil and type(BridgeDeposit.homeHere) == "function" then canMark = has and BridgeDeposit.homeHere() end
+        if self.markAllBtn.enable ~= canMark then self.markAllBtn:setEnable(canMark) end
+    end
+    if self.clearMarksBtn ~= nil then
+        local canClear = marked > 0
+        if self.clearMarksBtn.enable ~= canClear then self.clearMarksBtn:setEnable(canClear) end
+    end
     if self.resTick ~= nil then
         local want = BridgeData.optionOf(Bridge.store, "homeResources")
         if self.resTick:isSelected(1) ~= want then self.resTick:setSelected(1, want) end
@@ -743,7 +810,18 @@ end
 
 function BridgeHomeTab:render()
     if Bridge == nil or Bridge.store == nil then return end
+    local y = PAD
+    for _, line in ipairs(self.hintLines or {}) do
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        y = y + getTextManager():getFontHeight(UIFont.Small) + 2
+    end
+    self:drawText(tr("HomeZoneSection"), PAD, self.zoneHeaderY, 0.7, 0.7, 0.7, 1, UIFont.Small)
     self:drawText(BridgeHome.statusText(), PAD, self.statusY, 1, 1, 1, 1, UIFont.Small)
+    self:drawText(tr("HomeStorageSection"), PAD, self.storageHeaderY, 0.7, 0.7, 0.7, 1, UIFont.Small)
+    local marked = 0
+    if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then marked = BridgeDeposit.markedCount() end
+    self:drawText(tr("MarkedCount", marked), PAD, self.markedY, 0.8, 0.8, 0.8, 1, UIFont.Small)
+    self:drawText(tr("HomeBehaviorSection"), PAD, self.behaviorHeaderY, 0.7, 0.7, 0.7, 1, UIFont.Small)
 end
 
 function BridgeHomeTab:new(x, y, width, height)
@@ -784,3 +862,4 @@ if not BridgeHome._eventsHooked then
 end
 
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeHome] loaded") end
+
