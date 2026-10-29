@@ -27,13 +27,13 @@ BridgeMove.redPrev = nil
 
 
 
-local ASIDE_AHEAD = 0.7
-local ASIDE_PUSH = 20
+local ASIDE_AHEAD = 1.0
+local ASIDE_PUSH = 10
 local PUSH_GRACE = 12
 local ASIDE_PATH = 0.55
 local ASIDE_STEP = 0.5
 local ASIDE_MAX = 45
-local ASIDE_QUIET = 90
+local ASIDE_QUIET = 45
 
 
 local RUN_AHEAD = 2.5
@@ -2458,6 +2458,18 @@ end
 
 
 
+function BridgeMove.pushDir(red)
+    local vx, vy = BridgeMove.redVx or 0, BridgeMove.redVy or 0
+    if vx * vx + vy * vy > 0.000225 then return vx, vy end
+    local fx, fy = 0, 0
+    pcall(function()
+        local f = red:getForwardDirection()
+        fx, fy = f:getX(), f:getY()
+    end)
+    return fx, fy
+end
+
+
 function BridgeMove.onHisPath(bx, by, rx, ry, vx, vy)
     local vl = math.sqrt(vx * vx + vy * vy)
     if vl <= 0.01 then return nil end
@@ -2493,25 +2505,31 @@ function BridgeMove.pushCheck(body, red)
     local pushing, fx, fy = false, 0, 0
     pcall(function()
         pushing = red:isPlayerMoving() == true
-        if pushing then
-            local fwd = red:getForwardDirection()
-            fx, fy = fwd:getX(), fwd:getY()
-        end
+        if not pushing then pushing = red:pressedMovement(true) == true end
     end)
-    local ahead = nil
+    if pushing then fx, fy = BridgeMove.pushDir(red) end
+    local ahead, d = nil, 0
     if pushing then
-        pcall(function() ahead = BridgeMove.onHisPath(body:getX(), body:getY(), red:getX(), red:getY(), fx, fy) end)
+        pcall(function()
+            ahead = BridgeMove.onHisPath(body:getX(), body:getY(), red:getX(), red:getY(), fx, fy)
+            d = dist2d(body:getX(), body:getY(), red:getX(), red:getY())
+        end)
     end
+    local contact = pushing and ahead == nil and Bridge.follow and Bridge.pose == nil and d > 0 and d < 0.75
 
-    if ahead == nil then
+    if ahead == nil and not contact then
         if F.pushSeenIdle == nil or Bridge.time - F.pushSeenIdle > PUSH_GRACE then F.pushSinceIdle = nil end
         return
     end
     F.pushSeenIdle = Bridge.time
     F.pushSinceIdle = F.pushSinceIdle or Bridge.time
     if Bridge.time - F.pushSinceIdle >= ASIDE_PUSH then
-        BridgeMove.passThrough(body, true, sformat("player keeps pushing while she %s (%.2f ahead)",
-            Bridge.pose ~= nil and "sits" or "waits", ahead))
+        if contact then
+            BridgeMove.passThrough(body, true, sformat("player pressed against her (%.2f)", d))
+        else
+            BridgeMove.passThrough(body, true, sformat("player keeps pushing while she %s (%.2f ahead)",
+                Bridge.pose ~= nil and "sits" or (Bridge.follow and "follows" or "waits"), ahead))
+        end
     end
 end
 
@@ -2519,14 +2537,19 @@ end
 function BridgeMove.passTick(body, red)
     local F = BridgeMove.follow
     if F == nil or not F.passing then return end
-    local close, pushing = false, false
+    local d2, pushing = math.huge, false
     pcall(function()
         local dx, dy = body:getX() - red:getX(), body:getY() - red:getY()
-        close = dx * dx + dy * dy < 1.0
+        d2 = dx * dx + dy * dy
         pushing = red:isPlayerMoving() == true
     end)
-    if close and pushing then F.passUntil = Bridge.time + PASS_KEEP return end
-    if Bridge.time >= (F.passUntil or 0) then BridgeMove.passThrough(body, false, close and "player stopped" or "player passed") end
+    if d2 < 0.64 then
+        F.passUntil = Bridge.time + PASS_KEEP
+        return
+    end
+    if Bridge.time >= (F.passUntil or 0) then
+        BridgeMove.passThrough(body, false, d2 < 1.0 and "player stopped" or "player passed")
+    end
 end
 
 
@@ -2802,15 +2825,14 @@ local function followTrailStep(body)
 
 
 
-    local pushing, fx, fy = false, 0, 0
-    pcall(function()
-        pushing = red:isPlayerMoving() == true
-        if pushing then
-            local fwd = red:getForwardDirection()
-            fx, fy = fwd:getX(), fwd:getY()
-        end
-    end)
-    if not pushing and redGoes then fx, fy, pushing = BridgeMove.redVx or 0, BridgeMove.redVy or 0, true end
+    local pushing = false
+    local fx, fy = 0, 0
+    pcall(function() pushing = red:isPlayerMoving() == true end)
+    if pushing then
+        fx, fy = BridgeMove.pushDir(red)
+    elseif redGoes then
+        fx, fy, pushing = BridgeMove.redVx or 0, BridgeMove.redVy or 0, true
+    end
 
 
 

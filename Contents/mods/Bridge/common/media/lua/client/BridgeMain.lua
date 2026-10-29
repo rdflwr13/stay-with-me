@@ -4031,9 +4031,7 @@ local function updateZombieBody(body)
 
     if not ownerDead then pcall(function() BridgeMove.runGuard(body, red) end) end
 
-    if (not Bridge.follow or Bridge.pose ~= nil) and not ownerDead then
-        pcall(function() BridgeMove.pushCheck(body, red) end)
-    end
+    if not ownerDead then pcall(function() BridgeMove.pushCheck(body, red) end) end
 
 
 
