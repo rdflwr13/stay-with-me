@@ -3764,7 +3764,12 @@ local function updateZombieBody(body)
             end
         end
     end
-    pcall(function() body:setAnimatingBackwards(false) end)
+    local footBump = nil
+    pcall(function() footBump = tostring(body:getBumpType()) end)
+    if not (BridgeFight ~= nil and BridgeFight.state == "step" and BridgeFight.stepBump ~= nil
+            and footBump == BridgeFight.stepBump) then
+        pcall(function() body:setAnimatingBackwards(false) end)
+    end
     pcall(BridgeVoice.applyPrefix, body)
     if Bridge.zombieTicks % VOICE_EVERY == 3 then pcall(BridgeVoice.suppress, body) end
 

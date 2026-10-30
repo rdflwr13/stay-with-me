@@ -801,7 +801,9 @@ local function drive(body, red, F, pf, bx, by, px, py, want, kind, running, d, e
         local pivotDeg = nil
         if kind == "seat" or kind == "aside" then pivotDeg = BridgeMove.SEAT_PIVOT_DEG
         elseif kind == "mourn" then pivotDeg = BridgeMove.MOURN_PIVOT_DEG end
-        if pivotDeg ~= nil and BridgeMove.pivotToward(body, px, py, pivotDeg) ~= nil then
+        if BridgeMove.backwardsStep then
+
+        elseif pivotDeg ~= nil and BridgeMove.pivotToward(body, px, py, pivotDeg) ~= nil then
 
         else
 
@@ -2246,7 +2248,7 @@ end
 local STRAIGHT_TURN_DEG = 25
 local STRAIGHT_PIVOT_DEG = 60
 local STRAIGHT_TURN_MAX = 8
-function BridgeMove.goStraight(body, x, y, z, run, clear)
+function BridgeMove.goStraight(body, x, y, z, run, clear, backwards)
     local red = BridgeData.owner()
     if red == nil then return false end
     local F = BridgeMove.follow
@@ -2284,15 +2286,17 @@ function BridgeMove.goStraight(body, x, y, z, run, clear)
     local kind = run and "straight-run" or "straight"
     local starting = (F.frame ~= Bridge.tick - 1 and F.pivotTick ~= Bridge.tick - 1) or F.kind ~= kind
     if starting then F.pivotFrames = 0 end
-    local off = BridgeMove.facingOff(body, x, y)
-    if off ~= nil and off > STRAIGHT_TURN_DEG and (F.pivotFrames or 0) < STRAIGHT_TURN_MAX then
-        F.pivotFrames = (F.pivotFrames or 0) + 1
+    if backwards ~= true then
+        local off = BridgeMove.facingOff(body, x, y)
+        if off ~= nil and off > STRAIGHT_TURN_DEG and (F.pivotFrames or 0) < STRAIGHT_TURN_MAX then
+            F.pivotFrames = (F.pivotFrames or 0) + 1
 
-        pcall(function() if isFollowBump(tostring(body:getBumpType())) then BridgeMove.endFollowBump(body, "Stand") end end)
-        local left = BridgeMove.pivotToward(body, x, y, STRAIGHT_PIVOT_DEG)
-        F.pivotTick, F.kind = Bridge.tick, kind
+            pcall(function() if isFollowBump(tostring(body:getBumpType())) then BridgeMove.endFollowBump(body, "Stand") end end)
+            local left = BridgeMove.pivotToward(body, x, y, STRAIGHT_PIVOT_DEG)
+            F.pivotTick, F.kind = Bridge.tick, kind
 
-        if left ~= nil then return true end
+            if left ~= nil then return true end
+        end
     end
     local M = BridgeMove.speedModel
     local want = run and (M.Run.a + M.Run.b * 0.8) or (M.Walk.a + M.Walk.b * 0.8)
@@ -2300,7 +2304,10 @@ function BridgeMove.goStraight(body, x, y, z, run, clear)
     want = want * clamp(0.4 + 0.6 * toGoal, 0.5, 1.0)
     BridgeMove.walkType = run and "Run" or "Walk"
     freshDrive(F)
-    if drive(body, red, F, pf, bx, by, x, y, want, run and "straight-run" or "straight", run == true, d, toGoal) then
+    BridgeMove.backwardsStep = backwards == true or nil
+    local moved = drive(body, red, F, pf, bx, by, x, y, want, run and "straight-run" or "straight", run == true, d, toGoal)
+    BridgeMove.backwardsStep = nil
+    if moved then
         return true
     end
     BridgeMove.steering = false
