@@ -4338,7 +4338,7 @@ local function updateZombieBody(body)
     end
 
     if Bridge.mode ~= "follow" and Bridge.target == nil then
-
+        BridgeMove.followDebug("main-exit", body, "not-follow")
         if BridgeMove.onPath() then BridgeMove.stopPath(body) end
         if red ~= nil and Bridge.zombieTicks % 30 == 0 and dist2d(body, red) < 6 then
             pcall(function() body:faceLocationF(red:getX(), red:getY()) end)
@@ -4346,6 +4346,7 @@ local function updateZombieBody(body)
         return
     end
 
+    BridgeMove.followDebug("main-before-update", body, "call")
     BridgeMove.update(body)
     handProbe(body, "frame end")
 end

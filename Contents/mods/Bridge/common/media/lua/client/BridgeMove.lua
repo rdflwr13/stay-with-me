@@ -111,6 +111,43 @@ end
 local function warn(text) print("[BridgeMove] " .. tostring(text)) end
 
 
+function BridgeMove.followDebug(tag, body, why, pend, force)
+    if not force and (BridgeGunfight == nil or BridgeGunfight.magCareStage == nil) then return end
+    if body == nil then return end
+    local now = Bridge.time or 0
+    local key = tostring(tag) .. "|" .. tostring(why) .. "|" .. tostring(BridgeMove.moving)
+        .. "|" .. tostring(BridgeMove.steering) .. "|" .. tostring(BridgeMove.pathing)
+    if not force and BridgeMove.followDbgKey == key and now - (BridgeMove.followDbgAt or -999) < 10 then return end
+    BridgeMove.followDbgKey, BridgeMove.followDbgAt = key, now
+    local bump, asn, bmoving = "?", "?", "?"
+    pcall(function()
+        bump = tostring(body:getBumpType())
+        asn = tostring(body:getActionStateName())
+        bmoving = tostring(body:getVariableBoolean("bMoving"))
+    end)
+    local red = nil
+    pcall(function() red = BridgeData.owner() end)
+    local d = -1
+    if red ~= nil then
+        pcall(function()
+            local dx, dy = body:getX() - red:getX(), body:getY() - red:getY()
+            d = math.sqrt(dx * dx + dy * dy)
+        end)
+    end
+    local care, flee = "nil", "false"
+    if BridgeGunfight ~= nil then
+        care = tostring(BridgeGunfight.magCareStage)
+        flee = tostring(BridgeGunfight.reloadFlee)
+    end
+    local onPath = false
+    if type(BridgeMove.onPath) == "function" then onPath = BridgeMove.onPath() == true end
+    log(string.format("FOLLOWDBG %s why=%s t=%d bump=%s asn=%s bMoving=%s mv=%s steer=%s path=%s onPath=%s pend=%s d=%.2f redMoving=%s care=%s flee=%s",
+        tostring(tag), tostring(why), now, bump, asn, bmoving, tostring(BridgeMove.moving),
+        tostring(BridgeMove.steering), tostring(BridgeMove.pathing), tostring(onPath),
+        tostring(pend), d, tostring(BridgeMove.redMoving), care, flee))
+end
+
+
 
 
 local rawFormat = string.format
@@ -272,6 +309,7 @@ end
 
 function BridgeMove.followBump(body, walk)
     local want = walk == "Run" and "FollowRun" or "FollowWalk"
+    BridgeMove.followDebug("followBump", body, want)
     pcall(function()
         body:setVariable("bPathfind", false)
         body:setMoving(false)
@@ -288,6 +326,7 @@ end
 function BridgeMove.endFollowBump(body, to)
     pcall(function()
         if isFollowBump(tostring(body:getBumpType())) then
+            BridgeMove.followDebug("endFollowBump", body, tostring(to))
             if to == "" then
 
 
@@ -3625,9 +3664,13 @@ function BridgeMove.traceFrame(body, d, needPath, stalled)
 end
 
 function BridgeMove.currentGoal(body)
+    BridgeMove.followDebug("goal-enter", body, "enter")
     if Bridge.follow then
         local red = BridgeData.owner()
-        if red == nil then return nil end
+        if red == nil then
+            BridgeMove.followDebug("goal-exit", body, "red-nil")
+            return nil
+        end
 
 
 
@@ -3636,6 +3679,7 @@ function BridgeMove.currentGoal(body)
         pcall(function() pend = BridgeInventory ~= nil and BridgeInventory.transferPending(body) end)
         if pend then
             BridgeMove.moving = false
+            BridgeMove.followDebug("goal-exit", body, "pend", true)
             return nil
         end
         local d = dist2d(body:getX(), body:getY(), red:getX(), red:getY())
@@ -3651,8 +3695,12 @@ function BridgeMove.currentGoal(body)
                 Bridge.holdPos = nil
             end
         end
-        if not BridgeMove.moving then return nil end
+        if not BridgeMove.moving then
+            BridgeMove.followDebug("goal-exit", body, "stopped")
+            return nil
+        end
         local gx, gy, gz = nearRed(red, body)
+        BridgeMove.followDebug("goal-exit", body, "goal")
         return gx, gy, gz, d
     end
     if Bridge.target then
@@ -6042,6 +6090,7 @@ local function pickSpeed(d)
 end
 
 function BridgeMove.update(body)
+    BridgeMove.followDebug("update-enter", body, "entry")
     if Bridge.verbose and Bridge.tick - (BridgeMove.traceArm or -9999) >= 60 then
         BridgeMove.traceArm = Bridge.tick
         BridgeMove.traceUntil = Bridge.tick + 60 * 60 * 5
@@ -6098,13 +6147,17 @@ function BridgeMove.update(body)
     if Bridge.time < (BridgeMove.unPathfindUntil or 0) and BridgeMove.cross == nil then
         pcall(function() body:setVariable("bPathfind", false) end)
     end
-    if BridgeMove.climbStep(body) then return end
+    if BridgeMove.climbStep(body) then
+        BridgeMove.followDebug("update-exit", body, "climb")
+        return
+    end
     local okCross, crossing = pcall(function() return BridgeMove.crossStep(body) end)
     if not okCross then
         BridgeMove.crossInfo = "error: " .. tostring(crossing)
         BridgeMove.cross = nil
         pcall(function() body:setVariable("bPathfind", false) end)
     elseif crossing then
+        BridgeMove.followDebug("update-exit", body, "cross")
         trackStep(body)
         return
     end
@@ -6114,11 +6167,13 @@ function BridgeMove.update(body)
         BridgeMove.doorLast = "error: " .. tostring(atDoor)
         BridgeMove.doorAct = nil
     elseif atDoor then
+        BridgeMove.followDebug("update-exit", body, "door")
         trackStep(body)
         return
     end
 
     if BridgeAim ~= nil and BridgeAim.step(body, BridgeData.owner()) then
+        BridgeMove.followDebug("update-exit", body, "aim")
         trackStep(body)
         return
     end
@@ -6138,7 +6193,10 @@ function BridgeMove.update(body)
             BridgeMove.seat = nil
         else
             BridgeMove.seatInfo = nil
-            if seated then return end
+            if seated then
+                BridgeMove.followDebug("update-exit", body, "seat")
+                return
+            end
         end
     end
 
@@ -6189,7 +6247,10 @@ function BridgeMove.update(body)
         end
     end
 
-    if BridgeMove.steerMode and Bridge.follow and not pendHere and BridgeMove.followTrail(body) then return end
+    if BridgeMove.steerMode and Bridge.follow and not pendHere and BridgeMove.followTrail(body) then
+        BridgeMove.followDebug("update-exit", body, "trail")
+        return
+    end
 
     BridgeMove.setCollide(body, true)
     if BridgeMove.steering then
@@ -6242,6 +6303,7 @@ function BridgeMove.update(body)
             local red = BridgeData.owner()
             if red ~= nil then pcall(function() body:faceLocationF(red:getX(), red:getY()) end) end
         end
+        BridgeMove.followDebug("update-exit", body, "gx-nil")
         return
     end
 
