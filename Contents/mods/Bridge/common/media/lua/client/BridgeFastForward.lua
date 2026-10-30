@@ -116,7 +116,7 @@ BridgeFastForward.MOVE_HOLD = 10
 local HOLD_SKIP = { [""] = true, ["nil"] = true, Stand = true, StandSneak = true, Stand2h = true, StandSneak2h = true,
     FollowWalk = true, FollowRun = true, FollowWalkSneak = true, FollowRunSneak = true, FollowWalk2h = true,
     FollowRun2h = true, FollowWalkSneak2h = true, FollowRunSneak2h = true, StartMove = true, StartMove2h = true,
-    StartMoveSneak = true, StartMoveSneak2h = true,
+    StartMoveSneak = true, StartMoveSneak2h = true, FollowWalkBwd = true,
     ClimbFenceEnd = true, ClimbFenceTall = true, ClimbFenceTallStart = true, ClimbWindow = true, Scramble = true }
 
 

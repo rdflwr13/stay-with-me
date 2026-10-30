@@ -3766,7 +3766,8 @@ local function updateZombieBody(body)
     end
     local footBump = nil
     pcall(function() footBump = tostring(body:getBumpType()) end)
-    if not (BridgeFight ~= nil and BridgeFight.state == "step" and BridgeFight.stepBump ~= nil
+    local followBack = BridgeMove ~= nil and BridgeMove.backActive == true
+    if not followBack and not (BridgeFight ~= nil and BridgeFight.state == "step" and BridgeFight.stepBump ~= nil
             and footBump == BridgeFight.stepBump) then
         pcall(function() body:setAnimatingBackwards(false) end)
     end
