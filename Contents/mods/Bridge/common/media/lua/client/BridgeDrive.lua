@@ -190,6 +190,17 @@ local function headlightState(car)
     return on, canEmit
 end
 
+local function drivingForward(car)
+    if car == nil or not engineOn(car) then return false end
+    if BridgeCar == nil or type(BridgeCar.moving) ~= "function" then return false end
+    local moving = false
+    pcall(function() moving = BridgeCar.moving(car) == true end)
+    if not moving then return false end
+    local gear = nil
+    pcall(function() gear = car:getTransmissionNumber() end)
+    return type(gear) == "number" and gear > 0
+end
+
 local function radioPlaying(car)
     local on = false
     pcall(function()
@@ -357,6 +368,7 @@ BridgeDrive.radioWas = false
 BridgeDrive.healthStep = 0
 BridgeDrive.lastColdAt = -99999
 BridgeDrive.nextChat = 0
+BridgeDrive.headlightSince = nil
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeDrive] " .. tostring(text)) end end
 
@@ -379,6 +391,7 @@ local function reset()
     BridgeDrive.healthStep = 0
     BridgeDrive.lastColdAt = -99999
     BridgeDrive.nextChat = 0
+    BridgeDrive.headlightSince = nil
 end
 
 
@@ -1031,10 +1044,21 @@ function BridgeDrive.tick()
         if nightNow() then
             local lightsOn, canEmit = headlightState(car)
             local unable = (lightsOn and not canEmit) or (batt ~= nil and batt <= 0.0)
-            if (not lightsOn or unable) and say("EvCarLight") then
-                BridgeDrive.hpBase = hp or BridgeDrive.hpBase
-                return
+            if drivingForward(car) then
+                if not lightsOn or unable then
+                    if BridgeDrive.headlightSince == nil then BridgeDrive.headlightSince = Bridge.time end
+                    if Bridge.time - BridgeDrive.headlightSince >= 120 and say("EvCarLight") then
+                        BridgeDrive.hpBase = hp or BridgeDrive.hpBase
+                        return
+                    end
+                else
+                    BridgeDrive.headlightSince = nil
+                end
+            else
+                BridgeDrive.headlightSince = nil
             end
+        else
+            BridgeDrive.headlightSince = nil
         end
 
         local ron = radioPlaying(car)

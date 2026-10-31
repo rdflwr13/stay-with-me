@@ -423,7 +423,10 @@ function BridgeFastForward.calm(b, now)
             local z = zl:get(i)
             if z ~= b then
                 local zx, zy = z:getX() - bx, z:getY() - by
-                if zx * zx + zy * zy <= keep * keep and not z:isDead() then zombies[#zombies + 1] = z end
+                if zx * zx + zy * zy <= keep * keep and not z:isDead()
+                        and not (BridgeData ~= nil and BridgeData.harmless(z)) then
+                    zombies[#zombies + 1] = z
+                end
             end
         end
         local near2 = BridgeFastForward.ZOMBIE_NEAR * BridgeFastForward.ZOMBIE_NEAR

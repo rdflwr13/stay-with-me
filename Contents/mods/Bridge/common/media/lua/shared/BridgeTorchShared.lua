@@ -463,24 +463,6 @@ end
 
 
 
-local function playerTorchOn(red)
-    local on = false
-    pcall(function() on = red ~= nil and red:getTorchStrength() > BridgeTorchShared.CFG.TORCH end)
-    if not on then
-        pcall(function()
-            on = BridgeAmbient ~= nil and BridgeAmbient.prev ~= nil and BridgeAmbient.prev.torchOn == true
-        end)
-    end
-    return on == true
-end
-
-
-
-
-
-
-
-
 function BridgeTorchShared.isDark(lvl, external, why, lo)
     if lvl == nil then return false end
     if external == true and why ~= nil

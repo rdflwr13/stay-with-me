@@ -79,65 +79,6 @@ end
 
 
 
-local function externalLit(body)
-    if body == nil then return false, "nobody" end
-    local cell = getCell()
-    if cell == nil then return false, "nocell" end
-    local bx, by, bz = nil, nil, nil
-    pcall(function() bx, by, bz = math.floor(body:getX() + 0.5), math.floor(body:getY() + 0.5), body:getZ() end)
-    if bx == nil then return false, "nopos" end
-
-    local day = false
-    pcall(function()
-        local sq = body:getCurrentSquare()
-        if sq ~= nil and sq:isOutside() then
-            local c = getClimateManager()
-            if c ~= nil and (tonumber(c:getDayLightStrength()) or 0) > BridgeTorchShared.CFG.DAY_OFF then day = true end
-        end
-    end)
-    if day then return true, "daylight" end
-
-    local found, bestD, bestR, bestBri = false, nil, nil, nil
-    local nearD, nearR, nearBri = nil, nil, nil
-    pcall(function()
-        local positions = cell:getLamppostPositions()
-        if positions == nil then return end
-        for i = 0, positions:size() - 1 do
-            local s = positions:get(i)
-            if s ~= nil then
-                local active = false
-                pcall(function() active = s:isActive() == true end)
-                if active then
-                    local sx, sy, sz, rr, bri = nil, nil, nil, 0, 0
-                    pcall(function()
-                        sx, sy, sz = s:getX(), s:getY(), s:getZ()
-                        rr = tonumber(s:getRadius()) or 0
-                        bri = math.max(tonumber(s:getR()) or 0, math.max(tonumber(s:getG()) or 0, tonumber(s:getB()) or 0))
-                    end)
-                    if sx ~= nil and sz == bz then
-                        local dx, dy = sx - bx, sy - by
-                        local d2 = dx * dx + dy * dy
-                        local dist = math.sqrt(d2)
-                        if nearD == nil or dist < nearD then nearD, nearR, nearBri = dist, rr, bri end
-                        if rr >= 2 and bri >= BridgeTorchShared.CFG.EXTERNAL_MIN_BRI then
-                            local reach = math.min(rr, BridgeTorchShared.CFG.EXTERNAL_NEAR)
-                            if d2 <= reach * reach and not serverBlocked(cell, sx, sy, sz, bx, by) then
-                                if bestD == nil or dist < bestD then found, bestD, bestR, bestBri = true, dist, rr, bri end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end)
-    if found then return true, string.format("near d=%.1f r=%s b=%.2f", bestD, tostring(bestR), bestBri) end
-    if nearD ~= nil then return false, string.format("nearest d=%.1f r=%s b=%.2f", nearD, tostring(nearR), nearBri) end
-    return false, "none"
-end
-BridgeTorchServer.externalLit = externalLit
-
-
-
 local function relay(who, body, on, range)
     local id = nil
     pcall(function() id = body:getPersistentOutfitID() end)

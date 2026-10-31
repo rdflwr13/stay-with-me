@@ -5031,6 +5031,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     gunselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
+    friendselftest = true, light = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
 
 
@@ -5751,6 +5752,11 @@ function Bridge.run(line)
         return BridgeSleep.selftest()
     end
 
+    if cmd == "friendselftest" then
+        if BridgeData == nil or type(BridgeData.selftest) ~= "function" then return "BridgeData not loaded" end
+        return BridgeData.selftest()
+    end
+
     if cmd == "sleepfix" then
         if BridgeSleep == nil then return "sleep not loaded" end
         return BridgeSleep.set(parts[3], parts[4])
@@ -5785,6 +5791,14 @@ function Bridge.run(line)
         if sub == "reset" then return BridgeZScan.reset() end
         if sub == "selftest" then return BridgeZScan.selftest() end
         return "zscan status|tags|why|near|trace|debug|on|off|reset|selftest"
+    end
+
+    if cmd == "light" then
+        if BridgeLight == nil then return "light not loaded" end
+        local sub = parts[3]
+        if sub == nil or sub == "status" then return BridgeLight.statusText() end
+        if sub == "selftest" then return BridgeLight.selftest() end
+        return "light status|selftest"
     end
 
     if cmd == "menu" then

@@ -19,6 +19,7 @@ S.TAGS = {
     ["gun.target"] = true,
     ["gun.extra"] = true,
     ["horde.count"] = true,
+    ["horde.count.seen"] = true,
     ["horde.cone"] = true,
     ["task.danger"] = true,
     ["ambient.danger"] = true,
@@ -393,6 +394,16 @@ function S.isThreat(z)
         and not S.isRemote(z) and not S.isHarmless(z)
     m.threat[z] = v
     return v
+end
+
+function S.canSee(z, a, b)
+    if z == nil then return false end
+    local seen = false
+    if a ~= nil then pcall(function() seen = a:CanSee(z) == true end) end
+    if not seen and b ~= nil and b ~= a then
+        pcall(function() seen = b:CanSee(z) == true end)
+    end
+    return seen
 end
 
 local PROFILES = {
@@ -1016,6 +1027,12 @@ function S.count(cx, cy, cz, r, filterOrProfile, opts)
     return n
 end
 
+function S.countSeen(cx, cy, cz, r, a, b, opts)
+    return S.count(cx, cy, cz, r, function(z)
+        return S.isThreat(z) and S.canSee(z, a, b)
+    end, opts)
+end
+
 function S.find(pred, maxN, opts)
     local tag = optsTag(opts)
     local started = nowMs()
@@ -1359,6 +1376,36 @@ function S.selftest()
         check("count sleep", S.count(0, 0, 0, 5, "sleep") == 5, S.count(0, 0, 0, 5, "sleep"))
         check("count raw", S.count(0, 0, 0, 5, "raw") == 7, S.count(0, 0, 0, 5, "raw"))
         check("count z-band", S.count(0, 0, 0, 5, "raw", { zTol = 0.1 }) == 7, S.count(0, 0, 0, 5, "raw", { zTol = 0.1 }))
+    end
+
+    do
+        local V1 = { CanSee = function(_, z) return z.id == "V1" or z.id == "V2" or z.id == "HM" or z.id == "Z5" end }
+        local V2 = { CanSee = function(_, z) return z.id == "V2" end }
+        local none = {}
+        local z1 = fakeZombie(1, 0, 0, { id = "V1" })
+        local z2 = fakeZombie(1, 0, 0, { id = "V2" })
+        local z3 = fakeZombie(1, 0, 0, { id = "V3" })
+        local z4 = fakeZombie(1, 0, 0, { id = "V4" })
+        setList({ z1, z2, z3, z4 })
+
+        check("canSee nil", S.canSee(nil, V1, V1) == false)
+        check("canSee primary", S.canSee(z1, V1, V1) == true)
+        check("canSee secondary", S.canSee(z2, none, V1) == true)
+        check("canSee neither", S.canSee(z3, none, V2) == false)
+        check("canSee no method", S.canSee(z1, none, nil) == false)
+        check("countSeen two", S.countSeen(0, 0, 0, 5, V1, V1) == 2, S.countSeen(0, 0, 0, 5, V1, V1))
+
+        local hm = fakeZombie(1, 0, 0, { id = "HM", harmless = true })
+        setList({ z1, z2, hm })
+        check("countSeen excludes harmless", S.countSeen(0, 0, 0, 5, V1, V1) == 2,
+            S.countSeen(0, 0, 0, 5, V1, V1))
+
+        local z5 = fakeZombie(1, 0, 0.5, { id = "Z5" })
+        setList({ z1, z5 })
+        check("countSeen z-band default", S.countSeen(0, 0, 0, 5, V1, V1) == 2,
+            S.countSeen(0, 0, 0, 5, V1, V1))
+        check("countSeen z-band tight", S.countSeen(0, 0, 0, 5, V1, V1, { zTol = 0.1 }) == 1,
+            S.countSeen(0, 0, 0, 5, V1, V1, { zTol = 0.1 }))
     end
 
     do

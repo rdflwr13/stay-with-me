@@ -97,6 +97,24 @@ end
 
 
 
+BridgeData.GIRLFRIEND_MARK = "WPCompanion"
+
+function BridgeData.girlfriendPeaceful(z)
+    if z == nil then return false end
+    local yes = false
+    pcall(function()
+        if z:getVariableBoolean(BridgeData.GIRLFRIEND_MARK) then yes = true return end
+    end)
+    if yes then return true end
+    pcall(function()
+        if z.hasModData == nil or not z:hasModData() then return end
+        local data = z:getModData()
+        if data ~= nil and data[BridgeData.GIRLFRIEND_MARK] == true then yes = true end
+    end)
+    return yes
+end
+
+
 BridgeData.FOREIGN_MODDATA = BridgeData.FOREIGN_MODDATA or { "ProjectALifeOwned", "ProjectALifeActor" }
 
 
@@ -286,8 +304,8 @@ function BridgeData.npcfwPeaceful(z)
 end
 
 function BridgeData.harmless(z)
-    return BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.foreignPeaceful(z)
-        or BridgeData.npcfwPeaceful(z)
+    return BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.girlfriendPeaceful(z)
+        or BridgeData.foreignPeaceful(z) or BridgeData.npcfwPeaceful(z)
 end
 
 
@@ -1795,4 +1813,48 @@ function BridgeData.levelFromXp(perkKey, xp)
         lvl = n
     end
     return lvl
+end
+
+
+function BridgeData.selftest()
+    local checks, fails = 0, {}
+    local function check(name, got, want)
+        checks = checks + 1
+        if got ~= want then
+            fails[#fails + 1] = string.format("%s got=%s want=%s", name, tostring(got), tostring(want))
+        end
+    end
+    local function markStub(varMark, dataMark, bodyMark)
+        local bodyVar = (Bridge ~= nil and Bridge.BODY_VAR) or "NotAloneBody"
+        local data = {}
+        if dataMark then data[BridgeData.GIRLFRIEND_MARK] = true end
+        return {
+            getVariableBoolean = function(_, name)
+                if name == BridgeData.GIRLFRIEND_MARK then return varMark == true end
+                if name == bodyVar then return bodyMark == true end
+                return false
+            end,
+            hasModData = function() return true end,
+            getModData = function() return data end,
+            isReanimatedForGrappleOnly = function() return false end,
+        }
+    end
+    local okAll, errAll = pcall(function()
+        local plain = markStub(false, false, false)
+        check("plain girlfriend", BridgeData.girlfriendPeaceful(plain), false)
+        check("plain harmless", BridgeData.harmless(plain), false)
+        local varOnly = markStub(true, false, false)
+        check("variable girlfriend", BridgeData.girlfriendPeaceful(varOnly), true)
+        check("variable harmless", BridgeData.harmless(varOnly), true)
+        local dataOnly = markStub(false, true, false)
+        check("moddata girlfriend", BridgeData.girlfriendPeaceful(dataOnly), true)
+        check("moddata harmless", BridgeData.harmless(dataOnly), true)
+        local ownBody = markStub(false, false, true)
+        check("own body girlfriend", BridgeData.girlfriendPeaceful(ownBody), false)
+        check("nil girlfriend", BridgeData.girlfriendPeaceful(nil), false)
+        check("bare stub girlfriend", BridgeData.girlfriendPeaceful({}), false)
+    end)
+    if not okAll then fails[#fails + 1] = "selftest error: " .. tostring(errAll) end
+    if #fails == 0 then return string.format("dataselftest PASS (%d checks)", checks) end
+    return string.format("dataselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
 end

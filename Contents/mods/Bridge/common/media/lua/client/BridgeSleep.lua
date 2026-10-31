@@ -37,6 +37,13 @@ BridgeSleep.GETTERS = { "getNumVisibleZombies", "getNumVeryCloseZombies", "getNu
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeSleep] " .. tostring(text)) end end
 local function warn(text) print("[BridgeSleep] " .. tostring(text)) end
 
+local function benign(z)
+    if z == nil or BridgeData == nil or type(BridgeData.harmless) ~= "function" then return false end
+    local yes = false
+    pcall(function() yes = BridgeData.harmless(z) == true end)
+    return yes
+end
+
 function BridgeSleep.tentSleepWrapper()
     local tents = rawget(_G, "TentSleepImmersion")
     if tents == nil then return nil end
@@ -171,6 +178,7 @@ function BridgeSleep.calm(playerObj)
         elseif Bridge ~= nil and type(Bridge.isCompanion) == "function" then
             pcall(function() companion = Bridge.isCompanion(z) == true end)
         end
+        companion = companion or benign(z)
         if not companion then
             if visible or close or chasing then
                 BridgeSleep.lastVerdict = "real " .. (chasing and "chasing" or close and "very close" or "visible")
@@ -219,6 +227,7 @@ function BridgeSleep.onlyCompanions(playerObj)
     if BridgeZScan ~= nil then
         refs = BridgeZScan.find(function(z)
             return z ~= nil and z:isAlive() and not BridgeZScan.isCompanion(z) and not BridgeZScan.isDragged(z)
+                and not benign(z)
         end, nil, { tag = "sleep.only" })
     end
     if refs ~= nil then
@@ -238,7 +247,8 @@ function BridgeSleep.onlyCompanions(playerObj)
     for i = 0, list:size() - 1 do
         local z = list:get(i)
 
-        if z ~= nil and z:isAlive() and not Bridge.isCompanion(z) and not BridgeData.dragged(z) then
+        if z ~= nil and z:isAlive() and not Bridge.isCompanion(z) and not BridgeData.dragged(z)
+                and not benign(z) then
             local block, why = BridgeSleep.blocks(playerObj, z)
             if block then
                 local d = 0
@@ -721,7 +731,14 @@ function BridgeSleep.selftest()
     local oldFind, oldComp, oldDragged = BridgeZScan.find, BridgeZScan.isCompanion, BridgeZScan.isDragged
     local oldGetText, oldGetPlayer, oldIsClient, oldCharStat = getText, getSpecificPlayer, isClient, CharacterStat
     local refs = {}
-    BridgeZScan.find = function() return refs end
+    BridgeZScan.find = function(fn)
+        local out = {}
+        for i = 1, #refs do
+            local z = refs[i]
+            if fn == nil or fn(z) then out[#out + 1] = z end
+        end
+        return out
+    end
     BridgeZScan.isCompanion = function(z) return z.companion == true end
     BridgeZScan.isDragged = function() return false end
     local okAll, errAll = pcall(function()
@@ -740,6 +757,21 @@ function BridgeSleep.selftest()
         refs = { z2 }
         check("calm real visible", BridgeSleep.calm(p1), false)
         check("calm nothing counted", BridgeSleep.calm(playerStub(statsStub(0, 0, 0), false)), true)
+        local zm4 = zombieStub(4, 0, 0, nil)
+        zm4.getVariableBoolean = function(_, name) return name == "WPCompanion" end
+        zm4.hasModData = function() return false end
+        refs = { zm4 }
+        check("calm marked harmless", BridgeSleep.calm(p1), true)
+        check("only companions marked", BridgeSleep.onlyCompanions(p1), true)
+        local zm1 = zombieStub(1, 0, 0, nil)
+        zm1.getVariableBoolean = function(_, name) return name == "WPCompanion" end
+        zm1.hasModData = function() return false end
+        refs = { zm1 }
+        check("search marked block", BridgeSleep.searchZombieBlock(playerStub(statsStub(1, 0, 0), false)), false)
+        local oldBridge = Bridge
+        Bridge = { alive = function() return true end, body = zombieStub(0.5, 0, 0, nil), BODY_VAR = "NotAloneBody" }
+        check("speed marked block", BridgeSleep.speedBlocker(playerStub(statsStub(0, 0, 0), false)), nil)
+        Bridge = oldBridge
         local s3 = statsStub(0, 0, 0)
         local p3 = playerStub(s3, false)
         local close = BridgeSleep.calmOpen(p3)
@@ -826,10 +858,11 @@ function BridgeSleep.searchZombieBlock(playerObj)
             local dx, dy = z:getX() - px, z:getY() - py
             local d2 = dx * dx + dy * dy
             local floor = math.abs(z:getZ() - pz) < 1
-            if z:getVariableBoolean(Bridge.BODY_VAR) then
+            local own = z:getVariableBoolean(Bridge.BODY_VAR) == true
+            if own or benign(z) then
                 if d2 < close2 then ownClose = ownClose + 1 end
                 if d2 < seen2 then ownSeen = ownSeen + 1 end
-                if z:getTarget() == playerObj then ownChasing = ownChasing + 1 end
+                if own and z:getTarget() == playerObj then ownChasing = ownChasing + 1 end
             elseif floor and d2 < close2 then
                 return true
             end
@@ -842,10 +875,11 @@ function BridgeSleep.searchZombieBlock(playerObj)
                 local dx, dy = z:getX() - px, z:getY() - py
                 local d2 = dx * dx + dy * dy
                 local floor = math.abs(z:getZ() - pz) < 1
-                if z:getVariableBoolean(Bridge.BODY_VAR) then
+                local own = z:getVariableBoolean(Bridge.BODY_VAR) == true
+                if own or benign(z) then
                     if d2 < close2 then ownClose = ownClose + 1 end
                     if d2 < seen2 then ownSeen = ownSeen + 1 end
-                    if z:getTarget() == playerObj then ownChasing = ownChasing + 1 end
+                    if own and z:getTarget() == playerObj then ownChasing = ownChasing + 1 end
                 elseif floor and d2 < close2 then
                     return true
                 end
@@ -952,6 +986,7 @@ function BridgeSleep.speedBlocker(playerObj)
     if BridgeZScan ~= nil then
         refs = BridgeZScan.find(function(z)
             return z ~= nil and z:isAlive() and not BridgeZScan.isCompanion(z) and not BridgeZScan.isDragged(z)
+                and not benign(z)
         end, nil, { tag = "sleep.speed" })
     end
     if refs ~= nil then
@@ -975,7 +1010,8 @@ function BridgeSleep.speedBlocker(playerObj)
     for i = 0, list:size() - 1 do
         local z = list:get(i)
 
-        if z ~= nil and z:isAlive() and not Bridge.isCompanion(z) and not BridgeData.dragged(z) then
+        if z ~= nil and z:isAlive() and not Bridge.isCompanion(z) and not BridgeData.dragged(z)
+                and not benign(z) then
             local zx, zy = z:getX() - playerObj:getX(), z:getY() - playerObj:getY()
             local d2 = zx * zx + zy * zy
             if d2 < 4 * 4 then return "zombie within 4" end

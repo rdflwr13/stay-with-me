@@ -623,6 +623,9 @@ end
 
 function BridgeGunRules.targetVisible(body, red, z)
     if z == nil then return false end
+    if BridgeZScan ~= nil and type(BridgeZScan.canSee) == "function" then
+        return BridgeZScan.canSee(z, body, red) == true
+    end
     local seen = false
     if body ~= nil then
         pcall(function() seen = body:CanSee(z) == true end)
@@ -2088,6 +2091,21 @@ function BridgeGunRules.selftest()
     check("aimAngle same", BridgeGunRules.aimAngle(1, 0, 1, 0), 0)
     check("aimAngle quarter", string.format("%.2f", BridgeGunRules.aimAngle(1, 0, 0, 1)), "1.57")
     check("aimAngle empty", BridgeGunRules.aimAngle(0, 0, 1, 1), 0)
+
+    local bodyViewer = { CanSee = function(_, z) return z.flag == "body" end }
+    local redViewer = { CanSee = function(_, z) return z.flag == "red" end }
+    local blind = { CanSee = function() return false end }
+    local zb = { flag = "body" }
+    local zr = { flag = "red" }
+    local zn = { flag = "none" }
+    check("targetVisible body", BridgeGunRules.targetVisible(bodyViewer, redViewer, zb), true)
+    check("targetVisible red", BridgeGunRules.targetVisible(bodyViewer, redViewer, zr), true)
+    check("targetVisible neither", BridgeGunRules.targetVisible(blind, blind, zn), false)
+    check("targetVisible nil", BridgeGunRules.targetVisible(bodyViewer, redViewer, nil), false)
+    check("targetVisible delegates body", BridgeGunRules.targetVisible(bodyViewer, redViewer, zb),
+        BridgeZScan.canSee(zb, bodyViewer, redViewer))
+    check("targetVisible delegates red", BridgeGunRules.targetVisible(bodyViewer, redViewer, zr),
+        BridgeZScan.canSee(zr, bodyViewer, redViewer))
 
     if #fails == 0 then return string.format("gunselftest PASS (%d checks)", checks) end
     return string.format("gunselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))

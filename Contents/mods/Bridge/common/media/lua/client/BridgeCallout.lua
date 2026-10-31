@@ -1643,7 +1643,12 @@ function BridgeCallout.update(body)
             local hx, hy, hz = nil, nil, nil
             pcall(function() hx, hy, hz = red:getX(), red:getY(), red:getZ() end)
             if hx ~= nil then
-                local n = BridgeHorde.count(hx, hy, hz, BridgeHorde.RADIUS)
+                local raw = BridgeHorde.count(hx, hy, hz, BridgeHorde.RADIUS)
+                local n = 0
+                if raw >= BridgeHorde.TIERS[1] then
+                    n = BridgeHorde.countSeen(hx, hy, hz, BridgeHorde.RADIUS, body, red)
+                    vlog(string.format("horde: raw=%d seen=%d at %.1f,%.1f", raw, n, hx, hy))
+                end
                 local tiers = BridgeHorde.TIERS
                 for i = #tiers, 1, -1 do
                     local t = tiers[i]

@@ -31,7 +31,6 @@ BridgeAmbient.CFG = {
     FOG            = 0.4,
     WIND           = 0.5,
     CLOUD          = 0.6,
-    TORCH          = 0.05,
 }
 
 
@@ -53,10 +52,8 @@ BridgeAmbient.EVENTS = {
     EvWindy          = { slot = "AmbWindy",        cooldown = 15 * 60, cat = "WEATHER" },
     EvNightFalls     = { slot = "AmbNightFalls",   cooldown = 20 * 60, cat = "DARK" },
     EvDawn           = { slot = "AmbDawn",         cooldown = 20 * 60, cat = "DARK" },
-    EvDarkOut        = { slot = "AmbDarkOut",      cooldown = 10 * 60, cat = "DARK" },
     EvDarkOutTorch   = { slot = "AmbDarkOutTorch", cooldown = 10 * 60, cat = "DARK" },
     EvNeedLightOut   = { slot = "AmbNeedLightOut", cooldown = 15 * 60, cat = "DARK" },
-    EvDarkRoom       = { slot = "AmbDarkRoom",     cooldown = 12 * 60, cat = "DARK" },
     EvDarkRoomTorch  = { slot = "AmbDarkRoomTorch", cooldown = 12 * 60, cat = "DARK" },
     EvNeedLightIn    = { slot = "AmbNeedLightIn",  cooldown = 15 * 60, cat = "DARK" },
     EvLightOn        = { slot = "AmbLightOn",      cooldown = 10 * 60, cat = "DARK" },
@@ -148,22 +145,6 @@ local function place(red)
     return "sheltered", true
 end
 
-local function lightAt(red)
-    local lvl, torch = 1, 0
-    pcall(function()
-        local sq = red:getCurrentSquare()
-        if sq == nil then return end
-        lvl = sq:getLightLevel(red:getPlayerNum())
-        torch = math.min(1, red:getTorchStrength())
-        lvl = math.max(lvl, torch)
-        if sq:isOutside() then
-            local c = getClimateManager()
-            if c ~= nil then lvl = math.max(c:getDayLightStrength(), lvl) end
-        end
-    end)
-    return lvl, torch
-end
-
 local function snapshot(red, body)
     local p = BridgeAmbient.prev
     local s = { place = "out", covered = false }
@@ -192,22 +173,31 @@ local function snapshot(red, body)
     local sq = nil
     pcall(function() sq = red:getCurrentSquare() end)
     if sq ~= nil then pcall(function() s.power = sq:haveElectricity() end) end
-    s.torchOn = (math.min(1, red:getTorchStrength()) or 0) > BridgeAmbient.CFG.TORCH
-    local dark, inside = nil, nil
-    if BridgeTorch ~= nil and type(BridgeTorch.darkHere) == "function" then
-        dark, inside = BridgeTorch.darkHere(body)
+    s.torchOn = (math.min(1, red:getTorchStrength()) or 0) > BridgeTorchShared.CFG.TORCH
+    local entry = nil
+    if BridgeLight ~= nil and type(BridgeLight.at) == "function" then
+        local ok, got = pcall(BridgeLight.at, body)
+        if ok then entry = got end
     end
-    if dark == nil then
-        local lvl = BridgeTorchShared.darkAt(body)
-        local external, why = false, "none"
-        if BridgeTorch ~= nil and type(BridgeTorch.externalLight) == "function" then
-            local ok, e, w = pcall(BridgeTorch.externalLight, body, red)
-            if ok then external, why = (e == true), (w or "none") end
+    if entry ~= nil then
+        s.dark, s.inside = entry.dark == true, entry.inside ~= false
+    else
+        local dark, inside = nil, nil
+        if BridgeTorch ~= nil and type(BridgeTorch.darkHere) == "function" then
+            dark, inside = BridgeTorch.darkHere(body)
         end
-        dark = BridgeTorchShared.isDark(lvl, external, why)
-        inside = (place(body) ~= "out")
+        if dark == nil then
+            local lvl = BridgeTorchShared.darkAt(body)
+            local external, why = false, "none"
+            if BridgeTorch ~= nil and type(BridgeTorch.externalLight) == "function" then
+                local ok, e, w = pcall(BridgeTorch.externalLight, body, red)
+                if ok then external, why = (e == true), (w or "none") end
+            end
+            dark = BridgeTorchShared.isDark(lvl, external, why)
+            inside = (place(body) ~= "out")
+        end
+        s.dark, s.inside = dark, inside
     end
-    s.dark, s.inside = dark, inside
     pcall(function() s.night = getGameTime():isNight() end)
     pcall(function() s.car = red:getVehicle() ~= nil end)
     return s

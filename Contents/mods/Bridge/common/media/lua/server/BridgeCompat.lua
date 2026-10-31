@@ -187,6 +187,85 @@ function BridgeCompat.dogsTick()
     BridgeCompat.dogsInstall()
 end
 
+local SBT_CARDINAL = { { 0, 0 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+local SBT_ALL = { { 0, 0 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
+
+BridgeCompat.sbtTicks = 0
+BridgeCompat.sbtWrapped = nil
+BridgeCompat.sbtLogged = false
+BridgeCompat.sbtMissingLogged = false
+
+function BridgeCompat.sbtInKillZone(sq, cfg)
+    local cell = getCell()
+    if cell == nil or cfg == nil or sq == nil then return false end
+    local offsets = cfg.killCardinalOnly and SBT_CARDINAL or SBT_ALL
+    local cx, cy = sq:getX() + 0.5, sq:getY() + 0.5
+    local r = cfg.killRadius or 0
+    local r2 = r * r
+    for i = 1, #offsets do
+        local s = cell:getGridSquare(sq:getX() + offsets[i][1],
+            sq:getY() + offsets[i][2], sq:getZ())
+        if s ~= nil then
+            local movers = s:getMovingObjects()
+            if movers ~= nil then
+                for j = 0, movers:size() - 1 do
+                    local z = movers:get(j)
+                    if z ~= nil and instanceof(z, "IsoZombie") and not z:isDead() then
+                        local dx, dy = z:getX() - cx, z:getY() - cy
+                        if dx * dx + dy * dy <= r2 and BridgeCompat.isOurBody(z) then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+function BridgeCompat.sbtInstall()
+    if type(SBT) ~= "table" or type(SBT.config) ~= "table"
+            or type(SBT.registerSquare) ~= "function" then
+        return false
+    end
+    if BridgeCompat.sbtWrapped == SBT.registerSquare then return true end
+
+    local original = SBT.registerSquare
+    local wrapper = function(sq, loading)
+        local kind = original(sq, loading)
+        if kind == "spike" and sq ~= nil and BridgeCompat.sbtInKillZone(sq, SBT.config) then
+            return "protected"
+        end
+        return kind
+    end
+
+    BridgeCompat.sbtWrapped = wrapper
+    SBT.bridgeGuardWrapper = wrapper
+    SBT.registerSquare = wrapper
+
+    if not BridgeCompat.sbtLogged then
+        BridgeCompat.sbtLogged = true
+        log("Spiked Barrel Traps companion guard active")
+    end
+    return true
+end
+
+function BridgeCompat.sbtTick()
+    BridgeCompat.sbtTicks = BridgeCompat.sbtTicks + 1
+    if BridgeCompat.sbtTicks > 1 and BridgeCompat.sbtTicks % 10 ~= 0 then return end
+
+    if BridgeCompat.sbtInstall() then
+        BridgeCompat.sbtMissingLogged = false
+        return
+    end
+
+    if BridgeCompat.sbtTicks > 300 and modActive("SpikedBarrelTraps")
+            and not BridgeCompat.sbtMissingLogged then
+        BridgeCompat.sbtMissingLogged = true
+        log("SpikedBarrelTraps is active but SBT.registerSquare was not found; trap immunity is off")
+    end
+end
+
 BridgeCompat.rainingWanted = nil
 BridgeCompat.rainingTicks = 0
 BridgeCompat.rainingLogged = false
@@ -244,6 +323,7 @@ Events.OnTick.Add(function()
     pcall(BridgeCompat.survivorsTick)
     pcall(BridgeCompat.divgadgetsTick)
     pcall(BridgeCompat.dogsTick)
+    pcall(BridgeCompat.sbtTick)
     pcall(BridgeCompat.rainingTick)
 end)
 Events.OnGameStart.Add(function()
@@ -251,10 +331,12 @@ Events.OnGameStart.Add(function()
     BridgeCompat.survivorsTicks = 0
     BridgeCompat.divgadgetsTicks = 0
     BridgeCompat.dogsTicks = 0
+    BridgeCompat.sbtTicks = 0
     pcall(BridgeCompat.install)
     pcall(BridgeCompat.survivorsInstall)
     pcall(BridgeCompat.divgadgetsInstall)
     pcall(BridgeCompat.dogsInstall)
+    pcall(BridgeCompat.sbtInstall)
     pcall(BridgeCompat.rainingStart)
 end)
 Events.OnServerStarted.Add(function()
@@ -262,9 +344,11 @@ Events.OnServerStarted.Add(function()
     BridgeCompat.survivorsTicks = 0
     BridgeCompat.divgadgetsTicks = 0
     BridgeCompat.dogsTicks = 0
+    BridgeCompat.sbtTicks = 0
     pcall(BridgeCompat.install)
     pcall(BridgeCompat.survivorsInstall)
     pcall(BridgeCompat.divgadgetsInstall)
     pcall(BridgeCompat.dogsInstall)
+    pcall(BridgeCompat.sbtInstall)
     pcall(BridgeCompat.rainingStart)
 end)
