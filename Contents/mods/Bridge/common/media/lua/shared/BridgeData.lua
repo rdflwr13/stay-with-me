@@ -1735,6 +1735,31 @@ function BridgeData.cleanCount(n)
 end
 
 
+function BridgeData.cleanLastFight(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    local d = tonumber(t.d)
+    if d == nil or d ~= d then d = 0 end
+    if d < 0 then d = 0 end
+    if d > 3600 then d = 3600 end
+    out.d = d
+    local p = tonumber(t.p)
+    if p == nil or p ~= p then p = 0 end
+    p = math.floor(p)
+    if p < 0 then p = 0 end
+    if p > 200 then p = 200 end
+    out.p = p
+    out.m = (t.m == "gun") and "gun" or "melee"
+    out.h = (t.h == 1 or t.h == true) and 1 or 0
+    local a = tonumber(t.a)
+    if a == nil or a ~= a then a = 0 end
+    if a < 0 then a = 0 end
+    if a > 100000000 then a = 100000000 end
+    out.a = a
+    return out
+end
+
+
 function BridgeData.relTier(rel)
     local f = rel and rel.f or 0
     if f < 0 then return "Cold" end

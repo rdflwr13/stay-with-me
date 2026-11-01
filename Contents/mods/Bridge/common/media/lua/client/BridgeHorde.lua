@@ -73,11 +73,13 @@ function BridgeHorde.count(cx, cy, cz, radius)
 end
 
 
-function BridgeHorde.countSeen(cx, cy, cz, radius, body, red)
+function BridgeHorde.countSeen(cx, cy, cz, radius, body, red, known)
     if cx == nil or cy == nil then return 0 end
     local r = tonumber(radius) or BridgeHorde.RADIUS
     local czz = tonumber(cz) or 0
-    if BridgeHorde.count(cx, cy, czz, r) < BridgeHorde.TIERS[1] then return 0 end
+    local raw = tonumber(known)
+    if raw == nil then raw = BridgeHorde.count(cx, cy, czz, r) end
+    if raw < BridgeHorde.TIERS[1] then return 0 end
     local n = 0
     if BridgeZS ~= nil and type(BridgeZS.countSeen) == "function" then
         pcall(function()

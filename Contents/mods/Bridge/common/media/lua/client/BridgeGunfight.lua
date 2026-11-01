@@ -104,6 +104,7 @@ BridgeGunfight.reloadDoneAt = nil
 BridgeGunfight.suspended = false
 BridgeGunfight.recheckAt = nil
 BridgeGunfight.lowSaid = false
+BridgeGunfight.magLowSaid = false
 BridgeGunfight.modeRange = 0
 BridgeGunfight.canMelee = false
 BridgeGunfight.meleeFallback = false
@@ -368,6 +369,7 @@ local function setFields(item)
     BridgeGunfight.suspended = false
     BridgeGunfight.meleeFallback = false
     BridgeGunfight.lowSaid = false
+    BridgeGunfight.magLowSaid = false
     BridgeGunfight.reloadMissingCount = 0
 BridgeGunfight.reserveAt = nil
 BridgeGunfight.reserveN = 0
@@ -434,6 +436,7 @@ local function clearFields()
     BridgeGunfight.suspended = false
     BridgeGunfight.recheckAt = nil
     BridgeGunfight.lowSaid = false
+    BridgeGunfight.magLowSaid = false
     BridgeGunfight.modeRange = 0
     BridgeGunfight.canMelee = false
     BridgeGunfight.meleeFallback = false
@@ -1694,21 +1697,60 @@ local function shotFx(body, gun, kind, target)
 end
 
 
+local function loadableReserve(body, gun, items)
+    if body == nil or gun == nil then return false end
+    if items == nil then pcall(function() items = BridgeGunRules.itemsOf(body) end) end
+    if gun.magazineType ~= nil then
+        local _, best = BridgeGunRules.findLoadedMagazine(body, gun, items)
+        if (tonumber(best) or 0) > 0 then return true end
+        local total = BridgeGunRules.magazineCount(body, gun)
+        if (tonumber(total) or 0) > 0 then
+            local _, loose = BridgeGunRules.findLooseRounds(body, gun, 1, items)
+            if (tonumber(loose) or 0) > 0 then return true end
+            if BridgeGunRules.findAmmoBox(body, gun, items) ~= nil then return true end
+        end
+    else
+        local _, loose = BridgeGunRules.findLooseRounds(body, gun, 1, items)
+        if (tonumber(loose) or 0) > 0 then return true end
+        if BridgeGunRules.findAmmoBox(body, gun, items) ~= nil then return true end
+    end
+    local home = false
+    pcall(function()
+        home = BridgeFetch ~= nil and type(BridgeFetch.hasAmmoStock) == "function"
+            and BridgeFetch.hasAmmoStock(gun) == true
+    end)
+    return home
+end
+
+
 local function checkLowAmmo()
     local rounds = BridgeGunfight.rounds or 0
-    if BridgeGunfight.lowSaid then return end
+    if BridgeGunfight.lowSaid and BridgeGunfight.magLowSaid then return end
     local maxAmmo = BridgeGunfight.maxAmmo or 0
     if maxAmmo <= 0 then maxAmmo = tonumber(BridgeGunfight.gun and BridgeGunfight.gun.maxAmmo) or 0 end
     if maxAmmo <= 0 then return end
     if rounds <= 0 then
         BridgeGunfight.lowSaid = true
+        BridgeGunfight.magLowSaid = true
         return
     end
-    local threshold = math.max(1, math.ceil(maxAmmo * 0.2))
-    if rounds > threshold then return end
     local now = Bridge.time or 0
     if BridgeGunfight.lowCheckAt ~= nil and now - BridgeGunfight.lowCheckAt < 30 then return end
     BridgeGunfight.lowCheckAt = now
+    local magThreshold = math.max(1, math.ceil(maxAmmo * 0.3))
+    if rounds <= magThreshold and not BridgeGunfight.magLowSaid then
+        local body = BridgeGunfight.body
+        local items = nil
+        if body ~= nil then pcall(function() items = BridgeGunRules.itemsOf(body) end) end
+        if loadableReserve(body, BridgeGunfight.gun, items) then
+            BridgeGunfight.magLowSaid = true
+            pcall(function() BridgeCallout.lowMag() end)
+            return
+        end
+    end
+    if BridgeGunfight.lowSaid then return end
+    local threshold = math.max(1, math.ceil(maxAmmo * 0.2))
+    if rounds > threshold then return end
     local hasAmmo = nil
     if BridgeGunfight.hasAmmoAt ~= nil and now - BridgeGunfight.hasAmmoAt < 30 then
         hasAmmo = BridgeGunfight.hasAmmoValue
@@ -1994,6 +2036,7 @@ local function fire(body)
         extraLog[#extraLog + 1] = string.format("%.1f/s=%.2f/%s", dist(body, z), ex.share or 0,
             ehit and (ok and (dead and "kill" or "hit") or "error") or "miss")
     end
+    if extraKills > 0 then pcall(function() BridgeCallout.gunMultiKill() end) end
 
     local glass = glassTo(body, t)
     for _, ex in ipairs(extras) do glass = glass + glassTo(body, ex.target) end
@@ -2539,6 +2582,7 @@ local function finishReload(body)
     BridgeGunfight.lowCheckAt = nil
     clearReloadSpeed(body)
     BridgeGunfight.lowSaid = false
+    BridgeGunfight.magLowSaid = false
     BridgeGunfight.aimUntil = (Bridge.time or 0) + BridgeGunRules.aimTicks(BridgeGunfight.gun, aimingLevel())
     BridgeGunfight.nextShotAt = BridgeGunfight.aimUntil
     BridgeGunfight.state = "aim"
@@ -2573,8 +2617,9 @@ local function cancelReload(body, reason)
     return false
 end
 
-function BridgeGunfight.interruptReload(body, reason)
+function BridgeGunfight.interruptReload(body, reason, quiet)
     local stopped = false
+    local hadReload = BridgeGunfight.reloadStage ~= nil
     clearNeedCache()
     clearAmmoPresence()
     BridgeGunfight.hasAmmoAt = nil
@@ -2604,6 +2649,9 @@ function BridgeGunfight.interruptReload(body, reason)
         pcall(function() clearBump(body) end)
         BridgeGunfight.state = "idle"
         BridgeGunfight.info = "reload interrupted: " .. tostring(reason or "inventory transfer")
+        if hadReload and quiet ~= true then
+            pcall(function() BridgeCallout.reloadCancel() end)
+        end
     end
     return stopped
 end
@@ -2629,7 +2677,7 @@ end
 
 
 function BridgeGunfight.interruptForFlee(body)
-    pcall(function() BridgeGunfight.interruptReload(body, "flee") end)
+    pcall(function() BridgeGunfight.interruptReload(body, "flee", true) end)
     if BridgeGunfight.reposition ~= nil then
         pcall(function() stopReposition(body) end)
     end
@@ -2987,6 +3035,23 @@ local function trulyOutOfAmmo(body, items)
 end
 
 
+local function ammoOutLine(body, items)
+    if body == nil or BridgeGunfight.gun == nil then return end
+    if not trulyOutOfAmmo(body, items) then
+        local gun = BridgeGunfight.gun
+        if gun.magazineType ~= nil and (BridgeGunfight.rounds or 0) <= 0 then
+            local loaded = BridgeGunRules.findLoadedMagazine(body, gun, items)
+            local total = BridgeGunRules.magazineCount(body, gun)
+            if loaded == nil and (tonumber(total) or 0) <= 0 then
+                pcall(function() BridgeCallout.noSpare() end)
+            end
+        end
+        return
+    end
+    pcall(function() BridgeCallout.outOfAmmo() end)
+end
+
+
 local function forceMeleeFallback(body)
     if BridgeFight ~= nil then
         BridgeFight.target = nil
@@ -3050,7 +3115,7 @@ local function outOfAmmo(body, items)
             tostring(pick and pick.out), probe)
         local home = false
         pcall(function() home = BridgeFetch ~= nil and type(BridgeFetch.hasAmmoStock) == "function" and BridgeFetch.hasAmmoStock(BridgeGunfight.gun) end)
-        if not source and not home then pcall(function() BridgeCallout.outOfAmmo() end) end
+        pcall(function() ammoOutLine(body, items) end)
     end
     log("out of ammo for " .. tostring(BridgeGunfight.gun and BridgeGunfight.gun.fullType or "?"))
     if trulyOutOfAmmo(body, items) then forceMeleeFallback(body) end
@@ -4516,6 +4581,7 @@ BridgeGunfight.lastShotTarget = nil
         BridgeGunfight.suspended = false
         BridgeGunfight.noAmmoUntil = nil
         BridgeGunfight.lowSaid = false
+        BridgeGunfight.magLowSaid = false
     end
     if BridgeGunfight.suspended then
         if trulyOutOfAmmo(body) then
@@ -4546,6 +4612,7 @@ BridgeGunfight.lastShotTarget = nil
         if BridgeFight.target == nil and homeAmmo(body) then return false end
         BridgeGunfight.suspended = false
         BridgeGunfight.lowSaid = false
+        BridgeGunfight.magLowSaid = false
         log("ammo available, re-arming")
     end
 
@@ -4729,6 +4796,7 @@ BridgeGunfight.lastShotTarget = nil
             BridgeGunfight.target = t
             BridgeGunfight.lastTargetAt = Bridge.time
             BridgeGunfight.stowAt = nil
+            pcall(function() BridgeCallout.gunEngage() end)
             local nowA = Bridge.time or 0
             local fx, fy = 0, 1
             pcall(function()
@@ -4904,12 +4972,20 @@ BridgeGunfight.lastShotTarget = nil
     local why, blocker = blockedBy(body, t)
     if why ~= nil then
         if BridgeGunfight.standoffMoving then
-            if why == "player" then pcall(function() BridgeCallout.lineOfFire() end) end
+            if why == "player" then
+                pcall(function() BridgeCallout.lineOfFire() end)
+            else
+                pcall(function() BridgeCallout.noShot() end)
+            end
             BridgeGunfight.state = "backstep"
             BridgeGunfight.info = "hold fire: " .. why .. " (retreating)"
             return true
         end
-        if why == "player" then pcall(function() BridgeCallout.lineOfFire() end) end
+        if why == "player" then
+            pcall(function() BridgeCallout.lineOfFire() end)
+        else
+            pcall(function() BridgeCallout.noShot() end)
+        end
         BridgeGunfight.state = "sidestep"
         if BridgeGunfight.blockAt == nil or Bridge.time - BridgeGunfight.blockAt >= 60 then
             BridgeGunfight.blockAt = Bridge.time
@@ -5073,7 +5149,7 @@ function BridgeGunfight.onResult(args)
                 end
                 local home = false
                 pcall(function() home = BridgeFetch ~= nil and type(BridgeFetch.hasAmmoStock) == "function" and BridgeFetch.hasAmmoStock(BridgeGunfight.gun) end)
-                if not source and not home then pcall(function() BridgeCallout.outOfAmmo() end) end
+                pcall(function() ammoOutLine(BridgeGunfight.body, nil) end)
             end
         elseif why == "reloading" then
             BridgeGunfight.reloadStage = nil
@@ -5085,6 +5161,7 @@ function BridgeGunfight.onResult(args)
             BridgeGunfight.recheckAt = (Bridge.time or 0) + 20
             pcall(function() tellReload("cancel", {}) end)
             BridgeGunfight.info = "reload desync: cancel sent"
+            pcall(function() BridgeCallout.reloadCancel() end)
         elseif why == "gun missing" or why == "no primary gun" then
             BridgeGunfight.canMelee = true
             BridgeGunfight.suspended = true
@@ -5159,6 +5236,7 @@ function BridgeGunfight.onResult(args)
             end
         end
         log(string.format("shot extras n=%d hits=%d kills=%d", #extras, extraHits, extraKills))
+        if extraKills > 0 then pcall(function() BridgeCallout.gunMultiKill() end) end
         if extraHits > 0 then
             if args.hit ~= true then
                 BridgeGunfight.info = string.format("miss primary, extras hit=%d", extraHits)
@@ -5247,6 +5325,7 @@ BridgeGunfight.reserveN = 0
         end
         BridgeGunfight.suspended = false
         BridgeGunfight.lowSaid = false
+        BridgeGunfight.magLowSaid = false
         BridgeGunfight.info = string.format("reload result rounds=%d", BridgeGunfight.rounds or 0)
     elseif action == "start" then
         BridgeGunfight.canMelee = false
@@ -5460,6 +5539,7 @@ function BridgeGunfight.reset()
     BridgeGunfight.suspended = false
     BridgeGunfight.recheckAt = nil
     BridgeGunfight.lowSaid = false
+    BridgeGunfight.magLowSaid = false
     BridgeGunfight.modeRange = 0
     BridgeGunfight.canMelee = false
     BridgeGunfight.meleeFallback = false

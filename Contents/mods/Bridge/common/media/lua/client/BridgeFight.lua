@@ -12,6 +12,9 @@ local FENCE_HOP_PENALTY = 1.5
 local TIRED_SAY = 0.5
 local RESTED_SAY = 0.2
 
+BridgeFight.TIRED_THRESHOLD = TIRED_SAY
+function BridgeFight.tiredThreshold() return TIRED_SAY end
+
 local ATTACK_TIME = 28
 local SWING_LEN = 60
 local SWING_MIN = 35
@@ -436,8 +439,17 @@ BridgeFight.swingFrames = swingFrames
 
 
 
+local crowdMemo = { tick = nil, body = nil, byRadius = {} }
+
 local function crowdAround(body, radius)
     radius = radius or CROWD_RADIUS
+    local tick = Bridge.tick or 0
+    if crowdMemo.tick ~= tick or crowdMemo.body ~= body then
+        crowdMemo.tick, crowdMemo.body, crowdMemo.byRadius = tick, body, {}
+    end
+    local key = string.format("%.2f", radius)
+    local cached = crowdMemo.byRadius[key]
+    if cached ~= nil then return cached end
     local n = 0
     pcall(function()
         local bx, by = body:getX(), body:getY()
@@ -453,6 +465,7 @@ local function crowdAround(body, radius)
             end
         end
     end)
+    crowdMemo.byRadius[key] = n
     return n
 end
 BridgeFight.crowdAround = crowdAround
@@ -706,6 +719,7 @@ local function hitTarget(body, item, victim, noMiss, fixedDmg)
         miss = missChance(body)
         if ZombRand(100) >= 100 - miss then
             if not isAnimal then pcall(function() victim:setHitFromBehind(false) end) end
+            if (BridgeFight.crowd or 0) >= 2 then pcall(function() BridgeCallout.noRoom() end) end
             return string.format("miss roll (%.0f%% f=%.2f crowd=%d)", miss, BridgeFight.fatigue, BridgeFight.crowd)
         end
     end
@@ -1080,6 +1094,7 @@ local function validTarget(z, body, red, mode)
     pcall(function() thumping = tostring(z:getActionStateName()) == "thump" end)
     if thumping and barrierSide(z, body) then
         BridgeFight.info = "target behind a barrier (thump)"
+        pcall(function() BridgeCallout.cantReach() end)
         return false
     end
 
@@ -2523,9 +2538,17 @@ function BridgeFight.shoveResolve(body, primary)
     BridgeFight.lastShoveCrit = chance
     BridgeFight.shoveCrit = crit
     local targets = shoveTargets(body)
+    local hitCount, lethal = 0, false
     for i = 1, #targets do
         local e = targets[i]
-        pcall(function() shoveApply(body, e.z, e.dot, e.d, crit) end)
+        local ok = pcall(function() shoveApply(body, e.z, e.dot, e.d, crit) end)
+        if ok then hitCount = hitCount + 1 end
+        local dead = false
+        pcall(function() dead = e.z:isDead() == true or e.z:getHealth() <= 0 end)
+        if dead then lethal = true end
+    end
+    if hitCount > 0 and not lethal then
+        pcall(function() BridgeCallout.shove() end)
     end
     local str = strengthLevel()
     local fitN = fitnessLevel()
@@ -2724,6 +2747,31 @@ local function tryVault(body, t)
     end)
 end
 BridgeFight.vaultToward = tryVault
+
+local function playerInArc(body, red, item)
+    if body == nil or red == nil or item == nil then return false end
+    local ok = false
+    pcall(function()
+        if math.abs(red:getZ() - body:getZ()) > BridgeCallout.SWING_Z_TOL then return end
+        local range, minA = 2.0, 0
+        pcall(function() range = item:getMaxRange() end)
+        pcall(function() minA = item:getMinAngle() end)
+        if type(range) ~= "number" then range = 2.0 end
+        if type(minA) ~= "number" then minA = 0 end
+        local fx, fy = body:getForwardDirectionX(), body:getForwardDirectionY()
+        local fl = math.sqrt(fx * fx + fy * fy)
+        if fl < 0.01 then return end
+        fx, fy = fx / fl, fy / fl
+        local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
+        local d = math.sqrt(dx * dx + dy * dy)
+        if d <= 0.01 then return end
+        if d > range + BridgeCallout.SWING_RANGE_TOL then return end
+        if (fx * dx + fy * dy) / d < minA then return end
+        ok = true
+    end)
+    return ok
+end
+
 
 function BridgeFight.update(body)
     if not BridgeFight.enabled then rest(false) return false end
@@ -3044,7 +3092,10 @@ function BridgeFight.update(body)
         return false
     end
 
-    if picked then pcall(function() BridgeCallout.engage(t) end) end
+    if picked then
+        pcall(function() BridgeCallout.engage(t) end)
+        if isUnarmed(weapon(body)) then pcall(function() BridgeCallout.unarmed() end) end
+    end
 
     local escS = BridgeFight.escapeScan
     local escapeNeedClose = BridgeFight.escapeOn and d > range - 0.15
@@ -3122,6 +3173,9 @@ function BridgeFight.update(body)
         local escS = BridgeFight.escapeScan
         local flankNoPress = BridgeFight.escapeOn and escS ~= nil and (escS.nearN or 0) == 0
         if not flankNoPress or dShove <= SHOVE_RANGE - 0.25 then
+            local crowd = crowdAround(body)
+            BridgeFight.crowd = crowd
+            if crowd >= SHOVE_MIN_CROWD then pcall(function() BridgeCallout.noRoom() end) end
             return startShove(body, t)
         end
         if Bridge.verbose and (Bridge.time % 10) == 7 then
@@ -3140,6 +3194,7 @@ function BridgeFight.update(body)
         end
     end)
     pcall(function() body:faceLocationF(t:getX(), t:getY()) end)
+    if playerInArc(body, red, item) then pcall(function() BridgeCallout.inTheWay() end) end
     local crit, critChance, critMult = critRoll(item)
     BridgeFight.swingCrit, BridgeFight.swingCritChance, BridgeFight.swingCritMult = crit, critChance, critMult
     local prone = isProne(t)

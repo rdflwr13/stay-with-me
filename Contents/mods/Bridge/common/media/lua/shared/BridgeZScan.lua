@@ -9,6 +9,7 @@ S.BUCKET = 8
 
 S.TAGS = {
     ["callout.scan"] = true,
+    ["scan.frame"] = true,
     ["fight.crowd"] = true,
     ["fight.pick"] = true,
     ["fight.extra"] = true,
@@ -228,6 +229,8 @@ local function newMemo(tick)
         drag = setmetatable({}, { __mode = "k" }),
         risen = setmetatable({}, { __mode = "k" }),
         threat = setmetatable({}, { __mode = "k" }),
+        vis = setmetatable({}, { __mode = "k" }),
+        q = {},
     }
 end
 
@@ -396,12 +399,90 @@ function S.isThreat(z)
     return v
 end
 
+local MEMO_MAX = 32
+
+local function round2(v)
+    return string.format("%.4f", tonumber(v) or 0)
+end
+
+
+local function filterKey(f)
+    if f == nil then return "-" end
+    if type(f) == "string" then return "s:" .. f end
+    return "f:" .. tostring(f)
+end
+
+
+local function memGet(kind, key)
+    local m = memoNow()
+    local bucket = m.q[kind]
+    if bucket == nil then return nil end
+    local v = bucket[key]
+    if v ~= nil then S.stats.memoHits = S.stats.memoHits + 1 end
+    return v
+end
+
+
+local function memPut(kind, key, value)
+    local m = memoNow()
+    local bucket = m.q[kind]
+    if bucket == nil then
+        bucket = { n = 0 }
+        m.q[kind] = bucket
+    end
+    if bucket.n >= MEMO_MAX then return end
+    bucket[key] = value
+    bucket.n = bucket.n + 1
+end
+
+
+local function visGet(viewer, z)
+    if viewer == nil or z == nil then return nil end
+    local m = memoNow()
+    local byViewer = m.vis[viewer]
+    if byViewer == nil then return nil end
+    local v = byViewer[z]
+    if v ~= nil then S.stats.memoHits = S.stats.memoHits + 1 end
+    return v
+end
+
+
+local function visPut(viewer, z, v)
+    if viewer == nil or z == nil then return end
+    local m = memoNow()
+    local byViewer = m.vis[viewer]
+    if byViewer == nil then
+        byViewer = setmetatable({}, { __mode = "k" })
+        m.vis[viewer] = byViewer
+    end
+    byViewer[z] = v
+end
+
+
 function S.canSee(z, a, b)
     if z == nil then return false end
     local seen = false
-    if a ~= nil then pcall(function() seen = a:CanSee(z) == true end) end
+    if a ~= nil then
+        local v = visGet(a, z)
+        if v == nil then
+            local got = false
+            pcall(function() got = a:CanSee(z) == true end)
+            S.stats.memoMisses = S.stats.memoMisses + 1
+            visPut(a, z, got)
+            v = got
+        end
+        seen = v
+    end
     if not seen and b ~= nil and b ~= a then
-        pcall(function() seen = b:CanSee(z) == true end)
+        local v = visGet(b, z)
+        if v == nil then
+            local got = false
+            pcall(function() got = b:CanSee(z) == true end)
+            S.stats.memoMisses = S.stats.memoMisses + 1
+            visPut(b, z, got)
+            v = got
+        end
+        seen = v
     end
     return seen
 end
@@ -881,10 +962,22 @@ function S.near(x, y, r, opts)
         finishQuery("near", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return adapter({})
     end
-    local idxs = {}
-    local scanned, rejZ, rejF = scanNear(s, idxs, x, y, tonumber(r) or 0, opts)
-    local ms = nowMs() - started
-    finishQuery("near", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    local idxs = nil
+    local zf, tol = optsZ(opts)
+    local fn = type(opts) == "table" and opts.filter or nil
+    local key = "N|" .. round2(x) .. "|" .. round2(y) .. "|" .. round2(r)
+        .. "|" .. round2(zf or -999999) .. "|" .. round2(tol) .. "|" .. filterKey(fn)
+    idxs = memGet("near", key)
+    if idxs == nil then
+        S.stats.memoMisses = S.stats.memoMisses + 1
+        idxs = {}
+        local scanned, rejZ, rejF = scanNear(s, idxs, x, y, tonumber(r) or 0, opts)
+        memPut("near", key, idxs)
+        local ms = nowMs() - started
+        finishQuery("near", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    else
+        finishQuery("near", tag, #idxs, 0, #idxs, 0, 0, nowMs() - started)
+    end
     return toList(refsOf(s, idxs), opts)
 end
 
@@ -911,10 +1004,22 @@ function S.nearUnion(x1, y1, x2, y2, r, opts)
         return adapter({})
     end
     x2, y2 = tonumber(x2) or x1, tonumber(y2) or y1
-    local idxs = {}
-    local scanned, rejZ, rejF = scanUnion(s, idxs, x1, y1, x2, y2, tonumber(r) or 0, opts)
-    local ms = nowMs() - started
-    finishQuery("union", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    local idxs = nil
+    local zf, tol = optsZ(opts)
+    local fn = type(opts) == "table" and opts.filter or nil
+    local key = "U|" .. round2(x1) .. "|" .. round2(y1) .. "|" .. round2(x2) .. "|" .. round2(y2)
+        .. "|" .. round2(r) .. "|" .. round2(zf or -999999) .. "|" .. round2(tol) .. "|" .. filterKey(fn)
+    idxs = memGet("union", key)
+    if idxs == nil then
+        S.stats.memoMisses = S.stats.memoMisses + 1
+        idxs = {}
+        local scanned, rejZ, rejF = scanUnion(s, idxs, x1, y1, x2, y2, tonumber(r) or 0, opts)
+        memPut("union", key, idxs)
+        local ms = nowMs() - started
+        finishQuery("union", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    else
+        finishQuery("union", tag, #idxs, 0, #idxs, 0, 0, nowMs() - started)
+    end
     return toList(refsOf(s, idxs), opts)
 end
 
@@ -940,10 +1045,23 @@ function S.cone(x, y, fx, fy, minD, maxD, half, opts)
     minD = tonumber(minD) or 0
     maxD = tonumber(maxD) or 0
     half = tonumber(half) or 0
-    local idxs = {}
-    local scanned, rejZ, rejF = scanCone(s, idxs, x, y, fx, fy, minD, maxD, half, opts)
-    local ms = nowMs() - started
-    finishQuery("cone", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    local idxs = nil
+    local zf, tol = optsZ(opts)
+    local fn = type(opts) == "table" and opts.filter or nil
+    local key = "C|" .. round2(x) .. "|" .. round2(y) .. "|" .. round2(fx) .. "|" .. round2(fy)
+        .. "|" .. round2(minD) .. "|" .. round2(maxD) .. "|" .. round2(half)
+        .. "|" .. round2(zf or -999999) .. "|" .. round2(tol) .. "|" .. filterKey(fn)
+    idxs = memGet("cone", key)
+    if idxs == nil then
+        S.stats.memoMisses = S.stats.memoMisses + 1
+        idxs = {}
+        local scanned, rejZ, rejF = scanCone(s, idxs, x, y, fx, fy, minD, maxD, half, opts)
+        memPut("cone", key, idxs)
+        local ms = nowMs() - started
+        finishQuery("cone", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    else
+        finishQuery("cone", tag, #idxs, 0, #idxs, 0, 0, nowMs() - started)
+    end
     return toList(refsOf(s, idxs), opts)
 end
 
@@ -1004,6 +1122,14 @@ function S.count(cx, cy, cz, r, filterOrProfile, opts)
     end
     local r2 = (tonumber(r) or 0) ^ 2
     local fn = filterOf(filterOrProfile)
+    local key = "K|" .. round2(x) .. "|" .. round2(y) .. "|" .. round2(czz or -999999) .. "|" .. round2(r)
+        .. "|" .. round2(tol) .. "|" .. filterKey(filterOrProfile)
+    local cached = memGet("count", key)
+    if cached ~= nil then
+        finishQuery("count", tag, cached, 0, 0, 0, 0, nowMs() - started)
+        return cached
+    end
+    S.stats.memoMisses = S.stats.memoMisses + 1
     local idxs, seen = {}, {}
     gatherRadius(s, idxs, x, y, tonumber(r) or 0, seen)
     local n, scanned, rejZ, rejF = 0, 0, 0, 0
@@ -1024,15 +1150,24 @@ function S.count(cx, cy, cz, r, filterOrProfile, opts)
             end
         end
     end
+    memPut("count", key, n)
     local ms = nowMs() - started
     finishQuery("count", tag, n, rejZ + rejF, scanned, rejZ, rejF, ms)
     return n
 end
 
 function S.countSeen(cx, cy, cz, r, a, b, opts)
-    return S.count(cx, cy, cz, r, function(z)
+    local tol = type(opts) == "table" and (tonumber(opts.zTol) or 0.8) or 0.8
+    local key = "S|" .. round2(cx) .. "|" .. round2(cy) .. "|" .. round2(cz or -999999) .. "|" .. round2(r)
+        .. "|" .. round2(tol) .. "|" .. tostring(a) .. "|" .. tostring(b)
+    local cached = memGet("countSeen", key)
+    if cached ~= nil then return cached end
+    S.stats.memoMisses = S.stats.memoMisses + 1
+    local n = S.count(cx, cy, cz, r, function(z)
         return S.isThreat(z) and S.canSee(z, a, b)
     end, opts)
+    memPut("countSeen", key, tonumber(n) or 0)
+    return n
 end
 
 function S.find(pred, maxN, opts)

@@ -1529,6 +1529,13 @@ BridgeServer.Commands.state = function(player, args)
         local cities = BridgeData.cleanCities(args.cities)
         if cities ~= nil then rec.cities = cities end
     end
+    if args.lastFight ~= nil then
+        local lastFight = BridgeData.cleanLastFight(args.lastFight)
+        if lastFight ~= nil then
+            rec.lastFight = lastFight
+            changed = true
+        end
+    end
     if args.skills ~= nil then
         local skills = BridgeData.cleanSkills(args.skills)
         if skills ~= nil then
