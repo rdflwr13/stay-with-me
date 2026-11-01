@@ -121,6 +121,7 @@ local function warn(text) print("[BridgeMove] " .. tostring(text)) end
 function BridgeMove.followDebug(tag, body, why, pend, force)
     if not force and (BridgeGunfight == nil or BridgeGunfight.magCareStage == nil) then return end
     if body == nil then return end
+    if BridgeLog == nil or not BridgeLog.on() then return end
     local now = Bridge.time or 0
     local key = tostring(tag) .. "|" .. tostring(why) .. "|" .. tostring(BridgeMove.moving)
         .. "|" .. tostring(BridgeMove.steering) .. "|" .. tostring(BridgeMove.pathing)
@@ -3685,12 +3686,14 @@ end
 
 
 
+local function stepNeedsClimbImpl(a, b)
+    return a:getWindowTo(b) ~= nil or a:getWindowFrameTo(b) ~= nil or a:isHoppableTo(b)
+end
+
 local function stepNeedsClimb(a, b)
-    local yes = false
-    pcall(function()
-        yes = a:getWindowTo(b) ~= nil or a:getWindowFrameTo(b) ~= nil or a:isHoppableTo(b)
-    end)
-    return yes
+    local ok, yes = pcall(stepNeedsClimbImpl, a, b)
+    if not ok then return false end
+    return yes and true or false
 end
 
 
@@ -3702,6 +3705,11 @@ end
 
 
 
+local function engineBlockedImpl(a, b)
+    if not (a:HasStairs() or b:HasStairs()) then return false end
+    return a:testCollideAdjacentAdvanced(b:getX() - a:getX(), b:getY() - a:getY(), 0, false) == true
+end
+
 local function engineBlocked(a, b)
     if BridgeMove.engineTest == nil then
         local has = false
@@ -3710,16 +3718,8 @@ local function engineBlocked(a, b)
         log("engine collide test " .. (has and "available" or "missing: line check as before"))
     end
     if not BridgeMove.engineTest then return false end
-
-
-
-
-    local blocked = false
-    pcall(function()
-        if not (a:HasStairs() or b:HasStairs()) then return end
-        blocked = a:testCollideAdjacentAdvanced(b:getX() - a:getX(), b:getY() - a:getY(), 0, false) == true
-    end)
-    return blocked
+    local ok, blocked = pcall(engineBlockedImpl, a, b)
+    return ok and blocked == true
 end
 BridgeMove.engineBlocked = engineBlocked
 
@@ -3742,48 +3742,47 @@ end
 
 
 
-function BridgeMove.lineClear(body, gx, gy, gz)
-    local ok = false
-    pcall(function()
-        if math.abs(body:getZ() - gz) >= 0.5 then return end
-        local cell = getCell()
-        local bx, by = body:getX(), body:getY()
-        local z = math.floor(gz)
-        local dist = math.sqrt((gx - bx) ^ 2 + (gy - by) ^ 2)
-        local steps = math.max(1, math.ceil(dist / 0.4))
-        local prev = cell:getGridSquare(math.floor(bx), math.floor(by), z)
-        if prev == nil then return end
+local function lineClearImpl(body, gx, gy, gz)
+    if math.abs(body:getZ() - gz) >= 0.5 then return false end
+    local cell = getCell()
+    local bx, by = body:getX(), body:getY()
+    local z = math.floor(gz)
+    local dx, dy = gx - bx, gy - by
+    local dist = math.sqrt(dx ^ 2 + dy ^ 2)
+    local steps = math.max(1, math.ceil(dist / 0.4))
+    local prev = cell:getGridSquare(math.floor(bx), math.floor(by), z)
+    if prev == nil then return false end
+    local prevX, prevY = prev:getX(), prev:getY()
 
-
-
-
-        local cars = true
-        for i = 1, steps do
-            local t = i / steps
-            local sx, sy = math.floor(bx + (gx - bx) * t), math.floor(by + (gy - by) * t)
-            if sx ~= prev:getX() or sy ~= prev:getY() then
-                local sq = cell:getGridSquare(sx, sy, z)
-                if sq == nil then return end
-                if sx ~= prev:getX() and sy ~= prev:getY() then
-                    local a = cell:getGridSquare(sx, prev:getY(), z)
-                    local b = cell:getGridSquare(prev:getX(), sy, z)
-                    if a == nil or b == nil or prev:isBlockedTo(a) or a:isBlockedTo(sq) or prev:isBlockedTo(b) or b:isBlockedTo(sq) then return end
-                    if stepNeedsClimb(prev, a) or stepNeedsClimb(a, sq) or stepNeedsClimb(prev, b) or stepNeedsClimb(b, sq) then return end
-                    if not a:isFree(false) or not b:isFree(false) then return end
-                    if engineBlocked(prev, a) or engineBlocked(a, sq) or engineBlocked(prev, b) or engineBlocked(b, sq) then return end
-                    if cars and (underCar(a) or underCar(b)) then return end
-                elseif prev:isBlockedTo(sq) or stepNeedsClimb(prev, sq) or engineBlocked(prev, sq) then
-                    return
-                end
-                if i < steps and not sq:isFree(false) then return end
-
-                if i < steps and cars and underCar(sq) then return end
-                prev = sq
+    local cars = true
+    for i = 1, steps do
+        local t = i / steps
+        local sx, sy = math.floor(bx + dx * t), math.floor(by + dy * t)
+        if sx ~= prevX or sy ~= prevY then
+            local sq = cell:getGridSquare(sx, sy, z)
+            if sq == nil then return false end
+            if sx ~= prevX and sy ~= prevY then
+                local a = cell:getGridSquare(sx, prevY, z)
+                local b = cell:getGridSquare(prevX, sy, z)
+                if a == nil or b == nil or prev:isBlockedTo(a) or a:isBlockedTo(sq) or prev:isBlockedTo(b) or b:isBlockedTo(sq) then return false end
+                if stepNeedsClimb(prev, a) or stepNeedsClimb(a, sq) or stepNeedsClimb(prev, b) or stepNeedsClimb(b, sq) then return false end
+                if not a:isFree(false) or not b:isFree(false) then return false end
+                if engineBlocked(prev, a) or engineBlocked(a, sq) or engineBlocked(prev, b) or engineBlocked(b, sq) then return false end
+                if cars and (underCar(a) or underCar(b)) then return false end
+            elseif prev:isBlockedTo(sq) or stepNeedsClimb(prev, sq) or engineBlocked(prev, sq) then
+                return false
             end
+            if i < steps and not sq:isFree(false) then return false end
+            if i < steps and cars and underCar(sq) then return false end
+            prev, prevX, prevY = sq, sx, sy
         end
-        ok = true
-    end)
-    return ok
+    end
+    return true
+end
+
+function BridgeMove.lineClear(body, gx, gy, gz)
+    local ok, clear = pcall(lineClearImpl, body, gx, gy, gz)
+    return ok and clear == true
 end
 
 function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)

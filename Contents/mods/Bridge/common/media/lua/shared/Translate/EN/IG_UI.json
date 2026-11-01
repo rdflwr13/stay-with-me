@@ -1615,7 +1615,7 @@
     "IGUI_NotAlone_GunReserveConserve": "Conserve",
     "IGUI_NotAlone_GunReserveConserveTip": "Only draws the gun when there are 4 or more zombies nearby.",
     "IGUI_NotAlone_GunReserveEmergency": "Emergency only",
-    "IGUI_NotAlone_GunReserveEmergencyTip": "Only draws the gun when there are 13 or more zombies nearby.",
+    "IGUI_NotAlone_GunReserveEmergencyTip": "Only draws the gun when there are 10 or more zombies nearby.",
     "IGUI_NotAlone_GunOff": "Off",
     "IGUI_NotAlone_Say_Combat_bodyguard": "Not leaving your side.",
     "IGUI_NotAlone_Say_Combat_escort": "I'll clear around us.",

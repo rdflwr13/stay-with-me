@@ -4137,7 +4137,7 @@
     "IGUI_NotAlone_GunReserveConserve": "Экономить",
     "IGUI_NotAlone_GunReserveConserveTip": "Достаёт оружие, только когда рядом 4 и больше зомби.",
     "IGUI_NotAlone_GunReserveEmergency": "Только в крайнем случае",
-    "IGUI_NotAlone_GunReserveEmergencyTip": "Достаёт оружие, только когда рядом 13 и больше зомби.",
+    "IGUI_NotAlone_GunReserveEmergencyTip": "Достаёт оружие, только когда рядом 10 и больше зомби.",
     "IGUI_NotAlone_GunOff": "Выкл.",
     "IGUI_NotAlone_OptHomeAmmo": "Автоматически брать домашние патроны",
     "IGUI_NotAlone_OptHomeAmmoTip": "Включено: дома и вне боя она берёт патроны для текущего оружия из домашних запасов, если в сумках не хватает. Выключено: никогда.",

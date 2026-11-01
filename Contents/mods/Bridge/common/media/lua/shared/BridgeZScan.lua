@@ -528,6 +528,12 @@ local function refreshRefs()
     return buildRefs()
 end
 
+local function readCoords(z, xs, ys, zs, i)
+    xs[i] = z:getX()
+    ys[i] = z:getY()
+    zs[i] = z:getZ()
+end
+
 local function buildCoords()
     local s = snap
     if s == nil then return nil end
@@ -539,11 +545,7 @@ local function buildCoords()
     local var = bodyVar()
     for i = 1, s.n do
         local z = s.refs[i]
-        local ok = pcall(function()
-            xs[i] = z:getX()
-            ys[i] = z:getY()
-            zs[i] = z:getZ()
-        end)
+        local ok = pcall(readCoords, z, xs, ys, zs, i)
         if not ok then
             xs[i], ys[i], zs[i] = nil, nil, nil
         else

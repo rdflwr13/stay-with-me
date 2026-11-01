@@ -1603,7 +1603,7 @@
     "IGUI_NotAlone_GunReserveConserve": "Ahorrar munición",
     "IGUI_NotAlone_GunReserveConserveTip": "Solo saca el arma cuando hay 4 zombis o más cerca.",
     "IGUI_NotAlone_GunReserveEmergency": "Solo en emergencias",
-    "IGUI_NotAlone_GunReserveEmergencyTip": "Solo saca el arma cuando hay 13 zombis o más cerca.",
+    "IGUI_NotAlone_GunReserveEmergencyTip": "Solo saca el arma cuando hay 10 zombis o más cerca.",
     "IGUI_NotAlone_GunOff": "Desactivado",
     "IGUI_NotAlone_Say_Combat_bodyguard": "No me iré de tu lado.",
     "IGUI_NotAlone_Say_Combat_escort": "Voy a despejar alrededores.",

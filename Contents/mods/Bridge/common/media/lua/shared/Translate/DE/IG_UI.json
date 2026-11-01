@@ -3971,7 +3971,7 @@
     "IGUI_NotAlone_GunReserveConserve": "Sparsam",
     "IGUI_NotAlone_GunReserveConserveTip": "Zieht die Waffe nur, wenn 4 oder mehr Zombies in der Nähe sind.",
     "IGUI_NotAlone_GunReserveEmergency": "Nur im Notfall",
-    "IGUI_NotAlone_GunReserveEmergencyTip": "Zieht die Waffe nur, wenn 13 oder mehr Zombies in der Nähe sind.",
+    "IGUI_NotAlone_GunReserveEmergencyTip": "Zieht die Waffe nur, wenn 10 oder mehr Zombies in der Nähe sind.",
     "IGUI_NotAlone_GunMelee": "Nahkampfwechsel",
     "IGUI_NotAlone_GunMeleeTip": "Ob sie zu einer Nahkampfwaffe wechselt, wenn ein Zombie näher kommt.",
     "IGUI_NotAlone_GunMeleeOnTip": "Wechselt auf kurze Distanz zu ihrer besten Nahkampfwaffe.",

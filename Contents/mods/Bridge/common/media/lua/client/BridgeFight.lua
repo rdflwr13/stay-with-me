@@ -290,8 +290,12 @@ local function dist(a, b)
     return math.sqrt(dx * dx + dy * dy)
 end
 
+local function bodyVarImpl(z)
+    return z:getVariableBoolean("NotAloneBody")
+end
+
 local function isBody(z)
-    local ok, v = pcall(function() return z:getVariableBoolean("NotAloneBody") end)
+    local ok, v = pcall(bodyVarImpl, z)
     return ok and v
 end
 
@@ -342,13 +346,28 @@ local function attackAnims(item, prone, crit)
     return { "Attack2H1", "Attack2H2", "Attack2H3", "Attack2H4" }, item:getSwingSound()
 end
 
+local function actionStateImpl(z)
+    return z:getActionStateName()
+end
+
+local function crawlingImpl(z)
+    return z:isCrawling()
+end
+
+local function proneImpl(z)
+    return z:isProne()
+end
+
 local function isProne(z)
     local asn = "?"
-    pcall(function() asn = z:getActionStateName() end)
+    local okAsn, vAsn = pcall(actionStateImpl, z)
+    if okAsn then asn = vAsn end
     local crawl = false
-    pcall(function() crawl = z:isCrawling() end)
+    local okCrawl, vCrawl = pcall(crawlingImpl, z)
+    if okCrawl then crawl = vCrawl end
     local prone = false
-    pcall(function() prone = z:isProne() end)
+    local okProne, vProne = pcall(proneImpl, z)
+    if okProne then prone = vProne end
     return prone or crawl or asn == "onground" or asn == "sitonground"
         or string.sub(asn, 1, 5) == "getup"
 end
@@ -1007,11 +1026,14 @@ end
 
 
 
+local function reanimatedImpl(z, red)
+    return z:isReanimatedPlayer() and z:getReanimatedPlayer() == red
+end
+
 function BridgeFight.ownerRisen(z, red)
     if z == nil or red == nil then return false end
-    local risen = false
-    pcall(function() risen = z:isReanimatedPlayer() and z:getReanimatedPlayer() == red end)
-    return risen == true
+    local ok, risen = pcall(reanimatedImpl, z, red)
+    return ok and risen == true
 end
 
 local function validTarget(z, body, red, mode)
@@ -1268,6 +1290,20 @@ BridgeFight.sectorNCrowd = 0
 BridgeFight.oppositeCrowd = 0
 BridgeFight.gunShoveSwing = false
 
+local function footPressImpl(z)
+    return z:getTarget()
+end
+
+local function footBodyOk(z, body, bz, red)
+    if not (z:isAlive() and z:getHealth() > 0) then return false end
+    if math.abs(z:getZ() - bz) >= 0.8 then return false end
+    if instanceof(z, "IsoAnimal") then return false end
+    if isBody(z) then return false end
+    if BridgeFight.ownerRisen(z, red) then return false end
+    if BridgeData.harmless(z) then return false end
+    return true, z:getX(), z:getY()
+end
+
 local function footScan(body, red)
     local out = { n = 0, pressN = 0, nearN = 0, otherNear = 0, g2 = 0, g25 = 0, pushX = 0, pushY = 0,
                   cx = nil, cy = nil, centerDist = nil, threat = nil, threatD = math.huge,
@@ -1289,10 +1325,11 @@ local function footScan(body, red)
         end
     end
 
-    local function addHostile(z)
+    local function addHostile(z, zx, zy)
         if z == nil or z == body or seen[z] then return end
         seen[z] = true
-        local d = dist(z, body)
+        local dx, dy = zx - bx, zy - by
+        local d = math.sqrt(dx * dx + dy * dy)
         if d > scanLimit then return end
         local downed = isProne(z) == true
         if not downed and d < out.standD then
@@ -1300,7 +1337,7 @@ local function footScan(body, red)
         end
         local ang, idx = nil, nil
         if not downed and d <= FLEE_GUN_CROWD_R then
-            ang = math.atan2(z:getY() - by, z:getX() - bx) + math.pi
+            ang = math.atan2(zy - by, zx - bx) + math.pi
             idx = math.floor(ang / (2 * math.pi) * 8) % 8
             local bitCrowd = 2 ^ idx
             if math.floor(out.sectorMaskCrowd / bitCrowd) % 2 < 1 then
@@ -1319,7 +1356,8 @@ local function footScan(body, red)
         out.n = out.n + 1
         local pressing = d <= FOOT_PRESS
         if not pressing then
-            pcall(function() pressing = z:getTarget() == body end)
+            local called, target = pcall(footPressImpl, z)
+            pressing = called and target == body
         end
         if pressing and not downed then out.pressN = out.pressN + 1 end
         if pressing and not downed and d < out.pressD then out.pressD, out.pressThreat = d, z end
@@ -1336,7 +1374,7 @@ local function footScan(body, red)
                 out.sectorN = out.sectorN + 1
             end
         end
-        local sx, sy = bx - z:getX(), by - z:getY()
+        local sx, sy = bx - zx, by - zy
         local len = math.sqrt(sx * sx + sy * sy)
         if len > 0.001 then
             local w = 1 / math.max(d, 0.5)
@@ -1344,7 +1382,7 @@ local function footScan(body, red)
             out.pushY = out.pushY + (sy / math.max(d, 0.1)) * w
         end
         if d <= FOOT_AROUND then
-            cx, cy, cn = cx + z:getX(), cy + z:getY(), cn + 1
+            cx, cy, cn = cx + zx, cy + zy, cn + 1
         end
         if d < out.threatD then
             out.threatD, out.threat = d, z
@@ -1360,18 +1398,10 @@ local function footScan(body, red)
     if list ~= nil then
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            local ok = false
             if z ~= nil and z ~= body then
-                pcall(function()
-                    ok = z:isAlive() and z:getHealth() > 0
-                        and math.abs(z:getZ() - bz) < 0.8
-                        and not instanceof(z, "IsoAnimal")
-                        and not isBody(z)
-                        and not BridgeFight.ownerRisen(z, red)
-                        and not BridgeData.harmless(z)
-                end)
+                local called, ok, zx, zy = pcall(footBodyOk, z, body, bz, red)
+                if called and ok then addHostile(z, zx, zy) end
             end
-            if ok then addHostile(z) end
         end
     end
 
@@ -1398,7 +1428,7 @@ local function footScan(body, red)
                         and not BridgeFight.ownerRisen(n, red)
                         and not BridgeData.harmless(n)
                 end)
-                if ok then addHostile(n) end
+                if ok then addHostile(n, n:getX(), n:getY()) end
             end
         end)
     end
