@@ -181,7 +181,7 @@ local function torchTick()
                 local on = false
                 pcall(function() on = z:getVariableBoolean(BridgeTorchShared.VAR) == true end)
                 if on then
-                    local empty = BridgeTorchShared.drain(z)
+                    local empty, why = BridgeTorchShared.drain(z)
                     if empty then
                         BridgeTorchShared.apply(z, false)
                         pcall(function() z:setVariable(BridgeTorchShared.DEAD_VAR, true) end)
@@ -190,6 +190,9 @@ local function torchTick()
                         if not BridgeTorchShared.inCombat(z) then
                             pcall(function() BridgeTorchShared.swapBattery(z) end)
                         end
+                    elseif why == "none" or why == "not-drainable" then
+                        BridgeTorchShared.apply(z, false)
+                        relay(nil, z, false, nil)
                     end
                 else
 

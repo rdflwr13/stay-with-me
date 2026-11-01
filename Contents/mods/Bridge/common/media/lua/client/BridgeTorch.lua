@@ -518,7 +518,7 @@ function BridgeTorch.update(body)
 
     if not Bridge.mp then
         if BridgeTorchShared.isOn(body) and Bridge.every(60) then
-            local empty = BridgeTorchShared.drain(body)
+            local empty, why = BridgeTorchShared.drain(body)
             if empty then
                 BridgeTorch.sent[key] = false
                 BridgeTorchShared.apply(body, false)
