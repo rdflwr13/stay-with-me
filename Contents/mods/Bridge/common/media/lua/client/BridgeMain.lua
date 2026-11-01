@@ -4230,7 +4230,22 @@ local function updateZombieBody(body)
     end
 
     handProbe(body, "before fight")
-    local okFight, fighting = pcall(function() return BridgeFight.update(body) end)
+    local followPriority = false
+    if Bridge.follow and BridgeMove ~= nil and type(BridgeMove.followPriority) == "function" then
+        local okPri, pri = pcall(BridgeMove.followPriority, body, red)
+        if okPri then followPriority = pri == true end
+    end
+    local okFight, fighting = true, false
+    if followPriority then
+        if BridgeFight ~= nil and type(BridgeFight.releaseForFollow) == "function" then
+            pcall(BridgeFight.releaseForFollow, body, "player sprint")
+        end
+        if BridgeGunfight ~= nil and type(BridgeGunfight.followTick) == "function" then
+            pcall(BridgeGunfight.followTick, body)
+        end
+    else
+        okFight, fighting = pcall(function() return BridgeFight.update(body) end)
+    end
     handProbe(body, "fight")
     if not okFight then BridgeFight.info = "error: " .. tostring(fighting) Bridge.logError("fight", fighting) end
     if okFight and fighting then

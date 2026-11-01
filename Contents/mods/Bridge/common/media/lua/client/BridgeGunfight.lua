@@ -23,6 +23,18 @@ BridgeGunfight.hits = 0
 BridgeGunfight.blockAt = nil
 BridgeGunfight.moving = false
 BridgeGunfight.standoffMoving = false
+BridgeGunfight.followHold = false
+BridgeGunfight.retreatHoldUntil = nil
+BridgeGunfight.gunShoveTarget = nil
+BridgeGunfight.gunShoveRetargetAt = nil
+BridgeGunfight.shovePreferred = nil
+BridgeGunfight.ooaAt = nil
+BridgeGunfight.ooaValue = nil
+BridgeGunfight.climbHoldUntil = nil
+BridgeGunfight.climbOwner = false
+BridgeGunfight.fenceApproachUntil = nil
+BridgeGunfight.fenceApproachTarget = nil
+BridgeGunfight.fenceApproachCooldown = nil
 BridgeGunfight.standoffGoalX = nil
 BridgeGunfight.standoffGoalY = nil
 BridgeGunfight.standoffGoalZ = nil
@@ -33,6 +45,12 @@ BridgeGunfight.standoffStartY = nil
 BridgeGunfight.standoffSide = 1
 BridgeGunfight.standoffFlips = 0
 BridgeGunfight.standoffHoldAt = 0
+BridgeGunfight.standoffNav = nil
+BridgeGunfight.standoffDetourUntil = nil
+BridgeGunfight.standoffDetourX = nil
+BridgeGunfight.standoffDetourY = nil
+BridgeGunfight.standoffDetourZ = nil
+BridgeGunfight.standoffDetourFails = 0
 BridgeGunfight.scan = nil
 BridgeGunfight.gunShoveAt = nil
 BridgeGunfight.reloadFlee = false
@@ -45,6 +63,14 @@ BridgeGunfight.reloadFleeStuckAt = 0
 BridgeGunfight.reloadFleeStartX = nil
 BridgeGunfight.reloadFleeStartY = nil
 BridgeGunfight.reloadFleeFails = 0
+BridgeGunfight.reloadFleeGoalAt = nil
+BridgeGunfight.reloadFleeGoalSource = nil
+BridgeGunfight.reloadFleeGoalPlayerX = nil
+BridgeGunfight.reloadFleeGoalPlayerY = nil
+BridgeGunfight.reloadFleeGoalThreatX = nil
+BridgeGunfight.reloadFleeGoalThreatY = nil
+BridgeGunfight.reloadFleeSide = 1
+BridgeGunfight.reloadFleeHoldUntil = nil
 BridgeGunfight.missingSince = nil
 BridgeGunfight.friendlies = nil
 BridgeGunfight.friendliesAt = nil
@@ -118,7 +144,31 @@ local GUN_STANDOFF_ARRIVE      = 0.35
 local GUN_SHOVE_RANGE          = 1.05
 local GUN_CROWD_SECTORS        = 5
 local GUN_CROWD_OPPOSITE       = 2
+local GUN_PREF_MIN             = 6.0
+local GUN_PREF_MAX             = 13.0
+local GUN_PREF_FACTOR          = 0.62
+local GUN_PELLET_MIN           = 2.75
+local GUN_PELLET_MAX           = 4.5
+local GUN_CQ_MIN               = 1.2
+local GUN_CQ_MAX               = 2.4
+local GUN_BAND_FLOOR           = 0.85
+local GUN_BAND_CEILING         = 1.55
+local GUN_MODE_RANGE_CAP       = 0.8
+local GUN_PREF_FLOOR           = 3.0
+local GUN_STEP_MIN             = 1.2
+local GUN_STEP_MAX             = 3.5
+local GUN_STEP_SCALE           = 0.8
+local GUN_SHOT_RETREAT_HOLD    = 30
+local GUN_RETREAT_REPLAN       = 15
+local GUN_RETREAT_FACTOR       = 0.5
+local GUN_RETREAT_MIN          = 3.0
+local GUN_RETREAT_EXIT_ADD     = 1.5
+local GUN_PERSONAL_SPACE       = 3.0
 local RELOAD_FLEE_GOAL         = 4.0
+local RELOAD_FLEE_SAFE         = 8.0
+local RELOAD_FLEE_PLAYER_SAFE  = 5.0
+local RELOAD_FLEE_PLAYER_GAP   = 2.0
+local RELOAD_FLEE_REPLAN       = 90
 local RELOAD_FLEE_STUCK        = 20
 
 local STOW_TICKS = 180
@@ -923,6 +973,76 @@ local function validTarget(z, body, red)
     if not BridgeGunRules.targetVisible(body, red, z) then return false end
     return true
 end
+BridgeGunfight.validTarget = validTarget
+
+
+function BridgeGunfight.closeQuarters(body)
+    if body == nil then return false end
+    local inside = false
+    pcall(function()
+        local sq = body:getCurrentSquare()
+        inside = sq ~= nil and sq:getBuilding() ~= nil
+    end)
+    return inside
+end
+
+
+function BridgeGunfight.preferredBand(body, mode)
+    local gun = BridgeGunfight.gun
+    if gun == nil then return 0, 0, 0 end
+    local base = 0
+    if BridgeGunfight.gunItem ~= nil then
+        local ok, r = pcall(BridgeGunRules.range, BridgeGunfight.gunItem)
+        if ok then base = tonumber(r) or 0 end
+    end
+    if base <= 0 then base = tonumber(gun.range) or 0 end
+    if base <= 0 then return 0, 0, 0 end
+    local modeRange = tonumber(BridgeGunfight.modeRange) or 0
+    local preferred = 0
+    local pellet = (tonumber(gun.projectileCount) or 1) > 1
+    if pellet then
+        preferred = clamp(base * 0.5, GUN_PELLET_MIN, GUN_PELLET_MAX)
+    elseif BridgeGunfight.closeQuarters(body) then
+        preferred = clamp(base * 0.5, GUN_CQ_MIN, GUN_CQ_MAX)
+    else
+        preferred = clamp(base * GUN_PREF_FACTOR, GUN_PREF_MIN, GUN_PREF_MAX)
+    end
+    if modeRange > 0 then
+        local cap = modeRange * GUN_MODE_RANGE_CAP
+        if preferred > cap then preferred = cap end
+    end
+    if preferred < GUN_PREF_FLOOR then preferred = GUN_PREF_FLOOR end
+    local floor = preferred * GUN_BAND_FLOOR
+    local ceiling = math.max(preferred * GUN_BAND_CEILING, modeRange > 0 and modeRange or base)
+    return preferred, floor, ceiling
+end
+
+
+function BridgeGunfight.retreatDistance(preferred, floor)
+    local p = tonumber(preferred) or 0
+    local f = tonumber(floor) or 0
+    return math.min(f, math.max(GUN_RETREAT_MIN, p * GUN_RETREAT_FACTOR))
+end
+
+
+function BridgeGunfight.holdBand(body)
+    if body == nil then return false end
+    if BridgeGunfight.reloadFlee or BridgeGunfight.followHold then return false end
+    if BridgeGunfight.stance == "melee" then return false end
+    if not (BridgeGunfight.drawn == true or BridgeGunfight.target ~= nil) then return false end
+    local t = BridgeGunfight.target
+    if t == nil then return false end
+    local red = BridgeData.owner()
+    if red == nil then return false end
+    if not targetOk(t, body, red) then return false end
+    local mode = nil
+    if BridgeFight ~= nil and type(BridgeFight.mode) == "function" then
+        pcall(function() mode = BridgeFight.mode() end)
+    end
+    local _, _, ceiling = BridgeGunfight.preferredBand(body, mode)
+    if ceiling <= 0 then return false end
+    return dist(body, t) <= ceiling
+end
 
 
 local function pickTarget(body, red)
@@ -944,7 +1064,7 @@ local function pickTarget(body, red)
             if d2 <= range2 and targetOk(z, body, red) then
                 local dSelf = math.sqrt(d2)
                 if dSelf <= range then
-                    cands[#cands + 1] = { z = z, score = dist(red, z) + dSelf * 0.01 }
+                    cands[#cands + 1] = { z = z, d = dSelf, score = dist(red, z) + dSelf * 0.01 }
                 end
             end
         end
@@ -961,7 +1081,7 @@ local function pickTarget(body, red)
                     if d2 <= range2 and targetOk(a, body, red) then
                         local dSelf = math.sqrt(d2)
                         if dSelf <= range then
-                            cands[#cands + 1] = { z = a, score = dist(red, a) + dSelf * 0.01 }
+                            cands[#cands + 1] = { z = a, d = dSelf, score = dist(red, a) + dSelf * 0.01 }
                         end
                     end
                 end
@@ -976,22 +1096,72 @@ local function pickTarget(body, red)
                 if math.abs(n:getZ() - bz) < 0.8 and targetOk(n, body, red) then
                     local dS = dist(body, n)
                     if dS <= range then
-                        cands[#cands + 1] = { z = n, score = dist(red, n) + dS * 0.01 }
+                        cands[#cands + 1] = { z = n, d = dS, score = dist(red, n) + dS * 0.01 }
                     end
                 end
             end
         end)
     end
     if #cands == 0 then return nil end
-    table.sort(cands, function(a, b) return a.score < b.score end)
-    for _, c in ipairs(cands) do
-        local z = c.z
+    local function usable(z)
         local clear = false
         pcall(function()
             clear = BridgeGunRules.fireLineClear(cell, body:getX(), body:getY(), body:getZ(),
                 z:getX(), z:getY(), z:getZ()) == true
         end)
-        if clear and BridgeGunRules.targetVisible(body, red, z) then return z end
+        return clear and BridgeGunRules.targetVisible(body, red, z)
+    end
+    local function chosen(z, why)
+        BridgeGunfight.lockSince = Bridge.time
+        BridgeGunfight.lockReason = why
+        local typ = "?"
+        pcall(function() typ = tostring(z:getType()) end)
+        vlog(string.format("pick %s type=%s d=%.1f dred=%.1f", tostring(why), typ,
+            dist(body, z), dist(red, z)))
+        return z
+    end
+
+    local closeRange = tonumber(BridgeGunRules.MIN_RANGE) or 3
+    local mode = nil
+    if BridgeFight ~= nil and type(BridgeFight.mode) == "function" then
+        pcall(function() mode = BridgeFight.mode() end)
+    end
+    local okBand, bandPreferred, bandFloor = pcall(BridgeGunfight.preferredBand, body, mode)
+    if okBand and tonumber(bandFloor) and bandFloor > closeRange then closeRange = bandFloor end
+
+    local prefer = BridgeGunfight.shovePreferred
+    if prefer ~= nil then
+        for _, c in ipairs(cands) do
+            if c.z == prefer and c.d <= closeRange and usable(prefer) then
+                BridgeGunfight.shovePreferred = nil
+                return chosen(prefer, "shove retarget")
+            end
+        end
+    end
+
+    local cur = BridgeGunfight.target
+    local curClose = false
+    if cur ~= nil and targetOk(cur, body, red) and dist(body, cur) <= closeRange then curClose = true end
+    if not curClose then
+        local close = {}
+        for _, c in ipairs(cands) do
+            if c.d <= closeRange then close[#close + 1] = c end
+        end
+        if #close > 0 then
+            table.sort(close, function(a, b) return a.d < b.d end)
+            for _, c in ipairs(close) do
+                if usable(c.z) then
+                    BridgeGunfight.shovePreferred = nil
+                    return chosen(c.z, "close override")
+                end
+            end
+        end
+    end
+
+    BridgeGunfight.shovePreferred = nil
+    table.sort(cands, function(a, b) return a.score < b.score end)
+    for _, c in ipairs(cands) do
+        if usable(c.z) then return chosen(c.z, "player priority") end
     end
     return nil
 end
@@ -1008,7 +1178,14 @@ local function peekTarget(body, red)
     local best, bestD2 = nil, math.huge
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
     local range2 = range * range
-    local min2 = BridgeGunRules.MIN_RANGE * BridgeGunRules.MIN_RANGE
+    local minRange = tonumber(BridgeGunRules.MIN_RANGE) or 3
+    local mode = nil
+    if BridgeFight ~= nil and type(BridgeFight.mode) == "function" then
+        pcall(function() mode = BridgeFight.mode() end)
+    end
+    local okBand, _, bandFloor = pcall(BridgeGunfight.preferredBand, body, mode)
+    if okBand and tonumber(bandFloor) and bandFloor > minRange then minRange = bandFloor end
+    local min2 = minRange * minRange
     pcall(function()
         local list = nil
         if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.2, { tag = "gun.pick" }) end
@@ -1082,6 +1259,19 @@ local function peekTick(body, red)
     if lineNow then
         BridgeGunfight.peekCooldown = now + 30
         return false
+    end
+    if BridgeGunfight.startFenceApproach ~= nil then
+        local mode = nil
+        if BridgeFight ~= nil and BridgeFight.mode ~= nil then
+            local okm, m = pcall(BridgeFight.mode)
+            if okm then mode = m end
+        end
+        local okApproach = false
+        pcall(function() okApproach = BridgeGunfight.startFenceApproach(body, red, z, mode) == true end)
+        if okApproach then
+            BridgeGunfight.canMelee = false
+            return true
+        end
     end
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
     local dx, dy = z:getX() - bx, z:getY() - by
@@ -1282,11 +1472,18 @@ local function repositionTick(body, t, blocker)
     end
 
     local range = gun.range + 0.9
+    local floorNow = BridgeGunRules.MIN_RANGE
+    local mode = nil
+    if BridgeFight ~= nil and type(BridgeFight.mode) == "function" then
+        pcall(function() mode = BridgeFight.mode() end)
+    end
+    local okBand, _, bandFloor = pcall(BridgeGunfight.preferredBand, body, mode)
+    if okBand and tonumber(bandFloor) and bandFloor > floorNow then floorNow = bandFloor end
     local function goalFor(side)
         local off = 2.0
         local x, y = bx + px * off * side, by + py * off * side
         local td = BridgeGunRules.dist2(t:getX(), t:getY(), x, y)
-        if td > range or td < BridgeGunRules.MIN_RANGE * 0.8 then return nil end
+        if td > range or td < floorNow then return nil end
         if blocker ~= nil and BridgeGunRules.dist2(blocker:getX(), blocker:getY(), x, y) < 1.0 then
             return nil
         end
@@ -1580,6 +1777,11 @@ local function fire(body)
     BridgeGunfight.lastShotTarget = t
     BridgeGunfight.retargetUntil = (Bridge.time or 0) + BridgeGunRules.RETARGET_TICKS
     BridgeGunfight.plantRequired = false
+    BridgeGunfight.retreatHoldUntil = (Bridge.time or 0) + GUN_SHOT_RETREAT_HOLD
+    local fireType = "?"
+    pcall(function() fireType = tostring(t:getType()) end)
+    vlog(string.format("fire d=%.1f chance=%.0f moving=%s shots=%d target=%s", d, chance,
+        tostring(moving), BridgeGunfight.shots, fireType))
 
     if Bridge ~= nil and Bridge.mp then
         local onlineId = nil
@@ -1744,27 +1946,6 @@ local function fire(body)
             extraHits, extraKills, glass, table.concat(extraLog, " ")))
     end
     checkLowAmmo()
-end
-
-
-local function backpedal(body, t)
-    local bx, by = body:getX(), body:getY()
-    local dx, dy = bx - t:getX(), by - t:getY()
-    local len = math.sqrt(dx * dx + dy * dy)
-    if len < 0.001 then dx, dy, len = 0, 1, 1 end
-    local rx, ry = bx + (dx / len) * 3.5, by + (dy / len) * 3.5
-    local z = body:getZ()
-    if not BridgeMove.lineClear(body, rx, ry, z) then return false end
-    local moved = false
-    pcall(function()
-        moved = BridgeMove.goStraight(body, rx, ry, z, false, function(b, x, y, zz)
-            return BridgeMove.lineClear(b, x, y, zz)
-        end) == true
-    end)
-    if moved then
-        vlog(string.format("backpedal from %.1f tiles to %.1f,%.1f", dist(body, t), rx, ry))
-    end
-    return moved
 end
 
 
@@ -2492,6 +2673,7 @@ local function startAmmoOpen(body, force)
     end
     local _, loose = BridgeGunRules.findLooseRounds(body, gun, need, items)
     if loose >= need then
+        BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 30
         log(string.format("ammoOpen skip: loose rounds %d >= need %d", loose, need))
         return false
     end
@@ -2687,6 +2869,67 @@ local function ammoOpenTick(body)
 end
 
 
+local function trulyOutOfAmmo(body)
+    local now = Bridge.time or 0
+    if BridgeGunfight.ooaAt ~= nil and now - BridgeGunfight.ooaAt < OOA_RECHECK then
+        return BridgeGunfight.ooaValue == true
+    end
+    local gun = BridgeGunfight.gun
+    local out = true
+    if body == nil or gun == nil then
+        BridgeGunfight.ooaAt = now
+        BridgeGunfight.ooaValue = false
+        return false
+    end
+    if (BridgeGunfight.rounds or 0) > 0 then out = false end
+    local items = nil
+    local hadMag, hadLoose, hadBox, hadHome = false, 0, false, false
+    if out then
+        pcall(function() items = BridgeGunRules.itemsOf(body) end)
+        local mag = nil
+        pcall(function() mag = BridgeGunRules.findLoadedMagazine(body, gun, items) end)
+        hadMag = mag ~= nil
+        if hadMag then out = false end
+        if out then
+            local _, loose = nil, 0
+            pcall(function() _, loose = BridgeGunRules.findLooseRounds(body, gun, 1, items) end)
+            hadLoose = tonumber(loose) or 0
+            if hadLoose > 0 then out = false end
+        end
+        if out then
+            local ok, box = pcall(BridgeGunRules.findAmmoBox, body, gun, items)
+            hadBox = ok and box ~= nil
+            if hadBox then out = false end
+        end
+        if out and BridgeFetch ~= nil and type(BridgeFetch.hasAmmoStock) == "function" then
+            pcall(function() hadHome = BridgeFetch.hasAmmoStock(gun) == true end)
+            if hadHome then out = false end
+        end
+    end
+    BridgeGunfight.ooaAt = now
+    BridgeGunfight.ooaValue = out
+    vlog(string.format("truly out=%s rounds=%d mag=%s loose=%d box=%s home=%s",
+        tostring(out), BridgeGunfight.rounds or 0, tostring(hadMag), hadLoose,
+        tostring(hadBox), tostring(hadHome)))
+    return out
+end
+
+
+local function forceMeleeFallback(body)
+    if BridgeFight ~= nil then
+        BridgeFight.target = nil
+        BridgeFight.state = "idle"
+    end
+    BridgeGunfight.stance = "melee"
+    BridgeGunfight.meleeFallback = true
+    BridgeGunfight.target = nil
+    BridgeGunfight.state = "idle"
+    BridgeGunfight.info = "out of ammo: melee fallback"
+    BridgeGunfight.canMelee = true
+    vlog("forced melee: no ammunition anywhere")
+end
+
+
 local function outOfAmmo(body)
     BridgeGunfight.peek = nil
     if BridgeMove ~= nil then BridgeMove.forcedWalk = nil end
@@ -2737,6 +2980,7 @@ local function outOfAmmo(body)
         if not source and not home then pcall(function() BridgeCallout.outOfAmmo() end) end
     end
     log("out of ammo for " .. tostring(BridgeGunfight.gun and BridgeGunfight.gun.fullType or "?"))
+    if trulyOutOfAmmo(body) then forceMeleeFallback(body) end
     return false
 end
 
@@ -2800,9 +3044,6 @@ local function startReload(body, t, idle)
         elseif rounds >= maxAmmo then
             return false
         end
-    end
-    if t ~= nil and dist(body, t) < BridgeGunRules.MIN_RANGE then
-        pcall(function() backpedal(body, t) end)
     end
     local external = gun.magazineType ~= nil
     local available = 0
@@ -3018,6 +3259,59 @@ function BridgeGunfight.fastForwardTick(body)
 end
 
 
+function BridgeGunfight.releaseForFollow(body, why)
+    if BridgeGunfight.fireUntil ~= nil or BridgeGunfight.pendingShot ~= nil then return false end
+    local wasHold = BridgeGunfight.followHold == true
+    BridgeGunfight.target = nil
+    BridgeGunfight.aimUntil = nil
+    BridgeGunfight.nextShotAt = nil
+    BridgeGunfight.plantRequired = false
+    BridgeGunfight.moving = false
+    BridgeGunfight.standoffMoving = false
+    BridgeGunfight.standoffGoalX, BridgeGunfight.standoffGoalY, BridgeGunfight.standoffGoalZ = nil, nil, nil
+    BridgeGunfight.standoffStartX, BridgeGunfight.standoffStartY = nil, nil
+    BridgeGunfight.standoffAt = 0
+    BridgeGunfight.standoffHoldAt = 0
+    BridgeGunfight.reposition = nil
+    if body ~= nil and BridgeMove ~= nil then
+        pcall(function() if BridgeMove.onPath() then BridgeMove.stopPath(body) end end)
+        BridgeMove.moving = false
+        BridgeMove.steering = false
+        pcall(function() BridgeMove.endFollowBump(body, "") end)
+    end
+    BridgeGunfight.state = "idle"
+    BridgeGunfight.info = "follow: " .. tostring(why)
+    BridgeGunfight.followHold = true
+    if not wasHold then vlog("follow hold on: " .. tostring(why)) end
+    return true
+end
+
+
+function BridgeGunfight.endFollowHold()
+    if BridgeGunfight.followHold then vlog("follow hold off") end
+    BridgeGunfight.followHold = false
+end
+
+
+function BridgeGunfight.followTick(body)
+    if body == nil then return false end
+    if BridgeGunfight.reloadStage ~= nil then
+        if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
+        return reloadTick(body) == true
+    end
+    if BridgeGunfight.ammoItem ~= nil then
+        if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
+        return ammoOpenTick(body) == true
+    end
+    if BridgeGunfight.magCareStage ~= nil then
+        local ok, busy = pcall(function() return magazineCare(body, BridgeGunfight.gun, true) == true end)
+        return ok and busy == true
+    end
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = nil end
+    return false
+end
+
+
 local function standoffClear(body, x, y, z)
     local ok = false
     if BridgeFight == nil or BridgeFight.clearAt == nil then return false end
@@ -3047,36 +3341,7 @@ local function crowdDanger(S)
         or opposite >= GUN_CROWD_OPPOSITE
         or (sectors >= 4 and press >= 2)
 end
-
-
-local function crowdGoal(body, red, S, mode)
-    local mask = S.sectorMaskCrowd or 0
-    local bestStart, bestLen = nil, 0
-    for start = 0, 7 do
-        local len = 0
-        for k = 0, 7 do
-            local i = (start + k) % 8
-            local bit = 2 ^ i
-            if math.floor(mask / bit) % 2 >= 1 then break end
-            len = len + 1
-        end
-        if len > bestLen then
-            bestStart, bestLen = start, len
-        end
-    end
-    if bestStart == nil or bestLen <= 0 then return nil end
-    local center = (bestStart + (bestLen - 1) / 2) % 8
-    local theta = (center + 0.5) * math.pi / 4 - math.pi
-    local bx, by, bz = body:getX(), body:getY(), body:getZ()
-    local leash = standoffLeash(mode)
-    for _, radius in ipairs({ GUN_STANDOFF_MAX, (GUN_STANDOFF_MIN + GUN_STANDOFF_MAX) / 2 }) do
-        local x, y = bx + math.cos(theta) * radius, by + math.sin(theta) * radius
-        if standoffClear(body, x, y, bz) and standoffWithinLeash(red, x, y, leash) then
-            return x, y
-        end
-    end
-    return nil
-end
+BridgeGunfight.crowdDanger = crowdDanger
 
 
 local function standoffMeleeEligible(body, S)
@@ -3092,106 +3357,128 @@ local function standoffMeleeEligible(body, S)
 end
 
 
-local function standoffLateral(body, red, S, mode)
-    local bx, by, bz = body:getX(), body:getY(), body:getZ()
-    local threat = S.standThreat
-    local leash = standoffLeash(mode)
-    local bestX, bestY, bestD = nil, nil, nil
-    local dir = (BridgeGunfight.standoffSide or 1) >= 0 and 1 or -1
-    for k = 0, 7 do
-        local i = (k * dir) % 8
-        if i < 0 then i = i + 8 end
-        local a = i * math.pi / 4
-        local x, y = bx + math.cos(a) * GUN_STANDOFF_MIN, by + math.sin(a) * GUN_STANDOFF_MIN
-        if standoffClear(body, x, y, bz) and standoffWithinLeash(red, x, y, leash) then
-            local dd = 0
-            if threat ~= nil then
-                local dx, dy = x - threat:getX(), y - threat:getY()
-                dd = dx * dx + dy * dy
-            end
-            if bestD == nil or dd > bestD then bestX, bestY, bestD = x, y, dd end
-        end
-    end
-    return bestX, bestY
-end
-
-
-local function standoffGoal(body, red, S, mode)
-    if crowdDanger(S) then
-        local cx, cy = crowdGoal(body, red, S, mode)
-        if cx ~= nil then return cx, cy end
-    end
-    local bx, by, bz = body:getX(), body:getY(), body:getZ()
-    local threat = S.standThreat
-    local gx, gy = nil, nil
-    if threat ~= nil then
-        local dx, dy = bx - threat:getX(), by - threat:getY()
-        local len = math.sqrt(dx * dx + dy * dy)
-        if len > 0.001 then
-            local x, y = bx + dx / len * GUN_STANDOFF_MIN, by + dy / len * GUN_STANDOFF_MIN
-            if standoffClear(body, x, y, bz) and standoffWithinLeash(red, x, y, standoffLeash(mode)) then
-                gx, gy = x, y
-            end
-        end
-    end
-    if gx == nil and BridgeFight.escapePoint ~= nil then
-        gx, gy = BridgeFight.escapePoint(body, red, S, mode,
-            { GUN_STANDOFF_MIN, GUN_STANDOFF_MAX }, standoffLeash(mode))
-    end
-    if gx == nil then gx, gy = standoffLateral(body, red, S, mode) end
-    if gx == nil then return nil end
-    local dx, dy = gx - bx, gy - by
-    local len = math.sqrt(dx * dx + dy * dy)
-    if len > GUN_STANDOFF_MAX then
-        gx, gy = bx + dx / len * GUN_STANDOFF_MAX, by + dy / len * GUN_STANDOFF_MAX
-    end
-    return gx, gy
+local function reloadFleePlayerSafe(body, red, threat)
+    if threat == nil then return true end
+    if dist(red, threat) < RELOAD_FLEE_PLAYER_SAFE then return false end
+    local off = 99
+    pcall(function()
+        off = BridgeGunRules.pointSegment(threat:getX(), threat:getY(),
+            body:getX(), body:getY(), red:getX(), red:getY()) or 99
+    end)
+    if off < 1.2 then return false end
+    local clear = false
+    pcall(function() clear = BridgeMove.lineClear(body, red:getX(), red:getY(), red:getZ()) == true end)
+    return clear
 end
 
 
 local function reloadFleeGoal(body, red, S, mode)
-    if crowdDanger(S) then
-        local cx, cy = crowdGoal(body, red, S, mode)
-        if cx ~= nil then return cx, cy end
-    end
     local threat = S.standThreat
-    if threat == nil then return nil end
+    local crowd = crowdDanger(S)
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
+    local rx, ry = red:getX(), red:getY()
+    local normalLeash = tonumber(mode and mode.leash) or 999
+    local pd0 = dist(body, red)
+    local safePlayer = reloadFleePlayerSafe(body, red, threat)
+    if threat ~= nil and dist(body, threat) >= RELOAD_FLEE_SAFE and not crowd
+            and (not safePlayer or pd0 <= 3.0) then
+        return nil, nil, "safe"
+    end
+    if threat == nil and not crowd and pd0 <= 3.0 then
+        return nil, nil, "safe"
+    end
+    if safePlayer then
+        local ddx, ddy = rx - bx, ry - by
+        local pd = math.sqrt(ddx * ddx + ddy * ddy)
+        if pd > 0.001 then
+            local step = math.min(3.5, math.max(0, pd - RELOAD_FLEE_PLAYER_GAP))
+            if step >= 0.6 then
+                local x, y = bx + ddx / pd * step, by + ddy / pd * step
+                if standoffClear(body, x, y, bz) and standoffWithinLeash(red, x, y, normalLeash) then
+                    return x, y, "player"
+                end
+            elseif pd <= RELOAD_FLEE_PLAYER_GAP + 0.6 then
+                return nil, nil, "safe"
+            end
+            local px, py = -ddy / pd, ddx / pd
+            local side = BridgeGunfight.reloadFleeSide or 1
+            for _, s in ipairs({ side, -side }) do
+                local lx, ly = bx + px * 3.0 * s, by + py * 3.0 * s
+                if standoffClear(body, lx, ly, bz) and standoffWithinLeash(red, lx, ly, normalLeash) then
+                    BridgeGunfight.reloadFleeSide = s
+                    return lx, ly, "lateral"
+                end
+            end
+        end
+    end
     local leash = standoffLeash(mode)
-    local dx, dy = bx - threat:getX(), by - threat:getY()
-    local len = math.sqrt(dx * dx + dy * dy)
-    if len > 0.001 then
-        local x, y = bx + dx / len * RELOAD_FLEE_GOAL, by + dy / len * RELOAD_FLEE_GOAL
+    if threat ~= nil then
+        local dx, dy = bx - threat:getX(), by - threat:getY()
+        local len = math.sqrt(dx * dx + dy * dy)
+        if len > 0.001 then
+            local x, y = bx + dx / len * RELOAD_FLEE_GOAL, by + dy / len * RELOAD_FLEE_GOAL
+            if standoffClear(body, x, y, bz) and standoffWithinLeash(red, x, y, leash) then
+                return x, y, "threat"
+            end
+            local px, py = -dy / len, dx / len
+            local side = BridgeGunfight.reloadFleeSide or 1
+            for _, s in ipairs({ side, -side }) do
+                local lx, ly = bx + px * RELOAD_FLEE_GOAL * s, by + py * RELOAD_FLEE_GOAL * s
+                if standoffClear(body, lx, ly, bz) and standoffWithinLeash(red, lx, ly, leash) then
+                    BridgeGunfight.reloadFleeSide = s
+                    return lx, ly, "lateral"
+                end
+            end
+        end
+        return nil, nil, "blocked"
+    end
+    local sx, sy = S.pushX, S.pushY
+    local slen = math.sqrt(sx * sx + sy * sy)
+    if slen > 0.001 then
+        local x, y = bx + sx / slen * RELOAD_FLEE_GOAL, by + sy / slen * RELOAD_FLEE_GOAL
         if standoffClear(body, x, y, bz) and standoffWithinLeash(red, x, y, leash) then
-            return x, y
+            return x, y, "threat"
         end
     end
-    if BridgeFight ~= nil and BridgeFight.escapePoint ~= nil then
-        local gx, gy = BridgeFight.escapePoint(body, red, S, mode, { 3.0, RELOAD_FLEE_GOAL }, leash)
-        if gx ~= nil then return gx, gy end
-    end
-    local bestX, bestY, bestD = nil, nil, nil
-    for i = 0, 7 do
-        local a = i * math.pi / 4
-        local x, y = bx + math.cos(a) * RELOAD_FLEE_GOAL, by + math.sin(a) * RELOAD_FLEE_GOAL
-        if standoffClear(body, x, y, bz) and standoffWithinLeash(red, x, y, leash) then
-            local tx, ty = x - threat:getX(), y - threat:getY()
-            local dd = tx * tx + ty * ty
-            if bestD == nil or dd > bestD then bestX, bestY, bestD = x, y, dd end
+    local cx, cy = S.cx, S.cy
+    if cx ~= nil then
+        local dx, dy = bx - cx, by - cy
+        local len = math.sqrt(dx * dx + dy * dy)
+        if len > 0.001 then
+            local x, y = bx + dx / len * RELOAD_FLEE_GOAL, by + dy / len * RELOAD_FLEE_GOAL
+            if standoffClear(body, x, y, bz) and standoffWithinLeash(red, x, y, leash) then
+                return x, y, "threat"
+            end
         end
     end
-    return bestX, bestY
+    return nil, nil, "blocked"
+end
+
+
+local function clearReloadFleeMove(body)
+    if BridgeMove ~= nil then
+        if body ~= nil then pcall(function() BridgeMove.stopPath(body) end) end
+        BridgeMove.moving = false
+        BridgeMove.steering = false
+    end
+    BridgeGunfight.reloadFleeMoving = false
+    BridgeGunfight.moving = false
+    BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = nil, nil, nil
+    BridgeGunfight.reloadFleeStartX, BridgeGunfight.reloadFleeStartY = nil, nil
+    BridgeGunfight.reloadFleeGoalAt = nil
+    BridgeGunfight.reloadFleeNav = nil
 end
 
 
 local function reloadFleeMove(body, red, mode, S)
     if BridgeMove == nil then return false end
-    local threat = S.standThreat
-    if threat == nil and not crowdDanger(S) then
-        BridgeGunfight.reloadFleeMoving = false
+    if S == nil then S = { pushX = 0, pushY = 0, standD = -1 } end
+    local now = Bridge.time or 0
+    if now < (BridgeGunfight.reloadFleeHoldUntil or 0) then
+        clearReloadFleeMove(body)
         return false
     end
-    local now = Bridge.time or 0
+    local threat = S.standThreat
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
     local gx, gy = BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY
     local reached = false
@@ -3206,54 +3493,171 @@ local function reloadFleeMove(body, red, mode, S)
         local dx, dy = bx - sx, by - sy
         stuck = (dx * dx + dy * dy) < 0.16
     end
-    if gx == nil or reached or stuck then
-        local nx, ny = reloadFleeGoal(body, red, S, mode)
+    local playerMoved = false
+    if BridgeGunfight.reloadFleeGoalPlayerX == nil then
+        playerMoved = true
+    else
+        local dx = red:getX() - BridgeGunfight.reloadFleeGoalPlayerX
+        local dy = red:getY() - BridgeGunfight.reloadFleeGoalPlayerY
+        playerMoved = dx * dx + dy * dy > 4.0
+    end
+    local threatMoved = false
+    if threat == nil then
+        threatMoved = BridgeGunfight.reloadFleeGoalThreatX ~= nil
+    elseif BridgeGunfight.reloadFleeGoalThreatX == nil then
+        threatMoved = true
+    else
+        local dx = threat:getX() - BridgeGunfight.reloadFleeGoalThreatX
+        local dy = threat:getY() - BridgeGunfight.reloadFleeGoalThreatY
+        threatMoved = dx * dx + dy * dy > 4.0
+    end
+    local stale = now >= (BridgeGunfight.reloadFleeGoalAt or 0) + RELOAD_FLEE_REPLAN
+
+    local function storeGoal(nx, ny, nsrc)
+        BridgeGunfight.reloadFleeGoalSource = nsrc
+        BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = nx, ny, bz
+        BridgeGunfight.reloadFleeGoalAt = now
+        BridgeGunfight.reloadFleeGoalPlayerX, BridgeGunfight.reloadFleeGoalPlayerY = red:getX(), red:getY()
+        if threat ~= nil then
+            BridgeGunfight.reloadFleeGoalThreatX, BridgeGunfight.reloadFleeGoalThreatY = threat:getX(), threat:getY()
+        else
+            BridgeGunfight.reloadFleeGoalThreatX, BridgeGunfight.reloadFleeGoalThreatY = nil, nil
+        end
+        BridgeGunfight.reloadFleeStartX, BridgeGunfight.reloadFleeStartY = bx, by
+        BridgeGunfight.reloadFleeStuckAt = now
+        if BridgeNav ~= nil and BridgeNav.newState ~= nil then
+            BridgeGunfight.reloadFleeNav = BridgeNav.newState()
+            BridgeGunfight.reloadFleeNav.progressAt = now
+            BridgeGunfight.reloadFleeNav.since = now
+        end
+    end
+
+    if gx == nil or reached or stuck or stale or playerMoved or threatMoved then
+        local nx, ny, nsrc = reloadFleeGoal(body, red, S, mode)
         if nx == nil then
-            BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = nil, nil, nil
-            BridgeGunfight.reloadFleeMoving = false
+            clearReloadFleeMove(body)
+            if nsrc == "blocked" then
+                BridgeGunfight.reloadFleeFails = (BridgeGunfight.reloadFleeFails or 0) + 1
+                vlog(string.format("reload flee blocked fails=%d", BridgeGunfight.reloadFleeFails))
+                if BridgeGunfight.reloadFleeFails >= 2 then
+                    BridgeGunfight.reloadFleeHoldUntil = now + 60
+                    BridgeGunfight.reloadFleeFails = 0
+                end
+            end
             return false
         end
         if stuck then
             BridgeGunfight.reloadFleeFails = (BridgeGunfight.reloadFleeFails or 0) + 1
-            vlog(string.format("reload flee blocked fails=%d", BridgeGunfight.reloadFleeFails))
+            vlog(string.format("reload flee stuck fails=%d", BridgeGunfight.reloadFleeFails))
+            if BridgeGunfight.reloadFleeFails >= 2 then
+                BridgeGunfight.reloadFleeHoldUntil = now + 60
+                BridgeGunfight.reloadFleeFails = 0
+                clearReloadFleeMove(body)
+                return false
+            end
         end
-        BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = nx, ny, bz
-        BridgeGunfight.reloadFleeStartX, BridgeGunfight.reloadFleeStartY = bx, by
-        BridgeGunfight.reloadFleeStuckAt = now
+        if BridgeGunfight.reloadFleeGoalSource ~= nsrc then
+            vlog(string.format("reload flee goal %s player=%.1f threat=%.1f",
+                tostring(nsrc), dist(body, red), S.standD or -1))
+        end
+        storeGoal(nx, ny, nsrc)
         gx, gy = nx, ny
     end
     if not standoffClear(body, gx, gy, bz) then
-        local nx, ny = reloadFleeGoal(body, red, S, mode)
+        local nx, ny, nsrc = reloadFleeGoal(body, red, S, mode)
         if nx == nil then
-            BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = nil, nil, nil
-            BridgeGunfight.reloadFleeMoving = false
+            clearReloadFleeMove(body)
             return false
         end
-        BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = nx, ny, bz
-        BridgeGunfight.reloadFleeStartX, BridgeGunfight.reloadFleeStartY = bx, by
-        BridgeGunfight.reloadFleeStuckAt = now
+        storeGoal(nx, ny, nsrc)
         gx, gy = nx, ny
     end
     if not standoffWithinLeash(red, gx, gy, standoffLeash(mode)) then
-        BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = nil, nil, nil
-        BridgeGunfight.reloadFleeMoving = false
+        clearReloadFleeMove(body)
         return false
     end
-    local moved = false
-    BridgeMove.walkType = "Walk"
-    pcall(function()
-        moved = BridgeMove.goStraight(body, gx, gy, bz, false,
-            function(b, x, y, z) return standoffClear(b, x, y, z) end, false) == true
-    end)
-    if not moved then
-        pcall(function() BridgeMove.goToward(body, gx, gy, bz, false) end)
-        moved = BridgeMove.moving == true
+
+    local nav = BridgeGunfight.reloadFleeNav
+    if nav ~= nil and BridgeNav ~= nil then
+        local goalD = math.sqrt(BridgeGunRules.dist2(body:getX(), body:getY(), gx, gy))
+        if nav.bestD == nil or goalD < nav.bestD - 0.3 then
+            nav.bestD = goalD
+            nav.progressAt = now
+            nav.pathFails = 0
+        end
+        local stall = BridgeNav.stall(body, nav, {
+            ticks = 90,
+            move = 0.3,
+            exempt = function()
+                return BridgeMove.pendingClimb ~= nil or BridgeMove.cross ~= nil
+                    or BridgeMove.doorAct ~= nil or BridgeMove.window ~= nil
+                    or now < (BridgeMove.climbUntil or 0)
+            end,
+        })
+        if stall == "stalled" then
+            local px, py = nil, nil
+            pcall(function()
+                local point = BridgeNav.detour(body, gx, gy, bz, nav, { step = 1.6, ticks = 150 })
+                if point ~= nil then px, py = point.x, point.y end
+            end)
+            local safe = px ~= nil and standoffClear(body, px, py, bz)
+                and standoffWithinLeash(red, px, py, standoffLeash(mode))
+            if safe and threat ~= nil then
+                local td0 = dist(body, threat)
+                local tdp = math.sqrt(BridgeGunRules.dist2(px, py, threat:getX(), threat:getY()))
+                if tdp < td0 - 0.25 then safe = false end
+            end
+            if safe then
+                BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = px, py, bz
+                BridgeGunfight.reloadFleeStartX, BridgeGunfight.reloadFleeStartY = bx, by
+                BridgeGunfight.reloadFleeStuckAt = now
+                BridgeGunfight.reloadFleeGoalAt = now
+                BridgeGunfight.reloadFleeGoalPlayerX, BridgeGunfight.reloadFleeGoalPlayerY = red:getX(), red:getY()
+                if threat ~= nil then
+                    BridgeGunfight.reloadFleeGoalThreatX, BridgeGunfight.reloadFleeGoalThreatY = threat:getX(), threat:getY()
+                end
+                nav.bestD = nil
+                nav.progressAt = now
+                gx, gy = px, py
+                vlog(string.format("reload flee detour %.1f,%.1f", px, py))
+            else
+                BridgeGunfight.reloadFleeFails = (BridgeGunfight.reloadFleeFails or 0) + 1
+                vlog(string.format("reload flee detour blocked fails=%d", BridgeGunfight.reloadFleeFails))
+                if BridgeGunfight.reloadFleeFails >= 2 then
+                    BridgeGunfight.reloadFleeHoldUntil = now + 60
+                    BridgeGunfight.reloadFleeFails = 0
+                    clearReloadFleeMove(body)
+                end
+                return false
+            end
+        end
+        local pf = BridgeNav.notePathFail(nav, { limit = 2 })
+        if pf == "failed" then
+            vlog("reload flee path failed " .. tostring(BridgeNav.blockedReason()))
+            BridgeGunfight.reloadFleeHoldUntil = now + 60
+            clearReloadFleeMove(body)
+            return false
+        end
+        local prog = BridgeNav.progress(nav, { noProgress = 300, timeout = 600 })
+        if prog == "timeout" then
+            vlog("reload flee no progress " .. tostring(BridgeNav.blockedReason()))
+            BridgeGunfight.reloadFleeHoldUntil = now + 60
+            clearReloadFleeMove(body)
+            return false
+        end
     end
-    if not moved then
+
+    BridgeMove.walkType = "Walk"
+    pcall(function() body:setAnimatingBackwards(false) end)
+    pcall(function() BridgeMove.goToward(body, gx, gy, bz, true) end)
+    local busy = BridgeMove.moving == true or BridgeMove.pathing == true
+        or BridgeMove.pendingClimb ~= nil or BridgeMove.cross ~= nil
+        or BridgeMove.doorAct ~= nil or now < (BridgeMove.climbUntil or 0)
+    if not busy then
         BridgeGunfight.reloadFleeMoving = false
+        BridgeGunfight.moving = false
         return false
     end
-    BridgeMove.walkType = "Walk"
     BridgeGunfight.reloadFleeMoving = true
     BridgeGunfight.moving = true
     BridgeGunfight.state = "reload-flee"
@@ -3270,19 +3674,6 @@ local function reloadFleeTick(body, red, mode, S)
         return false
     end
     local threatNear = S ~= nil and (S.standThreat ~= nil or crowdDanger(S))
-    if not threatNear then
-        if BridgeGunfight.reloadFleeMoving and BridgeMove ~= nil then
-            pcall(function() BridgeMove.stopPath(body) end)
-        end
-        BridgeGunfight.reloadFlee = false
-        BridgeGunfight.reloadFleeMoving = false
-        BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = nil, nil, nil
-        BridgeGunfight.reloadFleeStartX, BridgeGunfight.reloadFleeStartY = nil, nil
-        BridgeGunfight.moving = false
-        BridgeGunfight.state = "idle"
-        return false
-    end
-    BridgeGunfight.reloadFleeMoving = true
     if BridgeGunfight.ammoItem ~= nil then
         pcall(function() ammoOpenTick(body) end)
     elseif BridgeGunfight.magCareStage ~= nil then
@@ -3310,13 +3701,36 @@ local function reloadFleeTick(body, red, mode, S)
         pcall(function() reloadTick(body) end)
     end
     BridgeGunfight.canMelee = false
-    reloadFleeMove(body, red, mode, S)
-    if (BridgeGunfight.rounds or 0) > 0 or not BridgeGunfight.hasPrepAmmo(body) then
+    local busyStage = BridgeGunfight.ammoItem ~= nil or BridgeGunfight.magCareStage ~= nil
+        or BridgeGunfight.reloadStage ~= nil
+    local nowTick = Bridge.time or 0
+    if busyStage then
+        BridgeGunfight.reloadFleeIdleAt = nil
+    elseif BridgeGunfight.reloadFleeIdleAt == nil then
+        BridgeGunfight.reloadFleeIdleAt = nowTick
+    elseif nowTick - BridgeGunfight.reloadFleeIdleAt >= 180 then
         BridgeGunfight.reloadFlee = false
         BridgeGunfight.reloadFleeMoving = false
-        BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = nil, nil, nil
-        BridgeGunfight.reloadFleeStartX, BridgeGunfight.reloadFleeStartY = nil, nil
+        BridgeGunfight.reloadFleeIdleAt = nil
+        BridgeGunfight.moving = false
+        BridgeGunfight.state = "idle"
         if BridgeMove ~= nil then pcall(function() BridgeMove.stopPath(body) end) end
+        logf("reload flee abort: no reload progress")
+        return false
+    end
+    local playerPull = dist(body, red) > math.max(3.0, RELOAD_FLEE_PLAYER_GAP + 0.6)
+    if threatNear or playerPull then
+        reloadFleeMove(body, red, mode, S)
+    else
+        if BridgeGunfight.reloadFleeMoving then
+            vlog("reload flee hold: no threat near")
+        end
+        clearReloadFleeMove(body)
+        BridgeGunfight.state = "idle"
+    end
+    if (BridgeGunfight.rounds or 0) > 0 or not BridgeGunfight.hasPrepAmmo(body) then
+        BridgeGunfight.reloadFlee = false
+        clearReloadFleeMove(body)
         logf("reload flee end rounds=%d ammo=%s", BridgeGunfight.rounds or 0,
             tostring(BridgeGunfight.hasPrepAmmo(body)))
     end
@@ -3324,11 +3738,219 @@ local function reloadFleeTick(body, red, mode, S)
 end
 
 
+local function beginFenceClimb(body, dir, why)
+    if BridgeMove == nil then return false end
+    pcall(function() BridgeMove.askClimb(body, "fence", nil) end)
+    if BridgeMove.pendingClimb ~= nil and dir ~= nil then
+        BridgeMove.pendingClimb.dir = dir
+    end
+    BridgeGunfight.fenceApproachUntil = nil
+    BridgeGunfight.fenceApproachTarget = nil
+    BridgeGunfight.climbHoldUntil = (Bridge.time or 0) + 180
+    BridgeGunfight.climbOwner = true
+    BridgeGunfight.standoffMoving = false
+    BridgeGunfight.moving = false
+    BridgeGunfight.state = "climb"
+    BridgeGunfight.info = "fence climb: " .. tostring(why)
+    if BridgeFight ~= nil and BridgeFight.endGunStep ~= nil then
+        pcall(BridgeFight.endGunStep, body)
+    end
+    vlog("fence climb " .. tostring(why))
+    return true
+end
+
+
+local function tryEscapeClimb(body, red, threat, mode)
+    if BridgeMove == nil or threat == nil or IsoDirections == nil then return false end
+    if BridgeMove.pendingClimb ~= nil then return false end
+    local cell = getCell()
+    if cell == nil then return false end
+    local cur = body:getCurrentSquare()
+    if cur == nil then return false end
+    local td = dist(body, threat)
+    local normalLeash = tonumber(mode and mode.leash) or 999
+    local best, bestScore = nil, nil
+    local dirs = {
+        { 1, 0, IsoDirections.E },
+        { -1, 0, IsoDirections.W },
+        { 0, 1, IsoDirections.S },
+        { 0, -1, IsoDirections.N },
+    }
+    for _, e in ipairs(dirs) do
+        local nx, ny = cur:getX() + e[1], cur:getY() + e[2]
+        local nextSq = cell:getGridSquare(nx, ny, cur:getZ())
+        if nextSq ~= nil then
+            local kind = nil
+            pcall(function() kind = BridgeMove.edgeBetween(body, cur, nextSq) end)
+            if kind == "fence" then
+                local free, safe = false, false
+                pcall(function() free = nextSq:isFree(false) == true end)
+                pcall(function() safe = BridgeMove.vaultSafe(body, cur, nextSq) == true end)
+                if free and safe then
+                    local lx, ly = nx + 0.5, ny + 0.5
+                    local nd = math.sqrt((lx - threat:getX()) ^ 2 + (ly - threat:getY()) ^ 2)
+                    local pd = math.sqrt((lx - red:getX()) ^ 2 + (ly - red:getY()) ^ 2)
+                    if nd >= td - 0.25 and pd <= normalLeash * 1.5 then
+                        local score = nd - pd * 0.05
+                        if bestScore == nil or score > bestScore then
+                            best, bestScore = e, score
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if best == nil then return false end
+    return beginFenceClimb(body, best[3], "escape")
+end
+
+
+local function climbTick(body)
+    local now = Bridge.time or 0
+    if BridgeMove == nil then return false end
+    if BridgeGunfight.climbOwner ~= true then
+        if BridgeGunfight.climbHoldUntil ~= nil and now >= BridgeGunfight.climbHoldUntil then
+            BridgeGunfight.climbHoldUntil = nil
+        end
+        return false
+    end
+    if BridgeMove.pendingClimb ~= nil then
+        pcall(function() BridgeMove.climbStep(body) end)
+        BridgeGunfight.climbHoldUntil = math.max(BridgeGunfight.climbHoldUntil or 0, now + 60)
+        BridgeGunfight.canMelee = false
+        BridgeGunfight.state = "climb"
+        BridgeGunfight.moving = false
+        return true
+    end
+    local hold = BridgeGunfight.climbHoldUntil
+    if hold ~= nil and now < hold then
+        if now < (BridgeMove.climbUntil or 0) then
+            BridgeGunfight.canMelee = false
+            BridgeGunfight.state = "climb"
+            BridgeGunfight.moving = false
+            return true
+        end
+        BridgeGunfight.climbHoldUntil = nil
+        BridgeGunfight.climbOwner = false
+    end
+    return false
+end
+
+
+local function fenceApproachTick(body, red, mode)
+    if BridgeMove == nil then return false end
+    if BridgeMove.pendingClimb ~= nil and BridgeGunfight.climbOwner ~= true then return false end
+    local ft = BridgeGunfight.fenceApproachTarget
+    if ft == nil then return false end
+    local now = Bridge.time or 0
+    local range = tonumber(BridgeGunfight.modeRange) or 0
+    if now >= (BridgeGunfight.fenceApproachUntil or 0) or not targetOk(ft, body, red)
+            or (range > 0 and dist(body, ft) > range + 0.9) then
+        BridgeGunfight.fenceApproachUntil = nil
+        BridgeGunfight.fenceApproachTarget = nil
+        BridgeGunfight.fenceApproachCooldown = now + 120
+        if BridgeMove ~= nil then pcall(function() BridgeMove.stopPath(body) end) end
+        return false
+    end
+    local bp, bf = BridgeGunfight.preferredBand(body, mode)
+    local retreatAt = BridgeGunfight.retreatDistance(bp, bf)
+    if dist(body, ft) <= retreatAt then
+        BridgeGunfight.fenceApproachUntil = nil
+        BridgeGunfight.fenceApproachTarget = nil
+        if BridgeMove ~= nil then pcall(function() BridgeMove.stopPath(body) end) end
+        return false
+    end
+    local line = false
+    pcall(function()
+        line = BridgeGunRules.fireLineClear(getCell(), body:getX(), body:getY(), body:getZ(),
+            ft:getX(), ft:getY(), ft:getZ()) == true
+    end)
+    if line then
+        BridgeGunfight.fenceApproachUntil = nil
+        BridgeGunfight.fenceApproachTarget = nil
+        BridgeGunfight.fenceApproachCooldown = now + 120
+        if BridgeMove ~= nil then pcall(function() BridgeMove.stopPath(body) end) end
+        return false
+    end
+    if BridgeFight ~= nil and BridgeFight.vaultToward ~= nil then
+        local vaulted = false
+        pcall(function() vaulted = BridgeFight.vaultToward(body, ft) == true end)
+        if vaulted then
+            BridgeGunfight.fenceApproachUntil = nil
+            BridgeGunfight.fenceApproachTarget = nil
+            BridgeGunfight.fenceApproachCooldown = now + 120
+            BridgeGunfight.climbHoldUntil = now + 180
+            BridgeGunfight.climbOwner = true
+            BridgeGunfight.canMelee = false
+            BridgeGunfight.state = "climb"
+            BridgeGunfight.moving = false
+            BridgeGunfight.info = "fence approach climb"
+            if BridgeFight.endGunStep ~= nil then pcall(BridgeFight.endGunStep, body) end
+            vlog("fence approach climb")
+            return true
+        end
+    end
+    pcall(function() BridgeMove.goToward(body, ft:getX(), ft:getY(), ft:getZ(), true) end)
+    BridgeMove.walkType = "Walk"
+    BridgeGunfight.canMelee = false
+    BridgeGunfight.moving = true
+    BridgeGunfight.state = "approach"
+    BridgeGunfight.info = "fence approach"
+    return true
+end
+
+
+local function startFenceApproach(body, red, t, mode)
+    if BridgeMove == nil or t == nil then return false end
+    if BridgeMove.pendingClimb ~= nil then return false end
+    local now = Bridge.time or 0
+    if BridgeGunfight.fenceApproachCooldown ~= nil and now < BridgeGunfight.fenceApproachCooldown then
+        return false
+    end
+    local range = tonumber(BridgeGunfight.modeRange) or 0
+    if range > 0 and dist(body, t) > range + 0.9 then return false end
+    local kind = nil
+    pcall(function() kind = BridgeMove.edgeOnLine(body, t:getX(), t:getY(), t:getZ(), 6) end)
+    if kind ~= "fence" then return false end
+    local bp, bf = BridgeGunfight.preferredBand(body, mode)
+    local retreatAt = BridgeGunfight.retreatDistance(bp, bf)
+    if dist(body, t) <= retreatAt then return false end
+    if BridgeFight ~= nil and BridgeFight.vaultToward ~= nil then
+        local vaulted = false
+        pcall(function() vaulted = BridgeFight.vaultToward(body, t) == true end)
+        if vaulted then
+            BridgeGunfight.climbHoldUntil = (Bridge.time or 0) + 180
+            BridgeGunfight.climbOwner = true
+            BridgeGunfight.fenceApproachCooldown = (Bridge.time or 0) + 120
+            BridgeGunfight.canMelee = false
+            BridgeGunfight.state = "climb"
+            BridgeGunfight.moving = false
+            BridgeGunfight.info = "fence approach climb"
+            if BridgeFight.endGunStep ~= nil then pcall(BridgeFight.endGunStep, body) end
+            vlog("fence approach climb")
+            return true
+        end
+    end
+    BridgeGunfight.fenceApproachTarget = t
+    BridgeGunfight.fenceApproachUntil = (Bridge.time or 0) + 120
+    pcall(function() BridgeMove.goToward(body, t:getX(), t:getY(), t:getZ(), true) end)
+    BridgeMove.walkType = "Walk"
+    BridgeGunfight.canMelee = false
+    BridgeGunfight.moving = true
+    BridgeGunfight.state = "approach"
+    BridgeGunfight.info = "fence approach"
+    vlog("fence approach start d=" .. string.format("%.1f", dist(body, t)))
+    return true
+end
+BridgeGunfight.startFenceApproach = startFenceApproach
+
+
 local function standoffStop()
     if BridgeGunfight.standoffMoving then
-        BridgeGunfight.plantRequired = true
+        if BridgeGunfight.standoffSatisfied ~= true then BridgeGunfight.plantRequired = true end
         BridgeGunfight.moving = false
     end
+    BridgeGunfight.standoffSatisfied = nil
     BridgeGunfight.standoffMoving = false
     BridgeGunfight.standoffGoalX, BridgeGunfight.standoffGoalY, BridgeGunfight.standoffGoalZ = nil, nil, nil
     BridgeGunfight.standoffStartX, BridgeGunfight.standoffStartY = nil, nil
@@ -3337,11 +3959,99 @@ local function standoffStop()
 end
 
 
+local function clearStandoffDetour()
+    BridgeGunfight.standoffDetourUntil = nil
+    BridgeGunfight.standoffDetourX = nil
+    BridgeGunfight.standoffDetourY = nil
+    BridgeGunfight.standoffDetourZ = nil
+    BridgeGunfight.standoffNav = nil
+    BridgeGunfight.standoffDetourFails = 0
+end
+
+
+local function standoffDetourTick(body, red, threat, mode, retreatAt, now)
+    if BridgeMove == nil or threat == nil or BridgeNav == nil then return false end
+    local untilAt = BridgeGunfight.standoffDetourUntil
+    if untilAt ~= nil then
+        local gx, gy, gz = BridgeGunfight.standoffDetourX, BridgeGunfight.standoffDetourY, BridgeGunfight.standoffDetourZ
+        local alive = false
+        pcall(function() alive = threat:isAlive() and threat:getHealth() > 0 end)
+        if not alive or gx == nil or now >= untilAt
+                or dist(body, threat) >= retreatAt + 2.0
+                or math.sqrt(BridgeGunRules.dist2(body:getX(), body:getY(), gx, gy)) < 0.6 then
+            clearStandoffDetour()
+            BridgeGunfight.standoffMoving = false
+            BridgeGunfight.moving = false
+            return false
+        end
+        BridgeMove.walkType = "Walk"
+        pcall(function() BridgeMove.goToward(body, gx, gy, gz, true) end)
+        BridgeGunfight.standoffMoving = true
+        BridgeGunfight.moving = true
+        BridgeGunfight.state = "backstep"
+        BridgeGunfight.info = "backstep detour"
+        return true
+    end
+    local nav = BridgeGunfight.standoffNav
+    if nav == nil then
+        nav = BridgeNav.newState()
+        nav.since = now
+        nav.progressAt = now
+        BridgeGunfight.standoffNav = nav
+    end
+    local stall = BridgeNav.stall(body, nav, {
+        ticks = 60,
+        move = 0.3,
+        exempt = function()
+            return BridgeMove.pendingClimb ~= nil or BridgeMove.cross ~= nil
+                or BridgeMove.doorAct ~= nil or BridgeMove.window ~= nil
+                or now < (BridgeMove.climbUntil or 0)
+        end,
+    })
+    if stall ~= "stalled" then return false end
+    local px, py = nil, nil
+    pcall(function()
+        local p = BridgeNav.detour(body, threat:getX(), threat:getY(), threat:getZ(), nav,
+            { step = 1.6, ticks = 150 })
+        if p ~= nil then px, py = p.x, p.y end
+    end)
+    local bz = body:getZ()
+    local safe = px ~= nil and standoffClear(body, px, py, bz)
+        and standoffWithinLeash(red, px, py, standoffLeash(mode))
+    if safe then
+        local td0 = dist(body, threat)
+        local tdp = math.sqrt(BridgeGunRules.dist2(px, py, threat:getX(), threat:getY()))
+        if tdp < td0 - 0.25 then safe = false end
+    end
+    if not safe then
+        BridgeGunfight.standoffDetourFails = (BridgeGunfight.standoffDetourFails or 0) + 1
+        vlog(string.format("standoff detour blocked fails=%d", BridgeGunfight.standoffDetourFails))
+        if BridgeGunfight.standoffDetourFails >= 2 then
+            BridgeGunfight.standoffHoldAt = now + 120
+            clearStandoffDetour()
+        end
+        return false
+    end
+    BridgeGunfight.standoffDetourX, BridgeGunfight.standoffDetourY, BridgeGunfight.standoffDetourZ = px, py, bz
+    BridgeGunfight.standoffDetourUntil = now + 150
+    nav.bestD = nil
+    nav.progressAt = now
+    BridgeMove.walkType = "Walk"
+    pcall(function() BridgeMove.goToward(body, px, py, bz, true) end)
+    BridgeGunfight.standoffMoving = true
+    BridgeGunfight.moving = true
+    BridgeGunfight.state = "backstep"
+    BridgeGunfight.info = "backstep detour"
+    vlog(string.format("standoff detour %.1f,%.1f retreat=%.1f", px, py, retreatAt))
+    return true
+end
+
+
 local function standoffTick(body, red, mode, S)
     if GUN_STANDOFF_ON ~= true then return false end
     if body == nil or red == nil or mode == nil or BridgeMove == nil then return false end
     if BridgeFight == nil or BridgeFight.flee or BridgeFight.state == "swing" then return false end
-    if BridgeGunfight.reloadFlee then return false end
+    if BridgeGunfight.reloadFlee or BridgeGunfight.followHold then return false end
     if BridgeGunfight.stance == "melee" then standoffStop() return false end
     if BridgeGunfight.gunShoveAt ~= nil then standoffStop() return false end
     if BridgeData.gunUseOf(Bridge.store) == "off" then standoffStop() return false end
@@ -3350,116 +4060,127 @@ local function standoffTick(body, red, mode, S)
     if S == nil then return false end
     BridgeGunfight.scan = S
 
-    local threat = S.standThreat
-    if threat == nil or (S.standD or 999) > GUN_STANDOFF_SCAN then
-        BridgeGunfight.standoffHoldAt = 0
-        standoffStop()
-        return false
-    end
-    if standoffMeleeEligible(body, S) then standoffStop() return false end
-    if BridgeGunfight.reposition ~= nil then standoffStop() return false end
+    local preferred, floor, ceiling = BridgeGunfight.preferredBand(body, mode)
+    local retreatAt = BridgeGunfight.retreatDistance(preferred, floor)
+    BridgeGunfight.retreatAt = retreatAt
+    BridgeFight.gunScanRadius = math.max(7.0, (preferred or 0) + 2.0)
+    local scan = math.max(GUN_STANDOFF_SCAN, BridgeFight.gunScanRadius)
+    local stepping = BridgeFight.stepOwner == "gun" and BridgeFight.state == "step"
     local crowd = crowdDanger(S)
-    local t = BridgeGunfight.target
-    if t ~= nil and BridgeGunfight.standoffMoving ~= true and not crowd
-            and (S.standD or 0) >= GUN_STANDOFF_MIN
-            and blockedBy(body, t) ~= nil then
+    local threat, d = nil, 999
+    local function usable(z, maxD)
+        if z == nil then return false end
+        local ok, harmless, downed = false, false, false
+        pcall(function() ok = z:isAlive() and z:getHealth() > 0 end)
+        pcall(function() harmless = BridgeData.harmless(z) == true end)
+        if BridgeFight.isKnockedDown ~= nil then
+            pcall(function() downed = BridgeFight.isKnockedDown(z) == true end)
+        end
+        if not ok or harmless or downed then return false end
+        return dist(body, z) <= maxD
+    end
+    local stepT = BridgeFight.stepTarget
+    if stepping and usable(stepT, scan) then
+        threat, d = stepT, dist(body, stepT)
+    else
+        local function pick(z, maxD)
+            if usable(z, maxD) then
+                local dd = dist(body, z)
+                if dd < d then threat, d = z, dd end
+            end
+        end
+        pick(BridgeGunfight.target, retreatAt)
+        pick(S.pressThreat, retreatAt)
+        pick(S.standThreat, GUN_PERSONAL_SPACE)
+        if threat == nil and crowd then pick(S.standThreat, scan) end
+    end
+    if threat == nil then
+        BridgeGunfight.standoffHoldAt = 0
+        clearStandoffDetour()
         standoffStop()
         return false
     end
-    local exitAt = crowd and GUN_STANDOFF_MAX or GUN_STANDOFF_EXIT
-    local enterAt = crowd and GUN_STANDOFF_EXIT or GUN_STANDOFF_MIN
-    local wasMoving = BridgeGunfight.standoffMoving == true
-    if wasMoving then
-        if (S.standD or 0) >= exitAt then
-            BridgeGunfight.standoffHoldAt = 0
+    local now = Bridge.time or 0
+    if BridgeGunfight.standoffDetourUntil ~= nil then
+        if standoffDetourTick(body, red, threat, mode, retreatAt, now) then return true end
+    end
+    if standoffMeleeEligible(body, S) then
+        clearStandoffDetour()
+        standoffStop()
+        return false
+    end
+    if BridgeGunfight.reposition ~= nil then
+        clearStandoffDetour()
+        standoffStop()
+        return false
+    end
+
+    local need = false
+    if stepping then need = true
+    elseif d <= retreatAt then need = true
+    elseif crowd then need = true end
+    if not need then
+        BridgeGunfight.standoffHoldAt = 0
+        clearStandoffDetour()
+        standoffStop()
+        return false
+    end
+
+    if not stepping and now < (BridgeGunfight.standoffHoldAt or 0) then
+        standoffStop()
+        return false
+    end
+    if d >= retreatAt then
+        if not stepping and now < (BridgeGunfight.retreatHoldUntil or 0) then
             standoffStop()
             return false
         end
-    elseif (S.standD or 0) >= enterAt then
-        BridgeGunfight.standoffHoldAt = 0
-        standoffStop()
-        return false
-    end
-    if (S.standD or 0) <= GUN_SHOVE_RANGE then standoffStop() return false end
-
-    local now = Bridge.time or 0
-    if now < (BridgeGunfight.standoffHoldAt or 0) then
-        standoffStop()
-        return false
-    end
-    local bx, by, bz = body:getX(), body:getY(), body:getZ()
-    local gx, gy = BridgeGunfight.standoffGoalX, BridgeGunfight.standoffGoalY
-    local reached = false
-    if gx ~= nil then
-        local dx, dy = gx - bx, gy - by
-        reached = (dx * dx + dy * dy) < 0.36
-    end
-    if gx == nil or reached
-            or (not wasMoving and now >= (BridgeGunfight.standoffAt or 0) + GUN_STANDOFF_REPLAN) then
-        local nx, ny = standoffGoal(body, red, S, mode)
-        if nx == nil then standoffStop() return false end
-        if gx == nil or nx ~= gx or ny ~= gy then
-            BridgeGunfight.standoffStartX, BridgeGunfight.standoffStartY = bx, by
-            BridgeGunfight.standoffStuckAt = now
-        end
-        BridgeGunfight.standoffGoalX, BridgeGunfight.standoffGoalY, BridgeGunfight.standoffGoalZ = nx, ny, bz
-        BridgeGunfight.standoffAt = now
-        gx, gy = nx, ny
-    end
-
-    if BridgeGunfight.standoffStartX ~= nil and now >= (BridgeGunfight.standoffStuckAt or now) + GUN_STANDOFF_STUCK then
-        local sx, sy = BridgeGunfight.standoffStartX, BridgeGunfight.standoffStartY
-        local moved = math.sqrt((bx - sx) * (bx - sx) + (by - sy) * (by - sy))
-        if moved < 0.4 then
-            BridgeGunfight.standoffFlips = (BridgeGunfight.standoffFlips or 0) + 1
-            BridgeGunfight.standoffSide = -(BridgeGunfight.standoffSide or 1)
-            BridgeGunfight.standoffGoalX, BridgeGunfight.standoffGoalY, BridgeGunfight.standoffGoalZ = nil, nil, nil
-            BridgeGunfight.standoffAt = 0
-            vlog(string.format("gun standoff blocked moved=%.2f flips=%d", moved, BridgeGunfight.standoffFlips))
-            if BridgeGunfight.standoffFlips >= 2 then
-                BridgeGunfight.standoffHoldAt = now + 120
-                standoffStop()
-                return false
-            end
+        if not stepping and now < (BridgeGunfight.standoffAt or 0) + GUN_RETREAT_REPLAN then
+            standoffStop()
             return false
         end
-        BridgeGunfight.standoffStuckAt = now
-        BridgeGunfight.standoffStartX, BridgeGunfight.standoffStartY = bx, by
     end
 
-    if not standoffClear(body, gx, gy, bz) then
-        local nx, ny = standoffLateral(body, red, S, mode)
-        if nx == nil then standoffStop() return false end
-        gx, gy = nx, ny
-        BridgeGunfight.standoffGoalX, BridgeGunfight.standoffGoalY, BridgeGunfight.standoffGoalZ = gx, gy, bz
+    local opts = {
+        gun = true,
+        preferred = preferred,
+        floor = retreatAt + 0.01,
+        ceiling = ceiling,
+        stopAt = retreatAt + GUN_RETREAT_EXIT_ADD,
+        leashMult = GUN_STANDOFF_LEASH_MULT,
+        stepMin = GUN_STEP_MIN,
+        stepMax = GUN_STEP_MAX,
+        stepScale = GUN_STEP_SCALE,
+        allowShoot = true,
+        flank = true,
+        validTarget = function(z) return usable(z, scan) end,
+    }
+    local started = false
+    pcall(function() started = BridgeFight.footStepGun(body, red, threat, mode, opts) == true end)
+    if started then
+        clearStandoffDetour()
         BridgeGunfight.standoffAt = now
-        BridgeGunfight.standoffStartX, BridgeGunfight.standoffStartY = bx, by
-        BridgeGunfight.standoffStuckAt = now
+        BridgeGunfight.standoffMoving = true
+        BridgeGunfight.moving = true
+        BridgeGunfight.state = "backstep"
+        BridgeGunfight.info = string.format("backstep %.1f band %.1f-%.1f", d, retreatAt, ceiling)
+        vlog(string.format("gun backstep d=%.1f retreat=%.1f preferred=%.1f floor=%.1f ceiling=%.1f crowd=%s",
+            d, retreatAt, preferred, floor, ceiling, tostring(crowd)))
+        return true
     end
-
-    local backwards = BridgeGunfight.drawn == true or BridgeGunfight.target ~= nil
-        or BridgeGunfight.aimUntil ~= nil
-    local moved = false
-    pcall(function()
-        moved = BridgeMove.goStraight(body, gx, gy, bz, false,
-            function(b, x, y, z) return standoffClear(b, x, y, z) end, backwards) == true
-    end)
-    if not moved then
-        pcall(function() BridgeMove.goToward(body, gx, gy, bz, false) end)
-        moved = BridgeMove.moving == true
+    if not started and d <= retreatAt then
+        if standoffDetourTick(body, red, threat, mode, retreatAt, now) then return true end
+        if now >= (BridgeFight.stepReadyAt or 0)
+                and tryEscapeClimb(body, red, threat, mode) then
+            return true
+        end
     end
-    if not moved then standoffStop() return false end
-
-    pcall(function() body:faceLocationF(threat:getX(), threat:getY()) end)
-    BridgeMove.walkType = "Walk"
-    BridgeGunfight.standoffMoving = true
-    BridgeGunfight.moving = true
-    BridgeGunfight.state = "backstep"
-    BridgeGunfight.info = string.format("standoff %.1f", S.standD or 0)
-    if not wasMoving then
-        vlog(string.format("gun standoff d=%.1f goal=%.1f,%.1f back=%s", S.standD or 0, gx, gy, tostring(backwards)))
-    end
-    return true
+    local after = 999
+    pcall(function() after = dist(body, threat) end)
+    BridgeGunfight.standoffSatisfied = after >= retreatAt
+    BridgeGunfight.standoffHoldAt = now + GUN_RETREAT_REPLAN
+    standoffStop()
+    return false
 end
 
 
@@ -3472,6 +4193,11 @@ function BridgeGunfight.update(body, S)
     end
     BridgeGunfight.body = body
     if BridgeGunfight.assignedId == nil then return false end
+    if BridgeGunfight.followHold then
+        BridgeGunfight.canMelee = false
+        BridgeGunfight.state = "idle"
+        return false
+    end
     local item = cachedGunItem(body)
     if item == nil then
         local gone = BridgeGunfight.gunItem
@@ -3512,6 +4238,23 @@ function BridgeGunfight.update(body, S)
         if BridgeGunfight.modeRange < 1 then BridgeGunfight.modeRange = 0 end
     end
 
+    if BridgeGunfight.gunShoveRetargetAt ~= nil
+            and (Bridge.time or 0) >= BridgeGunfight.gunShoveRetargetAt
+            and (BridgeFight == nil or BridgeFight.state ~= "swing") then
+        BridgeGunfight.gunShoveAt = nil
+        BridgeGunfight.gunShoveRetargetAt = nil
+        if BridgeFight ~= nil then BridgeFight.gunShoveSwing = false end
+        BridgeGunfight.target = nil
+        BridgeGunfight.aimUntil = nil
+        BridgeGunfight.nextShotAt = nil
+        BridgeGunfight.plantRequired = false
+        BridgeGunfight.moving = false
+        BridgeGunfight.state = "idle"
+        BridgeGunfight.lastPick = 0
+        BridgeGunfight.shovePreferred = BridgeGunfight.gunShoveTarget
+        BridgeGunfight.gunShoveTarget = nil
+        vlog("shove retarget: reacquire close")
+    end
     if BridgeGunfight.gunShoveAt ~= nil then
         BridgeGunfight.gunShoveAt = nil
         BridgeFight.gunShoveSwing = false
@@ -3522,6 +4265,7 @@ function BridgeGunfight.update(body, S)
         BridgeGunfight.nextShotAt = BridgeGunfight.aimUntil
     end
 
+    if climbTick(body) then return true end
     local wantReloadFlee = allows == true and reloadFleeNeeded(body)
     if BridgeGunfight.reloadFlee and not wantReloadFlee then
         BridgeGunfight.reloadFlee = false
@@ -3533,16 +4277,34 @@ function BridgeGunfight.update(body, S)
         BridgeGunfight.reloadFlee = true
         BridgeGunfight.reloadFleeMoving = false
         BridgeGunfight.reloadFleeGoalX, BridgeGunfight.reloadFleeGoalY, BridgeGunfight.reloadFleeGoalZ = nil, nil, nil
+        BridgeGunfight.reloadFleeGoalAt = nil
+        BridgeGunfight.reloadFleeGoalSource = nil
+        BridgeGunfight.reloadFleeGoalPlayerX, BridgeGunfight.reloadFleeGoalPlayerY = nil, nil
+        BridgeGunfight.reloadFleeGoalThreatX, BridgeGunfight.reloadFleeGoalThreatY = nil, nil
+        BridgeGunfight.reloadFleeSide = 1
+        BridgeGunfight.reloadFleeHoldUntil = nil
+        BridgeGunfight.reloadFleeIdleAt = nil
+        BridgeGunfight.reloadFleeNav = nil
         BridgeGunfight.reloadFleeFails = 0
         BridgeGunfight.standoffMoving = false
         BridgeGunfight.standoffGoalX, BridgeGunfight.standoffGoalY, BridgeGunfight.standoffGoalZ = nil, nil, nil
         BridgeGunfight.standoffStartX, BridgeGunfight.standoffStartY = nil, nil
         BridgeGunfight.standoffAt = 0
+        if BridgeFight ~= nil and BridgeFight.endGunStep ~= nil then
+            pcall(BridgeFight.endGunStep, body)
+        end
         BridgeGunfight.target = nil
         if BridgeFight ~= nil then BridgeFight.target = nil end
-        log("reload flee start")
+        logf("reload flee start player=%.1f speed=%.2f threat=%.1f rounds=%d ammo=%s",
+            dist(body, red), tonumber(BridgeMove.redSpeed) or 0,
+            S ~= nil and (S.standD or -1) or -1, BridgeGunfight.rounds or 0,
+            tostring(BridgeGunfight.hasPrepAmmo(body)))
     end
     if BridgeGunfight.reloadFlee and reloadFleeTick(body, red, mode, S) then
+        return true
+    end
+    if BridgeGunfight.reloadStage == nil and BridgeGunfight.ammoItem == nil
+            and BridgeGunfight.magCareStage == nil and fenceApproachTick(body, red, mode) then
         return true
     end
 
@@ -3673,6 +4435,10 @@ BridgeGunfight.lastShotTarget = nil
         BridgeGunfight.lowSaid = false
     end
     if BridgeGunfight.suspended then
+        if trulyOutOfAmmo(body) then
+            forceMeleeFallback(body)
+            return false
+        end
         if BridgeGunfight.noAmmoUntil ~= nil and Bridge.time < BridgeGunfight.noAmmoUntil then
             BridgeGunfight.canMelee = true
             BridgeGunfight.stance = "melee"
@@ -3850,7 +4616,8 @@ BridgeGunfight.lastShotTarget = nil
     BridgeGunfight.lastX = bxNow
     BridgeGunfight.lastY = byNow
     BridgeGunfight.walkingNow = locomoting or moved > BridgeGunRules.MOVE_EPS
-    if locomoting and t ~= nil and BridgeGunfight.state ~= "backstep" then
+    if locomoting and t ~= nil and BridgeGunfight.state ~= "backstep"
+            and BridgeGunfight.standoffMoving ~= true and BridgeFight.stepOwner ~= "gun" then
         BridgeGunfight.plantRequired = true
     end
     local pick = not BridgeGunfight.reloadFlee
@@ -3858,7 +4625,13 @@ BridgeGunfight.lastShotTarget = nil
     if t ~= nil and pick and not validTarget(t, body, red) then
         local lost = "body"
         pcall(function() lost = tostring(t:getType()) end)
-        vlog("target lost: " .. lost)
+        local line = false
+        pcall(function()
+            line = BridgeGunRules.fireLineClear(getCell(), body:getX(), body:getY(), body:getZ(),
+                t:getX(), t:getY(), t:getZ()) == true
+        end)
+        BridgeGunfight.lockReason = line and "lost: invalid" or "lost: line"
+        vlog("target lost: " .. lost .. (line and "" or " (line blocked)"))
         t = nil
         BridgeGunfight.target = nil
         BridgeGunfight.state = "idle"
@@ -3899,8 +4672,10 @@ BridgeGunfight.lastShotTarget = nil
             BridgeGunfight.aimUntil = start + aim
             BridgeGunfight.nextShotAt = BridgeGunfight.aimUntil
             BridgeGunfight.state = "aim"
-            vlog(string.format("target acquired d=%.1f aim=%d plant=%d turn=%d retarget=%d",
-                dist(body, t), aim, plantAdd, turn, retargetAdd))
+            local bp, bf, bc = BridgeGunfight.preferredBand(body, mode)
+            vlog(string.format("target acquired d=%.1f aim=%d plant=%d turn=%d retarget=%d band=%.1f/%.1f/%.1f reason=%s",
+                dist(body, t), aim, plantAdd, turn, retargetAdd, bp, bf, bc,
+                tostring(BridgeGunfight.lockReason)))
         end
     end
 
@@ -3989,6 +4764,20 @@ BridgeGunfight.lastShotTarget = nil
     pcall(function() body:faceLocationF(t:getX(), t:getY()) end)
 
     local d = dist(body, t)
+    local preferred, floor, ceiling = BridgeGunfight.preferredBand(body, mode)
+    if Bridge.verbose and (Bridge.time or 0) % 30 == 0 then
+        local line = false
+        pcall(function()
+            line = BridgeGunRules.fireLineClear(getCell(), body:getX(), body:getY(), body:getZ(),
+                t:getX(), t:getY(), t:getZ()) == true
+        end)
+        vlog(string.format("lock state=%s d=%.1f aim=%s next=%s plant=%s owner=%s reload=%s rounds=%d canMelee=%s line=%s band=%.1f/%.1f/%.1f reason=%s",
+            tostring(BridgeGunfight.state), d, tostring(BridgeGunfight.aimUntil),
+            tostring(BridgeGunfight.nextShotAt), tostring(BridgeGunfight.plantRequired),
+            tostring(BridgeFight.stepOwner), tostring(BridgeGunfight.reloadStage),
+            BridgeGunfight.rounds or 0, tostring(BridgeGunfight.canMelee), tostring(line),
+            preferred, floor, ceiling, tostring(BridgeGunfight.lockReason)))
+    end
     if d <= BridgeGunRules.MIN_RANGE and not gunLocked and swingRecoveryReady()
         and BridgeData.optionOf(Bridge.store, "gunMelee") and meleeReady(body) then
         local meleeReach = BridgeFight.reachable ~= nil and BridgeFight.reachable(body, t)
@@ -4012,8 +4801,7 @@ BridgeGunfight.lastShotTarget = nil
         end
     end
     if not BridgeGunfight.drawn then BridgeGunfight.draw(body) end
-    local retreat = BridgeGunfight.standoffMoving == true
-    if not retreat and d < BridgeGunRules.MIN_RANGE then retreat = backpedal(body, t) end
+    local retreat = BridgeGunfight.standoffMoving == true or BridgeFight.stepOwner == "gun"
     BridgeGunfight.moving = retreat
     BridgeGunfight.state = retreat and "backstep" or "aim"
 
@@ -4021,7 +4809,7 @@ BridgeGunfight.lastShotTarget = nil
         if BridgeGunfight.reposition ~= nil then stopReposition(body) end
         BridgeGunfight.blockSince = nil
         BridgeGunfight.reposSide = nil
-        if d < BridgeGunRules.MIN_RANGE and retreat then
+        if d < floor and retreat then
             BridgeGunfight.info = "backstep before reload"
             return true
         end
