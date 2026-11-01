@@ -3273,7 +3273,8 @@ function BridgeGunfight.releaseForFollow(body, why)
     BridgeGunfight.standoffAt = 0
     BridgeGunfight.standoffHoldAt = 0
     BridgeGunfight.reposition = nil
-    if body ~= nil and BridgeMove ~= nil then
+    if body ~= nil and BridgeMove ~= nil and not wasHold
+            and BridgeMove.pendingClimb == nil and BridgeMove.cross == nil then
         pcall(function() if BridgeMove.onPath() then BridgeMove.stopPath(body) end end)
         BridgeMove.moving = false
         BridgeMove.steering = false
@@ -3832,6 +3833,7 @@ local function climbTick(body)
         end
         BridgeGunfight.climbHoldUntil = nil
         BridgeGunfight.climbOwner = false
+        BridgeGunfight.state = "idle"
     end
     return false
 end

@@ -9,7 +9,7 @@ local FOLLOW_STOP = 0.9
 local FOLLOW_GAP = 1.2
 local RUN_DIST = 3.5
 local RUN_STOP = 2.0
-local FOLLOW_SPRINT_HOLD = 150
+local FOLLOW_SPRINT_HOLD = 30
 local FOLLOW_SPRINT_RATE = 0.08
 
 BridgeMove.moving = false
@@ -177,21 +177,24 @@ function BridgeMove.followPriority(body, red)
         if not BridgeMove.followPriorityHold
                 and (Bridge.time or 0) - BridgeMove.sprintSince >= FOLLOW_SPRINT_HOLD then
             BridgeMove.followPriorityHold = true
-            if Bridge.verbose then log("follow priority: engaged after 2.5 s sprint") end
+            if Bridge.verbose then log("follow priority: engaged after sprint hold") end
         end
     else
         BridgeMove.sprintSince = nil
     end
     if not BridgeMove.followPriorityHold then return false end
-    if BridgeGunfight ~= nil then
-        if BridgeGunfight.fireUntil ~= nil or BridgeGunfight.pendingShot ~= nil then return false end
-    end
     if BridgeFight ~= nil and BridgeFight.state == "swing" then return false end
     local d = 0
     pcall(function()
         local dx, dy = body:getX() - red:getX(), body:getY() - red:getY()
         d = math.sqrt(dx * dx + dy * dy)
     end)
+    if BridgeGunfight ~= nil then
+        local away = BridgeMove.redMoving == true and (BridgeMove.redSpeed or 0) >= FOLLOW_SPRINT_RATE
+        if not away and (BridgeGunfight.fireUntil ~= nil or BridgeGunfight.pendingShot ~= nil) then
+            return false
+        end
+    end
     if not sprinting and d <= FOLLOW_STOP + 0.5 then
         BridgeMove.followPriorityHold = false
         BridgeMove.sprintSince = nil

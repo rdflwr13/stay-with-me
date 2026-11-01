@@ -2609,6 +2609,7 @@ end
 
 function BridgeFight.releaseForFollow(body, why)
     if BridgeFight.state == "swing" then return false end
+    local wasHold = BridgeGunfight ~= nil and BridgeGunfight.followHold == true
     BridgeFight.target = nil
     BridgeFight.state = "idle"
     BridgeFight.swingBack = false
@@ -2618,7 +2619,10 @@ function BridgeFight.releaseForFollow(body, why)
     escapeReset()
     if body ~= nil then
         pcall(footEnd, body)
-        if BridgeMove ~= nil then pcall(function() BridgeMove.stopPath(body) end) end
+        if BridgeMove ~= nil and not wasHold
+                and BridgeMove.pendingClimb == nil and BridgeMove.cross == nil then
+            pcall(function() BridgeMove.stopPath(body) end)
+        end
     end
     pcall(function() BridgeCallout.breakOff() end)
     if BridgeGunfight ~= nil and type(BridgeGunfight.releaseForFollow) == "function" then

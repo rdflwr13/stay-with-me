@@ -34,7 +34,9 @@ end
 local function tick()
     local want = nil
     if atyOn() and Bridge ~= nil and Bridge.body ~= nil and BridgeGunfight ~= nil
-        and BridgeFight ~= nil and BridgeFight.state == "gun"
+        and BridgeFight ~= nil
+        and (BridgeFight.state == "gun"
+            or (BridgeFight.state == "step" and BridgeFight.stepOwner == "gun"))
         and BridgeGunfight.drawn == true and BridgeGunfight.target ~= nil
         and (BridgeGunfight.state == "aim" or BridgeGunfight.state == "backstep") then
         want = BridgeGunfight.target

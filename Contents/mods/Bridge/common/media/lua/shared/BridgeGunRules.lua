@@ -564,6 +564,57 @@ end
 BridgeGunRules.edgeTallHoppable = edgeTallHoppable
 
 
+local function edgeTallObject(a, b)
+    if a == nil or b == nil then return nil end
+    local owner, north = nil, false
+    if a:getX() ~= b:getX() then
+        owner, north = (a:getX() > b:getX()) and a or b, false
+    else
+        owner, north = (a:getY() > b:getY()) and a or b, true
+    end
+    local found = nil
+    pcall(function()
+        local objects = owner:getObjects()
+        if objects == nil then return end
+        for i = 0, objects:size() - 1 do
+            local o = objects:get(i)
+            if o ~= nil and o:isTallHoppable() then
+                local props = o:getProperties()
+                local n = props:has(IsoFlagType.TallHoppableN)
+                local w = props:has(IsoFlagType.TallHoppableW)
+                if (north and n) or (not north and w) then found = o return end
+            end
+        end
+    end)
+    return found
+end
+
+
+local function tallFenceSeeThrough(o)
+    if o == nil then return false end
+    local parts = {}
+    pcall(function()
+        local sprite = o:getSprite()
+        if sprite ~= nil then parts[#parts + 1] = tostring(sprite:getName()) end
+    end)
+    pcall(function() parts[#parts + 1] = tostring(o:getName()) end)
+    pcall(function() parts[#parts + 1] = tostring(o:getSpriteName()) end)
+    pcall(function()
+        local props = o:getProperties()
+        if props ~= nil then
+            parts[#parts + 1] = tostring(props:get("FenceTypeHigh") or "")
+            parts[#parts + 1] = tostring(props:get("FenceTypeLow") or "")
+        end
+    end)
+    local text = string.lower(table.concat(parts, " "))
+    if string.find(text, "wire", 1, true) ~= nil then return true end
+    if string.find(text, "chain", 1, true) ~= nil then return true end
+    if string.find(text, "barb", 1, true) ~= nil then return true end
+    if string.find(text, "metal", 1, true) ~= nil then return true end
+    return false
+end
+
+
 local function edgeStopsBullet(a, b)
     if a == nil or b == nil then return true, "no_square" end
     local w = edgeWindow(a, b)
@@ -574,7 +625,11 @@ local function edgeStopsBullet(a, b)
     local hop = false
     pcall(function() hop = a:isHoppableTo(b) == true or b:isHoppableTo(a) == true end)
     if hop then return false, nil end
-    if edgeTallHoppable(a, b) then return false, nil end
+    local tall = edgeTallObject(a, b)
+    if tall ~= nil then
+        if tallFenceSeeThrough(tall) then return false, nil end
+        return true, "tall_fence"
+    end
     local blocked = false
     pcall(function() blocked = a:isBlockedTo(b) == true or b:isBlockedTo(a) == true end)
     if blocked then return true, "wall_or_door" end
