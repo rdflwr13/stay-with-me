@@ -98,6 +98,363 @@ local function diag(key, message)
 end
 
 
+local function gunsmith()
+    local module = BridgeGunRules.gunsmith
+    if module == nil then return nil end
+    if module.active ~= nil and module.active() ~= true then return nil end
+    return module
+end
+
+do
+    local GSC = {}
+    BridgeGunRules.gunsmith = GSC
+
+    local warned = {}
+
+    local function say(text)
+        if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeGunRules] " .. tostring(text)) end
+    end
+
+    local function warnOnce(key, message)
+        if warned[key] == true then return end
+        warned[key] = true
+        say(message)
+    end
+
+    local function api()
+        local module = rawget(_G, "Gunsmith")
+        return type(module) == "table" and module or nil
+    end
+
+    local function isServerNow()
+        local yes = false
+        pcall(function() yes = isServer() == true end)
+        return yes
+    end
+
+    local function active()
+        if isServerNow() then return false end
+        return api() ~= nil
+    end
+
+    GSC.active = active
+
+    local function isGunItem(G, item)
+        if G == nil or item == nil then return false end
+        if type(G.IsGun) ~= "function" then return false end
+        local ok, yes = pcall(G.IsGun, item)
+        return ok and yes == true
+    end
+
+    local function instantiate(fullType)
+        if type(fullType) ~= "string" or fullType == "" then return nil end
+        local item = nil
+        local ok = pcall(function() item = instanceItem(fullType) end)
+        if not ok then return nil end
+        return item
+    end
+
+    local function isPlayer(character)
+        if character == nil then return false end
+        local yes = false
+        pcall(function() yes = instanceof(character, "IsoPlayer") == true end)
+        return yes
+    end
+
+    local function callWithNpcSafeSync(fn)
+        local hand = rawget(_G, "syncHandWeaponFields")
+        local mod = rawget(_G, "syncItemModData")
+        if type(hand) == "function" then
+            rawset(_G, "syncHandWeaponFields", function(character, item)
+                if isPlayer(character) then return hand(character, item) end
+            end)
+        end
+        if type(mod) == "function" then
+            rawset(_G, "syncItemModData", function(character, item)
+                if isPlayer(character) then return mod(character, item) end
+            end)
+        end
+        local ok, err = pcall(fn)
+        if type(hand) == "function" then rawset(_G, "syncHandWeaponFields", hand) end
+        if type(mod) == "function" then rawset(_G, "syncItemModData", mod) end
+        return ok, err
+    end
+
+    function GSC.isGun(item)
+        if not active() then return false end
+        return isGunItem(api(), item)
+    end
+
+    function GSC.isInternal(item)
+        if not active() then return false end
+        local G = api()
+        if not isGunItem(G, item) then return false end
+        if type(G.IsInternal) ~= "function" then return false end
+        local ok, yes = pcall(G.IsInternal, item)
+        return ok and yes == true
+    end
+
+    function GSC.magazineTypes(itemOrFullType)
+        if not active() then return {} end
+        local G = api()
+        if G == nil then return {} end
+        local item = itemOrFullType
+        if type(itemOrFullType) == "string" then item = instantiate(itemOrFullType) end
+        if not isGunItem(G, item) then return {} end
+        if type(G.MagazineTypesFor) ~= "function" then return {} end
+        local list = nil
+        local ok = pcall(function() list = G.MagazineTypesFor(item) end)
+        if not ok then
+            warnOnce("magazinetypes", "MagazineTypesFor failed")
+            return {}
+        end
+        local out, seen = {}, {}
+        if type(list) == "table" then
+            for _, fullType in ipairs(list) do
+                if type(fullType) == "string" and fullType ~= "" and seen[fullType] ~= true then
+                    seen[fullType] = true
+                    out[#out + 1] = fullType
+                end
+            end
+        end
+        return out
+    end
+
+    function GSC.ammoTypes(desc, owner)
+        local out, seen = {}, {}
+        if not active() then return out end
+        local function add(fullType)
+            if type(fullType) ~= "string" or fullType == "" or seen[fullType] == true then return end
+            seen[fullType] = true
+            out[#out + 1] = fullType
+        end
+        local G = api()
+        if G == nil or type(desc) ~= "table" then return out end
+        local item = desc.gunsmithItem
+        if not isGunItem(G, item) then item = instantiate(desc.fullType) end
+        if not isGunItem(G, item) then return out end
+        local cal = nil
+        if type(G.CaliberOf) == "function" then
+            local ok = false
+            ok, cal = pcall(G.CaliberOf, item)
+            if not ok then cal = nil end
+        end
+        if type(cal) ~= "string" or cal == "" then return out end
+        if type(G.Calibers) ~= "table" then return out end
+        if owner ~= nil and type(G.CarriedAmmo) == "function" then
+            local list = nil
+            pcall(function() list = G.CarriedAmmo(owner, cal) end)
+            if type(list) == "table" then
+                for _, entry in ipairs(list) do
+                    if type(entry) == "table" then add(entry.type) end
+                end
+            end
+        end
+        local caliberDef = type(G.Calibers) == "table" and G.Calibers[cal] or nil
+        if type(caliberDef) == "table" and type(caliberDef.ammo) == "table" then
+            for _, fullType in ipairs(caliberDef.ammo) do add(fullType) end
+        end
+        if type(G.DefaultAmmo) == "function" then
+            local fullType = nil
+            local ok = false
+            ok, fullType = pcall(G.DefaultAmmo, cal)
+            if ok then add(fullType) end
+        end
+        if type(G.ItemAmmo) == "function" then
+            local fullType = nil
+            local ok = false
+            ok, fullType = pcall(G.ItemAmmo, item)
+            if ok then add(fullType) end
+        end
+        return out
+    end
+
+    function GSC.boxTypes(roundType, gun)
+        local out, seen = {}, {}
+        if not active() then return out end
+        local function add(fullType)
+            if type(fullType) ~= "string" or fullType == "" or seen[fullType] == true then return end
+            local item = instantiate(fullType)
+            if item == nil then return end
+            seen[fullType] = true
+            out[#out + 1] = fullType
+        end
+        local G = api()
+        if G == nil or type(roundType) ~= "string" then return out end
+        if type(G.AmmoDef) ~= "function" then return out end
+        local def = nil
+        local ok = false
+        ok, def = pcall(G.AmmoDef, roundType)
+        if not ok or type(def) ~= "table" then return out end
+        local suffix = string.match(roundType, "^Gunsmith%.Ammo(.+)$")
+        if suffix == nil then return out end
+        local boxPrefix = type(G.Box) == "string" and G.Box or "Gunsmith.Box"
+        local cartonPrefix = type(G.Carton) == "string" and G.Carton or "Gunsmith.Carton"
+        add(boxPrefix .. suffix)
+        add(cartonPrefix .. suffix)
+        return out
+    end
+
+    function GSC.prepareGun(body, item)
+        if not active() then return false end
+        local G = api()
+        if not isGunItem(G, item) then return false end
+        local ran = false
+        if type(G.EnsureInit) == "function" then
+            local ok = pcall(G.EnsureInit, item, body)
+            if ok then ran = true else warnOnce("ensureinit", "EnsureInit failed") end
+        end
+        if type(G.Refresh) == "function" then
+            local ok = pcall(G.Refresh, item, body)
+            if ok then ran = true else warnOnce("refresh", "Refresh failed") end
+        end
+        if type(G.SyncRounds) == "function" then
+            local ok = pcall(G.SyncRounds, item)
+            if ok then ran = true else warnOnce("syncrounds", "SyncRounds failed") end
+        end
+        return ran
+    end
+
+    function GSC.insertMagazine(body, weapon, magazine, desc)
+        if not active() then return false end
+        local G = api()
+        if not isGunItem(G, weapon) or magazine == nil then return false end
+        local Action = rawget(_G, "GS_InsertMagAction")
+        if type(Action) ~= "table" or type(Action.new) ~= "function" then return false end
+        local carrier = nil
+        if type(G.CarrierOf) == "function" then
+            pcall(function() carrier = G.CarrierOf(body, magazine) end)
+        end
+        local ok = false
+        local err = nil
+        ok, err = callWithNpcSafeSync(function()
+            local action = Action:new(body, weapon, magazine, carrier)
+            action:loadAmmo()
+        end)
+        local hasClip = false
+        pcall(function() hasClip = weapon:isContainsClip() == true end)
+        if not ok then
+            if hasClip then
+                warnOnce("insertmagazine-sync", "insert magazine completed despite a sync error: " .. tostring(err))
+                return true
+            end
+            warnOnce("insertmagazine", "insert magazine failed: " .. tostring(err))
+            return false
+        end
+        return hasClip
+    end
+
+    function GSC.ejectMagazine(body, weapon)
+        if not active() then return false end
+        local G = api()
+        if not isGunItem(G, weapon) then return false end
+        local Action = rawget(_G, "GS_EjectMagAction")
+        if type(Action) ~= "table" or type(Action.new) ~= "function" then return false end
+        local hasClip = false
+        pcall(function() hasClip = weapon:isContainsClip() == true end)
+        if not hasClip then return false end
+        local carrier = nil
+        if type(G.CarrierOf) == "function" then
+            pcall(function() carrier = G.CarrierOf(body, weapon) end)
+        end
+        local ok = false
+        local err = nil
+        ok, err = callWithNpcSafeSync(function()
+            local action = Action:new(body, weapon, carrier)
+            action:unloadAmmo()
+        end)
+        local stillLoaded = true
+        pcall(function() stillLoaded = weapon:isContainsClip() == true end)
+        if not ok then
+            if not stillLoaded then
+                warnOnce("ejectmagazine-sync", "eject magazine completed despite a sync error: " .. tostring(err))
+                return true
+            end
+            warnOnce("ejectmagazine", "eject magazine failed: " .. tostring(err))
+            return false
+        end
+        if stillLoaded then
+            warnOnce("ejectmagazine", "eject magazine left the gun loaded")
+            return false
+        end
+        return true
+    end
+
+    function GSC.addInternalRound(item, roundType)
+        if not active() then return false end
+        local G = api()
+        if not isGunItem(G, item) then return false end
+        if type(roundType) ~= "string" or roundType == "" then return false end
+        if type(G.IsInternal) ~= "function" or type(G.TubeRounds) ~= "function" then return false end
+        local internal = false
+        pcall(function() internal = G.IsInternal(item) == true end)
+        if not internal then return false end
+        local ok = false
+        pcall(function()
+            local rounds = G.TubeRounds(item)
+            if type(rounds) == "table" then
+                table.insert(rounds, roundType)
+                ok = true
+            end
+        end)
+        if not ok then warnOnce("addinternalround", "TubeRounds failed") end
+        return ok
+    end
+
+    function GSC.prepareShot(body, item)
+        if not active() then return false end
+        local G = api()
+        if not isGunItem(G, item) then return false end
+        local ran = false
+        if type(G.SyncRounds) == "function" then
+            local ok = pcall(G.SyncRounds, item)
+            if ok then ran = true else warnOnce("syncrounds", "SyncRounds failed") end
+        end
+        local internal = false
+        if type(G.IsInternal) == "function" then
+            pcall(function() internal = G.IsInternal(item) == true end)
+        end
+        local round = nil
+        if internal then
+            if type(G.NextRound) == "function" then
+                local ok, value = pcall(G.NextRound, item)
+                if ok then round = value end
+            end
+        else
+            local data = nil
+            pcall(function() data = item:getModData() end)
+            local record = type(data) == "table" and data.GS_mag or nil
+            local rounds = type(record) == "table" and record.rounds or nil
+            if type(rounds) == "table" and #rounds > 0 then round = rounds[#rounds] end
+        end
+        if type(round) == "string" and round ~= "" then
+            pcall(function()
+                local data = item:getModData()
+                if type(data) == "table" then
+                    data.GS_chamber = round
+                    data.GS_dudRolled = nil
+                end
+            end)
+        end
+        if type(G.ApplyStats) == "function" then
+            local ok = pcall(G.ApplyStats, item)
+            if ok then ran = true else warnOnce("applystats", "ApplyStats failed") end
+        end
+        return ran
+    end
+
+    function GSC.afterShot(item)
+        if not active() then return false end
+        local G = api()
+        if not isGunItem(G, item) then return false end
+        if type(G.SyncRounds) ~= "function" then return false end
+        local ok = pcall(G.SyncRounds, item)
+        if not ok then warnOnce("syncrounds", "SyncRounds failed") end
+        return ok
+    end
+end
+
+
 local function gunworksModule(name, cacheKey)
     local cache = BridgeGunRules[cacheKey]
     if cache == nil then
@@ -434,10 +791,25 @@ function BridgeGunRules.describe(item)
         end
     end
     for _, t in ipairs(out.clipTypes) do addMag(t) end
+    local gs = gunsmith()
+    if gs ~= nil then
+        local ok = pcall(function()
+            local list = gs.magazineTypes(item)
+            if type(list) == "table" then
+                for _, t in ipairs(list) do addMag(t) end
+            end
+            if gs.isGun(item) then
+                out.gunsmith = true
+                out.gunsmithItem = item
+            end
+        end)
+        if not ok then diag("gunsmith-describe", "Gunsmith describe hook failed") end
+    end
     out.hasMagazineProfile = #out.magazineTypes > 0
     out.hasClipProfile = #out.clipTypes > 0
-    out.clipFamily = (out.reloadFamily == "revolver") and "revolver" or "rifle"
     out.external = out.hasMagazineProfile
+    if out.gunsmith == true then out.reloadFamily = BridgeGunRules.familyOf(out) end
+    out.clipFamily = (out.reloadFamily == "revolver") and "revolver" or "rifle"
     pcall(function() out.rounds = BridgeGunRules.roundsOf(item) end)
     applyMarzRifleMultiHit(out)
     return out
@@ -486,6 +858,16 @@ function BridgeGunRules.ammoTypesFor(desc, owner)
             if type(list) == "table" then
                 for _, t in ipairs(list) do add(t) end
             end
+        end
+    end
+    local gs = gunsmith()
+    if gs ~= nil then
+        local list = nil
+        local ok = pcall(function() list = gs.ammoTypes(desc, owner) end)
+        if ok and type(list) == "table" then
+            for _, t in ipairs(list) do add(t) end
+        elseif not ok then
+            diag("gunsmith-ammotypes", "Gunsmith ammo type hook failed")
         end
     end
     add(desc.ammoTypeKey)
@@ -1467,6 +1849,12 @@ function BridgeGunRules.setRounds(item, rounds, containsClip)
     local n = math.floor(tonumber(rounds) or 0)
     if n < 0 then n = 0 end
     local gun = BridgeGunRules.isGun(item)
+    local gs = gunsmith()
+    if gs ~= nil and gun then
+        local internal = false
+        local ok = pcall(function() internal = gs.isInternal(item) == true end)
+        if ok and internal then containsClip = false end
+    end
     if not gun then
         local cap = 0
         pcall(function() cap = math.floor(tonumber(item:getMaxAmmo()) or 0) end)
@@ -1708,9 +2096,23 @@ function BridgeGunRules.refreshMagazineProfile(desc)
             end
         end
     end
+    local gs = gunsmith()
+    if gs ~= nil and type(desc.fullType) == "string" then
+        local ok = pcall(function()
+            local gunItem = instanceItem(desc.fullType)
+            if gunItem ~= nil then
+                local list = gs.magazineTypes(gunItem)
+                if type(list) == "table" then
+                    for _, t in ipairs(list) do addMag(t) end
+                end
+            end
+        end)
+        if not ok then diag("gunsmith-magprofile", "Gunsmith magazine profile hook failed") end
+    end
     desc.hasMagazineProfile = #desc.magazineTypes > 0
     desc.hasClipProfile = #desc.clipTypes > 0
     desc.external = desc.hasMagazineProfile
+    if desc.gunsmith == true then desc.reloadFamily = BridgeGunRules.familyOf(desc) end
     desc.clipFamily = (desc.reloadFamily == "revolver") and "revolver" or "rifle"
     return desc.hasMagazineProfile == true
 end
@@ -1955,6 +2357,13 @@ end
 
 function BridgeGunRules.insertMagazine(body, weapon, magazine, desc)
     if weapon == nil or magazine == nil then return 0 end
+    local gs = gunsmith()
+    if gs ~= nil then
+        local inserted = false
+        local ok = pcall(function() inserted = gs.insertMagazine(body, weapon, magazine, desc) == true end)
+        if ok and inserted then return BridgeGunRules.roundsOf(weapon) end
+        if not ok then diag("gunsmith-insertmag", "Gunsmith insert magazine hook failed") end
+    end
     local full = nil
     pcall(function() full = magazine:getFullType() end)
     local isClip = type(desc) == "table" and type(desc.clipSet) == "table"
@@ -2568,7 +2977,25 @@ end
 
 function BridgeGunRules.boxTypesFor(roundType, gun)
     if type(roundType) ~= "string" or type(gun) ~= "table" then return {} end
-    return boxCandidatesFor(roundType, gun)
+    local out = boxCandidatesFor(roundType, gun)
+    local gs = gunsmith()
+    if gs ~= nil then
+        local extra = nil
+        local ok = pcall(function() extra = gs.boxTypes(roundType, gun) end)
+        if ok and type(extra) == "table" then
+            local seen = {}
+            for _, t in ipairs(out) do seen[t] = true end
+            for _, t in ipairs(extra) do
+                if type(t) == "string" and t ~= "" and seen[t] ~= true then
+                    seen[t] = true
+                    out[#out + 1] = t
+                end
+            end
+        elseif not ok then
+            diag("gunsmith-boxtypes", "Gunsmith box hook failed")
+        end
+    end
+    return out
 end
 
 
@@ -2611,7 +3038,7 @@ function BridgeGunRules.findAmmoBox(body, gun, items, owner)
         end
     end
     for i, roundType in ipairs(types) do
-        for _, boxType in ipairs(boxCandidatesFor(roundType, gun)) do
+        for _, boxType in ipairs(BridgeGunRules.boxTypesFor(roundType, gun)) do
             local spec = BridgeGunRules.unpackOf(boxType)
             if BridgeGunRules.exactOutput(spec) == roundType then
                 addWanted(boxType, roundType, i, 1)

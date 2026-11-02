@@ -720,6 +720,7 @@ function BridgeGunfight.recover(body)
     end
     if found ~= nil then
         setMark(found, true)
+        if BridgeGunRules.gunsmith ~= nil then BridgeGunRules.gunsmith.prepareGun(body, found) end
         setFields(found)
         if BridgeGear ~= nil and BridgeGear.isGear(body, found) then
             pcall(function() BridgeGear.release(body, found) end)
@@ -746,6 +747,7 @@ function BridgeGunfight.assign(body, item)
         log("assign refused: gun is not in her inventory")
         return false
     end
+    if BridgeGunRules.gunsmith ~= nil then BridgeGunRules.gunsmith.prepareGun(body, item) end
     local desc = BridgeGunRules.describe(item)
     if desc.magazineType == nil and desc.ammoTypeKey == nil then
         log("assign refused: gun has no magazine or ammo type")
@@ -1897,6 +1899,10 @@ local function fire(body)
     local gun = BridgeGunfight.gun
     local t = BridgeGunfight.target
     if item == nil or gun == nil or t == nil then return end
+    if BridgeGunRules.gunsmith ~= nil then
+        local prepared = BridgeGunRules.gunsmith.prepareShot(body, item) == true
+        if prepared then BridgeGunRules.refreshStats(gun, item) end
+    end
     if BridgeGunfight.reloadStage ~= nil or (BridgeGunfight.rounds or 0) <= 0 then return end
     local kind = gun.kind or "Handgun"
     local d = dist(body, t)
@@ -1937,6 +1943,7 @@ local function fire(body)
 
     BridgeGunfight.rounds = math.max(0, (BridgeGunfight.rounds or 1) - 1)
     BridgeGunRules.setRounds(item, BridgeGunfight.rounds, true)
+    if BridgeGunRules.gunsmith ~= nil then BridgeGunRules.gunsmith.afterShot(item) end
     if BridgeSkills ~= nil then
         pcall(function() BridgeSkills.add("Aiming", 0.5, "shot") end)
     end
@@ -2776,10 +2783,21 @@ local function ammoBoxProbe(body, gun)
     local efz = gun.efzAmmo
     local efzBoxes = type(efz) == "table" and efz.boxSet or {}
     local baseBox = gun.ammoBox
+    local gsBoxes, gsCartons = {}, {}
+    if gun.gunsmith == true then
+        local accept = nil
+        pcall(function() accept = BridgeGunRules.ammoAccept(gun) end)
+        if type(accept) == "table" then
+            for _, t in ipairs(accept.boxes or {}) do gsBoxes[t] = true end
+            for _, t in ipairs(accept.cartons or {}) do gsCartons[t] = true end
+        end
+    end
     for _, item in ipairs(BridgeGunRules.itemsOf(body)) do
         local full = nil
         pcall(function() full = item:getFullType() end)
-        if type(full) == "string" and (full == baseBox or efzBoxes[full] == true) then
+        local known = type(full) == "string"
+            and (full == baseBox or efzBoxes[full] == true or gsBoxes[full] == true or gsCartons[full] == true)
+        if known then
             local spec = efzBoxes[full] == true and BridgeGunRules.efzUnpackOf(full) or BridgeGunRules.unpackOf(full)
             if spec ~= nil then
                 parts[#parts + 1] = string.format("%s -> %s x%s (%s)",
@@ -3297,10 +3315,16 @@ local function advanceReload(body)
                 pcall(function() hasClip = BridgeGunfight.gunItem:isContainsClip() == true end)
             end
             if gun.magazineType ~= nil and (hasClip or (BridgeGunfight.reloadSavedRounds or 0) > 0) then
-                local stashed = BridgeGunRules.stashMagazine(body, gun, BridgeGunfight.reloadSavedRounds or 0)
-                if stashed ~= nil then
-                    log(string.format("reload: ejected magazine id=%s rounds=%d",
-                        tostring(stashed:getID()), BridgeGunRules.roundsOf(stashed)))
+                local ejected = false
+                if BridgeGunRules.gunsmith ~= nil and BridgeGunfight.gunItem ~= nil then
+                    ejected = BridgeGunRules.gunsmith.ejectMagazine(body, BridgeGunfight.gunItem) == true
+                end
+                if not ejected then
+                    local stashed = BridgeGunRules.stashMagazine(body, gun, BridgeGunfight.reloadSavedRounds or 0)
+                    if stashed ~= nil then
+                        log(string.format("reload: ejected magazine id=%s rounds=%d",
+                            tostring(stashed:getID()), BridgeGunRules.roundsOf(stashed)))
+                    end
                 end
             end
             if BridgeGunfight.gunItem ~= nil then
@@ -3365,8 +3389,13 @@ local function advanceReload(body)
                 cancelReload(body, "no rounds left")
                 return outOfAmmo(body)
             end
+            local removedType = nil
+            pcall(function() removedType = removed:getFullType() end)
             pcall(function() removedAmmo = removed:getAmmoType() end)
             got = 1
+            if BridgeGunRules.gunsmith ~= nil and BridgeGunfight.gunItem ~= nil and type(removedType) == "string" then
+                BridgeGunRules.gunsmith.addInternalRound(BridgeGunfight.gunItem, removedType)
+            end
             BridgeGunfight.rounds = (BridgeGunfight.rounds or 0) + 1
             BridgeGunfight.reloadTaken = (BridgeGunfight.reloadTaken or 0) + 1
             clearAmmoPresence()
