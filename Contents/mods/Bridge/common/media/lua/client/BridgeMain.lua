@@ -1583,6 +1583,29 @@ local function standSquareOk(sq, from)
 end
 Bridge.standSquareOk = standSquareOk
 
+local function teleportSquareOk(sq, from)
+    if sq == nil then return false end
+    local same = from ~= nil and from == sq
+    if not same and from ~= nil then
+        pcall(function()
+            same = from:getX() == sq:getX() and from:getY() == sq:getY() and from:getZ() == sq:getZ()
+        end)
+    end
+    if same then
+        local free = false
+        pcall(function() free = not sq:isVehicleIntersecting() and not sq:isWaterSquare() end)
+        if not free then return false end
+    elseif not standSquareOk(sq, from) then
+        return false
+    end
+    if BridgeMove ~= nil and type(BridgeMove.vaultSafe) == "function" then
+        local safe = BridgeMove.vaultSafe(Bridge.body, from, sq)
+        if not safe then return false end
+    end
+    return true
+end
+Bridge.teleportSquareOk = teleportSquareOk
+
 
 
 
@@ -1984,11 +2007,32 @@ end
 
 
 
+function Bridge.autoTeleportAllowed()
+    if not Bridge.follow or Bridge.mode ~= "follow" then return false end
+    if BridgeTask ~= nil and BridgeTask.active == true then return false end
+    return true
+end
+
+
 function Bridge.teleportToRed(prefer)
     local red = BridgeData.owner()
     if red == nil then return "no player" end
     if not Bridge.drivable() then return "no body or driven by another client" end
     Bridge.pose = nil
+    if BridgeGunfight ~= nil and type(BridgeGunfight.interruptReload) == "function" then
+        pcall(function() BridgeGunfight.interruptReload(Bridge.body, "teleport", true) end)
+    end
+    if BridgeGunfight ~= nil and type(BridgeGunfight.clearManualEjectHold) == "function" then
+        pcall(function() BridgeGunfight.clearManualEjectHold() end)
+    end
+    if BridgeGunfight ~= nil then
+        BridgeGunfight.ejectOnly = false
+        BridgeGunfight.ejectItemId = nil
+        BridgeGunfight.ejectItem = nil
+        BridgeGunfight.ejectDesc = nil
+        BridgeGunfight.ejectFamily = nil
+        BridgeGunfight.ejectApplied = false
+    end
     pcall(function()
         if BridgeGunfight ~= nil and type(BridgeGunfight.hasGun) == "function" and BridgeGunfight.hasGun()
             and type(BridgeGunfight.stow) == "function" then
@@ -1999,7 +2043,7 @@ function Bridge.teleportToRed(prefer)
 
 
     local square = nil
-    if prefer ~= nil and standSquareOk(prefer) then square = prefer end
+    if prefer ~= nil and teleportSquareOk(prefer, red:getCurrentSquare()) then square = prefer end
     if square == nil then pcall(function()
         local cell = getCell()
         local rx, ry, rz = math.floor(red:getX()), math.floor(red:getY()), math.floor(red:getZ())
@@ -2018,11 +2062,14 @@ function Bridge.teleportToRed(prefer)
         for i = 1, square == nil and #spots or 0 do
             local sq = cell:getGridSquare(rx + spots[i][1], ry + spots[i][2], rz)
 
-            if standSquareOk(sq, redSq) then square = sq break end
+            if teleportSquareOk(sq, redSq) then square = sq break end
         end
-        if square == nil then square = cell:getGridSquare(rx, ry, rz) end
+        if square == nil then
+            local sq = cell:getGridSquare(rx, ry, rz)
+            if teleportSquareOk(sq, redSq) then square = sq end
+        end
     end) end
-    if square == nil then return "teleport failed: no square near player" end
+    if square == nil then return "teleport failed: no safe square near player" end
 
     local x, y = square:getX() + 0.5, square:getY() + 0.5
     local moved = pcall(function()
@@ -2058,6 +2105,10 @@ function Bridge.setMode(mode)
 
     Bridge.newLifePending = nil
     Bridge.mode = mode
+    Bridge.floorPull = nil
+    Bridge.floorMismatchSince = nil
+    Bridge.zPrev = nil
+    Bridge.xyPrev = nil
     Bridge.follow = (mode == "follow")
     Bridge.target = nil
     BridgeMove.moving = false
@@ -6879,6 +6930,18 @@ end
 local TELEPORT_JUMP = 100
 local TELEPORT_FAR = 150
 
+local CLIMB_GRACE = 15
+local MAX_PENDING = 600
+local MISMATCH_TICKS = 300
+local MISMATCH_STILL = 0.3
+local LADDER_RADIUS = 1
+local PULL_RETRY = 30
+
+Bridge.floorPull = nil
+Bridge.floorMismatchSince = nil
+Bridge.zPrev = nil
+Bridge.xyPrev = nil
+
 function Bridge.pullOnTeleport()
     local red = BridgeData.owner()
     if red == nil then
@@ -6917,6 +6980,310 @@ function Bridge.pullOnTeleport()
     log(string.format("teleport: player jumped %.0f tiles (far=%s), body pulled", math.sqrt(d2), tostring(far)))
 end
 
+
+local LADDER_FLAGS = {
+    "ladderN", "ladderS", "ladderE", "ladderW",
+    "climbSheetN", "climbSheetS", "climbSheetE", "climbSheetW",
+    "climbSheetTopN", "climbSheetTopS", "climbSheetTopE", "climbSheetTopW",
+}
+
+local LADDER_SPRITES = {
+    "industry_railroad_05_20", "industry_railroad_05_21", "industry_railroad_05_36",
+    "industry_railroad_05_37", "industry_railroad_05_56", "industry_railroad_05_57",
+    "industry_railroad_05_58", "industry_railroad_05_59",
+    "carpentry_02_84", "carpentry_02_85", "carpentry_02_86", "carpentry_02_87",
+    "location_sewer_01_32", "location_sewer_01_33", "location_sewer_01_48", "location_sewer_01_49",
+    "advertising_01_6", "advertising_01_14",
+    "ladders_01_",
+    "basement_objects_02_",
+    "recreational_sports_01_32", "recreational_sports_01_33",
+    "pur_ladderw", "pur_hatchw",
+}
+
+local function spriteIsLadder(name)
+    if name == nil then return false end
+    local lower = string.lower(tostring(name))
+    if string.find(lower, "ladder", 1, true) ~= nil then return true end
+    for i = 1, #LADDER_SPRITES do
+        if string.find(lower, LADDER_SPRITES[i], 1, true) ~= nil then return true end
+    end
+    return false
+end
+
+local function squareHasLadderFlag(square)
+    if square == nil then return false end
+    for i = 1, #LADDER_FLAGS do
+        local found = false
+        pcall(function() found = square:has(LADDER_FLAGS[i]) == true end)
+        if found then return true end
+    end
+    return false
+end
+
+local function objectHasLadderFlag(obj)
+    if obj == nil then return false end
+    local found = false
+    pcall(function()
+        local props = obj:getProperties()
+        if props == nil then return end
+        for i = 1, #LADDER_FLAGS do
+            if props:has(LADDER_FLAGS[i]) then
+                found = true
+                return
+            end
+        end
+    end)
+    return found
+end
+
+function Bridge.climbSignal(red)
+    if red == nil then return nil end
+    local rope = false
+    pcall(function() rope = red:isClimbingRope() == true end)
+    if rope then return "rope" end
+    local climbing = false
+    pcall(function() climbing = red:isClimbing() == true end)
+    if climbing then return "ladder" end
+    local flags = { "ClimbRope", "ClimbLadder", "AparosaLadder" }
+    for i = 1, #flags do
+        local on = false
+        pcall(function() on = red:getVariableBoolean(flags[i]) == true end)
+        if on then return "ladder" end
+    end
+    local icln = false
+    pcall(function()
+        if red:hasModData() then
+            local md = red:getModData()
+            icln = md ~= nil and md.ICLNClimbState ~= nil
+        end
+    end)
+    if icln then return "ladder" end
+    return nil
+end
+
+function Bridge.ladderNear(x, y, zFrom, zTo)
+    if x == nil or y == nil then return false end
+    local z1 = zFrom or zTo
+    local z2 = zTo or zFrom
+    if z1 == nil or z2 == nil then return false end
+    local zmin = math.floor(math.min(z1, z2)) - 1
+    local zmax = math.floor(math.max(z1, z2)) + 1
+    local centres = { { x, y } }
+    local red = BridgeData.owner()
+    if red ~= nil then
+        local rx, ry = red:getX(), red:getY()
+        if rx ~= nil and ry ~= nil and (math.abs(rx - x) > 0.01 or math.abs(ry - y) > 0.01) then
+            centres[#centres + 1] = { rx, ry }
+        end
+    end
+    local cell = getCell()
+    if cell == nil then return false end
+    for c = 1, #centres do
+        local bx = math.floor(centres[c][1])
+        local by = math.floor(centres[c][2])
+        for dx = -LADDER_RADIUS, LADDER_RADIUS do
+            for dy = -LADDER_RADIUS, LADDER_RADIUS do
+                for z = zmin, zmax do
+                    local square = cell:getGridSquare(bx + dx, by + dy, z)
+                    if square ~= nil then
+                        if squareHasLadderFlag(square) then return true end
+                        local objects = nil
+                        pcall(function() objects = square:getObjects() end)
+                        if objects ~= nil then
+                            local count = 0
+                            pcall(function() count = objects:size() end)
+                            for i = 0, count - 1 do
+                                local obj = nil
+                                pcall(function() obj = objects:get(i) end)
+                                if obj ~= nil then
+                                    if objectHasLadderFlag(obj) then return true end
+                                    local name = nil
+                                    pcall(function()
+                                        local sprite = obj:getSprite()
+                                        if sprite ~= nil then name = sprite:getName() end
+                                    end)
+                                    if spriteIsLadder(name) then return true end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+function Bridge.onStairs(square)
+    if square == nil then return false end
+    local on = false
+    pcall(function() on = square:HasStairs() == true end)
+    return on
+end
+
+function Bridge.floorPullTick()
+    local red = BridgeData.owner()
+    if red == nil then
+        Bridge.floorPull, Bridge.floorMismatchSince = nil, nil
+        Bridge.zPrev, Bridge.xyPrev = nil, nil
+        return
+    end
+
+    local z, x, y = red:getZ(), red:getX(), red:getY()
+    local prevZ = Bridge.zPrev
+    local prevX = Bridge.xyPrev and Bridge.xyPrev.x or nil
+    local prevY = Bridge.xyPrev and Bridge.xyPrev.y or nil
+    local now = Bridge.tick
+    local sig = Bridge.climbSignal(red)
+    local pull = Bridge.floorPull
+
+    if sig ~= nil then
+        if pull == nil then
+            local hasLadder = false
+            pcall(function()
+                hasLadder = Bridge.ladderNear(prevX or x, prevY or y, prevZ or z, z)
+            end)
+            if sig == "rope" or hasLadder then
+                pull = {
+                    fromZ = prevZ or z,
+                    fromX = prevX or x,
+                    fromY = prevY or y,
+                    kind = hasLadder and "ladder" or "sheet rope",
+                    seenAt = now,
+                    endedAt = nil,
+                    lastTryAt = nil,
+                    failedLogged = nil,
+                }
+                Bridge.floorPull = pull
+                log(string.format("vertical: %s climb, z%.2f -> z%.2f (ladder evidence %s)",
+                    pull.kind, pull.fromZ, z, tostring(hasLadder)))
+            end
+        else
+            pull.seenAt = now
+            pull.endedAt = nil
+        end
+        Bridge.zPrev = z
+        Bridge.xyPrev = { x = x, y = y }
+        return
+    end
+
+    pull = Bridge.floorPull
+    if pull == nil and prevZ ~= nil and math.abs(z - prevZ) >= 0.9 then
+        local hasLadder = false
+        pcall(function()
+            hasLadder = Bridge.ladderNear(prevX or x, prevY or y, prevZ, z)
+        end)
+        if hasLadder then
+            pull = {
+                fromZ = prevZ,
+                fromX = prevX or x,
+                fromY = prevY or y,
+                kind = "ladder",
+                seenAt = now,
+                endedAt = now,
+                lastTryAt = nil,
+                failedLogged = nil,
+            }
+            Bridge.floorPull = pull
+            log(string.format("vertical: ladder floor jump, z%.2f -> z%.2f", prevZ, z))
+        end
+    end
+
+    if Bridge.floorPull == nil then
+        local body = Bridge.body
+        local mismatch = false
+        if body ~= nil and Bridge.mode == "follow" and Bridge.drivable() then
+            local bodyZ = nil
+            pcall(function() bodyZ = body:getZ() end)
+            mismatch = bodyZ ~= nil and math.abs(z - bodyZ) >= 0.9
+        end
+        local stairs = false
+        if mismatch then
+            pcall(function()
+                stairs = Bridge.onStairs(red:getCurrentSquare())
+                    or Bridge.onStairs(body:getCurrentSquare())
+            end)
+        end
+        if mismatch and not stairs and (Bridge.walk60 or 0) < MISMATCH_STILL then
+            if Bridge.floorMismatchSince == nil then Bridge.floorMismatchSince = now end
+            if now - Bridge.floorMismatchSince >= MISMATCH_TICKS then
+                Bridge.floorPull = {
+                    fromZ = body:getZ(),
+                    fromX = body:getX(),
+                    fromY = body:getY(),
+                    kind = "floor",
+                    seenAt = now,
+                    endedAt = now,
+                    lastTryAt = nil,
+                    failedLogged = nil,
+                }
+                Bridge.floorMismatchSince = nil
+                log(string.format("vertical: floor mismatch for %d ticks, pulling her", MISMATCH_TICKS))
+            end
+        else
+            Bridge.floorMismatchSince = nil
+        end
+    else
+        Bridge.floorMismatchSince = nil
+    end
+
+    pull = Bridge.floorPull
+    if pull ~= nil then
+        if pull.endedAt == nil then pull.endedAt = now end
+        if now - pull.endedAt >= CLIMB_GRACE then
+            if math.abs(z - pull.fromZ) < 0.9 then
+                Bridge.floorPull = nil
+            elseif now - pull.seenAt > MAX_PENDING then
+                Bridge.floorPull = nil
+                log("vertical: pull timed out")
+            elseif Bridge.mode ~= "follow" then
+                Bridge.floorPull = nil
+            elseif BridgeTask ~= nil and BridgeTask.active == true then
+                Bridge.floorPull = nil
+            elseif BridgeCar ~= nil and BridgeCar.busy() then
+                Bridge.floorPull = nil
+            else
+                local playerReady = false
+                pcall(function()
+                    local moving = red:isPlayerMoving() == true
+                    local inCar = red:getVehicle() ~= nil
+                    local onStairs = Bridge.onStairs(red:getCurrentSquare())
+                    playerReady = prevZ ~= nil and math.abs(z - prevZ) < 0.05
+                        and not moving and not inCar and not onStairs
+                end)
+                if not playerReady and not pull.settleLogged then
+                    pull.settleLogged = true
+                    log("vertical: waiting for player to finish the climb")
+                elseif playerReady then
+                    pull.settleLogged = nil
+                end
+                if playerReady and Bridge.autoTeleportAllowed() and Bridge.drivable()
+                    and BridgeMove.cross == nil and BridgeMove.pendingClimb == nil then
+                    if pull.lastTryAt == nil or now - pull.lastTryAt >= PULL_RETRY then
+                        pull.lastTryAt = now
+                        local result = Bridge.teleportToRed()
+                        if result == "teleported" then
+                            if pull.kind ~= "floor"
+                                and BridgeCallout ~= nil and type(BridgeCallout.climb) == "function" then
+                                pcall(function()
+                                    BridgeCallout.climb(z >= pull.fromZ and "up" or "down")
+                                end)
+                            end
+                            Bridge.floorPull = nil
+                            Bridge.floorMismatchSince = nil
+                        elseif not pull.failedLogged then
+                            pull.failedLogged = true
+                            log("vertical: pull failed: " .. tostring(result))
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    Bridge.zPrev = z
+    Bridge.xyPrev = { x = x, y = y }
+end
 
 
 function Bridge.parkAtHome()
@@ -7112,6 +7479,7 @@ function Bridge.onTick()
     end
     pcall(Bridge.driveStep)
     pcall(Bridge.pullOnTeleport)
+    pcall(Bridge.floorPullTick)
     carTick()
     driveTick()
 
@@ -7169,7 +7537,7 @@ function Bridge.onTick()
                     end
                     if far and trying and not climbingNow and not fightingNow and Bridge.walk60 < 0.3 then
                         Bridge.stuckCount = Bridge.stuckCount + 1
-                        if Bridge.stuckCount >= 3 and Bridge.follow and Bridge.mode == "follow" then
+                        if Bridge.stuckCount >= 3 and Bridge.autoTeleportAllowed() then
                             Bridge.stuckCount = 0
                             pcall(function()
                                 log(string.format("stuck, teleporting: st=%s bump=%s obstacle=%s path=%s",
@@ -7190,13 +7558,19 @@ function Bridge.onTick()
 
 
 
-    if Bridge.follow and Bridge.mode == "follow" and Bridge.tick % 60 == 0 and Bridge.drivable()
+    if Bridge.autoTeleportAllowed() and Bridge.tick % 60 == 0 and Bridge.drivable()
         and not (BridgeCar ~= nil and BridgeCar.busy()) then
         local red = BridgeData.owner()
         if red ~= nil then
             local dx = Bridge.body:getX() - red:getX()
             local dy = Bridge.body:getY() - red:getY()
-            if math.sqrt(dx * dx + dy * dy) > 20 then Bridge.teleportToRed() end
+            local flat = math.sqrt(dx * dx + dy * dy)
+            local dz = math.abs(Bridge.body:getZ() - red:getZ())
+            local playerBusy = Bridge.climbSignal(red) ~= nil or Bridge.onStairs(red:getCurrentSquare())
+            local climbing = BridgeMove.cross ~= nil or BridgeMove.pendingClimb ~= nil
+            if not playerBusy and (flat > 20 or (dz >= 0.9 and flat > 8 and not climbing)) then
+                Bridge.teleportToRed()
+            end
         end
     end
 
@@ -7742,6 +8116,10 @@ Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
 
 Events.OnGameStart.Add(function()
     pcall(function()
+        Bridge.floorPull = nil
+        Bridge.floorMismatchSince = nil
+        Bridge.zPrev = nil
+        Bridge.xyPrev = nil
         Events.OnZombieUpdate.Remove(Bridge.onZombieUpdate)
 Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
 Events.OnZombieCreate.Add(function(z)

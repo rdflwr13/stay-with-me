@@ -1518,7 +1518,7 @@ function BridgeGunRules.friendlyInLine(body, target, friendlies)
                 local fx, fy, fz = f:getX(), f:getY(), f:getZ()
                 if math.abs((fz or az) - az) < 0.8 then
                     local d, t = BridgeGunRules.pointSegment(fx, fy, ax, ay, bx, by)
-                    if d <= BridgeGunRules.FRIENDLY_RADIUS and t >= 0 and t < 0.99 then
+                    if d <= BridgeGunRules.FRIENDLY_RADIUS and t > 0 and t < 0.99 then
                         blocked = f
                         return
                     end
@@ -3504,6 +3504,28 @@ function BridgeGunRules.selftest()
         BridgeZScan.canSee(zb, bodyViewer, redViewer))
     check("targetVisible delegates red", BridgeGunRules.targetVisible(bodyViewer, redViewer, zr),
         BridgeZScan.canSee(zr, bodyViewer, redViewer))
+
+    local function laneFake(x, y, z)
+        return {
+            getX = function() return x end,
+            getY = function() return y end,
+            getZ = function() return z or 0 end,
+        }
+    end
+    local laneShooter = laneFake(0, 0, 0)
+    local laneTarget = laneFake(5, 0, 0)
+    local laneAhead = laneFake(2, 0.5, 0)
+    local laneBehind = laneFake(-0.5, 0, 0)
+    local laneBeyond = laneFake(6, 0.2, 0)
+    local laneSide = laneFake(2, 2.0, 0)
+    check("friendlyInLine ahead", BridgeGunRules.friendlyInLine(
+        laneShooter, laneTarget, { laneAhead }), laneAhead)
+    check("friendlyInLine behind", BridgeGunRules.friendlyInLine(
+        laneShooter, laneTarget, { laneBehind }), nil)
+    check("friendlyInLine beyond", BridgeGunRules.friendlyInLine(
+        laneShooter, laneTarget, { laneBeyond }), nil)
+    check("friendlyInLine side", BridgeGunRules.friendlyInLine(
+        laneShooter, laneTarget, { laneSide }), nil)
 
     if #fails == 0 then return string.format("gunselftest PASS (%d checks)", checks) end
     return string.format("gunselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))

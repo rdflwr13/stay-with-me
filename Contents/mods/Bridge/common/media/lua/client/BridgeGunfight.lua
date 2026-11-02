@@ -490,7 +490,13 @@ end
 function BridgeGunfight.isAssigned(body)
     if BridgeGunfight.assignedId ~= nil then return true end
     if body == nil or Bridge.store == nil or BridgeGunfight.recovering == true then return false end
-    if Bridge.store.gunType == nil and Bridge.store.gunId == nil then return false end
+    if Bridge.store.gunType == nil and Bridge.store.gunId == nil then
+        if BridgeGunfight.noRecordLogged ~= true then
+            BridgeGunfight.noRecordLogged = true
+            log("recover skipped: no primary gun record")
+        end
+        return false
+    end
     local now = Bridge.time or 0
     if BridgeGunfight.recoverAt ~= nil and now < BridgeGunfight.recoverAt then return false end
     BridgeGunfight.recovering = true
@@ -739,6 +745,14 @@ function BridgeGunfight.recover(body)
         setMark(found, true)
         if BridgeGunRules.gunsmith ~= nil then BridgeGunRules.gunsmith.prepareGun(body, found) end
         setFields(found)
+        setMark(found, true)
+        if Bridge.store ~= nil then
+            Bridge.store.gunType = BridgeGunfight.gun.fullType
+            Bridge.store.gunId = BridgeGunfight.assignedId
+            Bridge.store.gunRounds = BridgeGunfight.rounds
+        end
+        BridgeGunfight.recoverLogKey = nil
+        BridgeGunfight.noRecordLogged = nil
         if BridgeGear ~= nil and BridgeGear.isGear(body, found) then
             pcall(function() BridgeGear.release(body, found) end)
             pcall(function() body:resetModelNextFrame() end)
@@ -748,8 +762,13 @@ function BridgeGunfight.recover(body)
         logGunState("gun state at recover", body)
         return found
     end
-    if Bridge.store ~= nil and (Bridge.store.gunType ~= nil or Bridge.store.gunId ~= nil) then
-        log("recover: recorded gun is no longer in her inventory")
+    if Bridge.store ~= nil then
+        local key = tostring(Bridge.store.gunType) .. "|" .. tostring(Bridge.store.gunId)
+        if BridgeGunfight.recoverLogKey ~= key then
+            BridgeGunfight.recoverLogKey = key
+            log(string.format("recover failed: record type=%s id=%s, no usable gun in her inventory",
+                tostring(Bridge.store.gunType), tostring(Bridge.store.gunId)))
+        end
     end
     return nil
 end
@@ -770,12 +789,12 @@ function BridgeGunfight.assign(body, item)
         log("assign refused: gun has no magazine or ammo type")
         return false
     end
-    if BridgeGunfight.assignedId ~= nil and BridgeGunfight.assignedId ~= item:getID() then
-        BridgeGunfight.unassign(body, "replaced")
-    end
     if not ensureInMain(body, item) then
         log("assign refused: gun could not move to her main inventory")
         return false
+    end
+    if BridgeGunfight.assignedId ~= nil and BridgeGunfight.assignedId ~= item:getID() then
+        BridgeGunfight.unassign(body, "replaced")
     end
     if BridgeGear ~= nil and BridgeGear.isGear(body, item) then
         pcall(function() BridgeGear.release(body, item) end)
@@ -785,6 +804,14 @@ function BridgeGunfight.assign(body, item)
     BridgeGunfight.clearManualEjectHold()
     setMark(item, true)
     setFields(item)
+    if Bridge.store ~= nil then
+        Bridge.store.gunType = BridgeGunfight.gun.fullType
+        Bridge.store.gunId = BridgeGunfight.assignedId
+        Bridge.store.gunRounds = BridgeGunfight.rounds
+    end
+    BridgeGunfight.recoverLogKey = nil
+    BridgeGunfight.noRecordLogged = nil
+    BridgeGunfight.missingSince = nil
     BridgeGunfight.body = body
     BridgeGunfight.target = nil
     BridgeGunfight.state = "idle"
@@ -817,6 +844,14 @@ function BridgeGunfight.unassign(body, reason)
     clearFields()
     BridgeGunfight.info = "none"
     BridgeGunfight.body = body
+    if Bridge.store ~= nil then
+        Bridge.store.gunType = nil
+        Bridge.store.gunId = nil
+        Bridge.store.gunRounds = nil
+    end
+    BridgeGunfight.missingSince = nil
+    BridgeGunfight.recoverLogKey = nil
+    BridgeGunfight.noRecordLogged = nil
     tellServer("", nil)
     log("unassigned primary gun " .. tostring(was) .. ": " .. tostring(reason or "no reason"))
     return true
@@ -4709,7 +4744,11 @@ function BridgeGunfight.update(body, S)
         end
         BridgeGunfight.missingSince = BridgeGunfight.missingSince or Bridge.time
         if Bridge.time - BridgeGunfight.missingSince >= 900 then
-            BridgeGunfight.unassign(body, "gun gone or broken")
+            local back = nil
+            pcall(function() back = BridgeGunfight.recover(body) end)
+            if back == nil then
+                BridgeGunfight.unassign(body, "gun gone or broken")
+            end
         end
         BridgeGunfight.canMelee = true
         BridgeGunfight.info = "gun missing"

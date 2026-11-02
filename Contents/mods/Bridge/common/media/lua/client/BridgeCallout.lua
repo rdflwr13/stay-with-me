@@ -144,6 +144,8 @@ BridgeCallout.SAY = {
     EvLowAmmo    = 1,
     EvLineOfFire = 1,
     EvGunKill    = 1,
+    EvClimbUp    = 1,
+    EvClimbDown  = 1,
     EvGunEngage  = 1,
     EvSwitchToMelee = 1,
     EvSwitchToGun = 1,
@@ -202,6 +204,8 @@ BridgeCallout.EVENTS = {
     EvLowAmmo    = { slot = "LowAmmo",    cooldown = 30 },
     EvLineOfFire = { slot = "LineOfFire", cooldown = 15 },
     EvGunKill    = { slot = "GunKill",    cooldown = 20 },
+    EvClimbUp    = { slot = "Climb",      cooldown = 60 },
+    EvClimbDown  = { slot = "Climb",      cooldown = 60 },
     EvGunEngage  = { slot = "GunEngage",  cooldown = 30 },
     EvSwitchToMelee = { slot = "Switch",  cooldown = 20 },
     EvSwitchToGun = { slot = "Switch",    cooldown = 20 },
@@ -732,6 +736,11 @@ function BridgeCallout.reloading(hasMag)
     if not ammoThreat() then return false end
     if hasMag == false then return say("EvReloadLoose") end
     return say("EvReload")
+end
+
+function BridgeCallout.climb(direction)
+    if direction == "down" then return say("EvClimbDown") end
+    return say("EvClimbUp")
 end
 
 function BridgeCallout.outOfAmmo()
