@@ -1,5 +1,12 @@
 BridgeGunfight = BridgeGunfight or {}
 
+local function hasMagProfile(gun)
+    if gun == nil then return false end
+    if gun.magazineType ~= nil or gun.hasClipProfile == true then return true end
+    pcall(function() BridgeGunRules.refreshMagazineProfile(gun) end)
+    return gun.magazineType ~= nil or gun.hasClipProfile == true
+end
+
 BridgeGunfight.assignedId = nil
 BridgeGunfight.gunItem = nil
 BridgeGunfight.gun = nil
@@ -491,7 +498,7 @@ function BridgeGunfight.hasAmmo(body, forceMagPrep, items)
     local result = false
     if BridgeGunRules.hasReloadSource(body, gun) then
         result = true
-    elseif gun.magazineType ~= nil
+    elseif hasMagProfile(gun)
             and (force or BridgeData.optionOf(Bridge.store, "gunMagCare")) then
         local list = items or BridgeGunRules.itemsOf(body)
         local magazine = BridgeGunRules.findPartialMagazine(body, gun, list)
@@ -523,7 +530,7 @@ function BridgeGunfight.hasPrepAmmo(body, items)
     local result = false
     if BridgeGunRules.hasReloadSource(body, gun) then
         result = true
-    elseif gun.magazineType == nil then
+    elseif not hasMagProfile(gun) then
         local list = items or BridgeGunRules.itemsOf(body)
         local _, loose = BridgeGunRules.findLooseRounds(body, gun, 1, list)
         if loose > 0 then
@@ -1700,7 +1707,7 @@ end
 local function loadableReserve(body, gun, items)
     if body == nil or gun == nil then return false end
     if items == nil then pcall(function() items = BridgeGunRules.itemsOf(body) end) end
-    if gun.magazineType ~= nil then
+    if hasMagProfile(gun) then
         local _, best = BridgeGunRules.findLoadedMagazine(body, gun, items)
         if (tonumber(best) or 0) > 0 then return true end
         local total = BridgeGunRules.magazineCount(body, gun)
@@ -1761,7 +1768,7 @@ local function checkLowAmmo()
     end
     if hasAmmo then return end
     local usable = BridgeGunfight.gun ~= nil
-        and (BridgeGunfight.gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare"))
+        and (not hasMagProfile(BridgeGunfight.gun) or BridgeData.optionOf(Bridge.store, "gunMagCare"))
     if usable and BridgeGunfight.body ~= nil then
         local items = BridgeGunRules.itemsOf(BridgeGunfight.body)
         if BridgeGunRules.findAmmoBox(BridgeGunfight.body, BridgeGunfight.gun, items) ~= nil then return end
@@ -2198,7 +2205,7 @@ local function idleReloadWanted(body, gun)
     if not BridgeData.optionOf(Bridge.store, "gunReloadIdle") then return false end
     local maxAmmo = tonumber(gun.maxAmmo) or 0
     if maxAmmo <= 0 then return false end
-    if gun.magazineType ~= nil then
+    if hasMagProfile(gun) then
         local magazine, best = BridgeGunRules.findLoadedMagazine(body, gun)
         if magazine == nil or best <= 0 then return false end
         if rounds <= 0 then return true end
@@ -2315,6 +2322,10 @@ local function advanceMagCare(body, gun)
     local rounds = BridgeGunRules.roundsOf(magazine) + got
     if maxAmmo > 0 and rounds > maxAmmo then rounds = maxAmmo end
     BridgeGunRules.setRounds(magazine, rounds, false)
+    pcall(function()
+        local removedAmmo = removed:getAmmoType()
+        if removedAmmo ~= nil then magazine:setAmmoType(removedAmmo) end
+    end)
     playGunSound(body, "MagazineInsertAmmo")
     if BridgeSkills ~= nil and BridgeSkills.add ~= nil then
         pcall(function() BridgeSkills.add("Reloading", got, "round") end)
@@ -2343,7 +2354,7 @@ end
 
 
 local function magazineCare(body, gun, force, items)
-    if body == nil or gun == nil or gun.magazineType == nil then return false end
+    if body == nil or gun == nil or not hasMagProfile(gun) then return false end
     if BridgeMove ~= nil and type(BridgeMove.followDebug) == "function" then
         BridgeMove.followDebug("care-enter", body, "enter", false, true)
     end
@@ -2531,7 +2542,7 @@ end
 
 local function finishReload(body)
     if BridgeMove ~= nil then BridgeMove.forcedWalk = nil end
-    local external = BridgeGunfight.gun ~= nil and BridgeGunfight.gun.magazineType ~= nil
+    local external = BridgeGunfight.reloadMagId ~= nil
     local virtual = BridgeGunfight.reloadVirtual == true
     local clientAmmo = BridgeGunfight.reloadClientAmmo == true
     local taken = BridgeGunfight.reloadTaken or 0
@@ -2704,7 +2715,7 @@ local function refillNeed(body, gun, items)
     if body == nil or gun == nil then return 0 end
     local cap = tonumber(gun.maxAmmo) or 0
     if cap <= 0 then return 0 end
-    if gun.magazineType == nil then
+    if not hasMagProfile(gun) then
         return math.max(0, cap - (BridgeGunfight.rounds or 0))
     end
     local mag = BridgeGunRules.findPartialMagazine(body, gun, items)
@@ -2772,20 +2783,22 @@ local function startAmmoOpen(body, force, items)
         log(string.format("ammoOpen skip: cooldown %s", tostring(BridgeGunfight.ammoCooldown - (Bridge.time or 0))))
         return false
     end
-    if BridgeGunfight.gun.magazineType ~= nil and force ~= true
+    if hasMagProfile(BridgeGunfight.gun) and force ~= true
             and not BridgeData.optionOf(Bridge.store, "gunMagCare") then
         BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 600
         log("ammoOpen skip: magazine gun without magazine care")
         return false
     end
-    local max = tonumber(BridgeGunfight.maxAmmo) or 0
-    if max <= 0 then max = tonumber(BridgeGunfight.gun.maxAmmo) or 0 end
-    if max > 0 and (BridgeGunfight.rounds or 0) >= max and BridgeGunfight.magCareStage == nil then
-        return false
-    end
     items = items or BridgeGunRules.itemsOf(body)
     local gun = BridgeGunfight.gun
     local need = needOf(body, gun, items)
+    local partial = BridgeGunRules.findPartialMagazine(body, gun, items)
+    local max = tonumber(BridgeGunfight.maxAmmo) or 0
+    if max <= 0 then max = tonumber(gun.maxAmmo) or 0 end
+    if max > 0 and (BridgeGunfight.rounds or 0) >= max and BridgeGunfight.magCareStage == nil
+            and partial == nil and need <= 0 then
+        return false
+    end
     if need <= 0 then
         log("ammoOpen skip: refill need 0")
         return false
@@ -2881,7 +2894,7 @@ local function homeAmmo(body, items)
     items = items or BridgeGunRules.itemsOf(body)
     local need = needOf(body, gun, items)
     local minRounds = 0
-    if gun.magazineType ~= nil then
+    if hasMagProfile(gun) then
         local cap = tonumber(gun.maxAmmo) or 0
         local partial = BridgeGunRules.findPartialMagazine(body, gun, items)
         local _, best = BridgeGunRules.findLoadedMagazine(body, gun, items)
@@ -3039,7 +3052,7 @@ local function ammoOutLine(body, items)
     if body == nil or BridgeGunfight.gun == nil then return end
     if not trulyOutOfAmmo(body, items) then
         local gun = BridgeGunfight.gun
-        if gun.magazineType ~= nil and (BridgeGunfight.rounds or 0) <= 0 then
+        if hasMagProfile(gun) and (BridgeGunfight.rounds or 0) <= 0 then
             local loaded = BridgeGunRules.findLoadedMagazine(body, gun, items)
             local total = BridgeGunRules.magazineCount(body, gun)
             if loaded == nil and (tonumber(total) or 0) <= 0 then
@@ -3053,6 +3066,7 @@ end
 
 
 local function forceMeleeFallback(body)
+    local announce = BridgeGunfight.meleeFallback ~= true
     if BridgeFight ~= nil then
         BridgeFight.target = nil
         BridgeFight.state = "idle"
@@ -3063,7 +3077,7 @@ local function forceMeleeFallback(body)
     BridgeGunfight.state = "idle"
     BridgeGunfight.info = "out of ammo: melee fallback"
     BridgeGunfight.canMelee = true
-    vlog("forced melee: no ammunition anywhere")
+    if announce then vlog("forced melee: no ammunition anywhere") end
 end
 
 
@@ -3101,7 +3115,7 @@ local function outOfAmmo(body, items)
     if first then
         local source = false
         local usable = BridgeGunfight.gun ~= nil
-            and (BridgeGunfight.gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare"))
+            and (not hasMagProfile(BridgeGunfight.gun) or BridgeData.optionOf(Bridge.store, "gunMagCare"))
         local found, pick = false, nil
         if usable then
             items = items or BridgeGunRules.itemsOf(body)
@@ -3178,19 +3192,28 @@ local function startReload(body, t, idle)
     local maxAmmo = math.max(1, tonumber(gun.maxAmmo) or 1)
     if rounds > 0 then
         if idle ~= true then return false end
-        if gun.magazineType ~= nil then
+        if gun.magazineType ~= nil or gun.hasClipProfile == true then
             if rounds > math.floor(maxAmmo * 0.25) then return false end
         elseif rounds >= maxAmmo then
             return false
         end
     end
-    local external = gun.magazineType ~= nil
     local available = 0
     local items = BridgeGunRules.itemsOf(body)
-    if external then
-        local magazine, count = BridgeGunRules.findLoadedMagazine(body, gun, items)
+    local magazine, count = nil, 0
+    if hasMagProfile(gun) then
+        magazine, count = BridgeGunRules.findLoadedMagazine(body, gun, items)
+    end
+    local external = false
+    if gun.magazineType ~= nil then
         if magazine == nil then return outOfAmmo(body) end
         if rounds > 0 and count <= rounds then return false end
+        external = true
+    elseif magazine ~= nil and count > 0 then
+        if rounds > 0 and count <= rounds then return false end
+        external = true
+    end
+    if external then
         BridgeGunfight.reloadMagId = magazine:getID()
         BridgeGunfight.reloadRoundsLeft = 1
         BridgeGunfight.reloadNeed = count
@@ -3227,7 +3250,7 @@ local function startReload(body, t, idle)
             local total = gun.insertAll and (per * math.max(1, available)) or per
             setReloadStage(body, "load", stageTicks(total))
         end
-        pcall(function() BridgeCallout.reloading(gun.magazineType ~= nil) end)
+        pcall(function() BridgeCallout.reloading(external) end)
         BridgeGunfight.state = "reload"
     end
     logf("reload start %s family=%s need=%d rounds=%d", tostring(gun.fullType),
@@ -3248,7 +3271,7 @@ local function advanceReload(body)
             if BridgeGunfight.gunItem ~= nil then
                 pcall(function() hasClip = BridgeGunfight.gunItem:isContainsClip() == true end)
             end
-            if hasClip or (BridgeGunfight.reloadSavedRounds or 0) > 0 then
+            if gun.magazineType ~= nil and (hasClip or (BridgeGunfight.reloadSavedRounds or 0) > 0) then
                 local stashed = BridgeGunRules.stashMagazine(body, gun, BridgeGunfight.reloadSavedRounds or 0)
                 if stashed ~= nil then
                     log(string.format("reload: ejected magazine id=%s rounds=%d",
@@ -3266,7 +3289,7 @@ local function advanceReload(body)
         return true
     end
     if stage == "load" then
-        if gun.magazineType ~= nil then
+        if BridgeGunfight.reloadMagId ~= nil and hasMagProfile(gun) then
             if not mp or virtual then
                 local magazine = nil
                 if BridgeGunfight.reloadMagId ~= nil then
@@ -3280,20 +3303,25 @@ local function advanceReload(body)
                 pcall(function() magId = magazine:getID() end)
                 pcall(function() magType = magazine:getFullType() end)
                 pcall(function() magCap = math.floor(tonumber(magazine:getMaxAmmo()) or 0) end)
+                local isClip = type(gun.clipSet) == "table" and magType ~= nil and gun.clipSet[magType] == true
                 magRounds = BridgeGunRules.roundsOf(magazine)
                 BridgeGunfight.rounds = BridgeGunRules.insertMagazine(body, BridgeGunfight.gunItem, magazine, gun)
-                if magCap > 0 then
+                if not isClip and magCap > 0 then
                     BridgeGunfight.maxAmmo = magCap
                     if gun ~= nil then gun.maxAmmo = magCap end
                     if BridgeGunfight.gunItem ~= nil then
                         pcall(function() BridgeGunfight.gunItem:setMaxAmmo(magCap) end)
                     end
                 end
-                if magType ~= nil then
+                if not isClip and magType ~= nil then
                     if gun ~= nil then gun.magazineType = magType end
                     if BridgeGunfight.gunItem ~= nil then
                         pcall(function() BridgeGunfight.gunItem:setMagazineType(magType) end)
                     end
+                end
+                if BridgeGunfight.gunItem ~= nil and BridgeGunRules.refreshStats ~= nil then
+                    BridgeGunRules.refreshStats(gun, BridgeGunfight.gunItem)
+                    BridgeGunfight.maxAmmo = tonumber(gun.maxAmmo) or BridgeGunfight.maxAmmo
                 end
                 logf("reload: inserted magazine id=%s type=%s rounds=%d cap=%d",
                     tostring(magId), tostring(magType or "-"), magRounds, magCap)
@@ -3305,12 +3333,14 @@ local function advanceReload(body)
             return true
         end
         local got = 0
+        local removedAmmo = nil
         if not mp or clientAmmo then
             local removed = BridgeGunRules.removeOneLooseRound(body, gun)
             if removed == nil then
                 cancelReload(body, "no rounds left")
                 return outOfAmmo(body)
             end
+            pcall(function() removedAmmo = removed:getAmmoType() end)
             got = 1
             BridgeGunfight.rounds = (BridgeGunfight.rounds or 0) + 1
             BridgeGunfight.reloadTaken = (BridgeGunfight.reloadTaken or 0) + 1
@@ -3326,7 +3356,13 @@ local function advanceReload(body)
         local maxAmmo = tonumber(BridgeGunfight.maxAmmo) or 0
         if maxAmmo > 0 and BridgeGunfight.rounds > maxAmmo then BridgeGunfight.rounds = maxAmmo end
         if (not mp or clientAmmo) and BridgeGunfight.gunItem ~= nil then
+            if removedAmmo ~= nil then
+                pcall(function() BridgeGunfight.gunItem:setAmmoType(removedAmmo) end)
+            end
             BridgeGunRules.setRounds(BridgeGunfight.gunItem, BridgeGunfight.rounds or 0, true)
+            if BridgeGunRules.refreshStats ~= nil then
+                BridgeGunRules.refreshStats(gun, BridgeGunfight.gunItem)
+            end
         end
         if BridgeGunfight.reloadRoundsLeft > 0 then
             local per = RELOAD_ROUND_RIFLE
@@ -4531,7 +4567,7 @@ BridgeGunfight.lastShotTarget = nil
     end
 
     local idleItems = nil
-    if idleScan and BridgeGunfight.gun ~= nil and BridgeGunfight.gun.magazineType ~= nil
+    if idleScan and hasMagProfile(BridgeGunfight.gun)
         and BridgeData.optionOf(Bridge.store, "gunMagCare")
         and (BridgeFight == nil or BridgeFight.target == nil)
         and BridgeGunfight.state == "idle"
@@ -4648,7 +4684,7 @@ BridgeGunfight.lastShotTarget = nil
 
         if reserveBlocked and idleScan and BridgeGunfight.target == nil
             and (BridgeFight == nil or BridgeFight.target == nil) then
-            if BridgeGunfight.gun ~= nil and BridgeGunfight.gun.magazineType ~= nil
+            if hasMagProfile(BridgeGunfight.gun)
                 and startAmmoOpen(body) then return false end
 
             if idleReloadWanted(body, BridgeGunfight.gun) then
@@ -4656,7 +4692,7 @@ BridgeGunfight.lastShotTarget = nil
                 if BridgeGunfight.drawn and startReload(body, nil, true) then return true end
             end
 
-            if (BridgeGunfight.gun == nil or BridgeGunfight.gun.magazineType == nil)
+            if not hasMagProfile(BridgeGunfight.gun)
                 and startAmmoOpen(body) then return false end
         end
     end
@@ -4862,7 +4898,7 @@ BridgeGunfight.lastShotTarget = nil
             return false
         end
 
-        if idleScan and BridgeGunfight.gun ~= nil and BridgeGunfight.gun.magazineType ~= nil
+        if idleScan and hasMagProfile(BridgeGunfight.gun)
             and startAmmoOpen(body, BridgeGunfight.reloadFlee == true)
             then return BridgeGunfight.reloadFlee == true end
 
@@ -4871,7 +4907,7 @@ BridgeGunfight.lastShotTarget = nil
             if BridgeGunfight.drawn and startReload(body, nil, true) then return true end
         end
 
-        if idleScan and (BridgeGunfight.gun == nil or BridgeGunfight.gun.magazineType == nil)
+        if idleScan and not hasMagProfile(BridgeGunfight.gun)
             and startAmmoOpen(body, BridgeGunfight.reloadFlee == true)
             then return BridgeGunfight.reloadFlee == true end
 
@@ -5143,7 +5179,7 @@ function BridgeGunfight.onResult(args)
             if first then
                 local source = false
                 local usable = BridgeGunfight.gun ~= nil
-                    and (BridgeGunfight.gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare"))
+                    and (not hasMagProfile(BridgeGunfight.gun) or BridgeData.optionOf(Bridge.store, "gunMagCare"))
                 if usable and BridgeGunfight.body ~= nil then
                     pcall(function() source = BridgeGunRules.findAmmoBox(BridgeGunfight.body, BridgeGunfight.gun) ~= nil end)
                 end
@@ -5336,7 +5372,7 @@ BridgeGunfight.reserveN = 0
         if args.base == nil then args.base = BridgeGunfight.reloadBaseRounds or 0 end
         if args.needed == nil then args.needed = BridgeGunfight.reloadNeed or 0 end
         if args.external == nil then
-            args.external = BridgeGunfight.gun ~= nil and BridgeGunfight.gun.magazineType ~= nil
+            args.external = hasMagProfile(BridgeGunfight.gun)
         end
         if BridgeGunfight.reloadStage == "wait" then
             beginReload(BridgeGunfight.body, args)

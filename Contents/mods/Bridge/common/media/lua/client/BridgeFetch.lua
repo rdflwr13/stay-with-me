@@ -393,15 +393,18 @@ function BridgeFetch.findAmmo(gun, minRounds)
     local b = Bridge.body
     local bx, by, bz = nil, nil, nil
     if b ~= nil then pcall(function() bx, by, bz = b:getX(), b:getY(), math.floor(b:getZ()) end) end
-    local useBox = gun.magazineType == nil or BridgeData.optionOf(Bridge.store, "gunMagCare")
-    local useLoose = useBox
-    local box = gun.ammoBox
-    if box == nil and type(gun.ammoTypeKey) == "string" then
-        box = BridgeGunRules.resolveItemType(gun.ammoTypeKey .. "Box",
-            BridgeGunRules.moduleOf(gun.fullType),
-            BridgeGunRules.moduleOf(gun.ammoTypeKey),
-            "Base")
+    local owner = BridgeData.owner()
+    local types = BridgeGunRules.ammoTypesFor(gun, owner)
+    if #types == 0 then return nil end
+    local rank = {}
+    for i, t in ipairs(types) do rank[t] = i end
+    local useMag = gun.magazineType ~= nil or gun.hasClipProfile == true
+    if not useMag then
+        pcall(function() BridgeGunRules.refreshMagazineProfile(gun) end)
+        useMag = gun.magazineType ~= nil or gun.hasClipProfile == true
     end
+    local useBox = not useMag or BridgeData.optionOf(Bridge.store, "gunMagCare")
+    local useLoose = useBox
     local best, bestKind, bestValue, bestD = nil, nil, nil, nil
     for i = 1, #targets do
         local t = targets[i]
@@ -422,20 +425,27 @@ function BridgeFetch.findAmmo(gun, minRounds)
                         local kind, value = nil, 0
                         pcall(function()
                             local full = it:getFullType()
-                            if gun.magazineType ~= nil and full == gun.magazineType then
+                            local inProfile = gun.magazineSet ~= nil and gun.magazineSet[full] == true
+                            if useMag
+                                and (full == gun.magazineType or inProfile) then
                                 local r = BridgeGunRules.roundsOf(it)
                                 if r > minRounds then kind, value = 1, r end
-                            elseif useLoose and full == gun.ammoTypeKey then
-                                kind, value = 2, BridgeGunRules.itemCount(it)
-                            elseif useBox and box ~= nil and full == box then
-                                kind, value = 3, 1
-                            elseif useBox and box ~= nil then
-                                local up = BridgeGunRules.unpackUp(full)
-                                if up == box then
-                                    kind, value = 4, 1
-                                elseif up ~= nil then
-                                    local up2 = BridgeGunRules.unpackUp(up)
-                                    if up2 == box then kind, value = 5, 1 end
+                            elseif useLoose and rank[full] ~= nil then
+                                kind, value = 2, -rank[full] * 100000 + BridgeGunRules.itemCount(it)
+                            elseif useBox then
+                                local spec = BridgeGunRules.unpackOf(full)
+                                local exact = BridgeGunRules.exactOutput(spec)
+                                if exact ~= nil and rank[exact] ~= nil then
+                                    kind, value = 3, -rank[exact]
+                                else
+                                    local bd = BridgeGunRules.cartonBreakdown(full)
+                                    if bd ~= nil and bd.out ~= nil then
+                                        local boxSpec = BridgeGunRules.unpackOf(bd.out)
+                                        local boxOut = BridgeGunRules.exactOutput(boxSpec)
+                                        if boxOut ~= nil and rank[boxOut] ~= nil then
+                                            kind, value = 4, -rank[boxOut]
+                                        end
+                                    end
                                 end
                             end
                         end)
@@ -471,10 +481,13 @@ end
 
 local function homeLoose(gun, want)
     local b = Bridge.body
-    local full = type(gun) == "table" and gun.ammoTypeKey or nil
-    if b == nil or full == nil then return {}, 0 end
+    if b == nil or type(gun) ~= "table" then return {}, 0, nil end
+    local types = BridgeGunRules.ammoTypesFor(gun, BridgeData.owner())
+    if #types == 0 then return {}, 0, nil end
+    local rank = {}
+    for i, t in ipairs(types) do rank[t] = i end
     local targets = homeTargets(100000, 100000)
-    if targets == nil then return {}, 0 end
+    if targets == nil then return {}, 0, nil end
     local bx, by, bz = nil, nil, nil
     pcall(function() bx, by, bz = b:getX(), b:getY(), math.floor(b:getZ()) end)
     local order = {}
@@ -493,40 +506,51 @@ local function homeLoose(gun, want)
     table.sort(order, function(a, b2) return a.d < b2.d end)
     local need = math.floor(tonumber(want) or 0)
     if need <= 0 then need = 1 end
-    local items, total = {}, 0
+    local byType = {}
+    local bestType, bestRank = nil, nil
     for i = 1, #order do
-        if total >= need then break end
         local list = nil
         pcall(function() list = order[i].cont:getItems() end)
         if list ~= nil then
-            local arr = {}
-            for j = 0, list:size() - 1 do arr[#arr + 1] = list:get(j) end
-            for j = 1, #arr do
-                if total >= need then break end
-                local it = arr[j]
-                local t = nil
-                pcall(function() t = it:getFullType() end)
-                if t == full then
-                    local n = BridgeGunRules.itemCount(it)
-                    if n > 0 then
-                        items[#items + 1] = it
-                        total = total + n
+            for j = 0, list:size() - 1 do
+                local it = list:get(j)
+                if it ~= nil then
+                    local t = nil
+                    pcall(function() t = it:getFullType() end)
+                    if t ~= nil and rank[t] ~= nil then
+                        byType[t] = byType[t] or {}
+                        byType[t][#byType[t] + 1] = it
+                        if bestRank == nil or rank[t] < bestRank then
+                            bestType, bestRank = t, rank[t]
+                        end
                     end
                 end
             end
         end
     end
-    return items, total
+    if bestType == nil then return {}, 0, nil end
+    local items, total = {}, 0
+    for _, item in ipairs(byType[bestType]) do
+        if total >= need then break end
+        local n = BridgeGunRules.itemCount(item)
+        if n > 0 then
+            items[#items + 1] = item
+            total = total + n
+        end
+    end
+    return items, total, bestType
 end
 
 
 function BridgeFetch.pullLoose(gun, want)
     local b = Bridge.body
     local red = BridgeData.owner()
-    local full = type(gun) == "table" and gun.ammoTypeKey or nil
-    if b == nil or red == nil or full == nil then return "unavailable" end
+    if b == nil or red == nil or type(gun) ~= "table" then return "unavailable" end
     local n = math.floor(tonumber(want) or 0)
     if n <= 0 then n = 1 end
+    local items, total, selectedType = homeLoose(gun, n)
+    if selectedType == nil then return "absent" end
+    local full = selectedType
     if Bridge.mp then
         local ok = pcall(function()
             sendClientCommand(red, "Bridge", "fetchSupply", { loose = full, take = n })
@@ -535,7 +559,6 @@ function BridgeFetch.pullLoose(gun, want)
         log(string.format("home ammo: requested %d loose %s from a home container", n, tostring(full)))
         return "requested"
     end
-    local items, total = homeLoose(gun, n)
     if total <= 0 then return "absent" end
     local left = math.min(n, total)
     local moved = 0
@@ -672,9 +695,17 @@ function BridgeFetch.pullAmmo(gun, minRounds, need)
     local breakdown, why, spec = nil, nil, nil
     pcall(function() breakdown, why, spec = BridgeGunRules.cartonBreakdown(full) end)
     local outputs = (spec ~= nil and type(spec.out) == "table") and #spec.out or 0
-    if breakdown == nil or (gun ~= nil and gun.ammoBox ~= nil and breakdown.out ~= gun.ammoBox) then
+    local exactRound = nil
+    if breakdown ~= nil and breakdown.out ~= nil then
+        exactRound = BridgeGunRules.exactOutput(BridgeGunRules.unpackOf(breakdown.out))
+    end
+    local accept = {}
+    for _, t in ipairs(gun ~= nil and BridgeGunRules.ammoTypesFor(gun, BridgeData.owner()) or {}) do
+        accept[t] = true
+    end
+    if breakdown == nil or exactRound == nil or accept[exactRound] ~= true then
         log(string.format("home ammo: carton %s has unsupported breakdown recipe (%s, out=%d, amount=%s); left in storage",
-            tostring(full), tostring(why or "box type mismatch"), outputs,
+            tostring(full), tostring(why or "round mismatch"), outputs,
             tostring(spec ~= nil and spec.amount or "?")))
         return "unsupported"
     end

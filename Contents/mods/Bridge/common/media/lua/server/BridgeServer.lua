@@ -2419,6 +2419,14 @@ BridgeServer.Commands.gunLoadOne = function(player, args)
                 end)
                 if maxAmmo > 0 and rounds > maxAmmo then rounds = maxAmmo end
                 BridgeGunRules.setRounds(magazine, rounds, false)
+                local itemType = type(args) == "table" and args.itemType or nil
+                if itemType ~= nil then
+                    pcall(function()
+                        local scriptItem = instanceItem(itemType)
+                        local ammo = scriptItem and scriptItem:getAmmoType() or nil
+                        if ammo ~= nil then magazine:setAmmoType(ammo) end
+                    end)
+                end
                 local container = nil
                 pcall(function() container = magazine:getContainer() end)
                 if BridgeGunRules.canSync(container) then
@@ -2447,7 +2455,17 @@ BridgeServer.Commands.gunLoadOne = function(player, args)
     rec.gunReloadUsed = used
     rec.gunRounds = math.max(0, (tonumber(rec.gunReloadBaseRounds) or 0) + used)
     local held = body ~= nil and gunItemFor(body, rec) or nil
-    if held ~= nil then BridgeGunRules.setRounds(held, rec.gunRounds, true) end
+    if held ~= nil then
+        BridgeGunRules.setRounds(held, rec.gunRounds, true)
+        local itemType = type(args) == "table" and args.itemType or nil
+        if itemType ~= nil then
+            pcall(function()
+                local scriptItem = instanceItem(itemType)
+                local ammo = scriptItem and scriptItem:getAmmoType() or nil
+                if ammo ~= nil then held:setAmmoType(ammo) end
+            end)
+        end
+    end
     logf("gunLoadOne used=%d/%d rounds=%d", used, needed, rec.gunRounds)
 end
 
@@ -2497,7 +2515,7 @@ BridgeServer.Commands.gunReload = function(player, args)
         if rounds > 0 then
             local ok = false
             if idle then
-                if desc.magazineType ~= nil then
+                if desc.magazineType ~= nil or desc.hasClipProfile == true then
                     ok = rounds <= math.floor(maxAmmo * 0.25)
                 else
                     ok = rounds < maxAmmo
@@ -2509,28 +2527,50 @@ BridgeServer.Commands.gunReload = function(player, args)
         rec.gunReloadBaseRounds = rounds
         local needed = 0
         local magazine = nil
+        local external = false
         local clientAvailable = math.max(0, math.floor(tonumber(args.available) or 0))
         local clientNeeded = math.min(clientAvailable, math.max(1, maxAmmo - rounds))
         rec.gunReloadClientAmmo = nil
         if virtual then
-            needed = desc.magazineType ~= nil and clientAvailable or clientNeeded
+            needed = (desc.magazineType ~= nil or desc.hasClipProfile == true) and clientAvailable or clientNeeded
             if needed > maxAmmo then needed = maxAmmo end
             if needed < 1 then return answer(false, "no ammo") end
             rec.gunReloadClientAmmo = true
             rec.gunReloadMagId = nil
+            external = desc.magazineType ~= nil or desc.hasClipProfile == true
         elseif desc.magazineType ~= nil then
             local count = 0
             magazine, count = BridgeGunRules.findLoadedMagazine(body, desc)
             if magazine == nil then return answer(false, "no magazine") end
             needed = count
             rec.gunReloadMagId = magazine:getID()
+            external = true
+        elseif desc.hasClipProfile == true then
+            local count = 0
+            magazine, count = BridgeGunRules.findLoadedMagazine(body, desc)
+            if magazine ~= nil and count > 0 then
+                needed = count
+                rec.gunReloadMagId = magazine:getID()
+                external = true
+            else
+                needed = clientNeeded
+                if needed < 1 then return answer(false, "no ammo") end
+                rec.gunReloadClientAmmo = true
+                rec.gunReloadMagId = nil
+            end
         else
             needed = clientNeeded
             if needed < 1 then return answer(false, "no ammo") end
             rec.gunReloadClientAmmo = true
             rec.gunReloadMagId = nil
         end
-        local totalMs = reloadTotalMs(desc, needed, reloadLevel(rec))
+        local timingDesc = desc
+        if desc.external ~= external then
+            timingDesc = {}
+            for k, v in pairs(desc) do timingDesc[k] = v end
+            timingDesc.external = external
+        end
+        local totalMs = reloadTotalMs(timingDesc, needed, reloadLevel(rec))
         if BridgeServer.gunDesc ~= nil then BridgeServer.gunDesc[who] = nil end
         rec.gunReloadStage = "loading"
         rec.gunReloadUntil = getTimestampMs() + totalMs
@@ -2539,10 +2579,10 @@ BridgeServer.Commands.gunReload = function(player, args)
         rec.gunReloadUsed = 0
         rec.gunReloadVirtual = virtual or nil
         logf("gunReload start base=%d needed=%d external=%s virtual=%s clientAmmo=%s",
-            rounds, needed, tostring(desc.external == true), tostring(virtual),
+            rounds, needed, tostring(external), tostring(virtual),
             tostring(rec.gunReloadClientAmmo == true))
         answer(true, nil, { rounds = rounds, base = rounds, needed = needed, total = math.floor(totalMs),
-            external = desc.external == true, family = desc.reloadFamily, virtual = virtual,
+            external = external, family = desc.reloadFamily, virtual = virtual,
             clientAmmo = rec.gunReloadClientAmmo == true })
         return
     end
@@ -2552,7 +2592,8 @@ BridgeServer.Commands.gunReload = function(player, args)
         if rec.gunReloadUntil ~= nil and now < rec.gunReloadUntil - 1500 then
             return answer(false, "too soon")
         end
-        if rec.gunReloadClientAmmo and desc.magazineType ~= nil then
+        if rec.gunReloadClientAmmo and rec.gunReloadVirtual == true
+                and (desc.magazineType ~= nil or desc.hasClipProfile == true) then
             local needed = math.floor(tonumber(rec.gunReloadRounds) or 0)
             local maxAmmo = math.max(1, tonumber(args.maxAmmo) or tonumber(desc.maxAmmo) or needed)
             if needed > maxAmmo then needed = maxAmmo end
@@ -2564,7 +2605,9 @@ BridgeServer.Commands.gunReload = function(player, args)
             if held ~= nil then
                 BridgeGunRules.setRounds(held, needed, true)
                 pcall(function() held:setMaxAmmo(maxAmmo) end)
-                if args.magType ~= nil then pcall(function() held:setMagazineType(args.magType) end) end
+                if args.magType ~= nil and not (desc.clipSet and desc.clipSet[args.magType]) then
+                    pcall(function() held:setMagazineType(args.magType) end)
+                end
             end
             clearReload(rec, who)
             logf("gunReload external complete needed=%d rounds=%d", needed, needed)
@@ -2619,27 +2662,30 @@ BridgeServer.Commands.gunReload = function(player, args)
             return answer(false, "gun missing")
         end
         local rounds = 0
-        if desc.magazineType ~= nil then
+        if rec.gunReloadMagId ~= nil and (desc.magazineType ~= nil or desc.hasClipProfile == true) then
             local magazine = nil
-            if rec.gunReloadMagId ~= nil then
-                pcall(function() magazine = BridgeGunRules.findItemById(body, rec.gunReloadMagId) end)
-            end
+            pcall(function() magazine = BridgeGunRules.findItemById(body, rec.gunReloadMagId) end)
             if magazine == nil or BridgeGunRules.roundsOf(magazine) <= 0 then
                 clearReload(rec, who)
                 return answer(false, "magazine gone")
             end
-            rounds = BridgeGunRules.roundsOf(magazine)
             local magCap, magType = 0, nil
             pcall(function() magCap = math.floor(tonumber(magazine:getMaxAmmo()) or 0) end)
             pcall(function() magType = magazine:getFullType() end)
-            BridgeGunRules.removeItem(magazine)
-            local hadClip = false
-            pcall(function() hadClip = held:isContainsClip() == true end)
-            BridgeGunRules.setRounds(held, rounds, true)
-            if magCap > 0 then pcall(function() held:setMaxAmmo(magCap) end) end
-            if magType ~= nil then pcall(function() held:setMagazineType(magType) end) end
-            if hadClip or (rec.gunReloadSavedRounds or 0) > 0 then
-                BridgeGunRules.stashMagazine(body, desc, rec.gunReloadSavedRounds or 0)
+            local isClip = type(desc.clipSet) == "table" and magType ~= nil and desc.clipSet[magType] == true
+            if isClip then
+                rounds = BridgeGunRules.insertMagazine(body, held, magazine, desc)
+            else
+                rounds = BridgeGunRules.roundsOf(magazine)
+                BridgeGunRules.removeItem(magazine)
+                local hadClip = false
+                pcall(function() hadClip = held:isContainsClip() == true end)
+                BridgeGunRules.setRounds(held, rounds, true)
+                if magCap > 0 then pcall(function() held:setMaxAmmo(magCap) end) end
+                if magType ~= nil then pcall(function() held:setMagazineType(magType) end) end
+                if hadClip or (rec.gunReloadSavedRounds or 0) > 0 then
+                    BridgeGunRules.stashMagazine(body, desc, rec.gunReloadSavedRounds or 0)
+                end
             end
         else
             local needed = math.floor(tonumber(args.rounds) or tonumber(rec.gunReloadRounds) or 1)
