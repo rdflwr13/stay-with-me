@@ -1135,7 +1135,11 @@ local function pickTarget(body, red)
             if d2 <= range2 and targetOk(z, body, red) then
                 local dSelf = math.sqrt(d2)
                 if dSelf <= range then
-                    cands[#cands + 1] = { z = z, d = dSelf, score = dist(red, z) + dSelf * 0.01 }
+                    local bonus = 0
+                    if BridgeFight ~= nil and type(BridgeFight.speedScore) == "function" then
+                        bonus = BridgeFight.speedScore(z) or 0
+                    end
+                    cands[#cands + 1] = { z = z, d = dSelf, bonus = bonus, score = dist(red, z) + dSelf * 0.01 + bonus }
                 end
             end
         end
@@ -1152,7 +1156,11 @@ local function pickTarget(body, red)
                     if d2 <= range2 and targetOk(a, body, red) then
                         local dSelf = math.sqrt(d2)
                         if dSelf <= range then
-                            cands[#cands + 1] = { z = a, d = dSelf, score = dist(red, a) + dSelf * 0.01 }
+                            local bonus = 0
+                            if BridgeFight ~= nil and type(BridgeFight.speedScore) == "function" then
+                                bonus = BridgeFight.speedScore(a) or 0
+                            end
+                            cands[#cands + 1] = { z = a, d = dSelf, bonus = bonus, score = dist(red, a) + dSelf * 0.01 + bonus }
                         end
                     end
                 end
@@ -1167,7 +1175,11 @@ local function pickTarget(body, red)
                 if math.abs(n:getZ() - bz) < 0.8 and targetOk(n, body, red) then
                     local dS = dist(body, n)
                     if dS <= range then
-                        cands[#cands + 1] = { z = n, d = dS, score = dist(red, n) + dS * 0.01 }
+                        local bonus = 0
+                        if BridgeFight ~= nil and type(BridgeFight.speedScore) == "function" then
+                            bonus = BridgeFight.speedScore(n) or 0
+                        end
+                        cands[#cands + 1] = { z = n, d = dS, bonus = bonus, score = dist(red, n) + dS * 0.01 + bonus }
                     end
                 end
             end
@@ -1187,8 +1199,16 @@ local function pickTarget(body, red)
         BridgeGunfight.lockReason = why
         local typ = "?"
         pcall(function() typ = tostring(z:getType()) end)
-        vlog(string.format("pick %s type=%s d=%.1f dred=%.1f", tostring(why), typ,
-            dist(body, z), dist(red, z)))
+        local speed = "?"
+        local bonus = 0
+        if BridgeFight ~= nil and type(BridgeFight.speedName) == "function" then
+            speed = BridgeFight.speedName(z)
+        end
+        if BridgeFight ~= nil and type(BridgeFight.speedScore) == "function" then
+            bonus = BridgeFight.speedScore(z) or 0
+        end
+        vlog(string.format("pick %s type=%s d=%.1f dred=%.1f speed=%s bonus=%+.1f", tostring(why), typ,
+            dist(body, z), dist(red, z), speed, bonus))
         return z
     end
 
@@ -1219,7 +1239,9 @@ local function pickTarget(body, red)
             if c.d <= closeRange then close[#close + 1] = c end
         end
         if #close > 0 then
-            table.sort(close, function(a, b) return a.d < b.d end)
+            table.sort(close, function(a, b)
+                return (a.d + (a.bonus or 0)) < (b.d + (b.bonus or 0))
+            end)
             for _, c in ipairs(close) do
                 if usable(c.z) then
                     BridgeGunfight.shovePreferred = nil
@@ -2356,7 +2378,7 @@ end
 local function magazineCare(body, gun, force, items)
     if body == nil or gun == nil or not hasMagProfile(gun) then return false end
     if BridgeMove ~= nil and type(BridgeMove.followDebug) == "function" then
-        BridgeMove.followDebug("care-enter", body, "enter", false, true)
+        BridgeMove.followDebug("care-enter", body, "enter", false, false)
     end
     if BridgeGunfight.magCareStage ~= nil then
         if BridgeFight ~= nil and BridgeFight.target ~= nil then
@@ -2772,7 +2794,7 @@ local function ammoBoxProbe(body, gun)
 end
 
 
-local function startAmmoOpen(body, force, items)
+local function startAmmoOpen(body, force, items, allowDanger)
     if body == nil or BridgeGunfight.gun == nil then return false end
     if BridgeGunfight.ammoItem ~= nil then return true end
     if transferHoldsReload(body) then
@@ -2780,7 +2802,6 @@ local function startAmmoOpen(body, force, items)
         return false
     end
     if BridgeGunfight.ammoCooldown ~= nil and (Bridge.time or 0) < BridgeGunfight.ammoCooldown then
-        log(string.format("ammoOpen skip: cooldown %s", tostring(BridgeGunfight.ammoCooldown - (Bridge.time or 0))))
         return false
     end
     if hasMagProfile(BridgeGunfight.gun) and force ~= true
@@ -2809,16 +2830,20 @@ local function startAmmoOpen(body, force, items)
         log(string.format("ammoOpen skip: loose rounds %d >= need %d", loose, need))
         return false
     end
+    local guardRange = BridgeGunRules.MIN_RANGE
+    if allowDanger == true and BridgeGunfight.reloadFlee == true then
+        guardRange = math.min(guardRange, 1.5)
+    end
     local danger = false
     pcall(function()
         local red = BridgeData.owner()
         local bx, by = body:getX(), body:getY()
         local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, BridgeGunRules.MIN_RANGE, { tag = "gun.target" }) end
+        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, guardRange, { tag = "gun.target" }) end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and dist(body, z) <= BridgeGunRules.MIN_RANGE and targetOk(z, body, red) then
+            if z ~= nil and dist(body, z) <= guardRange and targetOk(z, body, red) then
                 danger = true
                 return
             end
@@ -3873,7 +3898,7 @@ local function reloadFleeTick(body, red, mode, S)
             local care = false
             pcall(function() care = magazineCare(body, BridgeGunfight.gun, true) == true end)
             if not care and BridgeGunfight.magCareStage == nil then
-                pcall(function() startAmmoOpen(body, true) end)
+                pcall(function() startAmmoOpen(body, true, nil, true) end)
             end
         end
     else

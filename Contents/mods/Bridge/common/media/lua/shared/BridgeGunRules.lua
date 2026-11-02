@@ -320,6 +320,27 @@ function BridgeGunRules.talkKind(desc)
 end
 
 
+local MARZ_RIFLE_EXCLUDE = {
+    ["MarzGuns.THOMPSON"] = true,
+    ["MarzGuns.MP5"] = true,
+    ["MarzGuns.MP5SD"] = true,
+    ["MarzGuns.MP5A2"] = true,
+    ["MarzGuns.M60"] = true,
+    ["MarzGuns.BAR"] = true,
+}
+
+local function applyMarzRifleMultiHit(desc)
+    if type(desc) ~= "table" then return end
+    if moduleOf(desc.fullType) ~= "MarzGuns" then return end
+    if desc.kind ~= "Rifle" then return end
+    if (tonumber(desc.projectileCount) or 1) > 1 then return end
+    if MARZ_RIFLE_EXCLUDE[desc.fullType] then return end
+    if (tonumber(desc.maxHitCount) or 1) ~= 1 then return end
+    desc.maxHitCount = 2
+    desc.piercingBullets = true
+end
+
+
 function BridgeGunRules.describe(item)
     local maxAmmo = num(function() return item:getMaxAmmo() end, 0)
     if maxAmmo <= 0 then maxAmmo = num(function() return item:getClipSize() end, 0) end
@@ -418,6 +439,7 @@ function BridgeGunRules.describe(item)
     out.clipFamily = (out.reloadFamily == "revolver") and "revolver" or "rifle"
     out.external = out.hasMagazineProfile
     pcall(function() out.rounds = BridgeGunRules.roundsOf(item) end)
+    applyMarzRifleMultiHit(out)
     return out
 end
 
@@ -2843,6 +2865,31 @@ function BridgeGunRules.selftest()
         check("Mosin loaded clip", clip, fakeClip)
         check("Mosin loaded clip rounds", clipRounds, 5)
     end
+    local marzChecks = {
+        { "AK74", "MarzGuns.AK74", 2, true },
+        { "AKS74U", "MarzGuns.AKS74U", 2, true },
+        { "SVD", "MarzGuns.SVD", 2, true },
+        { "CAMP_CARBINE", "MarzGuns.CAMP_CARBINE", 2, nil },
+        { "W1873", "MarzGuns.W1873", 2, nil },
+        { "MP5", "MarzGuns.MP5", 1, false },
+        { "M60", "MarzGuns.M60", 1, nil },
+        { "MOSSBERG_590", "MarzGuns.MOSSBERG_590", 9, false },
+    }
+    for _, entry in ipairs(marzChecks) do
+        local desc = descOf(entry[2])
+        if desc ~= nil then
+            check("Marz " .. entry[1] .. " maxHitCount", desc.maxHitCount, entry[3])
+            if entry[4] ~= nil then
+                check("Marz " .. entry[1] .. " piercingBullets", desc.piercingBullets, entry[4])
+            end
+        end
+    end
+    local vanillaAssault = descOf("Base.AssaultRifle")
+    if vanillaAssault ~= nil then
+        check("Vanilla AssaultRifle maxHitCount", vanillaAssault.maxHitCount, 1)
+        check("Vanilla AssaultRifle piercingBullets", vanillaAssault.piercingBullets, false)
+    end
+
     local aug = descOf("GunsOfTien.AUG")
     if aug ~= nil and type(aug.magazineSet) == "table" then
         local count = 0

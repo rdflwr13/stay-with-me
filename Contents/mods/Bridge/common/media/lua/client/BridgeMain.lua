@@ -5044,7 +5044,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
-    gunselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
+    gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     friendselftest = true, light = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
@@ -5751,6 +5751,13 @@ function Bridge.run(line)
     end
 
     if cmd == "gunselftest" then return BridgeGunRules.selftest() end
+
+    if cmd == "targetselftest" then
+        if BridgeFight == nil or type(BridgeFight.selftest) ~= "function" then
+            return "BridgeFight not loaded"
+        end
+        return BridgeFight.selftest()
+    end
 
     if cmd == "banditselftest" then
         if BridgeBandits == nil then return "bandits not loaded" end

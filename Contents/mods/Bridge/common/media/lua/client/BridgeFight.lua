@@ -74,8 +74,22 @@ for _, n in ipairs({ "Attack2H1", "Attack2H2", "Attack2H3", "Attack2H4", "Attack
     "Attack1H1", "Attack1H2", "Attack1H3", "Attack1H4", "Attack1H5", "Attack1HFloor", "Attack1HFloorB",
     "AttackS1", "AttackS2", "AttackS1B", "AttackS2B", "AttackS1Floor", "AttackS1FloorB", "AttackKnife", "AttackKnifeB", "AttackKnifeFloor",
     "AttackKnifeFloorB", "AttackStomp", "AttackStompB", "AttackBareHands1", "AttackBareHands2", "AttackBareHands3",
-    "AttackBareHands4", "AttackBareHands5", "AttackBareHands6", "Shove" }) do ATTACK_NODES[n] = true end
+    "AttackBareHands4", "AttackBareHands5", "AttackBareHands6", "Shove", "ShoveRifle" }) do ATTACK_NODES[n] = true end
 function BridgeFight.isAttackNode(name) return type(name) == "string" and ATTACK_NODES[name] == true end
+
+BridgeFight.BUTTSTROKE_ANIM = "ShoveRifle"
+function BridgeFight.buttstrokeOn()
+    if BridgeFight.buttstrokeCache ~= nil then return BridgeFight.buttstrokeCache end
+    local on = false
+    pcall(function()
+        local mods = getActivatedMods()
+        if mods ~= nil then
+            on = mods:contains("Buttstroke") == true or mods:contains("\\Buttstroke") == true
+        end
+    end)
+    BridgeFight.buttstrokeCache = on
+    return on
+end
 
 local BACK_ATTACK = {
     Attack1H1 = true, Attack1H2 = true, Attack1H3 = true, Attack1H4 = true, Attack1H5 = true,
@@ -862,6 +876,37 @@ function BridgeFight.mode()
 end
 
 
+BridgeFight.SPEED_SCORE = {
+    sprinter = -2.2,
+    fast     = -1.1,
+    shambler =  0.0,
+    crawler  =  1.1,
+}
+
+function BridgeFight.speedClass(z)
+    if z == nil then return nil end
+    local crawling = false
+    pcall(function() crawling = z:isCrawling() == true end)
+    if crawling then return "crawler" end
+    local t = -1
+    pcall(function() t = z:getSpeedType() end)
+    if t == 1 then return "sprinter" end
+    if t == 2 then return "fast" end
+    if t == 3 then return "shambler" end
+    return nil
+end
+
+function BridgeFight.speedScore(z)
+    local c = BridgeFight.speedClass(z)
+    if c == nil then return 0 end
+    return BridgeFight.SPEED_SCORE[c] or 0
+end
+
+function BridgeFight.speedName(z)
+    return BridgeFight.speedClass(z) or "?"
+end
+
+
 function BridgeFight.threat(z, body, red, mode)
     mode = mode or BridgeFight.mode()
     local bySelf = BridgeFight.guardOnly or mode.rank == "self"
@@ -880,6 +925,7 @@ function BridgeFight.threat(z, body, red, mode)
         pcall(function() clear = BridgeMove.lineClear(body, z:getX(), z:getY(), z:getZ()) == true end)
         if not clear then score = score + FENCE_HOP_PENALTY end
     end
+    score = score + BridgeFight.speedScore(z)
     return score
 end
 
@@ -2550,6 +2596,9 @@ function BridgeFight.shoveResolve(body, primary)
     if hitCount > 0 and not lethal then
         pcall(function() BridgeCallout.shove() end)
     end
+    if hitCount > 0 and BridgeFight.anim == BridgeFight.BUTTSTROKE_ANIM then
+        pcall(function() body:playSound("Buttstroke_Hit") end)
+    end
     local str = strengthLevel()
     local fitN = fitnessLevel()
     dbg(string.format("SHOVE targets=%d str=%d forceMult=%.2f crit=%.0f%% kd=%s fit=L%d(spd+%.0f%% drain x%.2f rec x%.2f)",
@@ -2581,7 +2630,8 @@ local function wantShove(body, t, item)
 end
 
 
-local function startShove(body, t)
+local function startShove(body, t, anim)
+    anim = anim or "Shove"
     pcall(function() body:faceLocationF(t:getX(), t:getY()) end)
     pcall(function()
         local st = body:getActionStateName()
@@ -2589,11 +2639,11 @@ local function startShove(body, t)
     end)
     pcall(function() body:setVariable(HIT_VAR, false) end)
     pcall(function() body:setVariable("BumpAnimFinished", false) end)
-    pcall(function() body:playSound("AttackShove") end)
+    if anim == "Shove" then pcall(function() body:playSound("AttackShove") end) end
     pcall(function() BridgeSound.voice(body, "MeleeShove", 40) end)
-    body:setBumpType("Shove")
-    if Bridge.mp then pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "look", { a = "Shove" }) end) end
-    BridgeFight.anim = "Shove"
+    body:setBumpType(anim)
+    if Bridge.mp then pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "look", { a = anim }) end) end
+    BridgeFight.anim = anim
     BridgeFight.kind = "shove"
     BridgeFight.swingBack = false
     BridgeFight.swingBackFlank = false
@@ -2644,7 +2694,16 @@ function BridgeFight.gunShove(body, t)
         BridgeGunfight.gunShoveTarget = t
         BridgeGunfight.shovePreferred = t
     end
-    local ok = startShove(body, t)
+    local hand = nil
+    pcall(function() hand = body:getPrimaryHandItem() end)
+    local held = hand ~= nil and BridgeGunfight ~= nil and BridgeGunfight.gunItem ~= nil
+        and hand == BridgeGunfight.gunItem
+    local rifle = false
+    if held and BridgeGunRules ~= nil then
+        pcall(function() rifle = BridgeGunRules.kind(hand) ~= "Handgun" end)
+    end
+    local butt = BridgeFight.buttstrokeOn() and rifle
+    local ok = startShove(body, t, butt and BridgeFight.BUTTSTROKE_ANIM or nil)
     if ok then
         BridgeFight.gunShoveSwing = true
         if BridgeGunfight ~= nil then
@@ -3007,12 +3066,15 @@ function BridgeFight.update(body)
         BridgeFight.lastPick = Bridge.time
         local okP, z = pcall(function() return pickTarget(body, red, mode) end)
         local cur = BridgeFight.target
-        if okP and z ~= nil and z ~= cur
-            and BridgeFight.threat(z, body, red, mode) + 1.0 < BridgeFight.threat(cur, body, red, mode) then
-            vlog(string.format("target switched: threat %.1f -> %.1f (dred %.1f -> %.1f)", BridgeFight.threat(cur, body, red, mode),
-                BridgeFight.threat(z, body, red, mode), dist(cur, red), dist(z, red)))
-            BridgeFight.target = z
-            BridgeFight.state = "idle"
+        if okP and z ~= nil and z ~= cur then
+            local curScore = BridgeFight.threat(cur, body, red, mode)
+            local newScore = BridgeFight.threat(z, body, red, mode)
+            if newScore + 1.0 < curScore then
+                vlog(string.format("target switched: threat %.1f (%s) -> %.1f (%s) (dred %.1f -> %.1f)",
+                    curScore, BridgeFight.speedName(cur), newScore, BridgeFight.speedName(z), dist(cur, red), dist(z, red)))
+                BridgeFight.target = z
+                BridgeFight.state = "idle"
+            end
         end
     end
     local picked = false
@@ -3261,6 +3323,60 @@ end
 
 
 
+
+
+function BridgeFight.selftest()
+    local checks, fails = 0, {}
+    local function check(name, ok)
+        checks = checks + 1
+        if not ok then fails[#fails + 1] = name end
+    end
+    local function near(a, b) return math.abs((tonumber(a) or 0) - (tonumber(b) or 0)) < 1e-9 end
+    local function stub(speed, crawl)
+        return {
+            getSpeedType = function() return speed end,
+            isCrawling = function() return crawl == true end,
+        }
+    end
+
+    local sprinter, fast, shambler = stub(1), stub(2), stub(3)
+    local crawler = stub(1, true)
+    local unknown = stub(-1)
+    local broken = {
+        getSpeedType = function() error("boom") end,
+        isCrawling = function() error("boom") end,
+    }
+
+    check("sprinter score", near(BridgeFight.speedScore(sprinter), -2.2))
+    check("sprinter name", BridgeFight.speedName(sprinter) == "sprinter")
+    check("fast score", near(BridgeFight.speedScore(fast), -1.1))
+    check("fast name", BridgeFight.speedName(fast) == "fast")
+    check("shambler score", near(BridgeFight.speedScore(shambler), 0.0))
+    check("shambler name", BridgeFight.speedName(shambler) == "shambler")
+    check("crawler score", near(BridgeFight.speedScore(crawler), 1.1))
+    check("crawler name", BridgeFight.speedName(crawler) == "crawler")
+    check("unknown score", near(BridgeFight.speedScore(unknown), 0))
+    check("unknown name", BridgeFight.speedName(unknown) == "?")
+    check("broken stub score", near(BridgeFight.speedScore(broken), 0))
+    check("broken stub name", BridgeFight.speedName(broken) == "?")
+    check("nil score", near(BridgeFight.speedScore(nil), 0))
+    check("nil name", BridgeFight.speedName(nil) == "?")
+
+    local d = 5
+    local sSprinter = d + BridgeFight.speedScore(sprinter)
+    local sFast = d + BridgeFight.speedScore(fast)
+    local sShambler = d + BridgeFight.speedScore(shambler)
+    local sCrawler = d + BridgeFight.speedScore(crawler)
+    check("equal distance order", sSprinter < sFast and sFast < sShambler and sShambler < sCrawler)
+    check("hysteresis sprinter to fast", sSprinter + 1.0 < sFast)
+    check("hysteresis fast to shambler", sFast + 1.0 < sShambler)
+    check("hysteresis shambler to crawler", sShambler + 1.0 < sCrawler)
+    check("soft crawler at 2 still beats shambler at 5",
+        (2 + BridgeFight.speedScore(crawler)) < (5 + BridgeFight.speedScore(shambler)))
+
+    if #fails == 0 then return string.format("targetselftest PASS (%d checks)", checks) end
+    return string.format("targetselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
+end
 
 
 function BridgeFight.staleEnd(body)
