@@ -1014,6 +1014,7 @@ local function syncGunState(who, rec)
     rec.gunReloadVirtual = nil
     rec.gunReloadSavedRounds = nil
     rec.gunReloadBaseRounds = nil
+    rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
     local body = currentBody(who, rec)
     local item = gunItemFor(body, rec)
     if item == nil then
@@ -1139,6 +1140,7 @@ BridgeServer.Commands.state = function(player, args)
                 rec.gunReloadVirtual = nil
                 rec.gunReloadSavedRounds = nil
                 rec.gunReloadBaseRounds = nil
+                rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
                 changed = true
             end
         elseif type(gt) == "string" and #gt <= 64 and BridgeGunRules ~= nil and BridgeGunRules.validType(gt) then
@@ -1161,6 +1163,7 @@ BridgeServer.Commands.state = function(player, args)
                 rec.gunReloadFamily, rec.gunReloadRounds = nil, nil
                 rec.gunReloadVirtual = nil
                 rec.gunReloadSavedRounds, rec.gunReloadBaseRounds = nil, nil
+                rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
             end
             if rec.gunReloadStage == nil then
                 local body = currentBody(player:getUsername(), rec)
@@ -2136,6 +2139,7 @@ local function clearReload(rec, who)
     rec.gunReloadVirtual = nil
     rec.gunReloadClientAmmo = nil
     rec.gunReloadSavedRounds, rec.gunReloadBaseRounds = nil, nil
+    rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
 end
 
 
@@ -2485,6 +2489,105 @@ BridgeServer.Commands.gunReload = function(player, args)
     if action == "cancel" then
         clearReload(rec, who)
         return answer(true, nil, { rounds = rec.gunRounds or 0 })
+    end
+    if action == "eject" then
+        if rec.bodyId == nil then return answer(false, "no companion") end
+        local body = currentBody(who, rec)
+        if body == nil then return answer(false, "no companion body") end
+        if rec.gunReloadStage ~= nil then
+            if reloadStale(rec) then
+                clearReload(rec, who)
+                log("gunReload cleared stale reload for " .. tostring(who))
+            else
+                return answer(false, "already reloading")
+            end
+        end
+        local item = nil
+        if type(args) == "table" and args.itemId ~= nil then
+            pcall(function() item = BridgeGunRules.findItemById(body, tonumber(args.itemId)) end)
+        end
+        if item == nil then item = gunItemFor(body, rec) end
+        if item == nil then return answer(false, "gun not found") end
+        if not BridgeGunRules.isGun(item) then return answer(false, "invalid gun") end
+        local desc = BridgeGunRules.describe(item)
+        if desc.magazineType == nil and desc.hasClipProfile ~= true then
+            return answer(false, "no magazine profile")
+        end
+        if desc.reloadFamily == "revolver" then return answer(false, "revolver") end
+        if BridgeGunRules.gunsmith ~= nil then
+            local internal = false
+            pcall(function() internal = BridgeGunRules.gunsmith.isInternal(item) == true end)
+            if internal then return answer(false, "internal magazine") end
+        end
+        local clip = false
+        pcall(function() clip = item:isContainsClip() == true end)
+        local rounds = BridgeGunRules.roundsOf(item)
+        if not clip and rounds <= 0 then return answer(false, "nothing to eject") end
+        local base = (desc.reloadFamily == "rifle") and 45 or 36
+        local ejectMs = (base / BridgeGunRules.reloadFactor(reloadLevel(rec))) * (1000 / 60)
+        if ejectMs < 1 then ejectMs = 1 end
+        rec.gunReloadStage = "eject"
+        rec.gunReloadUntil = getTimestampMs() + ejectMs
+        rec.gunEjectId = item:getID()
+        rec.gunEjectFamily = desc.reloadFamily
+        rec.gunEjectType = desc.magazineType
+        logf("gunReload eject gun=%s rounds=%d clip=%s", tostring(desc.fullType), rounds, tostring(clip))
+        answer(true, nil, { total = math.floor(ejectMs), family = desc.reloadFamily, rounds = rounds })
+        return
+    end
+    if action == "ejectDone" then
+        if rec.gunReloadStage ~= "eject" then return answer(false, "not ejecting") end
+        local now = getTimestampMs()
+        if rec.gunReloadUntil ~= nil and now < rec.gunReloadUntil - 1500 then
+            return answer(false, "too soon")
+        end
+        if rec.bodyId == nil then return answer(false, "no companion") end
+        local body = currentBody(who, rec)
+        if body == nil then return answer(false, "no companion body") end
+        local item = nil
+        if rec.gunEjectId ~= nil then
+            pcall(function() item = BridgeGunRules.findItemById(body, rec.gunEjectId) end)
+        end
+        if item == nil then
+            clearReload(rec, who)
+            return answer(false, "gun missing")
+        end
+        local desc = BridgeGunRules.describe(item)
+        local magType = nil
+        pcall(function() magType = item:getMagazineType() end)
+        if type(magType) ~= "string" or magType == "" then
+            pcall(function()
+                local part = item:getWeaponPart("Clip")
+                if part ~= nil then magType = part:getFullType() end
+            end)
+        end
+        if type(magType) == "string" and magType ~= "" then desc.magazineType = magType end
+        local rounds = BridgeGunRules.roundsOf(item)
+        local ammoList = BridgeGunRules.ammoListOf(item)
+        local magazine = BridgeGunRules.stashMagazine(body, desc, rounds, nil, ammoList)
+        if magazine == nil then
+            clearReload(rec, who)
+            return answer(false, "no magazine")
+        end
+        BridgeGunRules.setRounds(item, 0, false)
+        local assigned = gunItemFor(body, rec)
+        local isAssigned = assigned ~= nil and assigned:getID() == item:getID()
+        if isAssigned then rec.gunRounds = 0 end
+        if magazine ~= nil then
+            local dest = nil
+            pcall(function() dest = magazine:getContainer() end)
+            if dest == nil then dest = body:getInventory() end
+            pcall(function() sendAddItemToContainer(dest, magazine) end)
+            pcall(function() sendItemStats(magazine) end)
+        end
+        pcall(function() sendItemStats(item) end)
+        local magId = nil
+        if magazine ~= nil then pcall(function() magId = magazine:getID() end) end
+        clearReload(rec, who)
+        logf("gunReload eject done gun=%s rounds=%d mag=%s",
+            tostring(desc.fullType), rounds, tostring(magId or "-"))
+        answer(true, nil, { rounds = rounds, magRounds = rounds, itemId = item:getID() })
+        return
     end
     if rec.bodyId == nil then return answer(false, "no companion") end
     local body = currentBody(who, rec)

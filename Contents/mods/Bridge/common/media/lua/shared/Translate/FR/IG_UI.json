@@ -3717,5 +3717,7 @@
     "IGUI_NotAlone_RadialSelf": "Soi",
     "IGUI_NotAlone_RadialGear": "Équipement et Apparence",
       "IGUI_NotAlone_RadialStayCloser": "Restez proche",
-      "IGUI_NotAlone_RadialStayFurther": "Restez plus loin"
+      "IGUI_NotAlone_RadialStayFurther": "Restez plus loin",
+    "IGUI_NotAlone_SidebarNewTip": "Nouveau : cliquez pour ouvrir le panneau de la compagne.",
+    "IGUI_NotAlone_MenuEjectMagazine": "Éjecter le chargeur"
 }

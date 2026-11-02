@@ -3994,5 +3994,7 @@
     "IGUI_NotAlone_Soc_EvGunKill_Near_1": "Ya cayó.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_2": "Un disparo, uno menos.",
     "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Objetivo abatido. A por el siguiente.",
-    "IGUI_ContainerTitle_BridgeParked": "Acompañante"
+    "IGUI_ContainerTitle_BridgeParked": "Acompañante",
+    "IGUI_NotAlone_SidebarNewTip": "Nuevo: haz clic para abrir el panel de la compañera.",
+    "IGUI_NotAlone_MenuEjectMagazine": "Expulsar cargador"
 }

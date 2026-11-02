@@ -4272,6 +4272,8 @@
     "IGUI_NotAlone_Soc_EvMagLow_Near_3": "I'll need to reload soon.",
     "IGUI_NotAlone_Soc_EvMagLow_Close_1": "Getting low. Stay with me.",
     "IGUI_NotAlone_Soc_EvMagLow_Close_2": "Half a mag. I'll need to reload.",
-    "IGUI_NotAlone_Soc_EvMagLow_Close_3": "I'll need to reload. Cover me."
+    "IGUI_NotAlone_Soc_EvMagLow_Close_3": "I'll need to reload. Cover me.",
+    "IGUI_NotAlone_SidebarNewTip": "New: click to open the companion panel.",
+    "IGUI_NotAlone_MenuEjectMagazine": "Eject magazine"
 }
 

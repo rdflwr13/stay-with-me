@@ -60,6 +60,73 @@ BridgeMenu.TALK_RANGE = 12
 
 BridgeMenu.SHOW_STATUS = false
 
+BridgeMenu.NEW_SEEN_PREFIX = "bridge/companion_new_"
+BridgeMenu.newHintSeen = nil
+BridgeMenu.newHintKey = nil
+
+
+local function hintWorldKey()
+    local key = nil
+    pcall(function()
+        local w = getWorld()
+        key = tostring(w:getGameMode()) .. "_" .. tostring(w:getWorld())
+    end)
+    if key == nil then return nil end
+    return (string.gsub(key, "[^%w%-_]", "_"))
+end
+
+
+local function hintFile(key)
+    return BridgeMenu.NEW_SEEN_PREFIX .. key .. ".txt"
+end
+
+
+function BridgeMenu.resetNewHintCache()
+    BridgeMenu.newHintSeen = nil
+    BridgeMenu.newHintKey = nil
+end
+
+
+function BridgeMenu.newHintOn()
+    if BridgeData ~= nil and type(BridgeData.wants) == "function" then
+        local store = nil
+        if Bridge ~= nil then store = Bridge.store end
+        if BridgeData.wants(store) == false then return false end
+    end
+    if BridgeMenu.newHintSeen == false then return true end
+    if BridgeMenu.newHintSeen == true then return false end
+    local key = hintWorldKey()
+    if key == nil then return true end
+    if BridgeMenu.newHintKey ~= key then
+        BridgeMenu.newHintKey = key
+        BridgeMenu.newHintSeen = false
+        local seen = false
+        pcall(function()
+            local reader = getFileReader(hintFile(key), false)
+            if reader == nil then return end
+            local line = reader:readLine()
+            if line ~= nil then seen = true end
+            reader:close()
+        end)
+        if seen then BridgeMenu.newHintSeen = true end
+    end
+    return BridgeMenu.newHintSeen ~= true
+end
+
+
+function BridgeMenu.dismissNewHint()
+    if not BridgeMenu.newHintOn() then return end
+    BridgeMenu.newHintSeen = true
+    local key = BridgeMenu.newHintKey or hintWorldKey()
+    if key == nil then return end
+    local ok = pcall(function()
+        local writer = getFileWriter(hintFile(key), true, false)
+        writer:write("seen\n")
+        writer:close()
+    end)
+    if ok then log("new hint dismissed for " .. tostring(key)) end
+end
+
 
 local function present()
     if Bridge.alive() then return true end
@@ -300,11 +367,17 @@ end
 
 function BridgeMenu.onGunReloadIdle(on)
     if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption("gunReloadIdle", on == true) end
+    if BridgeGunfight ~= nil and type(BridgeGunfight.clearManualEjectHold) == "function" then
+        BridgeGunfight.clearManualEjectHold()
+    end
 end
 
 
 function BridgeMenu.onGunMagCare(on)
     if Bridge ~= nil and type(Bridge.setOption) == "function" then Bridge.setOption("gunMagCare", on == true) end
+    if BridgeGunfight ~= nil and type(BridgeGunfight.clearManualEjectHold) == "function" then
+        BridgeGunfight.clearManualEjectHold()
+    end
 end
 
 function BridgeMenu.onRenameDone(target, button, playerNum)
@@ -720,6 +793,7 @@ end
 
 
 function BridgeMenu.onButton(panel, button)
+    BridgeMenu.dismissNewHint()
     if Bridge == nil or Bridge.store == nil or BridgeWindow == nil then return end
     local x = panel:getAbsoluteX() + button:getRight() + 4
     local y = panel:getAbsoluteY() + button:getY()
@@ -733,6 +807,7 @@ end
 
 
 function BridgeMenu.onButtonMenu(panel, button)
+    BridgeMenu.dismissNewHint()
     if Bridge == nil or Bridge.store == nil then return end
     local playerNum = 0
     pcall(function() playerNum = panel.chr:getPlayerNum() end)
@@ -749,6 +824,7 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
         originalInit(self, ...)
         pcall(function()
             if self.chr == nil or self.chr:getPlayerNum() ~= 0 or self.invBtn == nil then return end
+            BridgeMenu.resetNewHintCache()
             local w, h = self.invBtn:getWidth(), self.invBtn:getHeight()
             local size = iconSize(self.invBtn)
             self.notAloneOff = getTexture("media/ui/Sidebar/NotAlone_Off_" .. size .. ".png")
@@ -759,6 +835,15 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
             btn.internal = "NOTALONE"
             btn:initialise()
             btn:instantiate()
+            local baseRender = btn.render
+            btn.render = function(button, ...)
+                if baseRender ~= nil then baseRender(button, ...) end
+                if not BridgeMenu.newHintOn() then return end
+                local r = math.max(3, math.floor(button.height * 0.12))
+                local cx, cy = button.width - r - 3, r + 3
+                button:drawRect(cx - r - 1, cy - r - 1, 2 * r + 2, 2 * r + 2, 0.85, 0, 0, 0)
+                button:drawRect(cx - r, cy - r, 2 * r, 2 * r, 1, 0.95, 0.25, 0.20)
+            end
             btn:setDisplayBackground(false)
             btn:ignoreWidthChange()
             btn:ignoreHeightChange()
@@ -781,7 +866,7 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
         local btn = self.notAloneBtn
         if btn == nil or Bridge == nil then return end
         pcall(function()
-            local lit = BridgeMenu.lit()
+            local lit = BridgeMenu.lit() or BridgeMenu.newHintOn()
             if lit ~= self.notAloneLit then
                 self.notAloneLit = lit
                 btn:setImage(lit and self.notAloneOn or self.notAloneOff)
@@ -793,7 +878,7 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
 
             if Bridge.every(30) then
                 for _, item in ipairs(self.mouseOverList or {}) do
-                    if item.object == btn then item.displayString = BridgeMenu.status() end
+                    if item.object == btn then item.displayString = BridgeMenu.newHintOn() and tr("SidebarNewTip") or BridgeMenu.status() end
                 end
             end
         end)

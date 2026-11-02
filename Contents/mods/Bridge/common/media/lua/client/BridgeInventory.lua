@@ -2754,6 +2754,16 @@ end
 
 
 
+function BridgeInventory.ejectOnHer(b, item)
+    local ok = false
+    if BridgeGunfight ~= nil and type(BridgeGunfight.ejectNow) == "function" then
+        pcall(function() ok = BridgeGunfight.ejectNow(b, item) == true end)
+    end
+    if not ok then log("eject on her failed: " .. tostring(item ~= nil and item:getType() or "?")) end
+    return ok
+end
+
+
 function BridgeInventory.assignOnHer(player, item, mode)
     local b = body()
     if b == nil or item == nil then return false end
@@ -3534,6 +3544,18 @@ function BridgeInventory.onFill(playerNum, context, items)
             else
                 rin:addOption(label("MenuAssignGun"), b, BridgeInventory.handsGun, item)
             end
+        end
+    end
+
+    if #list == 1 and BridgeInventory.isGun(list[1]) and BridgeInventory.inBody(list[1]:getContainer()) then
+        local ejectItem = list[1]
+        local canEject = false
+        if BridgeGunfight ~= nil and type(BridgeGunfight.canEjectGun) == "function" then
+            pcall(function() canEject = BridgeGunfight.canEjectGun(ejectItem) == true end)
+        end
+        if canEject then
+            pcall(function() context:removeOptionByName(getText("ContextMenu_EjectMagazine")) end)
+            rin:addOption(label("MenuEjectMagazine"), b, BridgeInventory.ejectOnHer, ejectItem)
         end
     end
 

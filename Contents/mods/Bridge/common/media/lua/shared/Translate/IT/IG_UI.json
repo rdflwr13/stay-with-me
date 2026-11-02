@@ -3998,5 +3998,7 @@
     "IGUI_NotAlone_RadialSelf": "Me",
     "IGUI_NotAlone_RadialGear": "Equipaggiamento e Aspetto",
       "IGUI_NotAlone_RadialStayCloser": "Resta vicino",
-      "IGUI_NotAlone_RadialStayFurther": "Resta più lontano"
+      "IGUI_NotAlone_RadialStayFurther": "Resta più lontano",
+    "IGUI_NotAlone_SidebarNewTip": "Nuovo: fai clic per aprire il pannello della compagna.",
+    "IGUI_NotAlone_MenuEjectMagazine": "Espelli il caricatore"
 }

@@ -4000,5 +4000,7 @@
     "IGUI_NotAlone_RadialSelf": "Selbst",
     "IGUI_NotAlone_RadialGear": "Ausrüstung & Aussehen",
       "IGUI_NotAlone_RadialStayCloser": "Näher bleiben",
-      "IGUI_NotAlone_RadialStayFurther": "Weiter weg bleiben"
+      "IGUI_NotAlone_RadialStayFurther": "Weiter weg bleiben",
+    "IGUI_NotAlone_SidebarNewTip": "Neu: Klicke hier, um das Begleiterfenster zu öffnen.",
+    "IGUI_NotAlone_MenuEjectMagazine": "Magazin auswerfen"
 }

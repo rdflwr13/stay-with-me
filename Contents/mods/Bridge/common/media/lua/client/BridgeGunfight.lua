@@ -135,6 +135,16 @@ BridgeGunfight.homeAmmoAt = nil
 BridgeGunfight.ammoBorrow = nil
 BridgeGunfight.reloadStageAt = nil
 BridgeGunfight.reloadStageTicks = 0
+BridgeGunfight.ejectOnly = false
+BridgeGunfight.ejectItemId = nil
+BridgeGunfight.ejectItem = nil
+BridgeGunfight.ejectDesc = nil
+BridgeGunfight.ejectFamily = nil
+BridgeGunfight.ejectApplied = false
+BridgeGunfight.manualEjectHold = false
+BridgeGunfight.manualEjectGunId = nil
+BridgeGunfight.manualEjectMagId = nil
+BridgeGunfight.manualEjectAt = nil
 BridgeGunfight.magCareStageAt = nil
 BridgeGunfight.magCareStageTicks = 0
 BridgeGunfight.ammoStageAt = nil
@@ -194,6 +204,7 @@ local RELOAD_VAR = "ReloadSpeed"
 local OOA_RECHECK = 60
 local RELOAD_UNLOAD_HANDGUN = 36
 local RELOAD_UNLOAD_RIFLE = 45
+local MANUAL_EJECT_HOLD = 900
 local RELOAD_LOAD_HANDGUN = 66
 local RELOAD_LOAD_RIFLE = 81
 local RELOAD_RACK_HANDGUN = 21
@@ -467,6 +478,12 @@ BridgeGunfight.reserveN = 0
     BridgeGunfight.peekCooldown = nil
     BridgeGunfight.homeAmmoAt = nil
     BridgeGunfight.ammoBorrow = nil
+    BridgeGunfight.ejectOnly = false
+    BridgeGunfight.ejectItemId = nil
+    BridgeGunfight.ejectItem = nil
+    BridgeGunfight.ejectDesc = nil
+    BridgeGunfight.ejectFamily = nil
+    BridgeGunfight.ejectApplied = false
 end
 
 
@@ -765,6 +782,7 @@ function BridgeGunfight.assign(body, item)
         pcall(function() body:resetModelNextFrame() end)
     end
     BridgeGunfight.cancelMagCare(body)
+    BridgeGunfight.clearManualEjectHold()
     setMark(item, true)
     setFields(item)
     BridgeGunfight.body = body
@@ -792,6 +810,7 @@ function BridgeGunfight.unassign(body, reason)
     if BridgeGunfight.assignedId == nil then return false end
     local item = BridgeGunfight.gunItem
     if BridgeGunfight.drawn then pcall(function() BridgeGunfight.stow(body) end) end
+    BridgeGunfight.clearManualEjectHold()
     setMark(item, false)
     local was = BridgeGunfight.gun and BridgeGunfight.gun.fullType or "?"
     BridgeGunfight.cancelMagCare(body)
@@ -1118,12 +1137,37 @@ function BridgeGunfight.holdBand(body)
 end
 
 
+local GUN_AWARE_CLOSE = 4.0
+local GUN_ARC_HALF = math.pi / 2 + 0.05
+
+
+function BridgeGunfight.facingOf(body)
+    local fx, fy = nil, nil
+    pcall(function()
+        fx = tonumber(body:getForwardDirectionX())
+        fy = tonumber(body:getForwardDirectionY())
+    end)
+    if fx == nil or fy == nil then return nil, nil end
+    if math.sqrt(fx * fx + fy * fy) < 0.001 then return nil, nil end
+    return fx, fy
+end
+
+
+function BridgeGunfight.inGunArc(fx, fy, bx, by, z, dSelf)
+    if dSelf <= GUN_AWARE_CLOSE then return true end
+    if fx == nil or fy == nil then return true end
+    local angle = BridgeGunRules.aimAngle(fx, fy, z:getX() - bx, z:getY() - by)
+    return angle <= GUN_ARC_HALF
+end
+
+
 local function pickTarget(body, red)
     local range = BridgeGunfight.modeRange or (BridgeGunfight.gun and BridgeGunfight.gun.range) or 0
     if range <= 0 then return nil end
     local cell = getCell()
     if cell == nil then return nil end
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
+    local fx, fy = BridgeGunfight.facingOf(body)
     local range2 = range * range
     local list = nil
     if BridgeZS ~= nil then list = BridgeZS.near(bx, by, range + 0.2, { tag = "gun.pick" }) end
@@ -1134,9 +1178,9 @@ local function pickTarget(body, red)
         if z ~= nil and math.abs(z:getZ() - bz) < 0.8 then
             local dx, dy = z:getX() - bx, z:getY() - by
             local d2 = dx * dx + dy * dy
-            if d2 <= range2 and targetOk(z, body, red) then
+            if d2 <= range2 then
                 local dSelf = math.sqrt(d2)
-                if dSelf <= range then
+                if dSelf <= range and BridgeGunfight.inGunArc(fx, fy, bx, by, z, dSelf) and targetOk(z, body, red) then
                     local bonus = 0
                     if BridgeFight ~= nil and type(BridgeFight.speedScore) == "function" then
                         bonus = BridgeFight.speedScore(z) or 0
@@ -1155,9 +1199,9 @@ local function pickTarget(body, red)
                 if a ~= nil and math.abs(a:getZ() - bz) < 0.8 then
                     local dx, dy = a:getX() - bx, a:getY() - by
                     local d2 = dx * dx + dy * dy
-                    if d2 <= range2 and targetOk(a, body, red) then
+                    if d2 <= range2 then
                         local dSelf = math.sqrt(d2)
-                        if dSelf <= range then
+                        if dSelf <= range and BridgeGunfight.inGunArc(fx, fy, bx, by, a, dSelf) and targetOk(a, body, red) then
                             local bonus = 0
                             if BridgeFight ~= nil and type(BridgeFight.speedScore) == "function" then
                                 bonus = BridgeFight.speedScore(a) or 0
@@ -1176,7 +1220,7 @@ local function pickTarget(body, red)
                 local n = npcs[i]
                 if math.abs(n:getZ() - bz) < 0.8 and targetOk(n, body, red) then
                     local dS = dist(body, n)
-                    if dS <= range then
+                    if dS <= range and BridgeGunfight.inGunArc(fx, fy, bx, by, n, dS) then
                         local bonus = 0
                         if BridgeFight ~= nil and type(BridgeFight.speedScore) == "function" then
                             bonus = BridgeFight.speedScore(n) or 0
@@ -1272,6 +1316,7 @@ local function peekTarget(body, red)
     if range <= 0 then return nil end
     local best, bestD2 = nil, math.huge
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
+    local fx, fy = BridgeGunfight.facingOf(body)
     local range2 = range * range
     local minRange = tonumber(BridgeGunRules.MIN_RANGE) or 3
     local mode = nil
@@ -1296,8 +1341,12 @@ local function peekTarget(body, red)
                     nearEnough = d2 <= range2
                 end
             end
-            if nearEnough and d2 > min2 and d2 < bestD2 and targetOk(z, body, red) and math.abs(z:getZ() - body:getZ()) < 0.8 then
-                best, bestD2 = z, d2
+            if nearEnough and d2 > min2 and d2 < bestD2 then
+                local dSelf = math.sqrt(d2)
+                if BridgeGunfight.inGunArc(fx, fy, bx, by, z, dSelf) and targetOk(z, body, red)
+                        and math.abs(z:getZ() - body:getZ()) < 0.8 then
+                    best, bestD2 = z, d2
+                end
             end
         end
     end)
@@ -2227,6 +2276,31 @@ local function transferHoldsReload(body)
     return false
 end
 
+function BridgeGunfight.clearManualEjectHold()
+    BridgeGunfight.manualEjectHold = false
+    BridgeGunfight.manualEjectGunId = nil
+    BridgeGunfight.manualEjectMagId = nil
+    BridgeGunfight.manualEjectAt = nil
+end
+
+function BridgeGunfight.manualEjectHoldActive(item)
+    if not BridgeGunfight.manualEjectHold then return false end
+    local now = Bridge.time or 0
+    if BridgeFight ~= nil and BridgeFight.target ~= nil then
+        BridgeGunfight.clearManualEjectHold()
+        return false
+    end
+    if BridgeGunfight.assignedId == nil or BridgeGunfight.assignedId ~= BridgeGunfight.manualEjectGunId then
+        BridgeGunfight.clearManualEjectHold()
+        return false
+    end
+    if now - (BridgeGunfight.manualEjectAt or now) >= MANUAL_EJECT_HOLD then
+        BridgeGunfight.clearManualEjectHold()
+        return false
+    end
+    return item ~= nil and item:getID() == BridgeGunfight.assignedId
+end
+
 local function idleReloadWanted(body, gun)
     if body == nil or gun == nil then return false end
     local rounds = BridgeGunfight.rounds or 0
@@ -2548,7 +2622,7 @@ tellLoadOne = function(item, magId)
     pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "gunLoadOne", args) end)
 end
 
-local function setReloadStage(body, stage, ticks)
+local function setReloadStage(body, stage, ticks, desc, family)
     local now = Bridge.time or 0
     local base = tonumber(ticks) or 0
     local mult = speedMult()
@@ -2557,12 +2631,12 @@ local function setReloadStage(body, stage, ticks)
     BridgeGunfight.reloadStageTicks = base
     BridgeGunfight.reloadUntil = now + (base / mult)
     vlog(string.format("reload stage %s base=%d x=%.2f at=%.1f", tostring(stage), base, mult, now))
-    local name = bumpName(stage, BridgeGunfight.reloadFamily)
+    local name = bumpName(stage, family or BridgeGunfight.reloadFamily)
     if not BridgeGunfight.reloadFleeMoving and not BridgeGunfight.standoffMoving then
         plant(body, name)
     end
     pcall(function() body:setVariable(FIRE_VAR, false) end)
-    local gun = BridgeGunfight.gun or {}
+    local gun = desc or BridgeGunfight.gun or {}
     local sound = gun.insertSound
     if stage == "unload" then sound = gun.ejectSound
     elseif stage == "rack" then sound = gun.rackSound end
@@ -2650,6 +2724,12 @@ local function cancelReload(body, reason)
     BridgeGunfight.reloadSavedRounds = 0
     BridgeGunfight.reloadBaseRounds = 0
     BridgeGunfight.reloadCancel = false
+    BridgeGunfight.ejectOnly = false
+    BridgeGunfight.ejectItemId = nil
+    BridgeGunfight.ejectItem = nil
+    BridgeGunfight.ejectDesc = nil
+    BridgeGunfight.ejectFamily = nil
+    BridgeGunfight.ejectApplied = false
     clearReloadSpeed(body)
     clearBump(body)
     BridgeGunfight.state = "idle"
@@ -2694,6 +2774,80 @@ function BridgeGunfight.interruptReload(body, reason, quiet)
         end
     end
     return stopped
+end
+
+
+function BridgeGunfight.ejectMagDesc(item, desc)
+    local out = desc
+    if type(out) ~= "table" then out = BridgeGunRules.describe(item) end
+    local magType = nil
+    pcall(function() magType = item:getMagazineType() end)
+    if type(magType) ~= "string" or magType == "" then
+        pcall(function()
+            local part = item:getWeaponPart("Clip")
+            if part ~= nil then magType = part:getFullType() end
+        end)
+    end
+    if type(magType) == "string" and magType ~= "" then out.magazineType = magType end
+    return out
+end
+
+
+function BridgeGunfight.canEjectGun(item)
+    if item == nil or not BridgeGunRules.isGun(item) then return false end
+    local desc = BridgeGunRules.describe(item)
+    if not hasMagProfile(desc) then return false end
+    if desc.reloadFamily == "revolver" then return false end
+    if BridgeGunRules.gunsmith ~= nil then
+        local internal = false
+        pcall(function() internal = BridgeGunRules.gunsmith.isInternal(item) == true end)
+        if internal then return false end
+    end
+    local clip = false
+    pcall(function() clip = item:isContainsClip() == true end)
+    if not clip and BridgeGunRules.roundsOf(item) <= 0 then return false end
+    return true, desc
+end
+
+
+function BridgeGunfight.ejectNow(body, item)
+    if body == nil or item == nil then return false end
+    local canEject, desc = BridgeGunfight.canEjectGun(item)
+    if not canEject then return false end
+    local clip = false
+    pcall(function() clip = item:isContainsClip() == true end)
+    local roundsNow = BridgeGunRules.roundsOf(item)
+    if BridgeGunfight.ejectOnly then return false end
+
+    BridgeGunfight.interruptReload(body, "manual eject", true)
+    BridgeGunfight.body = body
+    BridgeGunfight.target = nil
+    BridgeGunfight.aimUntil = nil
+    BridgeGunfight.nextShotAt = nil
+    BridgeGunfight.fireUntil = nil
+    pcall(function() body:setVariable(FIRE_VAR, false) end)
+    BridgeGunfight.suspended = false
+    BridgeGunfight.noAmmoUntil = nil
+    if BridgeGunfight.manualEjectGunId ~= nil and BridgeGunfight.manualEjectGunId ~= item:getID() then
+        BridgeGunfight.clearManualEjectHold()
+    end
+
+    BridgeGunfight.ejectOnly = true
+    BridgeGunfight.ejectItemId = item:getID()
+    BridgeGunfight.ejectItem = item
+    BridgeGunfight.ejectDesc = desc
+    BridgeGunfight.ejectFamily = desc.reloadFamily
+    BridgeGunfight.ejectApplied = false
+    BridgeGunfight.reloadFleeMoving = false
+    BridgeGunfight.standoffMoving = false
+
+    local base = (desc.reloadFamily == "rifle") and RELOAD_UNLOAD_RIFLE or RELOAD_UNLOAD_HANDGUN
+    BridgeGunfight.state = "reload"
+    applyReloadSpeed(body, reloadFactor())
+    pcall(function() BridgeCallout.reloading(true) end)
+    setReloadStage(body, "unload", stageTicks(base), desc, desc.reloadFamily)
+    logf("manual eject start %s rounds=%d clip=%s", tostring(desc.fullType), roundsNow, tostring(clip))
+    return true
 end
 
 
@@ -2879,6 +3033,7 @@ local function startAmmoOpen(body, force, items, allowDanger)
         return false
     end
     if pick == nil then
+        BridgeGunfight.ammoCooldown = (Bridge.time or 0) + 300
         local probe = ""
         if BridgeLog ~= nil and BridgeLog.on() then probe = ammoBoxProbe(body, gun) end
         log("ammoOpen none; boxes: " .. probe)
@@ -3218,6 +3373,7 @@ end
 
 local function startReload(body, t, idle)
     if BridgeGunfight.reloadStage ~= nil then return true end
+    if idle == true and BridgeGunfight.manualEjectHoldActive(BridgeGunfight.gunItem) then return false end
     if transferHoldsReload(body) then return false end
     if BridgeGunfight.reloadDoneAt ~= nil and (Bridge.time or 0) - BridgeGunfight.reloadDoneAt < 30 then
         return false
@@ -3444,8 +3600,111 @@ local function advanceReload(body)
     return finishReload(body)
 end
 
+function BridgeGunfight.finishManualEject(body)
+    local item = nil
+    if body ~= nil and BridgeGunfight.ejectItemId ~= nil then
+        pcall(function() item = BridgeGunRules.findItemById(body, BridgeGunfight.ejectItemId) end)
+    end
+    if item == nil and handAlive(BridgeGunfight.ejectItem) then item = BridgeGunfight.ejectItem end
+    local isAssigned = item ~= nil and BridgeGunfight.assignedId ~= nil
+        and item:getID() == BridgeGunfight.assignedId
+    if item == nil then
+        log("manual eject: gun gone")
+        BridgeGunfight.ejectOnly = false
+        BridgeGunfight.ejectItemId = nil
+        BridgeGunfight.ejectItem = nil
+        BridgeGunfight.ejectDesc = nil
+        BridgeGunfight.ejectFamily = nil
+        BridgeGunfight.ejectApplied = false
+        BridgeGunfight.reloadStage = nil
+        BridgeGunfight.reloadStageAt = nil
+        BridgeGunfight.reloadStageTicks = 0
+        BridgeGunfight.reloadUntil = nil
+        BridgeGunfight.state = "idle"
+        if BridgeMove ~= nil then BridgeMove.forcedWalk = nil end
+        clearReloadSpeed(body)
+        clearBump(body)
+        return false
+    end
+
+    local rounds = BridgeGunRules.roundsOf(item)
+    local ammoList = BridgeGunRules.ammoListOf(item)
+    local magId = nil
+
+    local desc = BridgeGunfight.ejectMagDesc(item, BridgeGunfight.ejectDesc)
+    local ejected = false
+    if BridgeGunRules.gunsmith ~= nil then
+        pcall(function() ejected = BridgeGunRules.gunsmith.ejectMagazine(body, item) == true end)
+    end
+    local magazine = nil
+    if not ejected then
+        magazine = BridgeGunRules.stashMagazine(body, desc, rounds, nil, ammoList)
+    end
+    if magazine ~= nil then magId = magazine:getID() end
+    if ejected or magazine ~= nil then
+        BridgeGunRules.setRounds(item, 0, false)
+        if isAssigned then
+            BridgeGunfight.rounds = 0
+            clearAmmoPresence()
+        end
+        logf("manual eject done %s rounds=%d mag=%s", tostring(desc.fullType), rounds, tostring(magId or "-"))
+        if isAssigned then
+            BridgeGunfight.manualEjectHold = true
+            BridgeGunfight.manualEjectGunId = item:getID()
+            BridgeGunfight.manualEjectMagId = magId
+            BridgeGunfight.manualEjectAt = Bridge.time or 0
+            if Bridge ~= nil and Bridge.mp then
+                local fullType = (BridgeGunfight.gun and BridgeGunfight.gun.fullType) or desc.fullType
+                tellServer(fullType, BridgeGunfight.assignedId, 0)
+            end
+        end
+    else
+        log("manual eject failed: no magazine created")
+    end
+
+    BridgeGunfight.ejectOnly = false
+    BridgeGunfight.ejectItemId = nil
+    BridgeGunfight.ejectItem = nil
+    BridgeGunfight.ejectDesc = nil
+    BridgeGunfight.ejectFamily = nil
+    BridgeGunfight.ejectApplied = false
+    BridgeGunfight.reloadStage = nil
+    BridgeGunfight.reloadStageAt = nil
+    BridgeGunfight.reloadStageTicks = 0
+    BridgeGunfight.reloadUntil = nil
+    BridgeGunfight.state = "idle"
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = nil end
+    clearReloadSpeed(body)
+    clearBump(body)
+    return false
+end
+
+
 local function reloadTick(body)
     if BridgeGunfight.reloadStage == nil then return false end
+    if BridgeGunfight.ejectOnly then
+        if BridgeGunfight.reloadStage == "wait" then
+            if (Bridge.time or 0) >= (BridgeGunfight.reloadUntil or 0) then
+                cancelReload(body, "server eject timeout")
+                return false
+            end
+            return true
+        end
+        local done = actionElapsed(BridgeGunfight.reloadStageAt, BridgeGunfight.reloadStageTicks)
+        if not done then
+            local fin = false
+            pcall(function() fin = body:getVariableBoolean(FIRE_VAR) == true end)
+            if fin then done = true end
+        end
+        if not done then
+            if not BridgeGunfight.reloadFleeMoving and not BridgeGunfight.standoffMoving then
+                plant(body, bumpName(BridgeGunfight.reloadStage,
+                    BridgeGunfight.ejectFamily or BridgeGunfight.reloadFamily))
+            end
+            return true
+        end
+        return BridgeGunfight.finishManualEject(body)
+    end
     if BridgeGunfight.reloadStage == "wait" then
         if (Bridge.time or 0) >= (BridgeGunfight.reloadUntil or 0) then
             cancelReload(body, "server start timeout")
@@ -4619,6 +4878,7 @@ BridgeGunfight.lastShotTarget = nil
         idleScan = true
         BridgeGunfight.idleScanAt = Bridge.time
     end
+    if idleScan and BridgeGunfight.manualEjectHoldActive(BridgeGunfight.gunItem) then idleScan = false end
 
     local idleItems = nil
     if idleScan and hasMagProfile(BridgeGunfight.gun)
@@ -5347,6 +5607,21 @@ function BridgeGunfight.onReloadResult(args)
         local why = tostring(args.why or "?")
         log("reload rejected: " .. why)
         BridgeGunfight.info = "reload rejected: " .. why
+        if action == "eject" or action == "ejectDone" then
+            BridgeGunfight.ejectOnly = false
+            BridgeGunfight.ejectItemId = nil
+            BridgeGunfight.ejectItem = nil
+            BridgeGunfight.ejectDesc = nil
+            BridgeGunfight.ejectFamily = nil
+            BridgeGunfight.ejectApplied = false
+            BridgeGunfight.reloadStage = nil
+            BridgeGunfight.reloadStageAt = nil
+            BridgeGunfight.reloadStageTicks = 0
+            BridgeGunfight.reloadUntil = nil
+            BridgeGunfight.state = "idle"
+            if BridgeMove ~= nil then BridgeMove.forcedWalk = nil end
+            return
+        end
         if action == "start" then
             BridgeGunfight.reloadStage = nil
             BridgeGunfight.reloadUntil = nil
@@ -5399,6 +5674,49 @@ BridgeGunfight.reserveN = 0
                 log("reload backoff " .. why .. " " .. tostring(wait))
             end
         end
+        return
+    end
+    if action == "eject" then
+        if BridgeGunfight.ejectOnly then
+            local family = args.family
+            if family == nil then family = BridgeGunfight.ejectFamily or "handgun" end
+            BridgeGunfight.ejectFamily = family
+            local base = (tostring(family) == "rifle") and RELOAD_UNLOAD_RIFLE or RELOAD_UNLOAD_HANDGUN
+            BridgeGunfight.reloadStage = "unload"
+            BridgeGunfight.reloadStageAt = Bridge.time or 0
+            BridgeGunfight.reloadStageTicks = stageTicks(base)
+            BridgeGunfight.reloadUntil = (Bridge.time or 0) + (BridgeGunfight.reloadStageTicks / speedMult())
+            BridgeGunfight.state = "reload"
+            BridgeGunfight.info = "manual eject running"
+        end
+        return
+    end
+    if action == "ejectDone" then
+        local ejectedId = tonumber(args.itemId) or BridgeGunfight.ejectItemId
+        local wasAssigned = ejectedId ~= nil and BridgeGunfight.assignedId ~= nil
+            and ejectedId == BridgeGunfight.assignedId
+        if wasAssigned then
+            BridgeGunfight.rounds = 0
+            clearAmmoPresence()
+            BridgeGunfight.manualEjectHold = true
+            BridgeGunfight.manualEjectGunId = BridgeGunfight.assignedId
+            BridgeGunfight.manualEjectMagId = tonumber(args.magId)
+            BridgeGunfight.manualEjectAt = Bridge.time or 0
+        end
+        BridgeGunfight.ejectOnly = false
+        BridgeGunfight.ejectItemId = nil
+        BridgeGunfight.ejectItem = nil
+        BridgeGunfight.ejectDesc = nil
+        BridgeGunfight.ejectFamily = nil
+        BridgeGunfight.ejectApplied = false
+        BridgeGunfight.reloadStage = nil
+        BridgeGunfight.reloadStageAt = nil
+        BridgeGunfight.reloadStageTicks = 0
+        BridgeGunfight.reloadUntil = nil
+        BridgeGunfight.state = "idle"
+        if BridgeMove ~= nil then BridgeMove.forcedWalk = nil end
+        logf("manual eject result rounds=%d assigned=%s",
+            math.floor(tonumber(args.rounds) or 0), tostring(wasAssigned))
         return
     end
     if action == "complete" then
@@ -5495,6 +5813,9 @@ end
 
 function BridgeGunfight.tick()
     local now = (Bridge ~= nil and Bridge.time) or 0
+    if BridgeGunfight.ejectOnly and BridgeGunfight.reloadStage ~= nil and BridgeGunfight.body ~= nil then
+        pcall(function() reloadTick(BridgeGunfight.body) end)
+    end
     local flashes = BridgeGunfight.flashes
     for i = #flashes, 1, -1 do
         local f = flashes[i]
@@ -5662,6 +5983,16 @@ BridgeGunfight.reserveN = 0
     BridgeGunfight.magCareAt = nil
     BridgeGunfight.magCareHand1 = nil
     BridgeGunfight.magCareHand2 = nil
+    BridgeGunfight.ejectOnly = false
+    BridgeGunfight.ejectItemId = nil
+    BridgeGunfight.ejectItem = nil
+    BridgeGunfight.ejectDesc = nil
+    BridgeGunfight.ejectFamily = nil
+    BridgeGunfight.ejectApplied = false
+    BridgeGunfight.manualEjectHold = false
+    BridgeGunfight.manualEjectGunId = nil
+    BridgeGunfight.manualEjectMagId = nil
+    BridgeGunfight.manualEjectAt = nil
     BridgeGunfight.body = nil
 end
 
