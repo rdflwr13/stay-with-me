@@ -84,3 +84,10 @@ option StayWithMe.CompanionWheelController
     page = StayWithMe,
     translation = StayWithMe_CompanionWheelController,
 }
+
+option StayWithMe.ForceSpawnNearPlayer
+{
+    type = boolean, default = false,
+    page = StayWithMe,
+    translation = StayWithMe_ForceSpawnNearPlayer,
+}

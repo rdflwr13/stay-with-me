@@ -130,6 +130,7 @@ Bridge.genderNoticeUntil = 0
 
 local IN_FILE = "bridge/in.txt"
 local OUT_FILE = "bridge/out.txt"
+Bridge.outFile = OUT_FILE
 
 
 Bridge.errBuf = Bridge.errBuf or {}
@@ -5098,7 +5099,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     friendselftest = true, light = true,
-    exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true }
+    exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true, meet = true }
 
 
 
@@ -5211,6 +5212,10 @@ function Bridge.run(line)
         return cmd .. (dev and ": not in multiplayer" or ": test build only")
     end
 
+    if cmd == "meet" then
+        if BridgeMeet == nil or type(BridgeMeet.run) ~= "function" then return "meet: not loaded" end
+        return BridgeMeet.run(parts, line)
+    end
     if cmd == "spawn" or cmd == "call" then
         if parts[3] == "player" then return Bridge.spawnPlayer() end
         return Bridge.call()
@@ -6622,6 +6627,11 @@ function Bridge.diagLines()
                 add("home", BridgeCallout.homeStatus())
             end
         end)
+        pcall(function()
+            if BridgeMeet ~= nil and type(BridgeMeet.diagLine) == "function" then
+                add("meet", BridgeMeet.diagLine())
+            end
+        end)
     end)
     return lines
 end
@@ -7573,6 +7583,8 @@ function Bridge.onTick()
             end
         end
     end
+
+    if BridgeMeet ~= nil and type(BridgeMeet.tick) == "function" then pcall(BridgeMeet.tick) end
 
     if Bridge.every(60) then Bridge.ensurePresent() end
 
@@ -8658,11 +8670,13 @@ function Bridge.newLifeTick()
     Bridge.redDied = nil
     if st ~= nil then st.redDied = nil end
     local was = BridgeData.modeOf(st)
+    local meetState = st ~= nil and st.meetState or nil
+    local meetHold = meetState == "pending" or meetState == "placed" or meetState == "left"
 
     Bridge.sleepParked, Bridge.claimParked, Bridge.homeParked = nil, nil, false
-    Bridge.setMode("follow")
+    if not meetHold then Bridge.setMode("follow") end
     if Bridge.mp then Bridge.newLifePending = true end
-    log("new character after death: she comes to him (was " .. tostring(was) .. ")")
+    log("new character after death: " .. (meetHold and "meet spot kept" or "she comes to him") .. " (was " .. tostring(was) .. ")")
 end
 
 

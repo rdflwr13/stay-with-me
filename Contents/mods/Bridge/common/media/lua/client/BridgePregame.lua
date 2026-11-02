@@ -27,6 +27,48 @@ local function cleanAimMode(value)
     return nil
 end
 
+local function cleanMeetMode(value)
+    local n = tonumber(value)
+    if n == nil then return 1 end
+    n = math.floor(n)
+    if n < 1 then return 1 end
+    if n > 3 then return 3 end
+    return n
+end
+
+local function cleanMeetDays(value)
+    local n = tonumber(value)
+    if n == nil then return 1 end
+    n = math.floor(n)
+    if n < 1 then return 1 end
+    return n
+end
+
+local function cleanMeetHint(value)
+    local n = tonumber(value)
+    if n == nil then return 1 end
+    n = math.floor(n)
+    if n < 0 then return 0 end
+    if n > 1 then return 1 end
+    return n
+end
+
+local function cleanMeetTown(value)
+    if type(value) ~= "string" or value == "" then return "near" end
+    return value
+end
+
+local function cleanMeetDistance(value)
+    if value == "far" or value == "very_far" then return value end
+    return "close"
+end
+
+local function meetWorldAge()
+    local h = 0
+    pcall(function() h = getGameTime():getWorldAgeHours() end)
+    return h or 0
+end
+
 function BridgePregame.defaultOptions()
     return {
         romance = true,
@@ -245,6 +287,13 @@ function BridgePregame.readDraft()
         femaleLook = lookFrom(fields.LOOK_F),
         maleLook = lookFrom(fields.LOOK_M),
         options = BridgePregame.optionsFromText(fields.OPTIONS),
+        meetMode = cleanMeetMode(fields.MEET_MODE),
+        meetDays = cleanMeetDays(fields.MEET_DAYS),
+        meetHint = cleanMeetHint(fields.MEET_HINT),
+        meetTown = cleanMeetTown(fields.MEET_TOWN),
+        meetDistance = cleanMeetDistance(fields.MEET_DISTANCE),
+        meetPresent = fields.MEET_MODE ~= nil or fields.MEET_DAYS ~= nil or fields.MEET_HINT ~= nil
+            or fields.MEET_TOWN ~= nil or fields.MEET_DISTANCE ~= nil,
     }
     draft.store = { gender = gender }
     local voiceF, voiceM = nil, nil
@@ -313,6 +362,11 @@ function BridgePregame.writeDraft(draft)
         "CLOTH_F=" .. esc(clothF),
         "CLOTH_M=" .. esc(clothM),
         "OPTIONS=" .. esc(BridgePregame.optionsText(draft.options)),
+        "MEET_MODE=" .. tostring(cleanMeetMode(draft.meetMode)),
+        "MEET_DAYS=" .. tostring(cleanMeetDays(draft.meetDays)),
+        "MEET_HINT=" .. tostring(cleanMeetHint(draft.meetHint)),
+        "MEET_TOWN=" .. esc(cleanMeetTown(draft.meetTown)),
+        "MEET_DISTANCE=" .. esc(cleanMeetDistance(draft.meetDistance)),
     }
     local writer = nil
     pcall(function() writer = getFileWriter(BridgePregame.FILE, true, false) end)
@@ -463,6 +517,11 @@ function BridgePregame.newDraft()
         clothFemale = BridgePregame.starterClothing("female"),
         clothMale = BridgePregame.starterClothing("male"),
         options = BridgePregame.defaultOptions(),
+        meetMode = 1,
+        meetDays = 1,
+        meetHint = 1,
+        meetTown = "near",
+        meetDistance = "close",
         store = { gender = companion },
     }
 end
@@ -479,6 +538,18 @@ function BridgePregame.ensureDraft()
     draft = BridgePregame.newDraft()
     BridgePregame.draft = draft
     return draft
+end
+
+function BridgePregame.readMeetOptions()
+    local draft = BridgePregame.readDraft()
+    if draft == nil or draft.meetPresent ~= true then return nil end
+    return {
+        mode = cleanMeetMode(draft.meetMode),
+        days = cleanMeetDays(draft.meetDays),
+        hint = cleanMeetHint(draft.meetHint),
+        town = cleanMeetTown(draft.meetTown),
+        distance = cleanMeetDistance(draft.meetDistance),
+    }
 end
 
 function BridgePregame.consumeInto(store)
@@ -528,6 +599,26 @@ function BridgePregame.consumeInto(store)
     local opts = BridgePregame.cleanOptions(draft.options)
     for _, key in ipairs(BridgePregame.OPTION_BOOLS) do store[key] = opts[key] end
     store.aimSense = opts.aimSense
+    if draft.meetPresent == true then
+        store.meetMode = cleanMeetMode(draft.meetMode)
+        store.meetDays = cleanMeetDays(draft.meetDays)
+        store.meetHint = cleanMeetHint(draft.meetHint)
+        store.meetTown = cleanMeetTown(draft.meetTown)
+        store.meetDistance = cleanMeetDistance(draft.meetDistance)
+        if store.meetMode > 1 and store.meetState == nil then
+            local hasBody = false
+            pcall(function() hasBody = Bridge ~= nil and Bridge.alive() == true end)
+            if not hasBody then
+                store.meetState = "pending"
+                store.want = false
+                if store.meetMode == 3 then
+                    store.meetAt = meetWorldAge() + store.meetDays * 24
+                else
+                    store.meetAt = 0
+                end
+            end
+        end
+    end
     removeDraftFile()
     BridgePregame.draft = nil
     log("draft applied: gender=" .. tostring(gender) .. " look=" .. tostring(look ~= nil)
@@ -888,6 +979,52 @@ function BridgePregameScreen:createChildren()
     end
     self:addChild(self.aimCombo)
 
+    self.meetTitle = tr("PregameMeetTitle", "How we meet")
+    self.meetWhenText = tr("PregameMeetWhen", "When")
+    self.meetHintText = tr("PregameMeetHint", "Hint")
+    self.meetDaysText = tr("PregameMeetDays", "Days")
+    self.meetWhereText = tr("PregameMeetWhere", "Where")
+    self.meetDistanceText = tr("PregameMeetDistance", "Distance")
+    self.meetModeCombo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onMeetMode)
+    self.meetModeCombo:initialise()
+    self.meetModeCombo:addOptionWithData(tr("PregameMeetWithYou", "With you at the start"), 1)
+    self.meetModeCombo:addOptionWithData(tr("PregameMeetNearby", "Spawns nearby"), 2)
+    self.meetModeCombo:addOptionWithData(tr("PregameMeetLater", "Meet them days later"), 3)
+    self:addChild(self.meetModeCombo)
+
+    self.meetDaysEntry = ISTextEntryBox:new("1", 0, 0, 80, BTN_H)
+    self.meetDaysEntry:initialise()
+    self.meetDaysEntry:instantiate()
+    pcall(function() self.meetDaysEntry:setOnlyNumbers(true) end)
+    pcall(function() self.meetDaysEntry:setMaxTextLength(6) end)
+    self.meetDaysEntry.onTextChangeFunction = BridgePregameScreen.onMeetDaysText
+    self.meetDaysEntry.target = self
+    self:addChild(self.meetDaysEntry)
+
+    self.meetWhereCombo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onMeetWhere)
+    self.meetWhereCombo:initialise()
+    self.meetWhereCombo:addOptionWithData(tr("PregameMeetNearMe", "Near me"), "near")
+    self.meetWhereCombo:addOptionWithData(tr("PregameMeetRandomTown", "Random town"), "random")
+    if BridgeCallout ~= nil and type(BridgeCallout.CITY_BOXES) == "table" then
+        for _, box in ipairs(BridgeCallout.CITY_BOXES) do
+            self.meetWhereCombo:addOptionWithData(box.label or box.id, box.id)
+        end
+    end
+    self:addChild(self.meetWhereCombo)
+
+    self.meetDistanceCombo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onMeetDistance)
+    self.meetDistanceCombo:initialise()
+    self.meetDistanceCombo:addOptionWithData(tr("PregameMeetClose", "Close"), "close")
+    self.meetDistanceCombo:addOptionWithData(tr("PregameMeetFar", "Far"), "far")
+    self.meetDistanceCombo:addOptionWithData(tr("PregameMeetVeryFar", "Very far"), "very_far")
+    self:addChild(self.meetDistanceCombo)
+
+    self.meetHintCombo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onMeetHint)
+    self.meetHintCombo:initialise()
+    self.meetHintCombo:addOptionWithData(tr("PregameMeetHintOn", "Marker on"), 1)
+    self.meetHintCombo:addOptionWithData(tr("PregameMeetHintOff", "Marker off"), 0)
+    self:addChild(self.meetHintCombo)
+
     self.makeupCombos = {}
     self.makeupOrder = {}
     local defs = rawget(_G, "MakeUpDefinitions")
@@ -1236,6 +1373,11 @@ function BridgePregameScreen:refresh()
         end
     end
     if self.aimCombo ~= nil then self.aimCombo:selectData(opts.aimSense) end
+    if self.meetModeCombo ~= nil then self.meetModeCombo:selectData(cleanMeetMode(draft.meetMode)) end
+    if self.meetDaysEntry ~= nil then self.meetDaysEntry:setText(tostring(cleanMeetDays(draft.meetDays))) end
+    if self.meetWhereCombo ~= nil then self.meetWhereCombo:selectData(cleanMeetTown(draft.meetTown)) end
+    if self.meetDistanceCombo ~= nil then self.meetDistanceCombo:selectData(cleanMeetDistance(draft.meetDistance)) end
+    if self.meetHintCombo ~= nil then self.meetHintCombo:selectData(cleanMeetHint(draft.meetHint)) end
 
     paintButton(self.hairColorBtn, c.hairColor)
     if self.hairColorBtn ~= nil then self.hairColorBtn:setTitle("") end
@@ -1426,6 +1568,83 @@ function BridgePregameScreen:layoutRight()
     self.aimCombo:setWidth(aimW)
     self.aimCombo:setHeight(BTN_H)
     self.behaviorBottom = by + BTN_H
+
+    local meetMode = cleanMeetMode(self.draft and self.draft.meetMode)
+    local meetTown = cleanMeetTown(self.draft and self.draft.meetTown)
+    local showDays = meetMode == 3
+    local showWhere = meetMode ~= 1
+    local showDistance = showWhere and meetTown == "near"
+    local showHint = meetMode ~= 1
+    local meetLabelW = textW(UIFont.Small, self.meetWhenText or "When") + 8
+    if meetLabelW < 64 then meetLabelW = 64 end
+    if meetLabelW > math.floor(w * 0.45) then meetLabelW = math.floor(w * 0.45) end
+    local meetW = w - meetLabelW
+    if meetW < 70 then meetW = 70 end
+    local rows = 1 + (showDays and 1 or 0) + (showWhere and 1 or 0)
+        + (showDistance and 1 or 0) + (showHint and 1 or 0)
+    local my = self.behaviorBottom + PAD
+    local needed = FONT_S + 6 + 5 + (BTN_H + 3) * rows
+    if my + needed > self.contentBottom then my = math.max(self.contentTop, self.contentBottom - needed) end
+    self.meetHeadingY = my
+    my = my + FONT_S + 6
+    self.meetDividerY = my
+    my = my + 5
+    self.meetModeLabelY = my + 3
+    self.meetModeCombo:setVisible(true)
+    self.meetModeCombo:setX(x + meetLabelW)
+    self.meetModeCombo:setY(my)
+    self.meetModeCombo:setWidth(meetW)
+    self.meetModeCombo:setHeight(BTN_H)
+    my = my + BTN_H + 3
+    if showDays and self.meetDaysEntry ~= nil then
+        self.meetDaysLabelY = my + 3
+        self.meetDaysEntry:setVisible(true)
+        self.meetDaysEntry:setX(x + meetLabelW)
+        self.meetDaysEntry:setY(my)
+        self.meetDaysEntry:setWidth(math.min(90, meetW))
+        self.meetDaysEntry:setHeight(BTN_H)
+        my = my + BTN_H + 3
+    else
+        self.meetDaysLabelY = nil
+        if self.meetDaysEntry ~= nil then self.meetDaysEntry:setVisible(false) end
+    end
+    if showWhere and self.meetWhereCombo ~= nil then
+        self.meetWhereLabelY = my + 3
+        self.meetWhereCombo:setVisible(true)
+        self.meetWhereCombo:setX(x + meetLabelW)
+        self.meetWhereCombo:setY(my)
+        self.meetWhereCombo:setWidth(meetW)
+        self.meetWhereCombo:setHeight(BTN_H)
+        my = my + BTN_H + 3
+    else
+        self.meetWhereLabelY = nil
+        if self.meetWhereCombo ~= nil then self.meetWhereCombo:setVisible(false) end
+    end
+    if showDistance and self.meetDistanceCombo ~= nil then
+        self.meetDistanceLabelY = my + 3
+        self.meetDistanceCombo:setVisible(true)
+        self.meetDistanceCombo:setX(x + meetLabelW)
+        self.meetDistanceCombo:setY(my)
+        self.meetDistanceCombo:setWidth(meetW)
+        self.meetDistanceCombo:setHeight(BTN_H)
+        my = my + BTN_H + 3
+    else
+        self.meetDistanceLabelY = nil
+        if self.meetDistanceCombo ~= nil then self.meetDistanceCombo:setVisible(false) end
+    end
+    if showHint then
+        self.meetHintLabelY = my + 3
+        self.meetHintCombo:setVisible(true)
+        self.meetHintCombo:setX(x + meetLabelW)
+        self.meetHintCombo:setY(my)
+        self.meetHintCombo:setWidth(meetW)
+        self.meetHintCombo:setHeight(BTN_H)
+        my = my + BTN_H + 3
+    else
+        self.meetHintLabelY = nil
+        self.meetHintCombo:setVisible(false)
+    end
+    self.meetBottom = my
 end
 
 function BridgePregameScreen:layout()
@@ -1566,6 +1785,25 @@ function BridgePregameScreen:render()
     if self.aimLabelY ~= nil then
         local label = tr("OptAimSense", "Line-of-fire caution")
         self:drawText(label, self.rightX, self.aimLabelY, 0.82, 0.82, 0.82, 1, UIFont.Small)
+    end
+    if self.meetHeadingY ~= nil then
+        self:drawText(self.meetTitle or tr("PregameMeetTitle", "How we meet"), self.rightX, self.meetHeadingY, 0.95, 0.95, 0.95, 1, UIFont.Small)
+        self:drawRect(self.rightX, self.meetDividerY, self.rightW, 1, 0.45, 0.55, 0.55, 0.55)
+    end
+    if self.meetModeLabelY ~= nil then
+        self:drawText(self.meetWhenText or "When", self.rightX, self.meetModeLabelY, 0.82, 0.82, 0.82, 1, UIFont.Small)
+    end
+    if self.meetDaysLabelY ~= nil then
+        self:drawText(self.meetDaysText or "Days", self.rightX, self.meetDaysLabelY, 0.82, 0.82, 0.82, 1, UIFont.Small)
+    end
+    if self.meetWhereLabelY ~= nil then
+        self:drawText(self.meetWhereText or "Where", self.rightX, self.meetWhereLabelY, 0.82, 0.82, 0.82, 1, UIFont.Small)
+    end
+    if self.meetDistanceLabelY ~= nil then
+        self:drawText(self.meetDistanceText or "Distance", self.rightX, self.meetDistanceLabelY, 0.82, 0.82, 0.82, 1, UIFont.Small)
+    end
+    if self.meetHintLabelY ~= nil then
+        self:drawText(self.meetHintText or "Hint", self.rightX, self.meetHintLabelY, 0.82, 0.82, 0.82, 1, UIFont.Small)
     end
 end
 
@@ -1997,6 +2235,39 @@ function BridgePregameScreen:onAimSense(combo)
     local mode = cleanAimMode(combo:getSelectedData())
     if mode ~= nil then opts.aimSense = mode end
     self.draft.options = opts
+end
+
+function BridgePregameScreen:onMeetMode(combo)
+    if self.filling or self.draft == nil then return end
+    local value = cleanMeetMode(combo:getSelectedData())
+    self.draft.meetMode = value
+    if value == 3 then
+        self.draft.meetDays = cleanMeetDays(self.draft.meetDays)
+        if self.meetDaysEntry ~= nil then self.meetDaysEntry:setText(tostring(self.draft.meetDays)) end
+    end
+    self:layout()
+end
+
+function BridgePregameScreen.onMeetDaysText(screen, box)
+    if screen == nil or box == nil or screen.filling or screen.draft == nil then return end
+    local n = tonumber(box:getText())
+    if n ~= nil and n >= 1 then screen.draft.meetDays = math.floor(n) end
+end
+
+function BridgePregameScreen:onMeetWhere(combo)
+    if self.filling or self.draft == nil then return end
+    self.draft.meetTown = cleanMeetTown(combo:getSelectedData())
+    self:layout()
+end
+
+function BridgePregameScreen:onMeetDistance(combo)
+    if self.filling or self.draft == nil then return end
+    self.draft.meetDistance = cleanMeetDistance(combo:getSelectedData())
+end
+
+function BridgePregameScreen:onMeetHint(combo)
+    if self.filling or self.draft == nil then return end
+    self.draft.meetHint = cleanMeetHint(combo:getSelectedData())
 end
 
 function BridgePregameScreen:onMakeup(combo)

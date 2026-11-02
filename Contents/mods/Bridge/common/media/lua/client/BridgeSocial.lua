@@ -334,6 +334,8 @@ function BridgeSocial.deed(kind)
         local heal = mult(2, relMult())
         r.f = clamp(r.f + heal, -100, 100)
         popRel(heal, 0)
+    elseif kind == "meet" then
+        gain(r, 4, 0)
     end
     BridgeSocial.save(true)
 end
@@ -1703,6 +1705,7 @@ end
 
 
 function BridgeSocial.onCombatKill(z)
+    if BridgeMeet ~= nil and type(BridgeMeet.quietCombat) == "function" and BridgeMeet.quietCombat() then return end
     local body = Bridge.body
     if z == nil or body == nil or z == body then return end
     if not engaged() then return end

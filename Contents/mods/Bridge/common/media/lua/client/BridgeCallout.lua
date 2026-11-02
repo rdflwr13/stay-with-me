@@ -464,6 +464,7 @@ end
 
 
 local function say(event)
+    if BridgeMeet ~= nil and type(BridgeMeet.quietCombat) == "function" and BridgeMeet.quietCombat() then return false end
     if carQuiet() then dropCarLines() return false end
     if BridgeCallout.ENABLED == 0 then return false end
     if trySay(event) then return true end

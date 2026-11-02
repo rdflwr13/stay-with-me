@@ -1,5 +1,7 @@
 {
     "Sandbox_StayWithMe": "Stay With Me",
+    "Sandbox_StayWithMe_ForceSpawnNearPlayer": "Force spawn near player (debug)",
+    "Sandbox_StayWithMe_ForceSpawnNearPlayer_tooltip": "Debug option. When enabled, the companion is respawned beside the player if missing and forced into follow mode. Use only for testing.",
     "Sandbox_StayWithMe_RelationshipGainMultiplier": "Relationship Gain Multiplier",
     "Sandbox_StayWithMe_RelationshipGainMultiplier_tooltip": "Scales how fast friendship and romance grow from all sources. Applied after the daily caps and only to gains, never to losses. 1.0 = default.",
     "Sandbox_StayWithMe_DailyFriendCap": "Daily Friendship Cap",
