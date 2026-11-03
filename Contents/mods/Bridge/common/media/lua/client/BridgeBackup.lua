@@ -28,7 +28,7 @@ BridgeBackup = BridgeBackup or {}
 local VERSION = "SWMBK1"
 local HOLD = 1200
 local CHECK_EVERY = 60
-local WRITE_GAP = 30
+local WRITE_GAP = 600
 local FLUSH_EVERY = 3600
 local ISSUED_KEY = "NotAloneIssued"
 
@@ -739,6 +739,7 @@ function BridgeBackup.onSave()
     if not active() or BridgeBackup.key == nil then return end
     local md = Bridge ~= nil and Bridge.world or nil
     if md == nil then return end
+    if BridgeBackup.dirty then BridgeBackup.write(md, signature(md)) end
     md.backupSeq = BridgeBackup.seq
     BridgeBackup.base = BridgeBackup.seq
 end

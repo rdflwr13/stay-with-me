@@ -504,6 +504,7 @@ function BridgeInventory.dropGone(b)
         note("dropGone " .. table.concat(dropped, ","))
     end
     if changed then pcall(function() BridgeInventory.refreeze(b) end) end
+    if changed and type(BridgeInventory.resetWornBags) == "function" then pcall(BridgeInventory.resetWornBags, b) end
     return changed
 end
 
@@ -1414,7 +1415,20 @@ local function warnOnce(text)
 end
 
 
+local wornBagBody, wornBagAt, wornBagList = nil, -1, nil
+
+function BridgeInventory.resetWornBags(b)
+    if b == nil or wornBagBody == b then
+        wornBagBody, wornBagAt, wornBagList = nil, -1, nil
+    end
+end
+
 function BridgeInventory.wornBags(b)
+    local now = Bridge ~= nil and tonumber(Bridge.time) or nil
+    now = now or 0
+    if b ~= nil and wornBagBody == b and wornBagList ~= nil and now - wornBagAt < 30 then
+        return wornBagList
+    end
     local bags = {}
     pcall(function()
         local items = b:getInventory():getItems()
@@ -1425,6 +1439,7 @@ function BridgeInventory.wornBags(b)
             end
         end
     end)
+    wornBagBody, wornBagAt, wornBagList = b, now, bags
     return bags
 end
 
@@ -1467,11 +1482,12 @@ function BridgeInventory.addButton(page)
 
 
 
+    local bags = BridgeInventory.wornBags(b)
     local open = false
     pcall(function()
         local inv = b:getInventory()
         if page.inventory == inv then open = true end
-        for _, bag in ipairs(BridgeInventory.wornBags(b)) do
+        for _, bag in ipairs(bags) do
             if page.inventory == bag:getInventory() then open = true end
         end
     end)
@@ -1479,7 +1495,7 @@ function BridgeInventory.addButton(page)
     if BridgeInventory.shown then limit = open and BridgeInventory.keepOpen or BridgeInventory.keep end
     if d > limit or math.abs(b:getZ() - red:getZ()) >= 1 then
         BridgeInventory.shown = false
-        BridgeInventory.note(string.format("hidden: too far (%.1f > %.1f)", d, limit))
+        BridgeInventory.note("hidden: too far")
         return
     end
     BridgeInventory.shown = true
@@ -1507,7 +1523,7 @@ function BridgeInventory.addButton(page)
             if type(bcap) ~= "number" or bcap <= 0 then bcap = BridgeInventory.herCapacity() end
             button.capacity = bcap
         end
-        for _, bag in ipairs(BridgeInventory.wornBags(b)) do
+        for _, bag in ipairs(bags) do
             local bagInv = bag:getInventory()
             if not has(bagInv) then
                 bagInv:setExplored(true)
@@ -3952,6 +3968,7 @@ function BridgeInventory.applyRecord(item, rec) BridgeItems.apply(item, rec) end
 
 
 function BridgeInventory.restore(b, list)
+    if type(BridgeInventory.resetWornBags) == "function" then pcall(BridgeInventory.resetWornBags, b) end
     note("restore " .. tostring(#list))
     if Bridge ~= nil then
         if type(Bridge.invalidateBodyCaches) == "function" then Bridge.invalidateBodyCaches(b) end

@@ -4004,8 +4004,18 @@ local function updateZombieBody(body)
         else
             snapshotDue = Bridge.zombieTicks % 30 == 15
         end
+        local transferActive = BridgeTask ~= nil and BridgeTask.active == true
+            and (BridgeTask.kind == "deposit" or BridgeTask.kind == "lootArea")
+        local transferSnap = false
+        if transferActive then
+            Bridge.transferSnapPending = true
+            snapshotDue = false
+        elseif Bridge.transferSnapPending == true then
+            Bridge.transferSnapPending = nil
+            transferSnap = true
+        end
         local okSnap, list = nil, nil
-        if snapshotDue or Bridge.itemsDirty == true then
+        if snapshotDue or transferSnap or Bridge.itemsDirty == true then
             Bridge.itemsDirty = nil
             okSnap, list = pcall(snapshotBody, body)
         end

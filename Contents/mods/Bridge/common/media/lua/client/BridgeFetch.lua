@@ -4,6 +4,9 @@ BridgeFetch = BridgeFetch or {}
 
 local MARGIN = 6
 local PENDING_TIMEOUT = 240
+BridgeFetch.AMMO_SCAN_CAP = 240
+BridgeFetch.AMMO_CACHE_TTL = 120
+BridgeFetch.ammoCache = BridgeFetch.ammoCache or {}
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeFetch] " .. tostring(text)) end end
 
@@ -385,10 +388,33 @@ function BridgeFetch.findItem(needId)
 end
 
 
+function BridgeFetch.invalidateAmmoCache()
+    BridgeFetch.ammoCache = {}
+end
+
+local function ammoCacheKey(gun, minRounds)
+    local g = "?"
+    pcall(function() g = gun:getFullType() or gun:getType() end)
+    local h = nil
+    pcall(function() h = BridgeHome ~= nil and BridgeHome.get() or nil end)
+    local hk = "none"
+    if h ~= nil then
+        hk = string.format("%s:%s:%s:%s:%s", tostring(h.x), tostring(h.y), tostring(h.z), tostring(h.w), tostring(h.h))
+    end
+    return tostring(g) .. "|" .. hk .. "|" .. tostring(minRounds or 0)
+end
+
 function BridgeFetch.findAmmo(gun, minRounds)
     if gun == nil then return nil end
     minRounds = tonumber(minRounds) or 0
-    local targets = homeTargets(100000, 100000)
+    local cacheKey = ammoCacheKey(gun, minRounds)
+    local hit = BridgeFetch.ammoCache[cacheKey]
+    local now = Bridge.time or 0
+    if hit ~= nil and now - (hit.at or 0) < BridgeFetch.AMMO_CACHE_TTL then
+        return hit.item, hit.kind, hit.value
+    end
+    local cap = BridgeFetch.AMMO_SCAN_CAP or 240
+    local targets = homeTargets(cap, cap)
     if targets == nil then return nil end
     local b = Bridge.body
     local bx, by, bz = nil, nil, nil
@@ -469,6 +495,7 @@ function BridgeFetch.findAmmo(gun, minRounds)
             end
         end
     end
+    BridgeFetch.ammoCache[cacheKey] = { at = now, item = best, kind = bestKind, value = bestValue }
     return best, bestKind, bestValue
 end
 
@@ -486,7 +513,8 @@ local function homeLoose(gun, want)
     if #types == 0 then return {}, 0, nil end
     local rank = {}
     for i, t in ipairs(types) do rank[t] = i end
-    local targets = homeTargets(100000, 100000)
+    local cap = BridgeFetch.AMMO_SCAN_CAP or 240
+    local targets = homeTargets(cap, cap)
     if targets == nil then return {}, 0, nil end
     local bx, by, bz = nil, nil, nil
     pcall(function() bx, by, bz = b:getX(), b:getY(), math.floor(b:getZ()) end)
@@ -615,6 +643,7 @@ function BridgeFetch.pullLoose(gun, want)
     end
     if moved <= 0 then return "noroom" end
     pcall(function() if Bridge.saveOutfit ~= nil then Bridge.saveOutfit() end end)
+    BridgeFetch.invalidateAmmoCache()
     log(string.format("home ammo: pulled %d loose %s from home (need %d, had %d)",
         moved, tostring(full), n, total))
     return "moved"
@@ -633,6 +662,7 @@ end
 function BridgeFetch.pullItem(item, label, opts)
     local b = Bridge.body
     local red = BridgeData.owner()
+    if label == "ammo" then BridgeFetch.invalidateAmmoCache() end
     if item == nil then return "absent" end
     if b == nil or red == nil then return "unavailable" end
     local dest = nil
@@ -804,6 +834,7 @@ function BridgeFetch.jobMissing(kind, targets)
             if need.cut then out[#out + 1] = "cutTool" end
         end
     end)
+    if #out > 0 then BridgeFetch.invalidateAmmoCache() end
     return out
 end
 
