@@ -899,6 +899,7 @@ end
 
 
 function BridgeInventory.afterChange(b, item, pre, kind)
+    if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
     local can, why, wait = BridgeInventory.canGesture(b)
     if not can and not wait then
         if #BridgeInventory.gestures > 0 then BridgeInventory.gestureFlush(b, "cannot gesture now") end
@@ -3938,6 +3939,10 @@ function BridgeInventory.applyRecord(item, rec) BridgeItems.apply(item, rec) end
 
 function BridgeInventory.restore(b, list)
     note("restore " .. tostring(#list))
+    if Bridge ~= nil then
+        if type(Bridge.invalidateBodyCaches) == "function" then Bridge.invalidateBodyCaches(b) end
+        if type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() else Bridge.itemsDirty = true end
+    end
     BridgeInventory.restoring = true
     local worn, hands, bag = 0, 0, 0
     local inv = b:getInventory()
@@ -4242,6 +4247,7 @@ end
 
 
 function BridgeInventory.giveDirect(item, why)
+    if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
     local b = body()
     local red = BridgeData.owner()
     if not Bridge.mp or b == nil or red == nil or item == nil then return false end

@@ -39,6 +39,8 @@ BridgeBackup.slot = 1
 BridgeBackup.dirty = false
 BridgeBackup.lastWrite = -99999
 BridgeBackup.sig = nil
+BridgeBackup.counter = 0
+BridgeBackup.sigCounter = nil
 BridgeBackup.items = {}
 BridgeBackup.held = {}
 BridgeBackup.writes = 0
@@ -224,6 +226,7 @@ end
 
 function BridgeBackup.noteItems(body, encoded, sig, n)
     if not active() or BridgeBackup.key == nil or body == nil then return end
+    BridgeBackup.counter = (BridgeBackup.counter or 0) + 1
     local who = BridgeData.me()
     if who == nil then return end
     encoded = BridgeItems.text(encoded) or ""
@@ -430,6 +433,7 @@ function BridgeBackup.write(md, sig)
     BridgeBackup.seq = seq
     BridgeBackup.slot = (BridgeBackup.slot == 1) and 2 or 1
     BridgeBackup.sig = sig
+    BridgeBackup.sigCounter = BridgeBackup.counter or 0
     BridgeBackup.dirty = false
     BridgeBackup.lastWrite = Bridge.time
     BridgeBackup.writes = BridgeBackup.writes + 1
@@ -676,7 +680,13 @@ function BridgeBackup.tick()
             if type(rec) == "table" and rec.bkIds ~= nil then pcall(BridgeBackup.dedupe, rec) end
         end
     end
-    if Bridge.every(CHECK_EVERY) then
+    local heavy
+    if BridgePerf ~= nil and type(BridgePerf.every) == "function" then
+        heavy = BridgePerf.every("backup", 180)
+    else
+        heavy = Bridge.every(CHECK_EVERY)
+    end
+    if heavy then
 
         if Bridge.alive() and Bridge.kind == "zombie" then
             local who = BridgeData.me()
@@ -694,8 +704,11 @@ function BridgeBackup.tick()
                 end
             end
         end
-        local sig = signature(md)
-        if sig ~= BridgeBackup.sig then BridgeBackup.dirty = true end
+        if BridgeBackup.counter ~= (BridgeBackup.sigCounter or -1) or BridgeBackup.dirty then
+            BridgeBackup.sigCounter = BridgeBackup.counter or 0
+            local sig = signature(md)
+            if sig ~= BridgeBackup.sig then BridgeBackup.dirty = true end
+        end
     end
 
     if Bridge.every(FLUSH_EVERY, 30) and BridgeBackup.flushed ~= BridgeBackup.fullState(md) then

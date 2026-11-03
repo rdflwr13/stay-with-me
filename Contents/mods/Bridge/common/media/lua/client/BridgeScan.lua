@@ -8,6 +8,38 @@ local frame = nil
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeScan] " .. tostring(text)) end end
 
+local function maxAge()
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then
+        return BridgePerf.age("scanFrame", 30)
+    end
+    return BridgeScan.MAX_AGE
+end
+
+local function readPos(z)
+    return z:getX(), z:getY(), z:getZ()
+end
+
+local function readAliveHp(z)
+    return z:isAlive() == true, z:getHealth()
+end
+
+local function readBodyVar(z, var)
+    return z:getVariableBoolean(var) == true
+end
+
+local function readHarmless(z)
+    return BridgeData.harmless(z) == true
+end
+
+local function readAggro(z, red)
+    return z:getTarget() == red
+end
+
+local function readAction(z)
+    local st = z:getActionStateName()
+    return st, (z:isProne() or z:isCrawling() or st == "onground" or st == "sitonground")
+end
+
 function BridgeScan.invalidate(reason)
     frame = nil
 end
@@ -47,9 +79,8 @@ local function build(body, red)
         for i = 0, list:size() - 1 do
             local z = list:get(i)
             if z ~= nil then
-                local zx, zy, zz = nil, nil, nil
-                pcall(function() zx, zy, zz = z:getX(), z:getY(), z:getZ() end)
-                if zx ~= nil then
+                local okPos, zx, zy, zz = pcall(readPos, z)
+                if okPos and zx ~= nil then
                     local e = { z = z, zz = zz }
                     e.dpx, e.dpy = zx - ox, zy - oy
                     e.dcx, e.dcy = zx - cx, zy - cy
@@ -59,19 +90,42 @@ local function build(body, red)
                     e.dc = math.sqrt(e.dc2)
                     e.zp = zz - oz
                     e.zc = zz - cz
-                    local alive, hp = false, 0
-                    pcall(function() alive = z:isAlive() == true hp = z:getHealth() end)
-                    e.alive = alive and (tonumber(hp) or 0) > 0
+                    local okA, alive, hp = pcall(readAliveHp, z)
+                    e.alive = okA and alive == true and (tonumber(hp) or 0) > 0
                     e.comp = false
-                    pcall(function() e.comp = z:getVariableBoolean(var) == true end)
-                    if not e.comp and BridgeZScan ~= nil and type(BridgeZScan.isCompanion) == "function" then
-                        local ok, v = pcall(BridgeZScan.isCompanion, z)
-                        if ok then e.comp = v == true end
+                    local memoComp = nil
+                    if BridgeZScan ~= nil and type(BridgeZScan.cachedCompanion) == "function" then
+                        memoComp = BridgeZScan.cachedCompanion(z)
+                    end
+                    if memoComp ~= nil then
+                        e.comp = memoComp
+                    else
+                        local okB, bv = pcall(readBodyVar, z, var)
+                        if okB then e.comp = bv end
+                        if not e.comp and BridgeZScan ~= nil and type(BridgeZScan.isCompanion) == "function" then
+                            local ok, v = pcall(BridgeZScan.isCompanion, z)
+                            if ok then e.comp = v == true end
+                        end
                     end
                     e.harm = false
-                    pcall(function() e.harm = BridgeData.harmless(z) == true end)
+                    local memoHarm = nil
+                    if BridgeZScan ~= nil and type(BridgeZScan.cachedHarmless) == "function" then
+                        memoHarm = BridgeZScan.cachedHarmless(z)
+                    end
+                    if memoHarm ~= nil then
+                        e.harm = memoHarm
+                    else
+                        local okH, hv = pcall(readHarmless, z)
+                        if okH then e.harm = hv == true end
+                    end
                     e.remote = false
-                    if BridgeZScan ~= nil and type(BridgeZScan.isRemote) == "function" then
+                    local memoRemote = nil
+                    if BridgeZScan ~= nil and type(BridgeZScan.cachedRemote) == "function" then
+                        memoRemote = BridgeZScan.cachedRemote(z)
+                    end
+                    if memoRemote ~= nil then
+                        e.remote = memoRemote
+                    elseif BridgeZScan ~= nil and type(BridgeZScan.isRemote) == "function" then
                         local ok, v = pcall(BridgeZScan.isRemote, z)
                         if ok then e.remote = v == true end
                     end
@@ -80,14 +134,15 @@ local function build(body, red)
                     e.seenC = seenBy(body, z)
                     e.seenR = e.seenP or e.seenC
                     e.aggro = false
-                    pcall(function() e.aggro = z:getTarget() == red end)
+                    local okG, aggro = pcall(readAggro, z, red)
+                    if okG then e.aggro = aggro == true end
                     e.state = "?"
                     e.down = false
-                    pcall(function()
-                        e.state = z:getActionStateName()
-                        e.down = z:isProne() or z:isCrawling()
-                            or e.state == "onground" or e.state == "sitonground"
-                    end)
+                    local okS, st, down = pcall(readAction, z)
+                    if okS then
+                        e.state = st
+                        e.down = down == true
+                    end
                     entries[#entries + 1] = e
                 end
             end
@@ -99,6 +154,8 @@ local function build(body, red)
         entries = entries,
         ox = ox, oy = oy, oz = oz,
         cx = cx, cy = cy, cz = cz,
+        targetWasNil = BridgeFight == nil or BridgeFight.target == nil,
+        bodyZ = body ~= nil and body:getZ() or nil,
     }
     function f.zombies()
         local out = {}
@@ -173,13 +230,24 @@ function BridgeScan.frame(body, red)
     pcall(function() cell = getCell() end)
     if cell == nil then return nil end
     local tick = (Bridge ~= nil and tonumber(Bridge.tick)) or 0
-    if frame ~= nil and frame.cell == cell and (tick - frame.tick) < BridgeScan.MAX_AGE then
+    if frame ~= nil and frame.cell == cell and (tick - frame.tick) < maxAge() then
         local stale = false
         if red ~= nil then
             pcall(function()
                 if red:isDead() then stale = true end
                 if red:getVehicle() ~= nil then stale = true end
             end)
+        end
+        local target = BridgeFight ~= nil and BridgeFight.target or nil
+        if frame.targetWasNil == true and target ~= nil then stale = true end
+        frame.targetWasNil = target == nil
+        if body ~= nil then
+            local bz = nil
+            pcall(function() bz = body:getZ() end)
+            if bz ~= nil then
+                if frame.bodyZ ~= nil and bz ~= frame.bodyZ then stale = true end
+                frame.bodyZ = bz
+            end
         end
         if not stale then return frame end
     end

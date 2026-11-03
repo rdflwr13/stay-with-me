@@ -184,12 +184,81 @@ local FOLLOW_DIST = 2.5
 local BODY_VAR = "NotAloneBody"
 Bridge.BODY_VAR = BODY_VAR
 
+Bridge.bodyVarCache = Bridge.bodyVarCache or setmetatable({}, { __mode = "k" })
+Bridge.outfitCache = Bridge.outfitCache or setmetatable({}, { __mode = "k" })
+
+local function perfAge(kind, fallback)
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then
+        return BridgePerf.age(kind, fallback)
+    end
+    return 1
+end
+
+Bridge.applied = {}
+
+function Bridge.resetApplied()
+    Bridge.applied = {}
+end
+
+local function applyOnce(key, fn)
+    if Bridge.applied[key] == true then return end
+    local ok = pcall(fn)
+    if ok then Bridge.applied[key] = true end
+end
+
+function Bridge.itemsChanged()
+    Bridge.itemsDirty = true
+    if BridgeBackup ~= nil then
+        BridgeBackup.counter = (tonumber(BridgeBackup.counter) or 0) + 1
+    end
+    if BridgeGunfight ~= nil and type(BridgeGunfight.invalidateAmmoPresence) == "function" then
+        BridgeGunfight.invalidateAmmoPresence()
+    end
+end
+
+function Bridge.invalidateBodyCaches(z)
+    if z == nil then
+        Bridge.bodyVarCache = setmetatable({}, { __mode = "k" })
+        Bridge.outfitCache = setmetatable({}, { __mode = "k" })
+        return
+    end
+    Bridge.bodyVarCache[z] = nil
+    Bridge.outfitCache[z] = nil
+end
+
+local function bodyCacheOn()
+    if BridgePerf ~= nil and type(BridgePerf.on) == "function" then return BridgePerf.on("bodyCache") end
+    return true
+end
+
 local function zombieBodyVar(z)
-    return z:getVariableBoolean(BODY_VAR)
+    local cacheOn = bodyCacheOn()
+    if cacheOn and BridgeZScan ~= nil and type(BridgeZScan.cachedBodyVar) == "function" then
+        local hit = BridgeZScan.cachedBodyVar(z)
+        if hit ~= nil then return hit end
+    end
+    local now = Bridge.tick or 0
+    local ttl = perfAge("bodyVar", 3)
+    local c = cacheOn and Bridge.bodyVarCache[z] or nil
+    if c ~= nil and now - c.tick < ttl then return c.value end
+    local v = nil
+    pcall(function() v = z:getVariableBoolean(BODY_VAR) == true end)
+    if v == nil then return nil end
+    if cacheOn then Bridge.bodyVarCache[z] = { tick = now, value = v } end
+    return v
 end
 
 local function zombieOutfitId(z)
-    return z:getPersistentOutfitID()
+    local now = Bridge.tick or 0
+    local ttl = perfAge("outfit", 5)
+    local cacheOn = bodyCacheOn()
+    local c = cacheOn and Bridge.outfitCache[z] or nil
+    if c ~= nil and now - c.tick < ttl then return c.value end
+    local v = nil
+    pcall(function() v = z:getPersistentOutfitID() end)
+    if v == nil then return nil end
+    if cacheOn then Bridge.outfitCache[z] = { tick = now, value = v } end
+    return v
 end
 
 
@@ -508,6 +577,7 @@ end
 
 function Bridge.hideBody(z, hide)
     if z == nil then return end
+    Bridge.invalidateBodyCaches(z)
     pcall(function() z:setInvisible(hide == true, true) end)
 
 
@@ -540,6 +610,8 @@ function Bridge.keepHidden(body, where)
 end
 
 local function humanize(body)
+    Bridge.invalidateBodyCaches(body)
+    Bridge.resetApplied()
     pcall(BridgeVoice.applyPrefix, body)
     body:setVariable(BODY_VAR, true)
 
@@ -620,7 +692,8 @@ end
 
 
 function Bridge.unhumanize(z, pooled)
-
+    Bridge.invalidateBodyCaches(z)
+    Bridge.resetApplied()
 
     pcall(function() BridgeInventory.forgetBody(z) end)
     for _, name in ipairs({ "WalkSpeed", "RunSpeed", "LimpSpeed", "ZombieHitReaction", "NoLungeTarget", "NotAloneWeapon", "NotAloneRifle",
@@ -688,6 +761,7 @@ end
 
 
 function Bridge.releaseForeign(z)
+    Bridge.invalidateBodyCaches(z)
     for _, name in ipairs({ "NotAloneWeapon", "NotAloneRifle", "NotAloneStride", "NotAloneAnimOld", "NotAloneSneak" }) do
         pcall(function() z:clearVariable(name) end)
     end
@@ -724,6 +798,8 @@ end
 
 
 local function release(z, pooled)
+    Bridge.invalidateBodyCaches(z)
+    Bridge.resetApplied()
     if BridgeData.foreign(z) then Bridge.releaseForeign(z) else Bridge.unhumanize(z, pooled) end
 end
 
@@ -1539,6 +1615,8 @@ end
 
 
 function Bridge.adoptServerBody(zombie)
+    Bridge.invalidateBodyCaches(zombie)
+    Bridge.resetApplied()
     if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.patchBody, zombie) end
     pcall(function() humanize(zombie) end)
     pcall(function() BridgeWash.stop("new body") end)
@@ -3647,6 +3725,71 @@ local function lookShare(body)
 end
 Bridge.lookShare = lookShare
 
+local function readAlifeMarks(body)
+    local keys = {}
+    local data = body:getModData()
+    if type(data) == "table" then
+        for k in pairs(data) do
+            if string.find(tostring(k), "ALife", 1, true) ~= nil then keys[#keys + 1] = tostring(k) end
+        end
+    end
+    table.sort(keys)
+    local text = table.concat(keys, ",")
+    if text ~= (Bridge.alifeMarks or "") then
+        vlog("alife marks on body: [" .. text .. "] state=" .. tostring(body:getActionStateName()))
+        Bridge.alifeMarks = text
+    end
+end
+
+local function clearBodyFlags(body)
+    if body:isBecomeCrawler() then body:setBecomeCrawler(false) end
+    if body:isCrawling() then
+        body:setCrawler(false)
+        body:setCanWalk(true)
+    end
+    if body:isFakeDead() then body:setFakeDead(false) end
+end
+
+local function fixBodyOutfit(body)
+    local fixed = nil
+    if not body:isPersistentOutfitInit() then
+        body:setPersistentOutfitID(body:getPersistentOutfitID(), true)
+        fixed = "outfit init"
+    end
+    if body:shouldDressInRandomOutfit() then
+        body:setDressInRandomOutfit(false)
+        fixed = (fixed and (fixed .. ", ") or "") .. "random outfit"
+    end
+    if fixed ~= nil and Bridge.time - (Bridge.outfitFixLogAt or -99999) >= 600 then
+        Bridge.outfitFixLogAt = Bridge.time
+        log("her body was set to be re-dressed (" .. fixed .. "), kept hers: another mod?")
+    end
+end
+
+local function clearBodyEat(body)
+    body:setBodyToEat(nil)
+    if body:getEatBodyTarget() ~= nil then body:setEatBodyTarget(nil, false) end
+end
+
+local function clearForceFakeDead(body)
+    if body:isForceFakeDead() then body:setForceFakeDead(false) end
+end
+
+local function readBodySkin(body)
+    return body:getHumanVisual():getSkinTexture()
+end
+
+local function refreshWornModel(body)
+    BridgeInventory.applyWorn(body)
+    body:resetModelNextFrame()
+    body:resetModel()
+    Bridge.reassertHair(body)
+end
+
+local function snapshotBody(body)
+    return BridgeInventory.snapshot(body)
+end
+
 local function updateZombieBody(body)
     if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
     Bridge.zombieTicks = Bridge.zombieTicks + 1
@@ -3670,35 +3813,13 @@ local function updateZombieBody(body)
     handProbe(body, "frame start")
 
     if Bridge.verbose and Bridge.every(60, 40) then
-        pcall(function()
-            local keys = {}
-            local data = body:getModData()
-            if type(data) == "table" then
-                for k, _ in pairs(data) do
-                    if string.find(tostring(k), "ALife", 1, true) ~= nil then keys[#keys + 1] = tostring(k) end
-                end
-            end
-            table.sort(keys)
-            local text = table.concat(keys, ",")
-            if text ~= (Bridge.alifeMarks or "") then
-                vlog("alife marks on body: [" .. text .. "] state=" .. tostring(body:getActionStateName()))
-                Bridge.alifeMarks = text
-            end
-        end)
+        pcall(readAlifeMarks, body)
     end
     traceState(body)
 
-    pcall(function() body:setShootable(false) end)
+    applyOnce("shootable", function() body:setShootable(false) end)
 
-
-    pcall(function()
-        if body:isBecomeCrawler() then body:setBecomeCrawler(false) end
-        if body:isCrawling() then
-            body:setCrawler(false)
-            body:setCanWalk(true)
-        end
-        if body:isFakeDead() then body:setFakeDead(false) end
-    end)
+    pcall(clearBodyFlags, body)
     local hr = Bridge.hitRestore
     if hr ~= nil then
         Bridge.hitRestore = nil
@@ -3711,7 +3832,7 @@ local function updateZombieBody(body)
             end)
         end
     end
-    body:setUseless(true)
+    applyOnce("useless", function() body:setUseless(true) end)
 
 
 
@@ -3720,32 +3841,15 @@ local function updateZombieBody(body)
 
 
 
-    pcall(function()
-        local fixed = nil
-        if not body:isPersistentOutfitInit() then
-            body:setPersistentOutfitID(body:getPersistentOutfitID(), true)
-            fixed = "outfit init"
-        end
-        if body:shouldDressInRandomOutfit() then
-            body:setDressInRandomOutfit(false)
-            fixed = (fixed and (fixed .. ", ") or "") .. "random outfit"
-        end
-        if fixed ~= nil and Bridge.time - (Bridge.outfitFixLogAt or -99999) >= 600 then
-            Bridge.outfitFixLogAt = Bridge.time
-            log("her body was set to be re-dressed (" .. fixed .. "), kept hers: another mod?")
-        end
-    end)
+    pcall(fixBodyOutfit, body)
     body:setTarget(nil)
 
 
 
 
-    pcall(function()
-        body:setBodyToEat(nil)
-        if body:getEatBodyTarget() ~= nil then body:setEatBodyTarget(nil, false) end
-    end)
+    applyOnce("eat", function() clearBodyEat(body) end)
 
-    if not Bridge.mortal then pcall(function() body:setAvoidDamage(true) end) end
+    if not Bridge.mortal then applyOnce("avoidDamage", function() body:setAvoidDamage(true) end) end
     Bridge.noFire(body)
 
 
@@ -3766,9 +3870,7 @@ local function updateZombieBody(body)
 
 
 
-    pcall(function()
-        if body:isForceFakeDead() then body:setForceFakeDead(false) end
-    end)
+    pcall(clearForceFakeDead, body)
     if Bridge.zombieTicks % 15 == 0 then Bridge.weaponVar(body) end
     do
         local sneak = false
@@ -3847,18 +3949,13 @@ local function updateZombieBody(body)
     local modelBusy = false
     pcall(function() modelBusy = BridgeInventory.modelBusy(body) end)
     if Bridge.time < BridgeInventory.redressUntil and Bridge.zombieTicks % 30 == 0 and not modelBusy then
-        pcall(function()
-            BridgeInventory.applyWorn(body)
-            body:resetModelNextFrame()
-            body:resetModel()
-            Bridge.reassertHair(body)
-        end)
+        pcall(refreshWornModel, body)
     end
 
 
 
 
-    if Bridge.zombieTicks % 30 == 15 then
+    if Bridge.zombieTicks % 30 == 15 or Bridge.itemsDirty == true then
         local ok, now = pcall(function() return BridgeInventory.wornList(body) end)
 
 
@@ -3867,12 +3964,7 @@ local function updateZombieBody(body)
         if lost and not modelBusy then Bridge.wornSeen = nil end
         if ok and now ~= Bridge.wornSeen and not modelBusy then
             Bridge.wornSeen = now
-            pcall(function()
-                BridgeInventory.applyWorn(body)
-                body:resetModelNextFrame()
-                body:resetModel()
-                Bridge.reassertHair(body)
-            end)
+            pcall(refreshWornModel, body)
         end
 
 
@@ -3880,19 +3972,24 @@ local function updateZombieBody(body)
         local okGone, gone = pcall(function() return BridgeInventory.dropGone(body) end)
         handProbe(body, "dropGone")
         if okGone and gone and not modelBusy then
-            pcall(function()
-                BridgeInventory.applyWorn(body)
-                body:resetModelNextFrame()
-                body:resetModel()
-                Bridge.reassertHair(body)
-            end)
+            pcall(refreshWornModel, body)
         end
 
 
 
 
 
-        local okSnap, list = pcall(function() return BridgeInventory.snapshot(body) end)
+        local snapshotDue
+        if BridgePerf ~= nil and type(BridgePerf.every) == "function" then
+            snapshotDue = BridgePerf.every("snapshot", 60)
+        else
+            snapshotDue = Bridge.zombieTicks % 30 == 15
+        end
+        local okSnap, list = nil, nil
+        if snapshotDue or Bridge.itemsDirty == true then
+            Bridge.itemsDirty = nil
+            okSnap, list = pcall(snapshotBody, body)
+        end
         local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
         local transferBusy = type(BridgeInventory.herTransferBusy) == "function" and BridgeInventory.herTransferBusy()
         if okSnap and not showering and not transferBusy then
@@ -4045,8 +4142,8 @@ local function updateZombieBody(body)
 
 
     if Bridge.zombieTicks % 30 == 0 and Bridge.hiddenSince == nil then
-        local skin = nil
-        pcall(function() skin = body:getHumanVisual():getSkinTexture() end)
+        local okSkin, skin = pcall(readBodySkin, body)
+        if not okSkin then skin = nil end
         if skin ~= nil and tostring(skin) ~= BridgeData.skinOf(Bridge.store) then
             pcall(function() BridgeInventory.skin(body, Bridge.store) end)
             pcall(function() body:resetModelNextFrame() end)
@@ -5099,7 +5196,8 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     friendselftest = true, light = true,
-    exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true, meet = true }
+    exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true, meet = true,
+    perf = true, gunstate = true }
 
 
 
@@ -5853,6 +5951,17 @@ function Bridge.run(line)
     if cmd == "zsselftest" then
         if BridgeZScan == nil then return "zscan not loaded" end
         return BridgeZScan.selftest()
+    end
+
+    if cmd == "gunstate" then
+        if BridgeGunfight == nil or type(BridgeGunfight.dump) ~= "function" then return "gunfight not loaded" end
+        return BridgeGunfight.dump()
+    end
+
+    if cmd == "perf" then
+        if BridgePerf == nil then return "perf not loaded" end
+        if parts[3] == nil then return BridgePerf.statusText() end
+        return BridgePerf.set(parts[3])
     end
 
     if cmd == "zscan" then

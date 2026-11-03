@@ -1379,6 +1379,76 @@ local function footBodyOk(z, body, bz, red)
     return true, z:getX(), z:getY()
 end
 
+BridgeFight.footState = BridgeFight.footState
+    or { seen = setmetatable({}, { __mode = "k" }), epoch = 0 }
+
+BridgeFight.footState.add = function(st, z, zx, zy)
+    local fs = BridgeFight.footState
+    if z == nil or z == st.body or fs.seen[z] == st.epoch then return end
+    fs.seen[z] = st.epoch
+    local out = st.out
+    local bx, by = st.bx, st.by
+    local dx, dy = zx - bx, zy - by
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d > st.scanLimit then return end
+    local downed = isProne(z) == true
+    if not downed and d < out.standD then
+        out.standD, out.standThreat = d, z
+    end
+    local ang, idx = nil, nil
+    if not downed and d <= FLEE_GUN_CROWD_R then
+        ang = math.atan2(zy - by, zx - bx) + math.pi
+        idx = math.floor(ang / (2 * math.pi) * 8) % 8
+        local bitCrowd = 2 ^ idx
+        if math.floor(out.sectorMaskCrowd / bitCrowd) % 2 < 1 then
+            out.sectorMaskCrowd = out.sectorMaskCrowd + bitCrowd
+            out.sectorNCrowd = out.sectorNCrowd + 1
+        end
+        if d <= FLEE_GUN_SECTOR_R then
+            local bitGun = 2 ^ idx
+            if math.floor(out.sectorMaskGun / bitGun) % 2 < 1 then
+                out.sectorMaskGun = out.sectorMaskGun + bitGun
+                out.sectorNGun = out.sectorNGun + 1
+            end
+        end
+    end
+    if d > FOOT_CROWD then return end
+    out.n = out.n + 1
+    local pressing = d <= FOOT_PRESS
+    if not pressing then
+        local called, target = pcall(footPressImpl, z)
+        pressing = called and target == st.body
+    end
+    if pressing and not downed then out.pressN = out.pressN + 1 end
+    if pressing and not downed and d < out.pressD then out.pressD, out.pressThreat = d, z end
+    if d <= FOOT_NEAR and not downed then
+        out.nearN = out.nearN + 1
+        if z ~= st.target then out.otherNear = out.otherNear + 1 end
+    end
+    if d <= 2.0 then out.g2 = out.g2 + 1 end
+    if d <= 2.5 then out.g25 = out.g25 + 1 end
+    if idx ~= nil and d <= FLEE_SECTOR_R then
+        local bit = 2 ^ idx
+        if math.floor(out.sectorMask / bit) % 2 < 1 then
+            out.sectorMask = out.sectorMask + bit
+            out.sectorN = out.sectorN + 1
+        end
+    end
+    local sx, sy = bx - zx, by - zy
+    local len = math.sqrt(sx * sx + sy * sy)
+    if len > 0.001 then
+        local w = 1 / math.max(d, 0.5)
+        out.pushX = out.pushX + (sx / math.max(d, 0.1)) * w
+        out.pushY = out.pushY + (sy / math.max(d, 0.1)) * w
+    end
+    if d <= FOOT_AROUND then
+        st.cx, st.cy, st.cn = st.cx + zx, st.cy + zy, st.cn + 1
+    end
+    if d < out.threatD then
+        out.threatD, out.threat = d, z
+    end
+end
+
 local function footScan(body, red)
     local out = { n = 0, pressN = 0, nearN = 0, otherNear = 0, g2 = 0, g25 = 0, pushX = 0, pushY = 0,
                   cx = nil, cy = nil, centerDist = nil, threat = nil, threatD = math.huge,
@@ -1388,8 +1458,6 @@ local function footScan(body, red)
                   sectorMaskCrowd = 0, sectorNCrowd = 0, oppositeCrowd = 0 }
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
     local target = BridgeFight.target
-    local cx, cy, cn = 0, 0, 0
-    local seen = {}
     local scanLimit = FOOT_CROWD
     if BridgeGunfight ~= nil and BridgeGunfight.isAssigned ~= nil then
         local ok, assigned = pcall(BridgeGunfight.isAssigned, body)
@@ -1400,69 +1468,10 @@ local function footScan(body, red)
         end
     end
 
-    local function addHostile(z, zx, zy)
-        if z == nil or z == body or seen[z] then return end
-        seen[z] = true
-        local dx, dy = zx - bx, zy - by
-        local d = math.sqrt(dx * dx + dy * dy)
-        if d > scanLimit then return end
-        local downed = isProne(z) == true
-        if not downed and d < out.standD then
-            out.standD, out.standThreat = d, z
-        end
-        local ang, idx = nil, nil
-        if not downed and d <= FLEE_GUN_CROWD_R then
-            ang = math.atan2(zy - by, zx - bx) + math.pi
-            idx = math.floor(ang / (2 * math.pi) * 8) % 8
-            local bitCrowd = 2 ^ idx
-            if math.floor(out.sectorMaskCrowd / bitCrowd) % 2 < 1 then
-                out.sectorMaskCrowd = out.sectorMaskCrowd + bitCrowd
-                out.sectorNCrowd = out.sectorNCrowd + 1
-            end
-            if d <= FLEE_GUN_SECTOR_R then
-                local bitGun = 2 ^ idx
-                if math.floor(out.sectorMaskGun / bitGun) % 2 < 1 then
-                    out.sectorMaskGun = out.sectorMaskGun + bitGun
-                    out.sectorNGun = out.sectorNGun + 1
-                end
-            end
-        end
-        if d > FOOT_CROWD then return end
-        out.n = out.n + 1
-        local pressing = d <= FOOT_PRESS
-        if not pressing then
-            local called, target = pcall(footPressImpl, z)
-            pressing = called and target == body
-        end
-        if pressing and not downed then out.pressN = out.pressN + 1 end
-        if pressing and not downed and d < out.pressD then out.pressD, out.pressThreat = d, z end
-        if d <= FOOT_NEAR and not downed then
-            out.nearN = out.nearN + 1
-            if z ~= target then out.otherNear = out.otherNear + 1 end
-        end
-        if d <= 2.0 then out.g2 = out.g2 + 1 end
-        if d <= 2.5 then out.g25 = out.g25 + 1 end
-        if idx ~= nil and d <= FLEE_SECTOR_R then
-            local bit = 2 ^ idx
-            if math.floor(out.sectorMask / bit) % 2 < 1 then
-                out.sectorMask = out.sectorMask + bit
-                out.sectorN = out.sectorN + 1
-            end
-        end
-        local sx, sy = bx - zx, by - zy
-        local len = math.sqrt(sx * sx + sy * sy)
-        if len > 0.001 then
-            local w = 1 / math.max(d, 0.5)
-            out.pushX = out.pushX + (sx / math.max(d, 0.1)) * w
-            out.pushY = out.pushY + (sy / math.max(d, 0.1)) * w
-        end
-        if d <= FOOT_AROUND then
-            cx, cy, cn = cx + zx, cy + zy, cn + 1
-        end
-        if d < out.threatD then
-            out.threatD, out.threat = d, z
-        end
-    end
+    local fs = BridgeFight.footState
+    fs.epoch = fs.epoch + 1
+    local st = { body = body, bx = bx, by = by, bz = bz, out = out, scanLimit = scanLimit,
+        target = target, epoch = fs.epoch, cx = 0, cy = 0, cn = 0 }
 
     local list = nil
     if BridgeZS ~= nil then
@@ -1475,7 +1484,7 @@ local function footScan(body, red)
             local z = list:get(i)
             if z ~= nil and z ~= body then
                 local called, ok, zx, zy = pcall(footBodyOk, z, body, bz, red)
-                if called and ok then addHostile(z, zx, zy) end
+                if called and ok then BridgeFight.footState.add(st, z, zx, zy) end
             end
         end
     end
@@ -1503,11 +1512,12 @@ local function footScan(body, red)
                         and not BridgeFight.ownerRisen(n, red)
                         and not BridgeData.harmless(n)
                 end)
-                if ok then addHostile(n, n:getX(), n:getY()) end
+                if ok then BridgeFight.footState.add(st, n, n:getX(), n:getY()) end
             end
         end)
     end
 
+    local cx, cy, cn = st.cx, st.cy, st.cn
     if cn > 0 then
         out.cx, out.cy = cx / cn, cy / cn
         out.centerDist = math.sqrt((out.cx - bx) ^ 2 + (out.cy - by) ^ 2)

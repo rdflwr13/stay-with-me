@@ -99,9 +99,10 @@ local function toList(arr, opts)
 end
 
 local function nowMs()
-    local t = 0
-    if getTimestampMs ~= nil then pcall(function() t = getTimestampMs() end) end
-    return t
+    if getTimestampMs == nil then return 0 end
+    local ok, t = pcall(getTimestampMs)
+    if ok and type(t) == "number" then return t end
+    return 0
 end
 
 local function tickNow()
@@ -223,6 +224,7 @@ local function newMemo(tick)
         tick = tick,
         alive = setmetatable({}, { __mode = "k" }),
         health = setmetatable({}, { __mode = "k" }),
+        bod = setmetatable({}, { __mode = "k" }),
         comp = setmetatable({}, { __mode = "k" }),
         rem = setmetatable({}, { __mode = "k" }),
         harm = setmetatable({}, { __mode = "k" }),
@@ -399,6 +401,45 @@ function S.isThreat(z)
     return v
 end
 
+local function currentMemo()
+    if snap == nil or memo == nil then return nil end
+    if snap.tick ~= tickNow() then return nil end
+    if memo.tick ~= snap.tick then return nil end
+    return memo
+end
+
+function S.cachedBodyVar(z)
+    if z == nil then return nil end
+    local m = currentMemo()
+    if m == nil then return nil end
+    return m.bod[z]
+end
+
+function S.cachedCompanion(z)
+    if z == nil then return nil end
+    local m = currentMemo()
+    if m == nil then return nil end
+    return m.comp[z]
+end
+
+function S.cachedRemote(z)
+    if z == nil then return nil end
+    local m = currentMemo()
+    if m == nil then return nil end
+    return m.rem[z]
+end
+
+function S.cachedHarmless(z)
+    if z == nil then return nil end
+    local m = currentMemo()
+    if m == nil then return nil end
+    return m.harm[z]
+end
+
+function S.cachedOutfit(z)
+    return nil
+end
+
 local MEMO_MAX = 32
 
 local function round2(v)
@@ -523,6 +564,24 @@ local function readRawList()
     return nil
 end
 
+local function readZombieList(cell)
+    if type(S.listProvider) == "function" then return S.listProvider() end
+    return cell:getZombieList()
+end
+
+local function fillRefs(list, refs)
+    local n = 0
+    local sz = list:size()
+    for i = 0, sz - 1 do
+        local z = list:get(i)
+        if z ~= nil then
+            n = n + 1
+            refs[n] = z
+        end
+    end
+    return n
+end
+
 local function buildRefs()
     local started = nowMs()
     local tick = tickNow()
@@ -534,10 +593,7 @@ local function buildRefs()
         S.stats.fallbacks = S.stats.fallbacks + 1
         return nil
     end
-    local ok, list = pcall(function()
-        if type(S.listProvider) == "function" then return S.listProvider() end
-        return cell:getZombieList()
-    end)
+    local ok, list = pcall(readZombieList, cell)
     S.stats.listReads = S.stats.listReads + 1
     if not ok or list == nil then
         S.stats.lastError = "nil zombie list: " .. tostring(list)
@@ -547,20 +603,14 @@ local function buildRefs()
         return nil
     end
 
-    local refs, n = {}, 0
-    local ok2, err = pcall(function()
-        local sz = list:size()
-        for i = 0, sz - 1 do
-            local z = list:get(i)
-            if z ~= nil then
-                n = n + 1
-                refs[n] = z
-            end
-        end
-    end)
+    local refs = {}
+    local ok2, n = pcall(fillRefs, list, refs)
+    if ok2 then
+        n = tonumber(n) or 0
+    end
     if not ok2 then
-        S.stats.lastError = "ref build failed: " .. tostring(err)
-        warn("refbuild", "ref build failed: " .. tostring(err))
+        S.stats.lastError = "ref build failed: " .. tostring(n)
+        warn("refbuild", "ref build failed: " .. tostring(n))
         failedTick, failedCell = tick, cell
         S.stats.fallbacks = S.stats.fallbacks + 1
         return nil
@@ -568,6 +618,7 @@ local function buildRefs()
 
     snap = {
         tick = tick,
+        listTick = tick,
         cell = cell,
         refs = refs,
         n = n,
@@ -591,22 +642,52 @@ local function buildRefs()
     return snap
 end
 
-local function refreshRefs()
+local buildCoords
+
+local function refreshRefs(maxAge)
+    maxAge = tonumber(maxAge) or 1
+    if maxAge < 1 then maxAge = 1 end
     local tick = tickNow()
     local cell = cellNow()
     S.stats.tick = tick
-    if snap ~= nil and (snap.tick ~= tick or snap.cell ~= cell) then
-        local reason = snap.tick ~= tick and "tick" or "cell"
+    local rebuild, listRead = false, false
+    if snap == nil then
+        rebuild, listRead = true, true
+    elseif snap.cell ~= cell then
         local inv = S.stats.invalidations
-        inv[reason] = (inv[reason] or 0) + 1
-        if reason ~= "tick" then thrashCheck() end
+        inv.cell = (inv.cell or 0) + 1
+        thrashCheck()
         snap = nil
         failedTick, failedCell = nil, nil
+        rebuild, listRead = true, true
+    elseif maxAge <= 1 then
+        if snap.tick ~= tick then
+            local inv = S.stats.invalidations
+            inv.tick = (inv.tick or 0) + 1
+            snap = nil
+            failedTick, failedCell = nil, nil
+            rebuild, listRead = true, true
+        end
+    elseif tick - (snap.tick or tick) >= maxAge then
+        local listAge = tonumber(S.listAge) or 15
+        if listAge < 1 then listAge = 1 end
+        if tick - (snap.listTick or snap.tick or tick) >= listAge then
+            snap = nil
+            failedTick, failedCell = nil, nil
+            rebuild, listRead = true, true
+        else
+            rebuild, listRead = true, false
+        end
     end
-    if memo ~= nil and memo.tick ~= tick then memo = nil end
-    if snap ~= nil then return snap end
-    if failedTick == tick and failedCell == cell then return nil end
-    return buildRefs()
+    if not rebuild then return snap end
+    if listRead then
+        if failedTick == tick and failedCell == cell then return nil end
+        return buildRefs()
+    end
+    if snap == nil then return nil end
+    snap.tick = tick
+    snap.level = 0
+    return buildCoords()
 end
 
 local function readCoords(z, xs, ys, zs, i)
@@ -615,38 +696,77 @@ local function readCoords(z, xs, ys, zs, i)
     zs[i] = z:getZ()
 end
 
-local function buildCoords()
+local function readFlags(z, alive, bod, rem, i, var, remoteHook, isClientNow)
+    alive[i] = z:isAlive() == true
+    bod[i] = z:getVariableBoolean(var) == true
+    if type(remoteHook) == "function" then
+        rem[i] = remoteHook(z) == true
+    elseif isClientNow then
+        rem[i] = z:isRemoteZombie() == true
+    else
+        rem[i] = false
+    end
+end
+
+local scratch = { xs = {}, ys = {}, zs = {}, alive = {}, bod = {}, rem = {}, n = 0 }
+
+local function ensureBuckets(s)
+    if s.buckets ~= nil or s.n <= S.BUCKET_AT then return end
+    local xs, ys = s.xs, s.ys
+    if xs == nil or ys == nil then return end
+    local buckets = {}
+    local B = S.BUCKET
+    for i = 1, s.n do
+        if xs[i] ~= nil and ys[i] ~= nil then
+            local bx = math.floor(xs[i] / B)
+            local by = math.floor(ys[i] / B)
+            local layer = buckets[bx]
+            if layer == nil then layer = {}; buckets[bx] = layer end
+            local col = layer[by]
+            if col == nil then col = {}; layer[by] = col end
+            col[#col + 1] = i
+        end
+    end
+    s.buckets = buckets
+end
+
+buildCoords = function()
     local s = snap
     if s == nil then return nil end
     if s.level >= 1 then return s end
     local started = nowMs()
-    local xs, ys, zs, alive, bod, rem = {}, {}, {}, {}, {}, {}
+    local reuse = not quietSelf
+    local xs = reuse and scratch.xs or {}
+    local ys = reuse and scratch.ys or {}
+    local zs = reuse and scratch.zs or {}
+    local alive = reuse and scratch.alive or {}
+    local bod = reuse and scratch.bod or {}
+    local rem = reuse and scratch.rem or {}
     local isClientNow = clientNow()
     local remoteHook = S.isRemoteOf
     local var = bodyVar()
     for i = 1, s.n do
         local z = s.refs[i]
+        xs[i], ys[i], zs[i] = nil, nil, nil
+        alive[i], bod[i], rem[i] = nil, nil, nil
         local ok = pcall(readCoords, z, xs, ys, zs, i)
         if not ok then
             xs[i], ys[i], zs[i] = nil, nil, nil
         else
-            pcall(function()
-                alive[i] = z:isAlive() == true
-                bod[i] = z:getVariableBoolean(var) == true
-            end)
-            if type(remoteHook) == "function" then
-                local okR, r = pcall(remoteHook, z)
-                if okR then rem[i] = r == true end
-            elseif isClientNow then
-                pcall(function() rem[i] = z:isRemoteZombie() == true end)
-            else
-                rem[i] = false
-            end
+            pcall(readFlags, z, alive, bod, rem, i, var, remoteHook, isClientNow)
         end
     end
+    if reuse and scratch.n > s.n then
+        for i = s.n + 1, scratch.n do
+            xs[i], ys[i], zs[i] = nil, nil, nil
+            alive[i], bod[i], rem[i] = nil, nil, nil
+        end
+    end
+    if reuse then scratch.n = s.n end
     s.xs, s.ys, s.zs = xs, ys, zs
     s.alive, s.bod, s.rem = alive, bod, rem
     s.level = 1
+    s.buckets = nil
 
     local m = memoNow()
     for i = 1, s.n do
@@ -654,25 +774,9 @@ local function buildCoords()
         if z ~= nil then
             if alive[i] ~= nil then m.alive[z] = alive[i] end
             if rem[i] ~= nil then m.rem[z] = rem[i] end
+            if bod[i] ~= nil then m.bod[z] = bod[i] end
             if bod[i] == true then m.comp[z] = true end
         end
-    end
-
-    if s.n > S.BUCKET_AT then
-        local buckets = {}
-        local B = S.BUCKET
-        for i = 1, s.n do
-            if xs[i] ~= nil and ys[i] ~= nil then
-                local bx = math.floor(xs[i] / B)
-                local by = math.floor(ys[i] / B)
-                local layer = buckets[bx]
-                if layer == nil then layer = {}; buckets[bx] = layer end
-                local col = layer[by]
-                if col == nil then col = {}; layer[by] = col end
-                col[#col + 1] = i
-            end
-        end
-        s.buckets = buckets
     end
 
     S.stats.coordBuilds = S.stats.coordBuilds + 1
@@ -683,8 +787,8 @@ local function buildCoords()
     return s
 end
 
-local function ensureCoords()
-    local s = refreshRefs()
+local function ensureCoords(maxAge)
+    local s = refreshRefs(maxAge)
     if s == nil then return nil end
     if s.level >= 1 then return s end
     return buildCoords()
@@ -694,10 +798,43 @@ function S.refresh()
     return refreshRefs()
 end
 
+S.listAge = 15
+
+S.TAG_AGE = {
+    ["mood.calm"] = "zscan",
+    ["social.busy"] = "zscan",
+    ["ambient.danger"] = "zscan",
+    ["moments.danger"] = "zscan",
+    ["drive.greet"] = "zscan",
+    ["drive.exit"] = "zscan",
+    ["fastforward.sight"] = "zscan",
+    ["watch.others"] = "zscan",
+    ["callout.scan"] = "zscanShort",
+    ["horde.count"] = "zscanShort",
+    ["horde.count.seen"] = "zscanShort",
+    ["horde.cone"] = "zscanShort",
+    ["server.othersNear"] = "zscanShort",
+    ["heal.threat"] = "zscanTight",
+    ["wash.threat"] = "zscanTight",
+    ["task.danger"] = "zscanTight",
+}
+
 local function optsTag(opts)
     if type(opts) ~= "table" then return nil end
     if type(opts.tag) == "string" then return opts.tag end
     return nil
+end
+
+local function optsAge(opts)
+    if type(opts) ~= "table" then return 1 end
+    local age = tonumber(opts.age)
+    if age ~= nil and age >= 1 then return math.floor(age) end
+    local kind = opts.tag ~= nil and S.TAG_AGE[opts.tag] or nil
+    if kind ~= nil and BridgePerf ~= nil and type(BridgePerf.age) == "function" then
+        local v = tonumber(BridgePerf.age(kind, 1))
+        if v ~= nil and v >= 1 then return math.floor(v) end
+    end
+    return 1
 end
 
 local function optsZ(opts)
@@ -808,6 +945,7 @@ end
 
 local function gatherRadius(s, out, x, y, radius, seen)
     local r2 = radius * radius
+    if radius > 0 then ensureBuckets(s) end
     if s.buckets ~= nil then
         local B = S.BUCKET
         local minBX, maxBX = math.floor((x - radius) / B), math.floor((x + radius) / B)
@@ -952,7 +1090,7 @@ function S.near(x, y, r, opts)
     end
     beginQuery("Near", tag)
     local started = nowMs()
-    local s = ensureCoords()
+    local s = ensureCoords(optsAge(opts))
     if s == nil then
         finishQuery("near", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return nil
@@ -993,7 +1131,7 @@ function S.nearUnion(x1, y1, x2, y2, r, opts)
     end
     beginQuery("Union", tag)
     local started = nowMs()
-    local s = ensureCoords()
+    local s = ensureCoords(optsAge(opts))
     if s == nil then
         finishQuery("union", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return nil
@@ -1035,7 +1173,7 @@ function S.cone(x, y, fx, fy, minD, maxD, half, opts)
     end
     beginQuery("Cone", tag)
     local started = nowMs()
-    local s = ensureCoords()
+    local s = ensureCoords(optsAge(opts))
     if s == nil then
         finishQuery("cone", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return nil
@@ -1110,7 +1248,7 @@ function S.count(cx, cy, cz, r, filterOrProfile, opts)
 
     beginQuery("Count", tag)
     local started = nowMs()
-    local s = ensureCoords()
+    local s = ensureCoords(optsAge(opts))
     if s == nil then
         finishQuery("count", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return 0
@@ -1206,7 +1344,7 @@ function S.find(pred, maxN, opts)
     end
 
     beginQuery("Find", tag)
-    local s = refreshRefs()
+    local s = refreshRefs(optsAge(opts))
     if s == nil then
         finishQuery("find", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return nil
@@ -1236,7 +1374,7 @@ function S.list(opts)
         finishQuery("list", tag, list ~= nil and list:size() or 0, 0, 0, 0, 0, 0)
         return list
     end
-    local s = refreshRefs()
+    local s = refreshRefs(optsAge(opts))
     if s == nil then
         finishQuery("list", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return nil
