@@ -1267,7 +1267,6 @@ function BridgeFight.applyStamina(rec)
     end
 end
 
--- Footwork: back away from the edge of the crowd while fighting.
 BridgeFight.FOOTWORK_ON = true
 BridgeFight.FOOT_ESCAPE_ON = true
 BridgeFight.FOOT_SWING_BACK = true
@@ -2130,7 +2129,6 @@ local function escapeTick(body, red, t, mode, range, S)
             near ~= nil and "yes" or "no", tostring(pressed), tostring(flankClose),
             tostring(BridgeFight.state), t ~= nil and tostring(t:getActionStateName()) or "nil"))
     end
-    -- Engage at range - 0.15 so the backward drift still lands the hit.
     if near ~= nil and pressed and (S.threatD or 999) <= (range or 0) - 0.15 then
         local sx, sy = escapePoint(body, red, S, mode)
         local bx, by, bz = body:getX(), body:getY(), body:getZ()
@@ -2166,7 +2164,6 @@ local function escapeTick(body, red, t, mode, range, S)
         return false
     end
 
-    -- No target in weapon reach: close in and fight. Do not add distance.
     if Bridge.verbose and (Bridge.time % 10) == 4 then
         vlog(string.format("escape hold: nearest=%.2f range=%.2f near=%s pressed=%s flankClose=%s -> fight/approach",
             S.threatD or -1, range or -1, near ~= nil and "yes" or "no", tostring(pressed), tostring(flankClose)))
@@ -2634,7 +2631,6 @@ local function wantShove(body, t, item)
     if isProne(t) then return false end
     if Bridge.time < (BridgeFight.shoveReadyAt or 0) then return false end
     local d = dist(body, t)
-    -- Edge shoves whiff after the resolve delay; start closer.
     if d > SHOVE_RANGE - 0.25 then return false end
     if SHOVE_UNARMED == 1 and isUnarmed(item) then return true end
     if SHOVE_DEFENSIVE == 1 then
@@ -2666,7 +2662,6 @@ local function startShove(body, t, anim)
     local shovePress = 0
     local escS = BridgeFight.escapeScan
     if escS ~= nil then shovePress = escS.pressN or 0 end
-    -- Shove drift only when the crowd is actually pressing (2+); flank shoves stay put.
     if BridgeFight.FOOT_SWING_BACK == true and BridgeFight.escapeOn and shovePress >= 2 then
         local bx, by = body:getX(), body:getY()
         local dx, dy = bx - t:getX(), by - t:getY()

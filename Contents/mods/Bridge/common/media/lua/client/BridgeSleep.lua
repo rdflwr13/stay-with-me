@@ -191,6 +191,27 @@ function BridgeSleep.calm(playerObj)
         if chasing then matchCh = matchCh + 1 end
         return true
     end
+    if BridgeZScan ~= nil and type(BridgeZScan.near) == "function" then
+        local px, py, pz = playerObj:getX(), playerObj:getY(), playerObj:getZ()
+        local nearRefs = nil
+        pcall(function()
+            nearRefs = BridgeZScan.near(px, py, BridgeSleep.SEEN, { z = pz, zTol = 1.5, tag = "sleep.calm" })
+        end)
+        if nearRefs ~= nil then
+            local okNear, foundReal = pcall(function()
+                for i = 0, nearRefs:size() - 1 do
+                    if not tally(nearRefs:get(i)) then return true end
+                end
+                return false
+            end)
+            if okNear and foundReal then return false, BridgeSleep.lastVerdict end
+            if okNear and matchV >= v and matchC >= c and matchCh >= ch then
+                BridgeSleep.lastVerdict = "only companion"
+                return true, BridgeSleep.lastVerdict
+            end
+            matchV, matchC, matchCh = 0, 0, 0
+        end
+    end
     local refs = nil
     if BridgeZScan ~= nil and type(BridgeZScan.find) == "function" then
         pcall(function() refs = BridgeZScan.find(function(z) return z ~= nil end, nil, { tag = "sleep.calm" }) end)
@@ -1137,6 +1158,282 @@ if BridgeSleep.speedKeepEnabled then
     Events.OnPlayerUpdate.Add(BridgeSleep.onPlayerUpdate)
     Events.OnTick.Add(function() BridgeSleep.keepSpeed("tick") end)
     Events.OnPreUIDraw.Add(function() BridgeSleep.keepSpeed("ui") end)
+end
+
+
+BridgeSleep.talk = BridgeSleep.talk or {}
+local talk = BridgeSleep.talk
+talk.SEC = 60
+talk.WAKE_TIMEOUT = 10 * talk.SEC
+talk.WAKE_MIN_HOURS = 1
+talk.WATCH_EVERY = 15
+talk.WAKE_STALE = 5 * talk.SEC
+talk.WAKE_DELAY = 2 * talk.SEC
+talk.SLEEP_WAIT = 2 * talk.SEC
+talk.state = nil
+talk.pendingSleep = nil
+talk.pendingWake = nil
+talk.asleep = false
+
+local function talkOwner()
+    local red = nil
+    pcall(function() red = BridgeData.owner() end)
+    return red
+end
+
+local function talkHours()
+    local h = 0
+    pcall(function() h = getGameTime():getWorldAgeHours() end)
+    return tonumber(h) or 0
+end
+
+local function talkTier()
+    local t = nil
+    pcall(function() t = BridgeMoments.group() end)
+    if t ~= "Far" and t ~= "Near" and t ~= "Close" then t = "Far" end
+    return t
+end
+
+local function talkInCarWith(red)
+    local yes = false
+    pcall(function() yes = BridgeCar ~= nil and BridgeCar.withRed(red) == true end)
+    return yes
+end
+
+local function talkSpeak(text, allowHidden)
+    if text == nil or text == "" then return false end
+    if Bridge == nil then return false end
+    if not allowHidden then
+        if Bridge.alive() ~= true or Bridge.hiddenSince ~= nil then return false end
+    end
+    local ok = pcall(function() Bridge.say(text) end)
+    if ok then Bridge.lastSpokeAt = Bridge.time end
+    return ok
+end
+
+local function talkClearStale()
+    local st = talk.state
+    if st ~= nil and st.handled and not talk.asleep
+        and Bridge.time - (st.at or Bridge.time) > talk.WAKE_STALE then
+        talk.state = nil
+    end
+end
+
+function talk.goodnight(body, kind)
+    if Bridge == nil then return false end
+    talkClearStale()
+    local st = talk.state
+    if st ~= nil and st.handled then return false end
+    local red = talkOwner()
+    if red == nil then return false end
+    local car = kind == "car"
+    if car and not talkInCarWith(red) then return false end
+    talk.state = { together = true, inCar = car, sleptAt = talkHours(), handled = true, at = Bridge.time }
+    talk.pendingWake = nil
+    local event = car and "EvSleepCar" or "EvSleep"
+    local text = nil
+    pcall(function() text = BridgeMoments.line(event) end)
+    if text == nil or text == "" then
+        talk.pendingSleep = nil
+        log("goodnight skipped: no line")
+        return true
+    end
+    talk.pendingSleep = { text = text, at = Bridge.time + 1, kind = kind, allowHidden = car }
+    log("goodnight queued: " .. tostring(kind))
+    return true
+end
+
+local function talkWakeEvent(kind)
+    local h = 0
+    pcall(function() h = getGameTime():getHour() end)
+    h = tonumber(h) or 0
+    local base
+    if h >= 5 and h <= 11 then base = "EvWakeMorning"
+    elseif h >= 12 and h <= 17 then base = "EvWakeLate"
+    else base = "EvWakeNight" end
+    if kind == "car" then base = base .. "Car" end
+    return base
+end
+
+local function talkFootDanger()
+    local danger = false
+    pcall(function()
+        if BridgeTask ~= nil and type(BridgeTask.dangerNear) == "function" and Bridge.body ~= nil then
+            danger = BridgeTask.dangerNear(Bridge.body) == true
+        end
+    end)
+    return danger
+end
+
+local function talkCarDanger(red)
+    local danger = false
+    pcall(function()
+        if BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle") then danger = true return end
+        local stats = red:getStats()
+        local close = tonumber(stats:getNumVeryCloseZombies()) or 0
+        local chasing = tonumber(stats:getNumChasingZombies()) or 0
+        danger = close > 0 or chasing > 0
+    end)
+    return danger
+end
+
+local function talkApplyMood(red, t)
+    if BridgeData == nil or type(BridgeData.optionOf) ~= "function" then return end
+    local on = false
+    pcall(function() on = BridgeData.optionOf(Bridge.store, "mood") == true end)
+    if not on then log("wake mood skipped: option off") return end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(red, "Bridge", "wakeMood", { tier = t }) end)
+        log("wake mood asked: " .. tostring(t))
+        return
+    end
+    local deltas = nil
+    pcall(function() deltas = BridgeMood.wakeDeltas(t) end)
+    if type(deltas) ~= "table" or type(BridgeMood.apply) ~= "function" then return end
+    local done = nil
+    pcall(function() done = BridgeMood.apply(red, deltas) end)
+    if type(done) == "table" then
+        log("wake mood applied: " .. BridgeMood.describe(done))
+    else
+        log("wake mood applied: nothing")
+    end
+end
+
+local function talkOnSleepStart(red)
+    talkClearStale()
+    local st = talk.state
+    if st ~= nil and st.handled then return end
+    if talkInCarWith(red) then
+        talk.goodnight(nil, "car")
+    end
+end
+
+local function talkOnWake(red)
+    local st = talk.state
+    talk.state = nil
+    talk.pendingSleep = nil
+    talk.pendingWake = nil
+    if st == nil or not st.together then log("wake skipped: not together") return end
+    if talkHours() - st.sleptAt < talk.WAKE_MIN_HOURS then log("wake skipped: too short") return end
+    local kind = st.inCar and "car" or "foot"
+    local event = talkWakeEvent(kind)
+    local text = nil
+    pcall(function() text = BridgeMoments.line(event) end)
+    if text == nil or text == "" then log("wake skipped: no line") return end
+    talk.pendingWake = { kind = kind, event = event, text = text, at = nil, since = Bridge.time, tier = talkTier() }
+end
+
+local function talkSleepTick()
+    local p = talk.pendingSleep
+    if p == nil then return end
+    if talkSpeak(p.text, p.allowHidden == true) then
+        talk.pendingSleep = nil
+        log("goodnight spoken: " .. tostring(p.kind))
+        return
+    end
+    if Bridge.time - p.at > talk.SLEEP_WAIT then
+        talk.pendingSleep = nil
+        log("goodnight dropped: body not visible")
+    end
+end
+
+local function talkWakeReady(red, p)
+    if p.kind == "car" then
+        return talkInCarWith(red) or (Bridge.alive() == true and Bridge.hiddenSince == nil)
+    end
+    return Bridge.alive() == true and Bridge.hiddenSince == nil
+end
+
+local function talkWakeTick(red)
+    local p = talk.pendingWake
+    if p == nil then return end
+    if p.at == nil then
+        if talkWakeReady(red, p) then
+            p.at = Bridge.time + talk.WAKE_DELAY
+            log("wake scheduled +2s")
+        elseif Bridge.time - p.since > talk.WAKE_TIMEOUT then
+            talk.pendingWake = nil
+            log("wake skipped: timeout")
+        end
+        return
+    end
+    if Bridge.time < p.at then return end
+    if not talkWakeReady(red, p) then
+        if Bridge.time - p.at > talk.WAKE_TIMEOUT then
+            talk.pendingWake = nil
+            log("wake skipped: timeout")
+        end
+        return
+    end
+    local danger = false
+    if p.kind == "car" then danger = talkCarDanger(red) else danger = talkFootDanger() end
+    if danger then
+        talk.pendingWake = nil
+        log("wake skipped: danger")
+        return
+    end
+    if talkSpeak(p.text, p.kind == "car") then
+        log("wake accepted: " .. tostring(p.event))
+        talkApplyMood(red, p.tier)
+    else
+        log("wake dropped: body not visible")
+    end
+    talk.pendingWake = nil
+end
+
+function talk.tick()
+    if Bridge == nil then return end
+    local red = talkOwner()
+    if red == nil then return end
+    if Bridge.tick % talk.WATCH_EVERY == 0 then
+        local asleep = false
+        pcall(function() asleep = red:isAsleep() == true end)
+        local was = talk.asleep
+        talk.asleep = asleep
+        if asleep and not was then
+            talkOnSleepStart(red)
+        elseif was and not asleep then
+            talkOnWake(red)
+        end
+    end
+    if talk.pendingSleep ~= nil then talkSleepTick() end
+    if talk.pendingWake ~= nil then talkWakeTick(red) end
+end
+
+if Events ~= nil and Events.OnTick ~= nil then
+    Events.OnTick.Add(function() pcall(talk.tick) end)
+end
+
+
+function BridgeSleep.hookSleepTalk()
+    if ISWorldObjectContextMenu == nil or type(ISWorldObjectContextMenu.onSleep) ~= "function" then return end
+    if ISWorldObjectContextMenu.bridgeSleepTalkHooked then return end
+    ISWorldObjectContextMenu.bridgeSleepTalkHooked = true
+    local base = ISWorldObjectContextMenu.onSleep
+    ISWorldObjectContextMenu.onSleep = function(...)
+        local red = nil
+        pcall(function() red = BridgeData.owner() end)
+        if red ~= nil and Bridge ~= nil and Bridge.alive() == true and Bridge.kind == "zombie" then
+            local near = false
+            pcall(function()
+                local dx, dy = Bridge.body:getX() - red:getX(), Bridge.body:getY() - red:getY()
+                near = dx * dx + dy * dy < 20 * 20 and math.abs(Bridge.body:getZ() - red:getZ()) < 2
+            end)
+            local inCar = false
+            pcall(function()
+                inCar = red:getVehicle() ~= nil or (BridgeCar ~= nil and BridgeCar.withRed(red) == true)
+            end)
+            if near and not inCar then
+                pcall(talk.goodnight, Bridge.body, "foot")
+            end
+        end
+        return base(...)
+    end
+    log("sleep menu goodnight hooked")
+end
+
+if Events ~= nil and Events.OnGameStart ~= nil then
+    Events.OnGameStart.Add(function() pcall(BridgeSleep.hookSleepTalk) end)
 end
 
 log("loaded")

@@ -1773,6 +1773,24 @@ BridgeServer.Commands.mood = function(player, args)
 end
 
 
+BridgeServer.wakeAt = {}
+local WAKE_GAP_MS = 2000
+BridgeServer.Commands.wakeMood = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    if not BridgeData.optionOf(rec, "mood") then return end
+    local tier = args and tostring(args.tier or "") or ""
+    if tier ~= "Far" and tier ~= "Near" and tier ~= "Close" then return end
+    if rec.bodyId == nil and not inCarWith(player, rec) then return end
+    local now = nowMs()
+    if now - (BridgeServer.wakeAt[who] or 0) < WAKE_GAP_MS then return end
+    BridgeServer.wakeAt[who] = now
+    local done, mask = BridgeMood.apply(player, BridgeMood.wakeDeltas(tier))
+    if mask > 0 then pcall(function() syncPlayerStats(player, mask) end) end
+    log("wake mood " .. tier .. " for " .. tostring(who) .. ": " .. BridgeMood.describe(done))
+end
+
+
 
 
 

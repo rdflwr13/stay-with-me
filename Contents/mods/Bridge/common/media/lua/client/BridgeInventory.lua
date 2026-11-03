@@ -1630,6 +1630,37 @@ function BridgeInventory.isHers(container)
 end
 
 
+function BridgeInventory.withoutHerButtons(playerNum, fn, ...)
+    local loot = getPlayerLoot and getPlayerLoot(playerNum) or nil
+    local list = loot and loot.backpacks or nil
+    if type(list) ~= "table" then return fn(...) end
+    local kept, hid = {}, false
+    for i = 1, #list do
+        local btn = list[i]
+        if btn ~= nil and BridgeInventory.isHers(btn.inventory) then hid = true else kept[#kept + 1] = btn end
+    end
+    if not hid then return fn(...) end
+    loot.backpacks = kept
+    local ok, a, b, c = pcall(fn, ...)
+    if loot.backpacks == kept then loot.backpacks = list end
+    if not ok then warn("withoutHerButtons failed: " .. tostring(a)) return end
+    return a, b, c
+end
+
+
+function BridgeInventory.filterHers(list)
+    local out = {}
+    if type(list) ~= "table" then return out end
+    for i = 1, #list do
+        local container = list[i]
+        if not BridgeInventory.isHers(container) then
+            out[#out + 1] = container
+        end
+    end
+    return out
+end
+
+
 
 
 
@@ -1680,6 +1711,109 @@ function BridgeInventory.wrapProximity()
     log("Proximity Inventory wrapped: her containers stay out of it")
 end
 
+
+BridgeInventory.bulkProxFloor = false
+
+function BridgeInventory.wrapProxInvBulkFloorGuard()
+    if type(ISLootWindowContainerControls) == "table" and type(ISLootWindowContainerControls.arrange) == "function"
+        and not ISLootWindowContainerControls.bridgeBulkFloorWrapped then
+        local arrange = ISLootWindowContainerControls.arrange
+        ISLootWindowContainerControls.arrange = function(self, ...)
+            local result = arrange(self, ...)
+            local btn = self ~= nil and self.proxMoveToFloorBtn or nil
+            if btn ~= nil and not btn.bridgeBulkFloorWrapped then
+                local click = btn.onclick or btn.onClick
+                if type(click) == "function" then
+                    btn.bridgeBulkFloorWrapped = true
+                    local wrapped = function(...)
+                        BridgeInventory.bulkProxFloor = true
+                        local ok, err = pcall(click, ...)
+                        BridgeInventory.bulkProxFloor = false
+                        if not ok then warn("proxInv move to floor failed: " .. tostring(err)) end
+                    end
+                    if btn.onclick ~= nil then btn.onclick = wrapped else btn.onClick = wrapped end
+                end
+            end
+            return result
+        end
+        ISLootWindowContainerControls.bridgeBulkFloorWrapped = true
+        log("proxInv bulk floor button wrapped")
+    end
+
+    if type(ISInventoryPaneContextMenu) == "table" and type(ISInventoryPaneContextMenu.onMoveItemsTo) == "function"
+        and not ISInventoryPaneContextMenu.bridgeBulkFloorWrapped then
+        local move = ISInventoryPaneContextMenu.onMoveItemsTo
+        ISInventoryPaneContextMenu.onMoveItemsTo = function(items, dest, player, ...)
+            if BridgeInventory.bulkProxFloor ~= true or type(items) ~= "table" or dest == nil then
+                return move(items, dest, player, ...)
+            end
+            local floor = false
+            pcall(function() floor = dest:getType() == "floor" end)
+            if not floor then return move(items, dest, player, ...) end
+            local kept = {}
+            local removed = 0
+            for i = 1, #items do
+                local item = items[i]
+                local hers = false
+                if item ~= nil then
+                    pcall(function() hers = BridgeInventory.isHers(item:getContainer()) == true end)
+                end
+                if hers then removed = removed + 1 else kept[#kept + 1] = item end
+            end
+            if removed > 0 and not BridgeInventory.bulkFloorLogged then
+                BridgeInventory.bulkFloorLogged = true
+                log("proxInv bulk floor: her containers excluded")
+            end
+            if #kept == 0 then return end
+            return move(kept, dest, player, ...)
+        end
+        ISInventoryPaneContextMenu.bridgeBulkFloorWrapped = true
+        log("proxInv bulk floor filter wrapped")
+    end
+end
+
+
+function BridgeInventory.wrapProxSmartStore()
+    if type(ProxSmartStore) ~= "table" or type(ProxSmartStore.distribute) ~= "function" then return end
+    if BridgeInventory.proxSmartStoreWrapped then return end
+    if type(ISInventoryPane) ~= "table" or type(ISInventoryPane.transferItemsByWeight) ~= "function" then return end
+    if type(ISInventoryPaneContextMenu) ~= "table" or type(ISInventoryPaneContextMenu.onPutItems) ~= "function" then return end
+
+    local transfer = ISInventoryPane.transferItemsByWeight
+    ISInventoryPane.transferItemsByWeight = function(self, items, container, ...)
+        local prox = false
+        pcall(function() prox = container ~= nil and container:getType() == "proxInv" end)
+        if prox then
+            local playerNum = self ~= nil and self.player or 0
+            return BridgeInventory.withoutHerButtons(playerNum, transfer, self, items, container, ...)
+        end
+        return transfer(self, items, container, ...)
+    end
+
+    local put = ISInventoryPaneContextMenu.onPutItems
+    ISInventoryPaneContextMenu.onPutItems = function(items, player, ...)
+        local playerNum = player or 0
+        local prox = false
+        local loot = nil
+        pcall(function() loot = getPlayerLoot(playerNum) end)
+        pcall(function() prox = loot ~= nil and loot.inventory ~= nil and loot.inventory:getType() == "proxInv" end)
+        if prox then
+            return BridgeInventory.withoutHerButtons(playerNum, put, items, player, ...)
+        end
+        return put(items, player, ...)
+    end
+
+    local distribute = ProxSmartStore.distribute
+    ProxSmartStore.distribute = function(pane, items, ...)
+        local playerNum = pane ~= nil and pane.player or 0
+        return BridgeInventory.withoutHerButtons(playerNum, distribute, pane, items, ...)
+    end
+
+    BridgeInventory.proxSmartStoreWrapped = true
+    log("ProxInventorySmartStore wrapped: her containers stay out of smart storage")
+end
+
+
 local function betterContainersActive()
     local on = false
     pcall(function()
@@ -1712,24 +1846,6 @@ function BridgeInventory.wrapBetterContainers()
         local t = nil
         pcall(function() t = container:getType() end)
         return t == BC.invName or t == BC.invName_corpses
-    end
-
-
-    function BridgeInventory.withoutHerButtons(playerNum, fn, ...)
-        local loot = getPlayerLoot and getPlayerLoot(playerNum) or nil
-        local list = loot and loot.backpacks or nil
-        if type(list) ~= "table" then return fn(...) end
-        local kept, hid = {}, false
-        for i = 1, #list do
-            local btn = list[i]
-            if btn ~= nil and BridgeInventory.isHers(btn.inventory) then hid = true else kept[#kept + 1] = btn end
-        end
-        if not hid then return fn(...) end
-        loot.backpacks = kept
-        local ok, a, b, c = pcall(fn, ...)
-        if loot.backpacks == kept then loot.backpacks = list end
-        if not ok then warn("withoutHerButtons failed: " .. tostring(a)) return end
-        return a, b, c
     end
 
 
@@ -1812,9 +1928,76 @@ local function twfActive()
 end
 BridgeInventory.twfActive = twfActive
 
+
+function BridgeInventory.wrapTwfSmartDeposit()
+    if not BridgeInventory.twfActive() then return end
+    if type(TwisTonFireInventory) ~= "table" or type(TwisTonFireInventory.RunSmartDeposit) ~= "function" then return end
+    if TwisTonFireInventory.bridgeSmartDepositWrapped then return end
+    local run = TwisTonFireInventory.RunSmartDeposit
+    TwisTonFireInventory.RunSmartDeposit = function(pane, items, ...)
+        local playerNum = pane and pane.player or 0
+        return BridgeInventory.withoutHerButtons(playerNum, run, pane, items, ...)
+    end
+    TwisTonFireInventory.bridgeSmartDepositWrapped = true
+    log("TwisTonFire smart deposit wrapped: her containers stay out of nearby storage")
+end
+
+
+function BridgeInventory.wrapCleanUINearby()
+    if type(ISInventoryPageTransferHandler) ~= "table"
+        or type(ISInventoryPageTransferHandler.getNearbyTransferContainers) ~= "function" then return end
+    if ISInventoryPageTransferHandler.bridgeNearbyWrapped then return end
+    local nearby = ISInventoryPageTransferHandler.getNearbyTransferContainers
+    ISInventoryPageTransferHandler.getNearbyTransferContainers = function(inventoryPage, ...)
+        local list = nearby(inventoryPage, ...)
+        if list == nil then return {} end
+        return BridgeInventory.filterHers(list)
+    end
+    ISInventoryPageTransferHandler.bridgeNearbyWrapped = true
+    log("CleanUI nearby transfers wrapped: her containers stay out of nearby storage")
+end
+
+
+BridgeInventory.transferLogged = BridgeInventory.transferLogged or {}
+
+function BridgeInventory.wrapTransferDiagnostics()
+    if type(ISInventoryTransferAction) ~= "table" or type(ISInventoryTransferAction.new) ~= "function" then return end
+    if ISInventoryTransferAction.bridgeTransferDiagWrapped then return end
+    local original = ISInventoryTransferAction.new
+    ISInventoryTransferAction.new = function(self, character, item, srcContainer, destContainer, ...)
+        local destHers, srcHers = false, false
+        pcall(function() destHers = BridgeInventory.isHers(destContainer) == true end)
+        pcall(function() srcHers = BridgeInventory.isHers(srcContainer) == true end)
+        if destHers and not srcHers then
+            local caller = "unknown"
+            if type(debug) == "table" and type(debug.traceback) == "function" then
+                local ok, trace = pcall(debug.traceback, "", 2)
+                if ok and type(trace) == "string" then
+                    caller = trace:match("\n%s*([^\n]+)") or trace
+                end
+            end
+            local key = tostring(caller) .. "|into"
+            if not BridgeInventory.transferLogged[key] then
+                BridgeInventory.transferLogged[key] = true
+                local kind = "?"
+                pcall(function() kind = tostring(destContainer:getType()) end)
+                log("transfer into her container from " .. tostring(caller) .. " (" .. kind .. ")")
+            end
+        end
+        return original(self, character, item, srcContainer, destContainer, ...)
+    end
+    ISInventoryTransferAction.bridgeTransferDiagWrapped = true
+end
+
+
 Events.OnGameStart.Add(function()
     pcall(BridgeInventory.wrapProximity)
     pcall(BridgeInventory.wrapBetterContainers)
+    pcall(BridgeInventory.wrapProxInvBulkFloorGuard)
+    pcall(BridgeInventory.wrapProxSmartStore)
+    pcall(BridgeInventory.wrapTwfSmartDeposit)
+    pcall(BridgeInventory.wrapCleanUINearby)
+    pcall(BridgeInventory.wrapTransferDiagnostics)
     if BridgeInventory.twfActive() then
         Events.OnRefreshInventoryWindowContainers.Add(BridgeInventory.onRefreshLate)
         print("[BridgeInventory] TwisTonFire Proximity Inventory detected: her containers stay out of it")
