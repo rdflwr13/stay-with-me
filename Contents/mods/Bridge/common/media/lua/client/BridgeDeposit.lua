@@ -1352,6 +1352,7 @@ local function depositTake(body, item, target, available, home, job)
         act.bridgeMinTime = t
         act.bridgeHome = home == true
         act.bridgeDeposit = home == true
+        act.bridgeDepositTask = true
         if #group > 1 then
             if isClient() then
                 if act.bridgeRelay ~= nil then
@@ -1390,6 +1391,7 @@ end
 
 local function updateTransfers(body, job)
     if job.pending ~= nil then
+        pcall(BridgeTask.forceIdle, body)
         local act = BridgeTask.lootAct
         if act ~= nil and act.bridgeRefused == true then
             log("transfer refused dest=" .. destLabel(job.current))
@@ -1481,6 +1483,7 @@ local function updateTransfers(body, job)
         if walk == "walking" then return true end
         pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
     end
+    pcall(BridgeTask.forceIdle, body)
     local items = job.assign or {}
     job.assign = nil
     local item = nil

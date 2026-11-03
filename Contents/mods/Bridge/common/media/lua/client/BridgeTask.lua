@@ -4491,6 +4491,7 @@ function BridgeTask.lootTake(body, target, item, dest)
         end
     end)
     pcall(function() act.bridgeHerLoot = BridgeTask.lootAnim(src) end)
+    act.bridgeWithdrawTask = true
     BridgeTask.lootAct = act
     BridgeTask.lootSrc = src
     local ok = false

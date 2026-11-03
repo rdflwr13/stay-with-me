@@ -1165,6 +1165,11 @@ function BridgeInventory.lootFor(act, anim)
     end
     local can, why, wait = BridgeInventory.canGesture(b, act)
     if not can and not wait then
+        if act ~= nil and why == "player far"
+            and (act.bridgeDepositTask == true or act.bridgeWithdrawTask == true) then
+            log("task gesture skipped: player far (transfer runs)")
+            return true
+        end
         log("loot gesture skipped: " .. tostring(why))
         return false
     end
@@ -1243,7 +1248,11 @@ local function waitTick(body, g)
         why = startBlocker(body, true)
         if why == nil then log("walking flags, but standing still: gesture anyway") end
     end
-    if why == nil and not playerNear(body, nearFor(g.action)) then why = "player far" end
+    if why == nil and not playerNear(body, nearFor(g.action)) then
+        if not (g.action ~= nil and (g.action.bridgeDepositTask == true or g.action.bridgeWithdrawTask == true)) then
+            why = "player far"
+        end
+    end
     if why ~= nil then
         if GESTURE_WAIT_CUT[why] then
             BridgeInventory.gestureFlush(body, "wait: " .. why)
@@ -1359,7 +1368,12 @@ function BridgeInventory.gestureTick(body)
         BridgeInventory.frozen = g.after
 
         local why = startBlocker(body)
-        if why == nil and not playerNear(body, nearFor(BridgeInventory.gestures[1].action)) then why = "player far" end
+        if why == nil and not playerNear(body, nearFor(BridgeInventory.gestures[1].action)) then
+            local nextAct = BridgeInventory.gestures[1].action
+            if not (nextAct ~= nil and (nextAct.bridgeDepositTask == true or nextAct.bridgeWithdrawTask == true)) then
+                why = "player far"
+            end
+        end
         if why ~= nil and not GESTURE_WAIT_CUT[why] then
             BridgeInventory.rebuild(body)
             pcall(function() if isGestureAnim(tostring(body:getBumpType())) then body:setBumpType("") end end)
@@ -5057,7 +5071,10 @@ function BridgeInventory.staysGuard(act)
         local b = body()
         if b == nil or Bridge.hiddenSince ~= nil then stop, why = true, "no body" return end
 
-        if not playerNear(b, GESTURE_LEAVE) then stop, why = true, "player went away" return end
+        if not (act.bridgeDepositTask == true or act.bridgeWithdrawTask == true)
+            and not playerNear(b, GESTURE_LEAVE) then
+            stop, why = true, "player went away" return
+        end
 
 
         if BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state == "swing") then stop, why = true, "fight" return end
@@ -5399,6 +5416,42 @@ if ISTransferAction ~= nil and ISTransferAction.transferItem ~= nil and not ISTr
     end
 end
 
+BridgeInventory.outfitSaveFirst = nil
+BridgeInventory.outfitSaveLast = nil
+
+
+function BridgeInventory.requestOutfitSave()
+    if BridgeInventory.outfitSaveFirst == nil then BridgeInventory.outfitSaveFirst = Bridge.time end
+    BridgeInventory.outfitSaveLast = Bridge.time
+end
+
+
+function BridgeInventory.clearOutfitSave()
+    BridgeInventory.outfitSaveFirst = nil
+    BridgeInventory.outfitSaveLast = nil
+end
+
+
+function BridgeInventory.outfitSaveTick()
+    if BridgeInventory.outfitSaveFirst == nil then return end
+    if not Bridge.alive() or Bridge.kind ~= "zombie" or (BridgeParked ~= nil and BridgeParked.active) then
+        BridgeInventory.clearOutfitSave()
+        return
+    end
+    local now = Bridge.time or 0
+    local quiet = (now - (BridgeInventory.outfitSaveLast or now)) >= 30
+    local capped = (now - BridgeInventory.outfitSaveFirst) >= 300
+    if not quiet and not capped then return end
+    local ok = Bridge.saveOutfit()
+    if ok then
+        if BridgeBackup ~= nil and BridgeBackup.flushNow ~= nil then pcall(BridgeBackup.flushNow) end
+    elseif Bridge.verbose then
+        log("deferred outfit save refused")
+    end
+    BridgeInventory.clearOutfitSave()
+end
+
+
 if ISInventoryTransferAction ~= nil and ISInventoryTransferAction.perform ~= nil
     and not ISInventoryTransferAction.bridgeSelectWrapped then
     local perform = ISInventoryTransferAction.perform
@@ -5427,9 +5480,13 @@ if ISInventoryTransferAction ~= nil and ISInventoryTransferAction.perform ~= nil
                     BridgeInventory.dropGone(Bridge.body)
                 end
             end)
-            pcall(function() Bridge.saveOutfit() end)
             if BridgeParked ~= nil then pcall(BridgeParked.save) end
-            pcall(function() if BridgeBackup ~= nil and BridgeBackup.flushNow ~= nil then BridgeBackup.flushNow() end end)
+            pcall(function()
+                if Bridge.alive() and Bridge.kind == "zombie"
+                    and not (BridgeParked ~= nil and BridgeParked.active) then
+                    BridgeInventory.requestOutfitSave()
+                end
+            end)
         end
 
         if BridgeHeal ~= nil and BridgeInventory.inBody(self.destContainer) then BridgeHeal.emptySig = nil end

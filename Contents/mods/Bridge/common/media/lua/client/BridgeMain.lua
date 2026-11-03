@@ -68,6 +68,7 @@ Bridge.red60 = 0
 Bridge.stuckCount = 0
 Bridge.wornSeen = nil
 Bridge.itemsSeen = nil
+Bridge.itemsCheckedTick = nil
 Bridge.enginePosX = nil
 Bridge.enginePosY = nil
 Bridge.engineAcc = 0
@@ -925,13 +926,18 @@ function Bridge.saveOutfit(encoded, force)
         logSnapshotState("redressed", "snapshot skipped: body re-dressed by the game")
         return false
     end
+    local snapList = nil
     if encoded == nil then
-        local snapOk, snap = pcall(function() return BridgeInventory.encode(BridgeInventory.snapshot(Bridge.body)) end)
+        local snapOk, snap, list = pcall(function()
+            local l = BridgeInventory.snapshot(Bridge.body)
+            return BridgeInventory.encode(l), l
+        end)
         if not snapOk then
             log("snapshot failed: " .. tostring(snap))
             return false
         end
         encoded = snap
+        snapList = list
     end
     checkInventoryWarning()
     local saved = BridgeItems.get(md)
@@ -958,13 +964,21 @@ function Bridge.saveOutfit(encoded, force)
         Bridge.itemsSavedTick = Bridge.time
         Bridge.itemsSpentAt = nil
         local snapSig, snapN = nil, nil
-        pcall(function()
-            local list = BridgeItems.decode(encoded)
-            snapN = #list
-            snapSig = BridgeItems.signature(list)
-        end)
+        if snapList ~= nil and BridgeItems.truncated ~= true then
+            pcall(function()
+                snapN = #snapList
+                snapSig = BridgeItems.signature(snapList)
+            end)
+            pcall(function() Bridge.noteWornList(snapList) end)
+        else
+            pcall(function()
+                local list = BridgeItems.decode(encoded)
+                snapN = #list
+                snapSig = BridgeItems.signature(list)
+            end)
+            pcall(function() Bridge.noteWorn(encoded) end)
+        end
         if snapSig ~= nil then Bridge.itemsSign = snapSig end
-        pcall(function() Bridge.noteWorn(encoded) end)
         if not Bridge.mp and BridgeBackup ~= nil then pcall(BridgeBackup.noteItems, Bridge.body, encoded, snapSig, snapN) end
     end
     return ok
@@ -974,8 +988,13 @@ end
 
 
 function Bridge.noteWorn(encoded)
-    local now, list = {}, BridgeItems.decode(encoded or "")
-    for _, r in ipairs(list) do
+    Bridge.noteWornList(BridgeItems.decode(encoded or ""))
+end
+
+
+function Bridge.noteWornList(list)
+    local now = {}
+    for _, r in ipairs(list or {}) do
         if r.p == nil and r.w then now[#now + 1] = r.t end
     end
     table.sort(now)
@@ -4005,9 +4024,16 @@ local function updateZombieBody(body)
 
             elseif (Bridge.time - (Bridge.itemsSavedTick or 0)) > (Bridge.mp and 3600 or 300)
                     or (Bridge.itemsSpentAt ~= nil and Bridge.time - Bridge.itemsSpentAt > 600) then
-                local full = BridgeInventory.encode(list)
+                local stale = (Bridge.time - (Bridge.itemsSavedTick or 0)) > (Bridge.mp and 3600 or 300)
+                local spent = (Bridge.itemsSpentAt ~= nil and Bridge.time - Bridge.itemsSpentAt > 600)
+                local checked = (Bridge.time - (Bridge.itemsCheckedTick or 0)) >= (Bridge.mp and 3600 or 300)
+                if spent or (stale and checked) then
+                    Bridge.itemsCheckedTick = Bridge.time
+                    vlog("snapshot full check: stale=" .. tostring(stale) .. " spent=" .. tostring(spent))
+                    local full = BridgeInventory.encode(list)
 
-                if full ~= Bridge.itemsSeen then Bridge.saveOutfit(full) else Bridge.itemsSpentAt = nil end
+                    if full ~= Bridge.itemsSeen then Bridge.saveOutfit(full) else Bridge.itemsSpentAt = nil end
+                end
             end
         end
     end
@@ -7583,6 +7609,9 @@ function Bridge.onTick()
     Bridge.dt = dt
     Bridge.prevTime = Bridge.time
     Bridge.time = Bridge.time + dt
+    if BridgeInventory ~= nil and type(BridgeInventory.outfitSaveTick) == "function" then
+        pcall(BridgeInventory.outfitSaveTick)
+    end
     if BridgeBackup ~= nil then pcall(BridgeBackup.tick) end
     pcall(Bridge.mournTick)
     if Bridge.corpseWatch ~= nil then pcall(Bridge.corpseSweep) end
