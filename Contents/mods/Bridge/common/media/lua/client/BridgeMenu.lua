@@ -1478,18 +1478,22 @@ function BridgeMenu.onDepositMenu(playerNum, context, worldobjects, test)
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.DEPOSIT_ENABLED ~= 1 then return end
     if BridgeDeposit == nil or type(BridgeDeposit.targetsUnder) ~= "function" then return end
     if not BridgeData.optionOf(Bridge.store, "lootMenu") then return end
-    if not present() then return end
+    local isPresent = present()
+    local markOk = BridgeDeposit.homeMarkHere() == true
+    if not isPresent and not markOk then return end
     local targets = BridgeDeposit.targetsUnder(worldobjects)
     if targets == nil or #targets == 0 then return end
-    local ok = false
-    pcall(function() ok = BridgeTask.kinds.deposit.available(Bridge.body) end)
     local sub = rinTopMenu(context)
-    local label = tr("DepositLootHere")
-    if sub:getOptionFromName(label) == nil then
-        local opt = sub:addOption(label, targets, BridgeMenu.onDepositThis)
-        if not ok or BridgeTask.active then opt.notAvailable = true end
+    if isPresent then
+        local ok = false
+        pcall(function() ok = BridgeTask.kinds.deposit.available(Bridge.body) end)
+        local label = tr("DepositLootHere")
+        if sub:getOptionFromName(label) == nil then
+            local opt = sub:addOption(label, targets, BridgeMenu.onDepositThis)
+            if not ok or BridgeTask.active then opt.notAvailable = true end
+        end
     end
-    if BridgeDeposit.homeHere() then
+    if markOk then
         local homeTargets = {}
         for i = 1, #targets do
             if BridgeDeposit.targetAtHome(targets[i]) then homeTargets[#homeTargets + 1] = targets[i] end

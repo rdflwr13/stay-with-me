@@ -798,7 +798,7 @@ function BridgeDeposit.isMarked(cont)
 end
 
 function BridgeDeposit.toggleMark(cont)
-    if not BridgeDeposit.homeHere() then return nil end
+    if not BridgeDeposit.homeMarkHere() then return nil end
     local ref = nil
     pcall(function() ref = BridgeInventory.destRef(cont) end)
     local key = BridgeData.storeRefKey(ref)
@@ -825,7 +825,7 @@ function BridgeDeposit.toggleMark(cont)
 end
 
 function BridgeDeposit.seedMarks()
-    if not BridgeDeposit.homeHere() then return 0 end
+    if not BridgeDeposit.homeMarkHere() then return 0 end
     local rec = store()
     local refs = BridgeData.cleanStoreRefs(rec.storeRefs) or {}
     local seen = {}
@@ -1251,6 +1251,17 @@ function BridgeDeposit.homeHere()
     pcall(function() rx, ry, rz = red:getX(), red:getY(), red:getZ() end)
     pcall(function() bx, by, bz = body:getX(), body:getY(), body:getZ() end)
     return atHome(rx, ry, rz) and atHome(bx, by, bz)
+end
+
+function BridgeDeposit.homeMarkHere()
+    local h = nil
+    if BridgeHome ~= nil and type(BridgeHome.get) == "function" then h = BridgeHome.get() end
+    if h == nil then return false end
+    local red = owner()
+    if red == nil then return false end
+    local rx, ry, rz = nil, nil, nil
+    pcall(function() rx, ry, rz = red:getX(), red:getY(), red:getZ() end)
+    return atHome(rx, ry, rz)
 end
 
 local function finishJob(job, reason)

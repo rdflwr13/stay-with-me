@@ -775,7 +775,7 @@ function BridgeHomeTab:prerender()
     if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then marked = BridgeDeposit.markedCount() end
     if self.markAllBtn ~= nil then
         local canMark = has
-        if BridgeDeposit ~= nil and type(BridgeDeposit.homeHere) == "function" then canMark = has and BridgeDeposit.homeHere() end
+        if BridgeDeposit ~= nil and type(BridgeDeposit.homeMarkHere) == "function" then canMark = has and BridgeDeposit.homeMarkHere() end
         if self.markAllBtn.enable ~= canMark then self.markAllBtn:setEnable(canMark) end
     end
     if self.clearMarksBtn ~= nil then

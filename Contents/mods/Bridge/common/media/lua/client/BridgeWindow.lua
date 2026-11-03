@@ -31,6 +31,8 @@ local ROW = 6
 local BOX = 8
 local AVATAR_BORDER = 2
 local AVATAR_W, AVATAR_H = 128, 256
+local BLOCK_TICKS = 15
+local LOOKS_TICKS = 15
 
 
 local FONT_S, FONT_M, BTN_H = 0, 0, 0
@@ -146,6 +148,31 @@ function BridgeWindow.lookKey(st, itemsKey)
         .. tostring(BridgeData.beardOf(st)) .. "|"
         .. tostring(bc.r) .. "," .. tostring(bc.g) .. "," .. tostring(bc.b) .. "|"
         .. (itemsKey or BridgeItems.lookKey(BridgeItems.decode(items)))
+end
+
+
+function BridgeWindow.dollKey(st)
+    local app = BridgeData.appearanceOf(st)
+    local function rawList(v)
+        if type(v) == "table" then return table.concat(v, ",") end
+        return tostring(v or "")
+    end
+    local function rawColor(c)
+        if type(c) ~= "table" then return "" end
+        return tostring(c.r) .. "," .. tostring(c.g) .. "," .. tostring(c.b)
+    end
+    return table.concat({
+        BridgeData.genderOf(st),
+        tostring(app ~= nil and app.skin or ""),
+        tostring(app ~= nil and app.hair or ""),
+        rawColor(app ~= nil and app.hairColor or nil),
+        tostring(app ~= nil and app.face or ""),
+        rawList(app ~= nil and app.details or nil),
+        tostring(app ~= nil and app.muscle or ""),
+        rawList(app ~= nil and app.makeup or nil),
+        tostring(app ~= nil and app.beard or ""),
+        rawColor(app ~= nil and app.beardColor or nil),
+    }, "|")
 end
 
 
@@ -300,12 +327,19 @@ function BridgeWindowInfo:createChildren()
     self.exerBtn:instantiate()
     self.exerBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.exerBtn)
+    self.lookItemsSrc = false
+    self.lookItemsKey = nil
 end
 
 
 function BridgeWindowInfo:refreshAvatar()
     local st = Bridge.store
-    local key = BridgeWindow.lookKey(st)
+    local items = st ~= nil and st.items or nil
+    if items ~= self.lookItemsSrc then
+        self.lookItemsSrc = items
+        self.lookItemsKey = BridgeItems.lookKey(BridgeItems.decode(items or ""))
+    end
+    local key = BridgeWindow.dollKey(st) .. "|" .. (self.lookItemsKey or "")
     if key == self.avatarKey then return end
     self.avatarKey = key
     local ok, err = pcall(function() self.avatar:setSurvivorDesc(BridgeWindow.makeDesc(st)) end)
@@ -470,10 +504,16 @@ function BridgeWindowInfo:render()
     self.callBtn:setY(y)
     y = y + BTN_H + GROUP
 
-    local shown = tr("LookDefault")
-    if BridgeLooks ~= nil and type(BridgeLooks.shown) == "function" then
-        local n = BridgeLooks.shown(Bridge.store)
-        if type(n) == "string" and n ~= "" then shown = n end
+    local shown = self.shownLook
+    if self.avatarKey ~= self.shownAvatarKey or shown == nil or (Bridge.time or 0) >= (self.shownAt or 0) then
+        shown = tr("LookDefault")
+        if BridgeLooks ~= nil and type(BridgeLooks.shown) == "function" then
+            local n = BridgeLooks.shown(Bridge.store)
+            if type(n) == "string" and n ~= "" then shown = n end
+        end
+        self.shownLook = shown
+        self.shownAvatarKey = self.avatarKey
+        self.shownAt = (Bridge.time or 0) + LOOKS_TICKS
     end
     self:drawEnds(x, y, colW, tr("WindowAppearance"), shown, 1, 1, 1, 0.6, 0.6, 0.6)
     y = y + FONT_S + PAD
@@ -508,10 +548,15 @@ function BridgeWindowInfo:render()
         if btn.setWidth ~= nil then btn:setWidth(iw) end
         btn:setY(lineY)
         btn:setTitle(tr("Exercise"))
-        local reason = nil
-        if BridgeExercise ~= nil and BridgeExercise.blockReason ~= nil then
-            pcall(function() reason = BridgeExercise.blockReason() end)
+        if self.blockAt == nil or (Bridge.time or 0) >= self.blockAt then
+            local reason = nil
+            if BridgeExercise ~= nil and BridgeExercise.blockReason ~= nil then
+                pcall(function() reason = BridgeExercise.blockReason() end)
+            end
+            self.blockReason = reason
+            self.blockAt = (Bridge.time or 0) + BLOCK_TICKS
         end
+        local reason = self.blockReason
         btn:setEnable(reason == nil)
         if reason == nil then
             btn.tooltip = tr("ExReadyNow")
@@ -533,6 +578,7 @@ function BridgeWindowInfo:render()
 end
 
 function BridgeWindowInfo:onExercise()
+    self.blockAt = nil
     if BridgeMenu ~= nil and BridgeMenu.onExercise ~= nil then BridgeMenu.onExercise() end
 end
 
@@ -1157,6 +1203,7 @@ end
 
 
 local GLOW_TICKS = 180
+local SKILL_TICKS = 15
 local function skillGlow(perk)
     if BridgeSkills == nil or BridgeSkills.lastLevelUp == nil then return 0 end
     local lu = BridgeSkills.lastLevelUp
@@ -1193,14 +1240,55 @@ function BridgeWindowSkills:createChildren()
     self.unit = skillUnit()
     self.rowH = skillRowH()
     self.hintLines, self.hintH = BridgeWindow.hintLines(self.width, "SkillsHint", name())
+    self.labels = {}
     self.labelW = 0
     for _, group in ipairs(BridgeWindow.SKILLS) do
         for _, row in ipairs(group.rows) do
-            self.labelW = math.max(self.labelW, textW(UIFont.Small, BridgeWindow.skillLabel(row.perk)))
+            local label = BridgeWindow.skillLabel(row.perk)
+            self.labels[row.perk] = label
+            self.labelW = math.max(self.labelW, textW(UIFont.Small, label))
         end
     end
     self.barX = PAD + self.labelW + PAD
     self.barW = 10 * self.unit + 9 * SKILL_GAP
+    self.skillSrc = nil
+    self.skillAt = 0
+    self.skillLevels = {}
+    self.skillProg = {}
+    self.hitRows = nil
+    self.hitRowH = nil
+    self.hitHintH = nil
+end
+
+function BridgeWindowSkills:refreshValues()
+    local store = Bridge ~= nil and Bridge.store or nil
+    local now = Bridge ~= nil and (Bridge.time or 0) or 0
+    if store == self.skillSrc and now < self.skillAt then return end
+    for _, group in ipairs(BridgeWindow.SKILLS) do
+        for _, row in ipairs(group.rows) do
+            self.skillLevels[row.perk] = skillLevel(row.perk)
+            self.skillProg[row.perk] = skillProgress(row.perk)
+        end
+    end
+    self.skillSrc = store
+    self.skillAt = now + SKILL_TICKS
+end
+
+function BridgeWindowSkills:refreshHitRows()
+    if self.hitRows ~= nil and self.hitRowH == self.rowH and self.hitHintH == self.hintH then return end
+    local rows = {}
+    local ry = PAD + (self.hintH or 0)
+    for _, group in ipairs(BridgeWindow.SKILLS) do
+        ry = ry + FONT_M + 2 + PAD
+        for _, row in ipairs(group.rows) do
+            rows[#rows + 1] = { row = row, y = ry, h = self.rowH }
+            ry = ry + self.rowH
+        end
+        ry = ry + PAD
+    end
+    self.hitRows = rows
+    self.hitRowH = self.rowH
+    self.hitHintH = self.hintH
 end
 
 function BridgeWindowSkills:drawBar(x, y, level, xp)
@@ -1223,13 +1311,14 @@ end
 function BridgeWindowSkills:render()
     self.unit = skillUnit()
     self.rowH = skillRowH()
+    self:refreshValues()
+    self:refreshHitRows()
     local x, y = PAD, PAD
     for _, line in ipairs(self.hintLines or {}) do
         self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
         y = y + getTextManager():getFontHeight(UIFont.Small) + 2
     end
     y = PAD + (self.hintH or 0)
-    self.hitRows = {}
     for _, group in ipairs(BridgeWindow.SKILLS) do
         self:drawText(gameText(group.category, group.category), x, y, 1, 1, 1, 1, UIFont.Medium)
         y = y + FONT_M + 2
@@ -1241,9 +1330,9 @@ function BridgeWindowSkills:render()
                 self:drawRect(x - 2, y, self.width - PAD * 2 + 4, self.rowH, glow * 0.45, 1, 0.89, 0.38)
             end
             local ty = y + (self.rowH - FONT_S) / 2
-            self:drawText(BridgeWindow.skillLabel(row.perk), x, ty, 1, 1, 1, 1, UIFont.Small)
-            self:drawBar(self.barX, y + (self.rowH - self.unit) / 2, skillLevel(row.perk), skillProgress(row.perk))
-            self.hitRows[#self.hitRows + 1] = { row = row, y = y, h = self.rowH }
+            self:drawText(self.labels[row.perk] or BridgeWindow.skillLabel(row.perk), x, ty, 1, 1, 1, 1, UIFont.Small)
+            self:drawBar(self.barX, y + (self.rowH - self.unit) / 2,
+                self.skillLevels[row.perk] or 0, self.skillProg[row.perk] or 0)
             y = y + self.rowH
         end
         y = y + PAD
@@ -1392,7 +1481,18 @@ function BridgeWindowMain:fitHeight()
     local view = self.panel.activeView.view
     local kind = self:kindOf(view)
     if view == nil or kind == nil then return end
-    local content = BridgeWindow.contentHeight(kind, self:getWidth())
+    local value = ""
+    if kind == "loot" then
+        value = tostring(BridgeWindow.lootMode or "loot")
+    elseif kind == "info" then
+        value = tostring(BridgeWindow.relRows())
+    end
+    local brand = kind .. "|" .. tostring(self:getWidth()) .. "|" .. name() .. "|" .. tostring(FONT_S) .. "|" .. value
+    if brand ~= self.contentBrand then
+        self.contentBrand = brand
+        self.contentH = BridgeWindow.contentHeight(kind, self:getWidth())
+    end
+    local content = self.contentH
     if type(content) ~= "number" or content <= 0 then return end
     content = math.ceil(content)
     local th = self:titleBarHeight()
