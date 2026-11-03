@@ -1,7 +1,19 @@
 BridgeDeposit = BridgeDeposit or {}
+BridgeDeposit.poolCache = BridgeDeposit.poolCache or {}
+BridgeDeposit.catCache = BridgeDeposit.catCache or {}
+BridgeDeposit.cacheOn = false
 
 local HOME_CAP = 240
 local AREA_CAP = 80
+local VALIDATE_EVERY = 30
+
+local function ffMult()
+    if BridgeTask ~= nil and type(BridgeTask.ffMult) == "function" then
+        local m = BridgeTask.ffMult()
+        if type(m) == "number" and m >= 1 then return m end
+    end
+    return 1
+end
 
 local FUNCTIONAL_CATS = {
     ReceiveTool = true,
@@ -33,6 +45,18 @@ local function itemFull(item)
     local t = nil
     pcall(function() t = item:getFullType() end)
     return type(t) == "string" and t or nil
+end
+
+local function jobFull(job, item)
+    if item == nil then return nil end
+    if job == nil or job.fullCache == nil then return itemFull(item) end
+    local f = job.fullCache[item]
+    if f == nil then
+        f = itemFull(item) or false
+        job.fullCache[item] = f
+    end
+    if f == false then return nil end
+    return f
 end
 
 local function itemId(item)
@@ -70,21 +94,35 @@ local function wornBagSet(body)
 end
 
 local function poolOf(item)
+    if item == nil then return nil end
+    if BridgeDeposit.cacheOn and BridgeDeposit.poolCache[item] ~= nil then
+        local cached = BridgeDeposit.poolCache[item]
+        if cached == false then return nil end
+        return cached
+    end
     local pool = nil
     pcall(function() pool = BridgeSocial.receivePool(item) end)
+    if BridgeDeposit.cacheOn then BridgeDeposit.poolCache[item] = pool or false end
     return pool
 end
 
 local function catOf(item, pool)
     if item == nil then return nil end
+    local useCache = BridgeDeposit.cacheOn and (pool == nil or pool == poolOf(item))
+    if useCache and BridgeDeposit.catCache[item] ~= nil then
+        local cached = BridgeDeposit.catCache[item]
+        if cached == false then return nil end
+        return cached
+    end
     pool = pool or poolOf(item)
     local food, water, booze = false, false, false
     pcall(function() food = item:IsFood() == true end)
     pcall(function() water = item:isWaterSource() == true end)
     pcall(function() booze = item:isAlcoholic() == true end)
-    if food or water or booze then return booze and "ReceiveBooze" or "ReceiveFood" end
     local cat = nil
-    if BridgeData ~= nil then
+    if food or water or booze then
+        cat = booze and "ReceiveBooze" or "ReceiveFood"
+    elseif BridgeData ~= nil then
         if pool ~= nil and pool ~= "ReceiveItem" then
             cat = BridgeData.LOOT_POOL_GROUP[pool]
             if cat == nil and BridgeData.LOOT_CAT_SET[pool] then cat = pool end
@@ -92,6 +130,7 @@ local function catOf(item, pool)
         if cat == nil then cat = BridgeData.lootCatPrefix(item) end
         if cat == nil and pool ~= nil and BridgeData.LOOT_CAT_SET[pool] then cat = pool end
     end
+    if useCache then BridgeDeposit.catCache[item] = cat or false end
     return cat
 end
 
@@ -828,20 +867,57 @@ function BridgeDeposit.refreshIndex(job)
         if BridgeDeposit.destUsable(t) then
             local c = containerContents(t.cont)
             t._full, t._cats, t._n = c.full, c.cats, c.n
+            t._capRound, t._loadRound, t._encloseJob = nil, nil, nil
             dests[#dests + 1] = t
         end
     end
     job.dests = dests
 end
 
+local function indexAdd(dest, moved)
+    if dest == nil or moved == nil then return end
+    dest._full = dest._full or {}
+    dest._cats = dest._cats or {}
+    for i = 1, #moved do
+        local it = moved[i]
+        local f = itemFull(it)
+        if f ~= nil then dest._full[f] = true end
+        local c = catOf(it)
+        if c ~= nil then dest._cats[c] = true end
+    end
+    dest._n = (dest._n or 0) + #moved
+    dest._capRound = nil
+    dest._loadRound = nil
+end
+
 local function freeSpace(t, item, player)
-    local cap, load = nil, 0
-    pcall(function() cap = t.cont:getEffectiveCapacity(player or getSpecificPlayer(0)) end)
-    pcall(function() load = t.cont:getContentsWeight() end)
-    if type(cap) ~= "number" or cap <= 0 then return nil end
-    if type(load) ~= "number" then load = 0 end
-    pcall(function() load = ItemContainer.floatingPointCorrection(load) end)
-    return cap - load - itemWeight(item)
+    if t._capRound == nil then
+        local cap = nil
+        pcall(function() cap = t.cont:getEffectiveCapacity(player or getSpecificPlayer(0)) end)
+        if type(cap) ~= "number" or cap <= 0 then t._capRound = false else t._capRound = cap end
+    end
+    if t._capRound == false then return nil end
+    if t._loadRound == nil then
+        local load = 0
+        pcall(function() load = t.cont:getContentsWeight() end)
+        if type(load) ~= "number" then load = 0 end
+        pcall(function() load = ItemContainer.floatingPointCorrection(load) end)
+        t._loadRound = load
+    end
+    return t._capRound - t._loadRound - itemWeight(item)
+end
+
+local function destEnclose(job, t)
+    if job == nil or job.bodyKey == nil then return false end
+    if t._encloseJob ~= job.bodyKey then
+        local sq = nil
+        pcall(function() sq = getCell():getGridSquare(t.x, t.y, t.z) end)
+        local k = nil
+        if sq ~= nil then pcall(function() k = BridgeDoors.enclosureKey(sq) end) end
+        t._encloseJob = job.bodyKey
+        t._enclose = (k == job.bodyKey)
+    end
+    return t._enclose == true
 end
 
 local function affinityRank(cat, t)
@@ -868,7 +944,7 @@ function BridgeDeposit.scoreDest(job, item)
     local player = owner()
     local body = job.body or selfBody()
     local cat = catOf(item)
-    local full = itemFull(item)
+    local full = jobFull(job, item)
     local match = BridgeData.optionOf(store(), "storeMatch") == true
     local best, bestScore = nil, nil
     for i = 1, #job.dests do
@@ -891,16 +967,7 @@ function BridgeDeposit.scoreDest(job, item)
                 end
                 local free = freeSpace(t, item, player)
                 if free == nil or free >= -0.001 then
-                    local enclose = false
-                    if job.bodyKey ~= nil then
-                        local sq = nil
-                        pcall(function() sq = getCell():getGridSquare(t.x, t.y, t.z) end)
-                        if sq ~= nil then
-                            local k = nil
-                            pcall(function() k = BridgeDoors.enclosureKey(sq) end)
-                            enclose = k == job.bodyKey
-                        end
-                    end
+                    local enclose = destEnclose(job, t)
                     local dx, dy = 0, 0
                     if body ~= nil then dx, dy = body:getX() - (t.x + 0.5), body:getY() - (t.y + 0.5) end
                     local dist = math.sqrt(dx * dx + dy * dy) + 20 * math.abs((t.z or 0) - (body ~= nil and math.floor(body:getZ()) or 0))
@@ -963,13 +1030,17 @@ local function compact(list)
     return out
 end
 
-local function refreshPanels()
+local function refreshBackpacks()
     pcall(function()
         local inv, loot = getPlayerInventory(0), getPlayerLoot(0)
         if inv ~= nil then inv:refreshBackpacks() end
         if loot ~= nil then loot:refreshBackpacks() end
-        ISInventoryPage.renderDirty = true
     end)
+end
+
+local function refreshPanels()
+    refreshBackpacks()
+    pcall(function() ISInventoryPage.renderDirty = true end)
 end
 BridgeDeposit.refreshPanels = refreshPanels
 
@@ -994,8 +1065,13 @@ end
 function BridgeDeposit.clear()
     BridgeDeposit.job = nil
     BridgeDeposit.pending = nil
+    BridgeDeposit.cacheOn = false
+    BridgeDeposit.poolCache = {}
+    BridgeDeposit.catCache = {}
     if BridgeTask ~= nil and type(BridgeTask.lootAbortAct) == "function" then pcall(BridgeTask.lootAbortAct) end
     if BridgeMove ~= nil then BridgeMove.holdDoors = false end
+    saveOutfit()
+    refreshPanels()
 end
 
 local function initJob(body, pending)
@@ -1008,6 +1084,9 @@ local function initJob(body, pending)
     local key = nil
     pcall(function() key = BridgeDoors.enclosureKey(body:getCurrentSquare()) end)
     job.bodyKey = key
+    BridgeDeposit.cacheOn = true
+    BridgeDeposit.poolCache = {}
+    BridgeDeposit.catCache = {}
     local items = {}
     for i = 1, #(job.items or {}) do
         local it = job.items[i]
@@ -1015,7 +1094,12 @@ local function initJob(body, pending)
     end
     job.items = items
     if job.dests == nil then job.dests = {} end
-    BridgeDeposit.refreshIndex(job)
+    if job.indexed ~= true then BridgeDeposit.refreshIndex(job) end
+    job.allDests = {}
+    for i = 1, #job.dests do job.allDests[i] = job.dests[i] end
+    job.fullCache = {}
+    job.validateAt = 0
+    job.uiAt = 0
     job.count = job.count or 0
     BridgeTask.depositFull = false
     BridgeTask.depositCount = job.count
@@ -1026,13 +1110,43 @@ local function initJob(body, pending)
     return job
 end
 
+local function takingBusy()
+    if BridgeInventory == nil or type(BridgeInventory.taking) ~= "table" then return false end
+    for _ in pairs(BridgeInventory.taking) do return true end
+    return false
+end
+
+local function restoreDests(job)
+    if job == nil or job.allDests == nil then return end
+    local list = {}
+    local bad = job.bad or {}
+    for i = 1, #job.allDests do
+        local t = job.allDests[i]
+        if not bad[refKey(t)] and BridgeDeposit.destUsable(t) then list[#list + 1] = t end
+    end
+    job.dests = list
+end
+
+local function rescanItems(body, job)
+    if job == nil then return 0 end
+    restoreDests(job)
+    local more = BridgeDeposit.storableItems(body)
+    if #more == 0 then return 0 end
+    job.items = more
+    job.validateAt = Bridge.time + VALIDATE_EVERY
+    job.emptyAt = nil
+    log("deposit rescan added=" .. #more)
+    return #more
+end
+
 function BridgeDeposit.start(destTargets, opts)
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.DEPOSIT_ENABLED ~= 1 then return "disabled" end
     local cfg = opts or {}
     local body = selfBody()
     if body == nil then return "no body" end
     local items = BridgeDeposit.storableItems(body)
-    if #items == 0 then
+    local waiting = (#items == 0) and takingBusy()
+    if #items == 0 and not waiting then
         local why = BridgeDeposit.explain(body)
         if #why == 0 then
             log("unavailable: nothing carried")
@@ -1055,13 +1169,24 @@ function BridgeDeposit.start(destTargets, opts)
         end
         dests = only
     end
+    if waiting and #dests == 0 then
+        log("unavailable: no destination (waiting)")
+        if Bridge ~= nil then
+            if cfg.home == true then Bridge.speak("JobNoMarked") else Bridge.speak("JobNoStorage") end
+        end
+        return "unavailable"
+    end
     local pending = { items = items, dests = dests, remote = cfg.remote == true, said = {}, bad = {}, count = 0 }
-    local probe = { body = body, dests = dests, bad = {}, bodyKey = nil }
-    pcall(function() probe.bodyKey = BridgeDoors.enclosureKey(body:getCurrentSquare()) end)
-    BridgeDeposit.refreshIndex(probe)
-    local fit = false
-    for i = 1, #items do
-        if BridgeDeposit.scoreDest(probe, items[i]) ~= nil then fit = true break end
+    local fit = waiting
+    if not waiting then
+        local probe = { body = body, dests = dests, bad = {}, bodyKey = nil }
+        pcall(function() probe.bodyKey = BridgeDoors.enclosureKey(body:getCurrentSquare()) end)
+        BridgeDeposit.refreshIndex(probe)
+        for i = 1, #items do
+            if BridgeDeposit.scoreDest(probe, items[i]) ~= nil then fit = true break end
+        end
+        pending.dests = probe.dests
+        pending.indexed = true
     end
     if not fit then
         log(string.format("unavailable: no destination fits %d item(s) in %d container(s)", #items, #dests))
@@ -1070,6 +1195,7 @@ function BridgeDeposit.start(destTargets, opts)
         end
         return "unavailable"
     end
+    log(string.format("start items=%d dests=%d waiting=%s", #items, #dests, tostring(waiting)))
     BridgeDeposit.pending = pending
     local res = BridgeTask.start("deposit", {}, nil, nil)
     if res ~= "started" then
@@ -1099,9 +1225,13 @@ function BridgeDeposit.homeHere()
     return atHome(rx, ry, rz) and atHome(bx, by, bz)
 end
 
-local function finishJob(job)
+local function finishJob(job, reason)
     BridgeTask.depositCount = job ~= nil and (job.count or 0) or 0
     BridgeTask.depositFull = job ~= nil and job.full == true or false
+    if job ~= nil then
+        log(string.format("deposit finish reason=%s count=%d remaining=%d",
+            tostring(reason or "done"), job.count or 0, #(job.items or {})))
+    end
     return BridgeTask.finish()
 end
 
@@ -1128,16 +1258,7 @@ local function destAssignments(job, body)
     for i = 1, #order do
         local entry = groups[order[i]]
         local d = entry.dest
-        local enclose = false
-        if job.bodyKey ~= nil then
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(d.x, d.y, d.z) end)
-            if sq ~= nil then
-                local k = nil
-                pcall(function() k = BridgeDoors.enclosureKey(sq) end)
-                enclose = k == job.bodyKey
-            end
-        end
+        local enclose = destEnclose(job, d)
         local dist = math.sqrt((d.x + 0.5 - bx) ^ 2 + (d.y + 0.5 - by) ^ 2) + 20 * math.abs((d.z or 0) - bz)
         local score = { enclose = enclose, dist = dist, key = order[i] }
         local better = false
@@ -1197,7 +1318,7 @@ local function destLabel(dest)
     return string.format("%s@%s,%s,%s", kind, tostring(dest.x), tostring(dest.y), tostring(dest.z))
 end
 
-local function depositTake(body, item, target, available, home)
+local function depositTake(body, item, target, available, home, job)
     local dest = target ~= nil and target.cont or nil
     local src = nil
     pcall(function() src = item:getContainer() end)
@@ -1207,13 +1328,13 @@ local function depositTake(body, item, target, available, home)
     if act == nil then return nil, nil end
     local group = { item }
     local cap = (BridgeTask ~= nil and BridgeTask.LOOT_BATCH_MAX) or 20
-    local full = itemFull(item)
+    local full = jobFull(job, item)
     for i = 1, #(available or {}) do
         if #group >= cap then break end
         local it = available[i]
         local same = false
         pcall(function()
-            same = it ~= nil and it ~= item and it:getContainer() == src and it:getFullType() == full
+            same = it ~= nil and it ~= item and it:getContainer() == src and jobFull(job, it) == full
         end)
         if same then group[#group + 1] = it end
     end
@@ -1260,6 +1381,8 @@ end
 
 local function removeDest(job, dest)
     if job == nil or dest == nil then return end
+    job.bad = job.bad or {}
+    job.bad[refKey(dest)] = true
     for i = 1, #job.dests do
         if job.dests[i].cont == dest.cont then table.remove(job.dests, i) break end
     end
@@ -1283,7 +1406,7 @@ local function updateTransfers(body, job)
         local here = false
         pcall(function() here = src ~= nil and src:contains(job.pending) end)
         local elapsed = Bridge.time - (job.pendingAt or Bridge.time)
-        local minTicks = job.pendingMin or 0
+        local minTicks = (job.pendingMin or 0) / ffMult()
         if (not here and elapsed >= minTicks) or elapsed > BridgeTask.LOOT_TRANSFER_WAIT then
             if not here then
                 local group = job.pendingGroup or { job.pending }
@@ -1299,9 +1422,12 @@ local function updateTransfers(body, job)
                 job.count = (job.count or 0) + #movedItems
                 if #movedItems > 0 then sayFor(job, job.pending) end
                 removeItems(job, movedItems)
-                BridgeDeposit.refreshIndex(job)
-                refreshPanels()
-                saveOutfit()
+                indexAdd(job.current, movedItems)
+                pcall(function() ISInventoryPage.renderDirty = true end)
+                if Bridge.time >= (job.uiAt or 0) then
+                    refreshBackpacks()
+                    job.uiAt = Bridge.time + 60
+                end
                 log(string.format("placed n=%d dest=%s total=%d", #movedItems, destLabel(job.current), job.count))
                 BridgeTask.lootAct = nil
                 BridgeTask.lootSrc = nil
@@ -1314,16 +1440,23 @@ local function updateTransfers(body, job)
             job.assign = nil
             pcall(function() BridgeMove.stopPath(body) end)
         end
-        if #job.items == 0 then return finishJob(job) end
+        if #job.items == 0 then return true end
         return true
     end
     if job.current == nil then
         local entry = destAssignments(job, body)
         if entry == nil then
-            job.full = #job.items > 0
-            if job.full then BridgeTask.depositFull = true end
+            local current = {}
+            for i = 1, #job.items do
+                local it = job.items[i]
+                if it ~= nil and stillPresent(body, it) then current[#current + 1] = it end
+            end
+            job.items = current
+            if #job.items == 0 then return true end
+            job.full = true
+            BridgeTask.depositFull = true
             log(string.format("no destination for %d remaining item(s)", #job.items))
-            return finishJob(job)
+            return finishJob(job, "no destination")
         end
         job.current = entry.dest
         job.assign = entry.items
@@ -1370,7 +1503,7 @@ local function updateTransfers(body, job)
         return true
     end
     local src = item:getContainer()
-    local act, group, t = depositTake(body, item, target, items, job.remote)
+    local act, group, t = depositTake(body, item, target, items, job.remote, job)
     if act == nil then
         removeDest(job, target)
         job.current = nil
@@ -1396,22 +1529,42 @@ function BridgeDeposit.update(body)
     end
     BridgeTask.depositFull = false
     BridgeTask.depositCount = job.count or 0
-    local items = {}
-    for i = 1, #(job.items or {}) do
-        local it = job.items[i]
-        local flying = false
-        if job.pending ~= nil then
-            flying = it == job.pending
-            if not flying and type(job.pendingGroup) == "table" then
-                for g = 1, #job.pendingGroup do
-                    if job.pendingGroup[g] == it then flying = true break end
+    if Bridge.time >= (job.validateAt or 0) then
+        local items = {}
+        for i = 1, #(job.items or {}) do
+            local it = job.items[i]
+            local flying = false
+            if job.pending ~= nil then
+                flying = it == job.pending
+                if not flying and type(job.pendingGroup) == "table" then
+                    for g = 1, #job.pendingGroup do
+                        if job.pendingGroup[g] == it then flying = true break end
+                    end
                 end
             end
+            if it ~= nil and (flying or stillPresent(body, it)) then items[#items + 1] = it end
         end
-        if it ~= nil and (flying or stillPresent(body, it)) then items[#items + 1] = it end
+        job.items = items
+        job.validateAt = Bridge.time + VALIDATE_EVERY
     end
-    job.items = items
-    if #job.items == 0 then return finishJob(job) end
+    if #job.items == 0 then
+        if takingBusy() then
+            job.emptyAt = job.emptyAt or Bridge.time
+            if Bridge.time - job.emptyAt < BridgeTask.LOOT_TRANSFER_WAIT then
+                return true
+            end
+        end
+        if job.rescanCount ~= nil and job.rescanCount > 0 and job.count == job.rescanCountAt then
+            return finishJob(job, "no progress")
+        end
+        local added = rescanItems(body, job)
+        if added > 0 then
+            job.rescanCount = (job.rescanCount or 0) + 1
+            job.rescanCountAt = job.count
+            return true
+        end
+        return finishJob(job, "empty")
+    end
     return updateTransfers(body, job)
 end
 

@@ -40,6 +40,10 @@ BridgeCallout.HOME_WITH = 12
 BridgeCallout.HOME_HOURS = 1.0
 BridgeCallout.HOME_GAP = 60 * 60
 
+BridgeCallout.MARK_EVENT = "EvMarkStorage"
+BridgeCallout.UNMARK_EVENT = "EvUnmarkStorage"
+BridgeCallout.MARK_GAP = 4
+
 BridgeCallout.SWING_COMBAT_QUIET = 60
 BridgeCallout.SWING_ZOMBIE_DIST = 10
 BridgeCallout.SWING_Z_TOL = 0.8
@@ -1171,6 +1175,23 @@ local function homeFire()
     if BridgeMoments == nil or type(BridgeMoments.say) ~= "function" then return false end
     local said = false
     pcall(function() said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn") == true end)
+    return said
+end
+
+
+function BridgeCallout.markSay(marked)
+    if BridgeCallout.ENABLED == 0 then return false end
+    if BridgeMenu == nil or type(BridgeMenu.inTalkRange) ~= "function" then return false end
+    if not BridgeMenu.inTalkRange() then return false end
+    local red = BridgeData.owner()
+    if red == nil or not homeCanSpeak(red) then return false end
+    local event = marked and BridgeCallout.MARK_EVENT or BridgeCallout.UNMARK_EVENT
+    local slot = marked and "StorageMark" or "StorageUnmark"
+    local said = false
+    pcall(function()
+        said = BridgeMoments.say(event, BridgeCallout.MARK_GAP, true, slot) == true
+    end)
+    if said then vlog("storage mark spoken " .. tostring(marked == true)) end
     return said
 end
 

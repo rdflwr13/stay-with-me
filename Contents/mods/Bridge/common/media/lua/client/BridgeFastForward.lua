@@ -202,7 +202,8 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
                 or BridgeTask.kind == "cleanUp" or BridgeTask.kind == "moveCorpses"
                 or BridgeTask.kind == "washSink" or BridgeTask.kind == "fillWater"
                 or BridgeTask.kind == "emptyFluid" or BridgeTask.kind == "pryDoor"
-                or BridgeTask.kind == "shower")
+                or BridgeTask.kind == "shower" or BridgeTask.kind == "deposit"
+                or BridgeTask.kind == "lootArea")
         end
     end)
     if job and not seated and not ffJob then return "job" end
@@ -736,7 +737,8 @@ function BridgeFastForward.tick()
                 or BridgeTask.kind == "moveCorpses"
                 or BridgeTask.kind == "washSink" or BridgeTask.kind == "fillWater"
                 or BridgeTask.kind == "emptyFluid" or BridgeTask.kind == "pryDoor"
-                or BridgeTask.kind == "shower") then
+                or BridgeTask.kind == "shower" or BridgeTask.kind == "deposit"
+                or BridgeTask.kind == "lootArea") then
         pcall(function() BridgeTask.update(Bridge.body) end)
         if Bridge.every(120) then
             log("ff drive: " .. tostring(BridgeTask.kind) .. " time=" .. string.format("%.1f", Bridge.time or 0))

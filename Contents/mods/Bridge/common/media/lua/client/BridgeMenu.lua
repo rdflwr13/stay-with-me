@@ -1525,6 +1525,9 @@ function BridgeMenu.onToggleMark(cont)
     if BridgeDeposit == nil or type(BridgeDeposit.toggleMark) ~= "function" then return end
     local state = BridgeDeposit.toggleMark(cont)
     log("mark toggle " .. tostring(state))
+    if state ~= nil and BridgeCallout ~= nil and type(BridgeCallout.markSay) == "function" then
+        pcall(BridgeCallout.markSay, state == true)
+    end
 end
 
 local function lootTargetsForItems(list, playerNum, whole)

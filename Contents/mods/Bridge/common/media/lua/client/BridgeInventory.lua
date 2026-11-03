@@ -2001,7 +2001,7 @@ end
 
 
 
-function BridgeInventory.roomVerdict(container, a, b2)
+function BridgeInventory.roomVerdict(container, a, b2, knownHers)
     local b = body()
     if b == nil or container == nil then return nil end
 
@@ -2009,13 +2009,17 @@ function BridgeInventory.roomVerdict(container, a, b2)
     local isMain = container == b:getInventory()
     local isCarried = false
     if not isMain then
-        pcall(function() isCarried = BridgeInventory.isHers(container) end)
-        if not isCarried then
-            pcall(function()
-                local ph, sh = b:getPrimaryHandItem(), b:getSecondaryHandItem()
-                if ph ~= nil and ph:IsInventoryContainer() and ph:getInventory() == container then isCarried = true end
-                if sh ~= nil and sh:IsInventoryContainer() and sh:getInventory() == container then isCarried = true end
-            end)
+        if knownHers == true then
+            isCarried = true
+        else
+            pcall(function() isCarried = BridgeInventory.isHers(container) end)
+            if not isCarried then
+                pcall(function()
+                    local ph, sh = b:getPrimaryHandItem(), b:getSecondaryHandItem()
+                    if ph ~= nil and ph:IsInventoryContainer() and ph:getInventory() == container then isCarried = true end
+                    if sh ~= nil and sh:IsInventoryContainer() and sh:getInventory() == container then isCarried = true end
+                end)
+            end
         end
     end
     if not isMain and not isCarried then return nil end

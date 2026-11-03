@@ -19,6 +19,7 @@ local ICONS = {
     keep = "media/ui/emotes/followbehind.png",
     work = "media/textures/RadialMenu/WorkMainMenu.png",
     depositHome = "media/textures/RadialMenu/WorkDepositAllLoot.png",
+    depositArea = "media/textures/RadialMenu/WorkDepositLootInArea.png",
     self = "media/textures/RadialMenu/SelfMenu.png",
     gear = "media/textures/RadialMenu/EquipmentAppearanceMenu.png",
     call = "media/ui/emotes/wavehello.png",
@@ -277,7 +278,7 @@ local function workEntries()
     end
     local defs = {
         { flag = "LOOTING_ENABLED", kind = "lootArea", key = "JobLootArea", handler = BridgeMenu.onJobLootArea, icon = ICONS.loot },
-        { flag = "DEPOSIT_ENABLED", kind = "depositArea", key = "JobDepositArea", handler = BridgeMenu.onJobDepositArea, icon = ICONS.loot },
+        { flag = "DEPOSIT_ENABLED", kind = "depositArea", key = "JobDepositArea", handler = BridgeMenu.onJobDepositArea, icon = ICONS.depositArea },
         { flag = "DEPOSIT_ENABLED", kind = "deposit", key = "DepositLootHome", handler = BridgeMenu.onDepositHome, icon = ICONS.depositHome,
             when = function() return BridgeDeposit ~= nil and BridgeDeposit.homeHere() end },
         { flag = "CLEANING_ENABLED", kind = "cleanUp", key = "JobCleanUp", handler = BridgeMenu.onJobCleanUp, icon = ICONS.clean },
