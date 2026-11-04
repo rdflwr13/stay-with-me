@@ -484,7 +484,7 @@ function BridgeAppearance.clothToken(list)
     local parts = {}
     for i = 1, #list do
         local e = list[i]
-        if #parts >= 32 then break end
+        if #parts >= 96 then break end
         if type(e) == "table" and type(e.loc) == "string" and type(e.t) == "string"
             and string.find(e.loc, "^[%w_]+$") ~= nil and #e.t <= 128 then
             local tint = ""
@@ -496,7 +496,7 @@ function BridgeAppearance.clothToken(list)
             local tc = tcNumber ~= nil and tostring(tcNumber) or ""
             local bt = btNumber ~= nil and tostring(btNumber) or ""
             local part = e.loc .. ":" .. e.t .. ":" .. tc .. ":" .. bt .. ":" .. tint
-            if #table.concat(parts, "|") + #part + 1 > 1800 then break end
+            if #table.concat(parts, "|") + #part + 1 > 6000 then break end
             parts[#parts + 1] = part
         end
     end
@@ -507,9 +507,9 @@ function BridgeAppearance.clothFromToken(text)
     local out = {}
     if type(text) ~= "string" then return out end
     if text == "" then return out end
-    if #text > 1800 then return nil end
+    if #text > 6000 then return nil end
     local start = 1
-    while start <= #text and #out < 32 do
+    while start <= #text and #out < 96 do
         local sep = string.find(text, "|", start, true)
         local part = nil
         if sep == nil then

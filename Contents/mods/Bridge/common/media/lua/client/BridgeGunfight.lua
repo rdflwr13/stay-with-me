@@ -790,6 +790,44 @@ local function logGunState(tag, body)
 end
 
 
+local attachGun
+
+local function restoreStowedGun(body, item)
+    if body == nil or item == nil then return false end
+    if Bridge.body ~= nil and Bridge.body ~= body then return false end
+
+    local hand = nil
+    pcall(function() hand = body:getPrimaryHandItem() end)
+    if hand == item then return false end
+
+    local main = false
+    pcall(function() main = item:getContainer() == body:getInventory() end)
+    if not main then
+        local key = "container|" .. tostring(item:getID())
+        if BridgeGunfight.attachLogKey ~= key then
+            BridgeGunfight.attachLogKey = key
+            log("recovered primary gun left unattached: not in her main inventory")
+        end
+        return false
+    end
+
+    local ok = attachGun(body, item)
+    if ok then
+        BridgeGunfight.attachLogKey = nil
+        pcall(function() body:resetModelNextFrame() end)
+        log("recovered primary gun attachment restored at "
+            .. tostring(BridgeGunfight.attached and BridgeGunfight.attached.slot or "?"))
+    else
+        local key = "slot|" .. tostring(item:getID())
+        if BridgeGunfight.attachLogKey ~= key then
+            BridgeGunfight.attachLogKey = key
+            log("recovered primary gun left unattached: slot unavailable or occupied")
+        end
+    end
+    return ok
+end
+
+
 function BridgeGunfight.recover(body)
     BridgeGunfight.reset()
     BridgeGunfight.body = body
@@ -826,6 +864,7 @@ function BridgeGunfight.recover(body)
         end
         tellServer(BridgeGunfight.gun.fullType, BridgeGunfight.assignedId, BridgeGunfight.rounds)
         log("recovered primary gun " .. BridgeGunRules.summary(BridgeGunfight.gun))
+        restoreStowedGun(body, found)
         logGunState("gun state at recover", body)
         return found
     end
@@ -947,7 +986,7 @@ local function detachGun(body)
 end
 
 
-local function attachGun(body, item)
+attachGun = function(body, item)
     local slot, set, defType = nil, nil, nil
     pcall(function() slot, set, defType = BridgeWeapon.slotFor(body, item) end)
     if slot == nil then return false end
@@ -2113,7 +2152,7 @@ end
 
 local function fire(body)
     local item = BridgeGunfight.gunItem
-    local gun = BridgeGunfight.gun
+    local gun = BridgeGunRules.ggsShotDesc(BridgeGunfight.gun, item)
     local t = BridgeGunfight.target
     if item == nil or gun == nil or t == nil then return end
     if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
@@ -2161,6 +2200,7 @@ local function fire(body)
 
     BridgeGunfight.rounds = math.max(0, (BridgeGunfight.rounds or 1) - 1)
     BridgeGunRules.setRounds(item, BridgeGunfight.rounds, true)
+    BridgeGunRules.ggsConsumeRound(item)
     if BridgeGunRules.gunsmith ~= nil then BridgeGunRules.gunsmith.afterShot(item) end
     if BridgeSkills ~= nil then
         pcall(function() BridgeSkills.add("Aiming", 0.5, "shot") end)
@@ -2595,6 +2635,11 @@ local function advanceMagCare(body, gun)
     local rounds = BridgeGunRules.roundsOf(magazine) + got
     if maxAmmo > 0 and rounds > maxAmmo then rounds = maxAmmo end
     BridgeGunRules.setRounds(magazine, rounds, false)
+    local removedType = nil
+    pcall(function() removedType = removed:getFullType() end)
+    if type(removedType) == "string" then
+        BridgeGunRules.ggsInsertLoadedRound(magazine, removedType)
+    end
     pcall(function()
         local removedAmmo = removed:getAmmoType()
         if removedAmmo ~= nil then magazine:setAmmoType(removedAmmo) end
@@ -2664,6 +2709,7 @@ local function magazineCare(body, gun, force, items)
             magazine = BridgeGunRules.ejectMagazine(body, gun, 0)
             if magazine ~= nil then
                 BridgeGunRules.setRounds(BridgeGunfight.gunItem, 0, false)
+                BridgeGunRules.ggsSyncCount(BridgeGunfight.gunItem)
                 BridgeGunfight.rounds = 0
                 clearAmmoPresence()
                 logf("magazine care: ejected inserted magazine id=%s type=%s rounds=%d clipPart=%s",
@@ -3661,7 +3707,7 @@ local function advanceReload(body)
                     ejected = BridgeGunRules.gunsmith.ejectMagazine(body, BridgeGunfight.gunItem) == true
                 end
                 if not ejected then
-                    local stashed = BridgeGunRules.stashMagazine(body, gun, BridgeGunfight.reloadSavedRounds or 0)
+                    local stashed = BridgeGunRules.stashMagazine(body, gun, BridgeGunfight.reloadSavedRounds or 0, nil, nil, BridgeGunfight.gunItem)
                     if stashed ~= nil then
                         log(string.format("reload: ejected magazine id=%s rounds=%d",
                             tostring(stashed:getID()), BridgeGunRules.roundsOf(stashed)))
@@ -3670,6 +3716,7 @@ local function advanceReload(body)
             end
             if BridgeGunfight.gunItem ~= nil then
                 BridgeGunRules.setRounds(BridgeGunfight.gunItem, 0, false)
+                BridgeGunRules.ggsSyncCount(BridgeGunfight.gunItem)
             end
             BridgeGunfight.rounds = 0
             clearAmmoPresence()
@@ -3723,14 +3770,13 @@ local function advanceReload(body)
             return true
         end
         local got = 0
-        local removedAmmo = nil
+        local removedAmmo, removedType = nil, nil
         if not mp or clientAmmo then
             local removed = BridgeGunRules.removeOneLooseRound(body, gun)
             if removed == nil then
                 cancelReload(body, "no rounds left")
                 return outOfAmmo(body)
             end
-            local removedType = nil
             pcall(function() removedType = removed:getFullType() end)
             pcall(function() removedAmmo = removed:getAmmoType() end)
             got = 1
@@ -3757,6 +3803,9 @@ local function advanceReload(body)
             BridgeGunRules.setRounds(BridgeGunfight.gunItem, BridgeGunfight.rounds or 0, true)
             if BridgeGunRules.refreshStats ~= nil then
                 BridgeGunRules.refreshStats(gun, BridgeGunfight.gunItem)
+            end
+            if type(removedType) == "string" then
+                BridgeGunRules.ggsInsertLoadedRound(BridgeGunfight.gunItem, removedType)
             end
         end
         if BridgeGunfight.reloadRoundsLeft > 0 then
@@ -3823,11 +3872,12 @@ function BridgeGunfight.finishManualEject(body)
     end
     local magazine = nil
     if not ejected then
-        magazine = BridgeGunRules.stashMagazine(body, desc, rounds, nil, ammoList)
+        magazine = BridgeGunRules.stashMagazine(body, desc, rounds, nil, ammoList, item)
     end
     if magazine ~= nil then magId = magazine:getID() end
     if ejected or magazine ~= nil then
         BridgeGunRules.setRounds(item, 0, false)
+        BridgeGunRules.ggsSyncCount(item)
         if isAssigned then
             BridgeGunfight.rounds = 0
             clearAmmoPresence()

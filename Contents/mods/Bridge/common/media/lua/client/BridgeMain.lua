@@ -626,6 +626,7 @@ local function humanize(body)
     body:setVariable("SurvivorNPC", true)
     pcall(function() Bridge.touched[body] = body:getPersistentOutfitID() end)
     pcall(function() body:getModData().notAloneBody = true end)
+    pcall(function() if BridgeKnoxComp ~= nil then BridgeKnoxComp.markOurs(body) end end)
     if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
 
     pcall(function() body:getModData().arcadiaRVAuthorizedDiscoveryZombie = true end)
@@ -693,6 +694,7 @@ end
 
 
 function Bridge.unhumanize(z, pooled)
+    if BridgeKnoxComp ~= nil then BridgeKnoxComp.clearOurs(z) end
     Bridge.invalidateBodyCaches(z)
     Bridge.resetApplied()
 
@@ -762,6 +764,7 @@ end
 
 
 function Bridge.releaseForeign(z)
+    if BridgeKnoxComp ~= nil then BridgeKnoxComp.clearOurs(z) end
     Bridge.invalidateBodyCaches(z)
     for _, name in ipairs({ "NotAloneWeapon", "NotAloneRifle", "NotAloneStride", "NotAloneAnimOld", "NotAloneSneak" }) do
         pcall(function() z:clearVariable(name) end)
@@ -5192,6 +5195,7 @@ function Bridge.onZombieUpdate(zombie)
     if killed then return end
     if Bridge.body == nil then
 
+        pcall(function() if BridgeKnoxComp ~= nil then BridgeKnoxComp.markOurs(zombie) end end)
         Bridge.body = zombie
         Bridge.kind = "zombie"
         Bridge.noteSpawned()
@@ -5239,7 +5243,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
-    friendselftest = true, light = true,
+    friendselftest = true, knoxselftest = true, theodoreselftest = true, light = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true, meet = true,
     perf = true, gunstate = true }
 
@@ -5975,6 +5979,20 @@ function Bridge.run(line)
     if cmd == "friendselftest" then
         if BridgeData == nil or type(BridgeData.selftest) ~= "function" then return "BridgeData not loaded" end
         return BridgeData.selftest()
+    end
+
+    if cmd == "knoxselftest" then
+        if BridgeKnoxComp == nil or type(BridgeKnoxComp.selftest) ~= "function" then
+            return "BridgeKnoxComp not loaded"
+        end
+        return BridgeKnoxComp.selftest()
+    end
+
+    if cmd == "theodoreselftest" then
+        if BridgeTheodoreCompat == nil or type(BridgeTheodoreCompat.selftest) ~= "function" then
+            return "BridgeTheodoreCompat not loaded"
+        end
+        return BridgeTheodoreCompat.selftest()
     end
 
     if cmd == "sleepfix" then
