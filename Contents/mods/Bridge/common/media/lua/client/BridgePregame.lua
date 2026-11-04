@@ -2188,6 +2188,14 @@ function BridgePregameScreen:playVoice(voice)
             getSoundManager():stopUISound(self.voiceSound)
             self.voiceSound = nil
         end
+        local emitter = nil
+        pcall(function() emitter = getSoundManager():getUIEmitter() end)
+        if emitter == nil then return end
+        local player = nil
+        pcall(function() player = IsoPlayer.getInstance() end)
+        if player == nil then
+            pcall(function() emitter:setPos(0, 0, 0) end)
+        end
         getSoundManager():setMusicState("InGame")
         getSoundManager():resumeSoundAndMusic()
         self.voiceSound = getSoundManager():playUISound(tostring(voice.prefix) .. "ShoutHey")

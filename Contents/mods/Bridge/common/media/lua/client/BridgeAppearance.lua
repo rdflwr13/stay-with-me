@@ -1026,7 +1026,9 @@ function BridgeAppearanceBody:onVoice(combo)
         pitch = math.floor((tonumber(sel.pitch) or 0) + 0.5),
     }
     BridgeAppearance.candidate.voice = voice
-    if Bridge.alive() and Bridge.body ~= nil then
+    local player = nil
+    pcall(function() player = IsoPlayer.getInstance() end)
+    if Bridge.alive() and Bridge.body ~= nil and player ~= nil then
         pcall(function() BridgeSound.preview(Bridge.body, voice, "ShoutHey") end)
     end
 end
