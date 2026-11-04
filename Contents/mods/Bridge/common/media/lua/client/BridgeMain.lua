@@ -626,6 +626,7 @@ local function humanize(body)
     body:setVariable("SurvivorNPC", true)
     pcall(function() Bridge.touched[body] = body:getPersistentOutfitID() end)
     pcall(function() body:getModData().notAloneBody = true end)
+    pcall(function() if BridgeKnoxComp ~= nil then BridgeKnoxComp.markOurs(body) end end)
     if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
 
     pcall(function() body:getModData().arcadiaRVAuthorizedDiscoveryZombie = true end)
@@ -693,6 +694,7 @@ end
 
 
 function Bridge.unhumanize(z, pooled)
+    if BridgeKnoxComp ~= nil then BridgeKnoxComp.clearOurs(z) end
     Bridge.invalidateBodyCaches(z)
     Bridge.resetApplied()
 
@@ -762,6 +764,7 @@ end
 
 
 function Bridge.releaseForeign(z)
+    if BridgeKnoxComp ~= nil then BridgeKnoxComp.clearOurs(z) end
     Bridge.invalidateBodyCaches(z)
     for _, name in ipairs({ "NotAloneWeapon", "NotAloneRifle", "NotAloneStride", "NotAloneAnimOld", "NotAloneSneak" }) do
         pcall(function() z:clearVariable(name) end)
@@ -1439,6 +1442,14 @@ end
 
 
 
+local function herOutfit(z)
+    if BridgeBanditsCompat ~= nil then return BridgeBanditsCompat.isHerOutfit(z) end
+    local name = nil
+    pcall(function() name = z:getOutfitName() end)
+    return name == "Naked"
+end
+
+
 function Bridge.isCompanion(z)
     if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(z) then
         return false
@@ -1449,7 +1460,7 @@ function Bridge.isCompanion(z)
         if not Bridge.mp then return end
         local pid = z:getPersistentOutfitID()
         if Bridge.bodyIndex[pid] ~= nil or (Bridge.store ~= nil and Bridge.store.bodyId == pid) then yes = true return end
-        if BridgeRemnant ~= nil and BridgeRemnant.hasMark(pid) and z:isFemale() == BridgeData.isFemale(Bridge.store) and z:getOutfitName() == "Naked" then yes = true end
+        if BridgeRemnant ~= nil and BridgeRemnant.hasMark(pid) and z:isFemale() == BridgeData.isFemale(Bridge.store) and herOutfit(z) then yes = true end
     end)
     return yes
 end
@@ -1783,7 +1794,7 @@ function Bridge.spawnZombie(px, py, pz)
 
         local chance = BridgeData.isFemale(Bridge.store) and 100 or 0
         Bridge.creating = true
-        local okAdd, list = pcall(addZombiesInOutfit, x, y, z, 1, "Naked", chance, false, false, false, false, false, false, 1)
+        local okAdd, list = pcall(addZombiesInOutfit, x, y, z, 1, (BridgeBanditsCompat ~= nil and BridgeBanditsCompat.outfit() or "Naked"), chance, false, false, false, false, false, false, 1)
         Bridge.creating = false
         if not okAdd then failed = "addZombiesInOutfit failed: " .. tostring(list) return end
         if list == nil or list:size() == 0 then failed = "addZombiesInOutfit returned nothing" return end
@@ -3481,7 +3492,7 @@ function Bridge.corpseSweep()
                         if female == nil then female = BridgeData.isFemale(Bridge.store) end
                         if mySkin == nil then mySkin = BridgeData.skinOf(Bridge.store) end
                         hers = c:isZombie() and c:isFemale() == female and (tostring(skin or "") == mySkin or marked)
-                            and tostring(c:getOutfitName()) == "Naked"
+                            and herOutfit(c)
                     end)
                     if hers then
                         pcall(function() sq:removeCorpse(c, false) end)
@@ -3858,7 +3869,7 @@ local function updateZombieBody(body)
             end)
         end
     end
-    applyOnce("useless", function() body:setUseless(true) end)
+    pcall(function() body:setUseless(true) end)
 
 
 
@@ -3869,6 +3880,7 @@ local function updateZombieBody(body)
 
     pcall(fixBodyOutfit, body)
     body:setTarget(nil)
+    pcall(function() body:setVariable("NoLungeTarget", true) end)
 
 
 
@@ -4954,7 +4966,7 @@ end
 function Bridge.strayCheck(z, pid, oid)
     local sign = false
     if BridgeRemnant ~= nil and BridgeRemnant.hasMark(pid) then
-        pcall(function() sign = z:isFemale() == BridgeData.isFemale(Bridge.store) and z:getOutfitName() == "Naked" and not z:isDead() end)
+        pcall(function() sign = z:isFemale() == BridgeData.isFemale(Bridge.store) and herOutfit(z) and not z:isDead() end)
     end
     if not sign then
         Bridge.unstray(z)
@@ -5192,6 +5204,7 @@ function Bridge.onZombieUpdate(zombie)
     if killed then return end
     if Bridge.body == nil then
 
+        pcall(function() if BridgeKnoxComp ~= nil then BridgeKnoxComp.markOurs(zombie) end end)
         Bridge.body = zombie
         Bridge.kind = "zombie"
         Bridge.noteSpawned()
@@ -5239,7 +5252,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
-    friendselftest = true, light = true,
+    friendselftest = true, knoxselftest = true, theodoreselftest = true, light = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true, meet = true,
     perf = true, gunstate = true }
 
@@ -5975,6 +5988,20 @@ function Bridge.run(line)
     if cmd == "friendselftest" then
         if BridgeData == nil or type(BridgeData.selftest) ~= "function" then return "BridgeData not loaded" end
         return BridgeData.selftest()
+    end
+
+    if cmd == "knoxselftest" then
+        if BridgeKnoxComp == nil or type(BridgeKnoxComp.selftest) ~= "function" then
+            return "BridgeKnoxComp not loaded"
+        end
+        return BridgeKnoxComp.selftest()
+    end
+
+    if cmd == "theodoreselftest" then
+        if BridgeTheodoreCompat == nil or type(BridgeTheodoreCompat.selftest) ~= "function" then
+            return "BridgeTheodoreCompat not loaded"
+        end
+        return BridgeTheodoreCompat.selftest()
     end
 
     if cmd == "sleepfix" then

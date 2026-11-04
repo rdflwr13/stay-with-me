@@ -5,6 +5,8 @@ pcall(function() require "OptionScreens/CharacterCreationAvatar" end)
 require "ISUI/ISPanelJoypad"
 require "ISUI/ISTabPanel"
 require "ISUI/ISComboBox"
+require "ISUI/ISLabel"
+require "ISUI/ISRect"
 require "ISUI/ISButton"
 require "ISUI/ISColorPicker"
 require "ISUI/ISTickBox"
@@ -79,6 +81,17 @@ function BridgePregame.defaultOptions()
         exerciseWithMe = false,
         aimSense = BridgeData.DEFAULT_AIM_SENSE or 1,
     }
+end
+
+function BridgePregame.allClothesUnlocked()
+    local unlocked = false
+    pcall(function()
+        if type(getSandboxOptions) ~= "function" then return end
+        local options = getSandboxOptions()
+        if options == nil or type(options.getAllClothesUnlocked) ~= "function" then return end
+        unlocked = not not options:getAllClothesUnlocked()
+    end)
+    return unlocked == true
 end
 
 function BridgePregame.cleanOptions(src)
@@ -264,7 +277,7 @@ function BridgePregame.readDraft()
         if string.sub(line, -1) == "\r" then line = string.sub(line, 1, -2) end
         if line ~= "" then
             seen = true
-            if #line > 8000 then bad = true break end
+            if #line > 20000 then bad = true break end
             local key, value = string.match(line, "^([A-Z_]+)=(.*)$")
             if key == nil then bad = true break end
             local plain = unesc(value)
@@ -794,8 +807,70 @@ function BridgePregameScreen:definition(loc, gender)
     return def
 end
 
+function BridgePregameScreen:clothCatalog(loc)
+    self.clothOptionCache = self.clothOptionCache or {}
+    local cached = self.clothOptionCache[loc]
+    if cached ~= nil then return cached end
+    local items = nil
+    pcall(function() items = getAllItemsForBodyLocation(loc) end)
+    if type(items) ~= "table" then return nil end
+    local valid = {}
+    for _, itemType in ipairs(items) do
+        if itemExists(itemType) then valid[#valid + 1] = itemType end
+    end
+    self.clothOptionCache[loc] = valid
+    return valid
+end
+
+function BridgePregameScreen:clothLabel(itemType)
+    self.itemLabelCache = self.itemLabelCache or {}
+    local label = self.itemLabelCache[itemType]
+    if label == nil then
+        label = itemLabel(itemType)
+        self.itemLabelCache[itemType] = label
+    end
+    return label
+end
+
+function BridgePregameScreen:unlockedLocations(gender)
+    if self.unlockedLocSet ~= nil then return self.unlockedLocSet end
+    local set = {}
+    local group = nil
+    pcall(function() group = BodyLocations.getGroup("Human") end)
+    if group ~= nil then
+        local count = 0
+        pcall(function() count = group:size() end)
+        for i = 0, count - 1 do
+            local key = nil
+            pcall(function()
+                local id = group:getLocationByIndex(i):getId()
+                local wound = ItemBodyLocation ~= nil and ItemBodyLocation.WOUND or nil
+                local zed = ItemBodyLocation ~= nil and ItemBodyLocation.ZED_DMG or nil
+                if id ~= wound and id ~= zed then key = id:getTranslationName() end
+            end)
+            if type(key) == "string" and key ~= "" and string.find(key, "^MakeUp") == nil then
+                local items = self:clothCatalog(key)
+                if type(items) == "table" and #items > 0 then set[key] = true end
+            end
+        end
+    end
+    for _, list in pairs(self.starterByGender or {}) do
+        for _, e in ipairs(list) do
+            if type(e.loc) == "string" then set[e.loc] = true end
+        end
+    end
+    self.unlockedLocSet = set
+    return set
+end
+
 function BridgePregameScreen:availableLocations(gender)
     local set = {}
+    local unlocked = self.clothUnlocked
+    if unlocked == nil then unlocked = BridgePregame.allClothesUnlocked() end
+    if unlocked then
+        for loc in pairs(self:unlockedLocations(gender)) do set[loc] = true end
+        return set
+    end
     local def = nil
     pcall(function()
         local list = ClothingSelectionDefinitions.default
@@ -813,7 +888,7 @@ function BridgePregameScreen:clothOptions(loc, gender)
     for _, itemType in ipairs(def and def.items or {}) do
         if itemExists(itemType) and not seen[itemType] then
             seen[itemType] = true
-            out[#out + 1] = { t = itemType, label = itemLabel(itemType) }
+            out[#out + 1] = { t = itemType, label = self:clothLabel(itemType) }
         end
     end
     local starters = self.starterByGender[gender] or {}
@@ -821,44 +896,185 @@ function BridgePregameScreen:clothOptions(loc, gender)
         if e.loc == loc then
             if itemExists(e.t) and not seen[e.t] then
                 seen[e.t] = true
-                out[#out + 1] = { t = e.t, label = itemLabel(e.t) }
+                out[#out + 1] = { t = e.t, label = self:clothLabel(e.t) }
             end
             if itemExists(e.alt) and not seen[e.alt] then
                 seen[e.alt] = true
-                out[#out + 1] = { t = e.alt, label = itemLabel(e.alt) }
+                out[#out + 1] = { t = e.alt, label = self:clothLabel(e.alt) }
             end
         end
     end
     return out
 end
 
-function BridgePregameScreen:buildClothOrder()
-    local set = {}
-    local function addDef(gender)
-        local def = nil
-        pcall(function()
-            local list = ClothingSelectionDefinitions.default
-            def = (gender == "male") and list.Male or list.Female
-        end)
-        for loc in pairs(def or {}) do set[loc] = true end
+function BridgePregameScreen:unlockedClothOptions(loc, gender)
+    local items = self:clothCatalog(loc)
+    if type(items) ~= "table" or #items == 0 then
+        if BridgePregame.unlockWarned ~= true then
+            BridgePregame.unlockWarned = true
+            warn("AllClothesUnlocked unavailable: using the definition list")
+        end
+        return self:clothOptions(loc, gender)
     end
-    addDef("female")
-    addDef("male")
+    local out, seen = {}, {}
+    local function add(itemType)
+        if type(itemType) ~= "string" or itemType == "" or seen[itemType] then return end
+        if not itemExists(itemType) then return end
+        seen[itemType] = true
+        out[#out + 1] = { t = itemType, label = self:clothLabel(itemType) }
+    end
+    for _, itemType in ipairs(items) do add(itemType) end
+    local starters = self.starterByGender[gender] or {}
+    for _, e in ipairs(starters) do
+        if e.loc == loc then
+            add(e.t)
+            add(e.alt)
+        end
+    end
+    table.sort(out, function(a, b) return a.label < b.label end)
+    return out
+end
+
+local function clothLocLabel(loc)
+    local text = vanillaText("UI_ClothingType_" .. tostring(loc), nil)
+    if type(text) ~= "string" or text == "" then return tostring(loc) end
+    return text
+end
+
+function BridgePregameScreen:buildClothOrder()
+    self.clothOptionCache = self.clothOptionCache or {}
+    self.itemLabelCache = self.itemLabelCache or {}
+    self.clothUnlocked = BridgePregame.allClothesUnlocked()
     self.starterByGender = {
         female = BridgePregame.starterClothing("female"),
         male = BridgePregame.starterClothing("male"),
     }
-    for _, list in pairs(self.starterByGender) do
-        for _, e in ipairs(list) do set[e.loc] = true end
+    local set = {}
+    if self.clothUnlocked then
+        self.unlockedLocSet = nil
+        local gender = self.draft ~= nil and self.draft.gender or "female"
+        for loc in pairs(self:unlockedLocations(gender)) do set[loc] = true end
+    else
+        self.unlockedLocSet = nil
+        local function addDef(gender)
+            local def = nil
+            pcall(function()
+                local list = ClothingSelectionDefinitions.default
+                def = (gender == "male") and list.Male or list.Female
+            end)
+            for loc in pairs(def or {}) do set[loc] = true end
+        end
+        addDef("female")
+        addDef("male")
+        for _, list in pairs(self.starterByGender) do
+            for _, e in ipairs(list) do set[e.loc] = true end
+        end
     end
     local order, used, extras = {}, {}, {}
     for _, loc in ipairs(CLOTH_FIXED) do
         if set[loc] then order[#order + 1] = loc used[loc] = true end
     end
     for loc in pairs(set) do if not used[loc] then extras[#extras + 1] = loc end end
-    table.sort(extras)
+    if self.clothUnlocked then
+        local labels = {}
+        for _, loc in ipairs(extras) do labels[loc] = clothLocLabel(loc) end
+        table.sort(extras, function(a, b) return labels[a] < labels[b] end)
+    else
+        table.sort(extras)
+    end
     for _, loc in ipairs(extras) do order[#order + 1] = loc end
     self.clothOrder = order
+end
+
+BridgePregameClothPanel = ISPanelJoypad:derive("BridgePregameClothPanel")
+
+function BridgePregameClothPanel:prerender()
+    self:doRightJoystickScrolling(20, 20)
+    ISPanelJoypad.prerender(self)
+    self:setStencilRect(0, 0, self.width, self.height)
+end
+
+function BridgePregameClothPanel:render()
+    ISPanelJoypad.render(self)
+    self:clearStencilRect()
+    self:renderJoypadFocus(-3, -3, self.width + 6, self.height + 6)
+end
+
+function BridgePregameClothPanel:onMouseWheel(del)
+    self:setYScroll(self:getYScroll() - del * 40)
+end
+
+function BridgePregameClothPanel:onGainJoypadFocus(joypadData)
+    ISPanelJoypad.onGainJoypadFocus(self, joypadData)
+    self.joypadButtonsY = {}
+    local screen = self.parentScreen or self.parent
+    if screen ~= nil then
+        for _, widgets in ipairs(screen.clothWidgets or {}) do
+            self:insertNewLineOfButtons(widgets[1], widgets[2], widgets[3], widgets[4])
+        end
+    end
+    self.joypadIndex = 1
+    if self.prevJoypadIndexY ~= -1 then
+        self.joypadIndexY = self.prevJoypadIndexY
+    else
+        self.joypadIndexY = 1
+    end
+    self.joypadButtons = self.joypadButtonsY[self.joypadIndexY]
+    if self.joypadButtons ~= nil and self.joypadButtons[self.joypadIndex] ~= nil then
+        self.joypadButtons[self.joypadIndex]:setJoypadFocused(true)
+    end
+end
+
+function BridgePregameClothPanel:onLoseJoypadFocus(joypadData)
+    self.prevJoypadIndexY = self.joypadIndexY
+    self:clearJoypadFocus(joypadData)
+    ISPanelJoypad.onLoseJoypadFocus(self, joypadData)
+end
+
+function BridgePregameClothPanel:onJoypadDown(button, joypadData)
+    if button == Joypad.BButton and not self:isFocusOnControl() then
+        joypadData.focus = self.parentScreen or self.parent
+        updateJoypadFocus(joypadData)
+    else
+        ISPanelJoypad.onJoypadDown(self, button, joypadData)
+    end
+end
+
+function BridgePregameClothPanel:new(x, y, width, height)
+    local o = ISPanelJoypad:new(x, y, width, height)
+    setmetatable(o, self)
+    self.__index = self
+    o.prevJoypadIndexY = -1
+    return o
+end
+
+function BridgePregameScreen:ensureClothRow(loc)
+    self.clothRows = self.clothRows or {}
+    local row = self.clothRows[loc]
+    if row ~= nil then return row end
+    local parent = self.clothPanel or self
+    local combo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onClothType)
+    combo:initialise()
+    combo.loc = loc
+    parent:addChild(combo)
+    local color = ISButton:new(0, 0, BTN_H, BTN_H, "", self, BridgePregameScreen.onClothColor)
+    color:initialise()
+    color:instantiate()
+    color.loc = loc
+    parent:addChild(color)
+    local tex = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onClothTexture)
+    tex:initialise()
+    tex.loc = loc
+    parent:addChild(tex)
+    local label = ISLabel:new(0, 0, BTN_H, vanillaText("UI_ClothingType_" .. tostring(loc), tostring(loc)),
+        0.82, 0.82, 0.82, 1, UIFont.Small, true)
+    label:initialise()
+    parent:addChild(label)
+    row = { combo = combo, color = color, tex = tex, label = label }
+    self.clothRows[loc] = row
+    self:bindClothingHover(combo)
+    self:bindTextureHover(tex)
+    return row
 end
 
 function BridgePregameScreen:createChildren()
@@ -1051,24 +1267,25 @@ function BridgePregameScreen:createChildren()
         end
     end
 
-    self:buildClothOrder()
     self.clothRows = {}
-    for _, loc in ipairs(self.clothOrder) do
-        local combo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onClothType)
-        combo:initialise()
-        combo.loc = loc
-        self:addChild(combo)
-        local color = ISButton:new(0, 0, BTN_H, BTN_H, "", self, BridgePregameScreen.onClothColor)
-        color:initialise()
-        color:instantiate()
-        color.loc = loc
-        self:addChild(color)
-        local tex = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onClothTexture)
-        tex:initialise()
-        tex.loc = loc
-        self:addChild(tex)
-        self.clothRows[loc] = { combo = combo, color = color, tex = tex }
-    end
+    self.clothOptionCache = {}
+    self.itemLabelCache = {}
+    self:buildClothOrder()
+    self.clothPanel = BridgePregameClothPanel:new(0, 0, 10, 10)
+    self.clothPanel:initialise()
+    self.clothPanel.parentScreen = self
+    self.clothPanel:noBackground()
+    self:addChild(self.clothPanel)
+    self.clothPanel:setScrollChildren(true)
+    self.clothHeadingLabel = ISLabel:new(0, 0, BTN_H, vanillaText("UI_characreation_clothing", "Clothing"),
+        0.95, 0.95, 0.95, 1, UIFont.Small, true)
+    self.clothHeadingLabel:initialise()
+    self.clothPanel:addChild(self.clothHeadingLabel)
+    self.clothDivider = ISRect:new(0, FONT_S + 6, 100, 1, 0.45, 0.55, 0.55, 0.55)
+    self.clothDivider:initialise()
+    self.clothDivider:instantiate()
+    self.clothPanel:addChild(self.clothDivider)
+    for _, loc in ipairs(self.clothOrder) do self:ensureClothRow(loc) end
 
     self.lookCombo = ISComboBox:new(0, 0, 120, BTN_H, self, BridgePregameScreen.onLook)
     self.lookCombo:initialise()
@@ -1214,20 +1431,38 @@ function BridgePregameScreen:rebuildControls()
 end
 
 function BridgePregameScreen:rebuildClothing(gender)
+    local unlocked = BridgePregame.allClothesUnlocked()
+    if self.clothUnlocked ~= unlocked or self.clothGender ~= gender then
+        self.clothOptionCache = {}
+        self.itemLabelCache = {}
+        self.unlockedLocSet = nil
+    end
+    self.clothUnlocked = unlocked
+    self.clothGender = gender
+    self:buildClothOrder()
     self.clothAvailable = self:availableLocations(gender)
+    self.clothWidgets = {}
     for _, loc in ipairs(self.clothOrder) do
-        local row = self.clothRows[loc]
+        local row = self:ensureClothRow(loc)
         if self.clothAvailable[loc] then
             comboReset(row.combo)
             comboAdd(row.combo, self.noneText, nil)
-            for _, option in ipairs(self:clothOptions(loc, gender)) do
+            local options = nil
+            if unlocked then
+                options = self:unlockedClothOptions(loc, gender)
+            else
+                options = self:clothOptions(loc, gender)
+            end
+            for _, option in ipairs(options) do
                 comboAdd(row.combo, option.label, option.t)
             end
         else
             row.combo:setVisible(false)
             row.color:setVisible(false)
             row.tex:setVisible(false)
+            if row.label ~= nil then row.label:setVisible(false) end
         end
+        self.clothWidgets[#self.clothWidgets + 1] = { row.combo, row.color, row.tex }
     end
 end
 
@@ -1237,9 +1472,10 @@ function BridgePregameScreen:refreshClothing()
     local clothing = BridgePregame.activeClothing(draft) or {}
     local allowed = self.clothAvailable or {}
     for _, loc in ipairs(self.clothOrder) do
-        local row = self.clothRows[loc]
+        local row = self:ensureClothRow(loc)
         if allowed[loc] then
             row.combo:setVisible(true)
+            if row.label ~= nil then row.label:setVisible(true) end
             local entry = BridgeAppearance.clothingAt(clothing, loc)
             if entry ~= nil then
                 comboSelect(row.combo, entry.t)
@@ -1269,6 +1505,7 @@ function BridgePregameScreen:refreshClothing()
             row.combo:setVisible(false)
             row.color:setVisible(false)
             row.tex:setVisible(false)
+            if row.label ~= nil then row.label:setVisible(false) end
         end
     end
 end
@@ -1515,46 +1752,111 @@ function BridgePregameScreen:layoutLeft()
 end
 
 function BridgePregameScreen:layoutRight()
-    local x, y = self.rightX, self.contentTop
-    local labelW = 64
-    self.clothHeadingY = y
-    y = y + FONT_S + 6
-    self.clothDividerY = y
-    y = y + 5
+    local x = self.rightX
     local w = self.rightW
+    local panel = self.clothPanel
+    if panel == nil then return end
+
+    local meetMode = cleanMeetMode(self.draft and self.draft.meetMode)
+    local meetTown = cleanMeetTown(self.draft and self.draft.meetTown)
+    local showDays = meetMode == 3
+    local showWhere = meetMode ~= 1
+    local showDistance = showWhere and meetTown == "near"
+    local showHint = meetMode ~= 1
+    local meetLabelW = textW(UIFont.Small, self.meetWhenText or "When") + 8
+    if meetLabelW < 64 then meetLabelW = 64 end
+    if meetLabelW > math.floor(w * 0.45) then meetLabelW = math.floor(w * 0.45) end
+    local meetW = w - meetLabelW
+    if meetW < 70 then meetW = 70 end
+    local meetRows = 1 + (showDays and 1 or 0) + (showWhere and 1 or 0)
+        + (showDistance and 1 or 0) + (showHint and 1 or 0)
+    local meetH = FONT_S + 6 + 5 + (BTN_H + 3) * meetRows
+    local meetTop = self.contentBottom - meetH
+
+    local behaviorH = FONT_S + 6 + 5 + BTN_H
+    for i, tick in ipairs(self.behaviorTicks or {}) do
+        behaviorH = behaviorH + math.max(BTN_H, tick:getHeight()) + 2
+    end
+    local behaviorTop = meetTop - PAD - behaviorH
+    if behaviorTop < self.contentTop then behaviorTop = self.contentTop end
+
+    local panelTop = self.contentTop
+    local panelBottom = behaviorTop - PAD
+    if panelBottom < panelTop then panelBottom = panelTop end
+    local panelH = panelBottom - panelTop
+    local panelW = math.max(w, (self.width or 0) - x - 6)
+
+    local scroll = 0
+    pcall(function() scroll = panel:getYScroll() end)
+    panel:setX(x)
+    panel:setY(panelTop)
+    panel:setWidth(panelW)
+    panel:setHeight(panelH)
+    if self.clothHeadingLabel ~= nil then
+        self.clothHeadingLabel:setX(0)
+        self.clothHeadingLabel:setY(0)
+    end
+    if self.clothDivider ~= nil then
+        self.clothDivider:setX(0)
+        self.clothDivider:setY(FONT_S + 6)
+        self.clothDivider:setWidth(panelW)
+    end
+    if panel.__bridgeScrollBars ~= true then
+        local ok = pcall(function() panel:addScrollBars() end)
+        if ok then panel.__bridgeScrollBars = true end
+    end
+    panel:setScrollChildren(true)
+
     local allowed = self.clothAvailable or {}
+    local labelW = 64
     for _, loc in ipairs(self.clothOrder) do
-        local row = self.clothRows[loc]
-        row.visible = allowed[loc] == true
         if allowed[loc] then
-            local comboW = math.floor((w - labelW) * 0.40)
-            if comboW < 70 then comboW = 70 end
-            local colorW = BTN_H
-            local texW = w - labelW - comboW - colorW - 8
-            if texW < 60 then texW = 60 end
-            row.labelY = y + 3
-            row.combo:setX(x + labelW)
-            row.combo:setY(y)
+            local text = vanillaText("UI_ClothingType_" .. tostring(loc), tostring(loc))
+            labelW = math.max(labelW, textW(UIFont.Small, text) + 10)
+        end
+    end
+    if labelW > 140 then labelW = 140 end
+    local scrollW = (panelW > w) and 0 or 18
+    local colorW = BTN_H
+    local comboW = math.min(300, w - labelW - colorW - 4 - 70 - 8 - scrollW)
+    if comboW < 90 then comboW = 90 end
+    local texW = w - labelW - comboW - colorW - 8 - scrollW
+    if texW < 60 then texW = 60 end
+    local ry = FONT_S + 6 + 5
+    for _, loc in ipairs(self.clothOrder) do
+        local row = self:ensureClothRow(loc)
+        row.visible = allowed[loc] == true
+        if row.visible then
+            if row.label ~= nil then
+                row.label:setX(labelW - row.label.width)
+                row.label:setY(ry)
+                row.label:setVisible(true)
+            end
+            row.combo:setX(labelW)
+            row.combo:setY(ry)
             row.combo:setWidth(comboW)
             row.combo:setHeight(BTN_H)
-            row.color:setX(x + labelW + comboW + 4)
-            row.color:setY(y)
+            row.combo.openUpwards = ry > panelH * 0.55
+            row.color:setX(labelW + comboW + 4)
+            row.color:setY(ry)
             row.color:setWidth(colorW)
             row.color:setHeight(BTN_H)
-            row.tex:setX(x + labelW + comboW + 4 + colorW + 4)
-            row.tex:setY(y)
+            row.tex:setX(labelW + comboW + 4 + colorW + 4)
+            row.tex:setY(ry)
             row.tex:setWidth(texW)
             row.tex:setHeight(BTN_H)
-            y = y + BTN_H + 3
+            ry = ry + BTN_H + 3
         else
             row.combo:setVisible(false)
             row.color:setVisible(false)
             row.tex:setVisible(false)
+            if row.label ~= nil then row.label:setVisible(false) end
         end
     end
-    self.clothBottom = y
+    panel:setScrollHeight(math.max(ry + PAD, panelH))
+    pcall(function() panel:setYScroll(scroll) end)
 
-    local by = y + PAD
+    local by = behaviorTop
     self.behaviorHeadingY = by
     by = by + FONT_S + 6
     self.behaviorDividerY = by
@@ -1592,9 +1894,7 @@ function BridgePregameScreen:layoutRight()
     if meetW < 70 then meetW = 70 end
     local rows = 1 + (showDays and 1 or 0) + (showWhere and 1 or 0)
         + (showDistance and 1 or 0) + (showHint and 1 or 0)
-    local my = self.behaviorBottom + PAD
-    local needed = FONT_S + 6 + 5 + (BTN_H + 3) * rows
-    if my + needed > self.contentBottom then my = math.max(self.contentTop, self.contentBottom - needed) end
+    local my = meetTop
     self.meetHeadingY = my
     my = my + FONT_S + 6
     self.meetDividerY = my
@@ -1665,7 +1965,7 @@ function BridgePregameScreen:layout()
     local frameW = math.min(1120, w - PAD * 2)
     local frameX = math.floor((w - frameW) / 2)
     local leftW = math.floor(math.min(300, math.max(250, frameW * 0.27)))
-    local rightW = math.floor(math.min(330, math.max(290, frameW * 0.30)))
+    local rightW = math.floor(math.min(520, math.max(430, frameW * 0.45)))
     local centerX = frameX + leftW + PAD
     local rightX = frameX + frameW - rightW
     local centerW = rightX - centerX - PAD
@@ -1788,17 +2088,6 @@ function BridgePregameScreen:render()
         self:drawText(line, self.leftX, self.summaryY, 0.75, 0.75, 0.75, 1, UIFont.Small)
     end
 
-    if self.clothHeadingY ~= nil then
-        self:drawText(vanillaText("UI_characreation_clothing", "Clothing"), self.rightX, self.clothHeadingY, 0.95, 0.95, 0.95, 1, UIFont.Small)
-        self:drawRect(self.rightX, self.clothDividerY, self.rightW, 1, 0.45, 0.55, 0.55, 0.55)
-    end
-    for _, loc in ipairs(self.clothOrder or {}) do
-        local row = self.clothRows[loc]
-        if row ~= nil and row.visible == true and row.labelY ~= nil then
-            local label = vanillaText("UI_ClothingType_" .. loc, loc)
-            self:drawText(label, self.rightX, row.labelY, 0.82, 0.82, 0.82, 1, UIFont.Small)
-        end
-    end
     if self.behaviorHeadingY ~= nil then
         self:drawText(self.behaviorTitle or tr("PregameBehavior", "Companion behavior"), self.rightX, self.behaviorHeadingY, 0.95, 0.95, 0.95, 1, UIFont.Small)
         self:drawRect(self.rightX, self.behaviorDividerY, self.rightW, 1, 0.45, 0.55, 0.55, 0.55)
@@ -2677,6 +2966,9 @@ function BridgePregame.show()
         BridgePregame.screen = screen
     end
     screen.draft = draft
+    if screen.clothRows ~= nil then
+        pcall(function() screen:rebuildClothing(draft.gender) end)
+    end
     BridgeAppearance.instance = screen
     BridgePregame.active = true
     screen:setX(0)
@@ -2736,7 +3028,19 @@ end
 function BridgePregame.finishPending()
     local pending = BridgePregame.pending
     BridgePregame.pending = nil
-    if pending == nil or type(BridgePregame.original) ~= "function" then return end
+    if pending == nil then return end
+    if type(pending.finish) == "function" then
+        BridgePregame.finishing = true
+        local ok, err = pcall(pending.finish)
+        BridgePregame.finishing = false
+        if not ok then
+            warn("character creation finish failed: " .. tostring(err))
+            removeDraftFile()
+            BridgePregame.restoreAfterFailure()
+        end
+        return
+    end
+    if type(BridgePregame.original) ~= "function" then return end
     local button = pending.button
     if type(button) ~= "table" or button.internal ~= "NEXT" then
         button = pending.self ~= nil and pending.self.playButton or button

@@ -1,5 +1,34 @@
 BridgeAnimalsNoFear = BridgeAnimalsNoFear or {}
 
+BridgeAnimalsNoFear.npcCalm = true
+
+function BridgeAnimalsNoFear.isCompanionZombie(z)
+    if z == nil then return false end
+    local companion = rawget(_G, "BridgeCompanion")
+    if type(companion) ~= "table" or type(companion.isBody) ~= "function" then return false end
+    local ok, yes = pcall(companion.isBody, z)
+    return ok and yes == true
+end
+
+function BridgeAnimalsNoFear.isProtectedAnimal(a)
+    if a == nil then return false end
+    local animal = false
+    pcall(function() animal = instanceof(a, "IsoAnimal") == true end)
+    if not animal then return false end
+    local dead = false
+    pcall(function() dead = a:isDead() == true end)
+    if dead then return false end
+    local wild = false
+    pcall(function() wild = a:isWild() == true end)
+    if wild then return false end
+    local animals = rawget(_G, "BridgeAnimals")
+    if type(animals) == "table" and type(animals.hostile) == "function" then
+        local ok, hostile = pcall(animals.hostile, a)
+        if ok and hostile == true then return false end
+    end
+    return true
+end
+
 function BridgeAnimalsNoFear.apply()
     local defs = AnimalDefinitions and AnimalDefinitions.animals
     if type(defs) ~= "table" then return 0, 0 end

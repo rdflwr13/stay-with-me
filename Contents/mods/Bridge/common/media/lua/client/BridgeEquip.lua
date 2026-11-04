@@ -792,8 +792,13 @@ function BridgeEquip.resolveDrop(targetWidget)
     if b == nil then return end
 
     if targetWidget ~= nil then
-        if type(targetWidget.acceptItem) == "function" then pcall(function() targetWidget:acceptItem(item) end) end
-        log("drop-in " .. tostring(item:getType()) .. " -> " .. tostring(targetWidget.kind or "slot"))
+        log("drop-in " .. tostring(item:getType()) .. " -> " .. tostring(targetWidget.kind or targetWidget.region and targetWidget.region.id or "slot"))
+        if type(targetWidget.acceptItem) == "function" then
+            local ok, err = pcall(function() targetWidget:acceptItem(item) end)
+            if not ok then log("drop-in acceptItem error: " .. tostring(err)) end
+        else
+            log("drop-in target has no acceptItem")
+        end
         return
     end
     if kind == nil then return end
@@ -834,11 +839,13 @@ end
 BridgeEquip.canHandOver = canHandOver
 
 local function acceptGear(b, player, item, cell)
-    if b == nil or item == nil or cell == nil then return false end
-    if BridgeGear == nil or not BridgeGear.canAttach(item) then return false end
+    log("gear: enter item=" .. tostring(item ~= nil and item:getType() or "nil")
+        .. " cell=" .. tostring(cell ~= nil and cell.type or "nil"))
+    if b == nil or item == nil or cell == nil then log("gear: reject nil arg") return false end
+    if BridgeGear == nil or not BridgeGear.canAttach(item) then log("gear: reject canAttach") return false end
     local slot = cellSlotFor(b, item, cell)
-    if slot == nil then return false end
-    if not canHandOver(b, player, item) then return false end
+    if slot == nil then log("gear: reject no slot") return false end
+    if not canHandOver(b, player, item) then log("gear: reject canHandOver") return false end
     local current = nil
     pcall(function() current = BridgeGear.gearInSlot(b, cell.providerId, cell.type) end)
     if current == item then return false end
@@ -858,22 +865,53 @@ local function wearable(item)
 end
 
 local function acceptClothing(b, player, item, region)
-    if b == nil or item == nil or region == nil then return false end
-    if not wearable(item) then return false end
-    if not regionAccepts(region, item) then return false end
+    local why = "?"
+    local function dbg(text) log("cloth: " .. tostring(text)) end
+    if b == nil or item == nil or region == nil then dbg("reject nil arg") return false end
+    dbg("enter item=" .. tostring(item:getType()) .. " region=" .. tostring(region.id))
+    if not wearable(item) then
+        why = "wearable"
+        pcall(function()
+            why = string.format("wearable canWear=%s broken=%s handsGear=%s variants=%d",
+                tostring(BridgeInventory.canWear(item)), tostring(item:isBroken()),
+                tostring(BridgeInventory.handsGear(item)), #BridgeInventory.variants(item).list)
+        end)
+        dbg("reject " .. why)
+        return false
+    end
+    if not regionAccepts(region, item) then
+        pcall(function()
+            why = string.format("region=%s loc=%s canBe=%s", tostring(region.id),
+                tostring(item:getBodyLocation()), tostring(item:canBeEquipped()))
+        end)
+        dbg("reject region " .. why)
+        return false
+    end
     local variant = variantFor(region, item)
     local already = false
     pcall(function() already = b:isEquippedClothing(item) end)
-    if already and variant == nil and locInRegion(region, itemLoc(item)) then return false end
-    if not canHandOver(b, player, item) then return false end
+    if already and variant == nil and locInRegion(region, itemLoc(item)) then dbg("reject already worn in region") return false end
+    if not canHandOver(b, player, item) then
+        pcall(function()
+            local c = item:getContainer()
+            why = string.format("containerType=%s favorite=%s", tostring(c ~= nil and c:getType() or "nil"),
+                tostring(item:isFavorite()))
+        end)
+        dbg("reject canHandOver " .. why)
+        return false
+    end
     local top = false
     pcall(function() top = item:getContainer() == b:getInventory() end)
+    dbg("accepted top=" .. tostring(top) .. " variant=" .. tostring(variant ~= nil))
     if top then
         if variant ~= nil then
             local _, newItem = BridgeInventory.wearVariant(b, item, variant, false, false, false)
             if newItem ~= nil then BridgeInventory.gifted(b, newItem) end
         else
             BridgeInventory.wear(b, item)
+            local worn = false
+            pcall(function() worn = b:isEquippedClothing(item) end)
+            dbg("wear done worn=" .. tostring(worn))
             BridgeInventory.gifted(b, item)
         end
         refreshOutfit()
@@ -882,16 +920,18 @@ local function acceptClothing(b, player, item, region)
     local ok = false
     if variant ~= nil then ok = BridgeInventory.wearOnHer(player, item, variant)
     else ok = BridgeInventory.wearOnHer(player, item) end
+    dbg("wearOnHer ok=" .. tostring(ok))
     if ok then refreshOutfit() end
     return ok == true
 end
 BridgeEquip.acceptClothing = acceptClothing
 
 local function acceptWeapon(b, player, item)
-    if b == nil or item == nil or BridgeWeapon == nil then return false end
-    if not BridgeWeapon.isMelee(item) then return false end
-    if not canHandOver(b, player, item) then return false end
-    if weaponItem(b) == item then return false end
+    log("weapon: enter item=" .. tostring(item ~= nil and item:getType() or "nil"))
+    if b == nil or item == nil then log("weapon: reject nil arg") return false end
+    if not BridgeWeapon.isMelee(item) then log("weapon: reject not melee") return false end
+    if not canHandOver(b, player, item) then log("weapon: reject canHandOver") return false end
+    if weaponItem(b) == item then log("weapon: reject already assigned") return false end
     local top = false
     pcall(function() top = item:getContainer() == b:getInventory() end)
     if top then
@@ -990,10 +1030,13 @@ end
 
 function BridgeEquipSlot:acceptItem(item)
     local b, player = her(), playerOf(0)
+    log("slot acceptItem kind=" .. tostring(self.kind) .. " item=" .. tostring(item ~= nil and item:getType() or "nil")
+        .. " her=" .. tostring(b ~= nil))
     if b == nil or item == nil then return end
     if self.kind == "gear" then acceptGear(b, player, item, self.cell)
     elseif self.kind == "weapon" then acceptWeapon(b, player, item)
-    elseif self.kind == "gun" then acceptGun(b, player, item) end
+    elseif self.kind == "gun" then acceptGun(b, player, item)
+    else log("slot acceptItem: kind=" .. tostring(self.kind) .. " has no accept path") end
 end
 
 function BridgeEquipSlot:canAccept(item)
@@ -1190,6 +1233,8 @@ end
 
 function BridgeEquipSuperSlot:acceptItem(item)
     local b, player = her(), playerOf(0)
+    log("super acceptItem region=" .. tostring(self.region ~= nil and self.region.id or "nil")
+        .. " item=" .. tostring(item ~= nil and item:getType() or "nil") .. " her=" .. tostring(b ~= nil))
     if b == nil or item == nil then return false end
     local slot = self:gearTarget(item)
     if slot ~= nil then
@@ -1312,6 +1357,9 @@ end
 
 function BridgeEquipSuperSlot:onMouseUp(x, y)
     local dragged = draggedItem()
+    log("super onMouseUp region=" .. tostring(self.region ~= nil and self.region.id or "nil")
+        .. " dragged=" .. tostring(dragged ~= nil and dragged:getType() or "nil")
+        .. " internalDrag=" .. tostring(BridgeEquip.drag ~= nil))
     self.dragArmed = false
     self.dragItem = nil
     if BridgeEquip.drag ~= nil then

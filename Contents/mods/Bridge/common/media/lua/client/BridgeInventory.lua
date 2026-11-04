@@ -2631,10 +2631,13 @@ end
 
 function BridgeInventory.wear(b, item, keepHoods)
 
+    log("wear enter " .. tostring(item ~= nil and item:getType() or "nil"))
     local here = false
     pcall(function() here = item:getContainer() == b:getInventory() end)
     if not here then
-        log("wear skipped: item is not in her inventory")
+        local c = "nil"
+        pcall(function() c = tostring(item:getContainer() ~= nil and item:getContainer():getType() or "nil") end)
+        log("wear skipped: item is not in her inventory (container=" .. c .. ")")
         return
     end
     pcall(function() note("wear " .. item:getType()) end)
@@ -2643,6 +2646,9 @@ function BridgeInventory.wear(b, item, keepHoods)
     if not keepHoods then pcall(function() BridgeInventory.hoodsDown(b, item) end) end
     local ok, err = pcall(function() BridgeInventory.putOn(b, item) end)
     if not ok then warn("wear failed: " .. tostring(err)) end
+    local wornNow = false
+    pcall(function() wornNow = b:isEquippedClothing(item) end)
+    log("wear putOn ok=" .. tostring(ok) .. " equipped=" .. tostring(wornNow))
     if ok then BridgeInventory.afterChange(b, item, pre, "wear") else redress(b) end
     refreshPanels()
 end
@@ -2740,6 +2746,7 @@ BridgeInventory.queueHolds = queueHolds
 
 
 function BridgeInventory.wearVariant(b, item, extraType, quiet, arriving, keepHoods)
+    log("wearVariant enter " .. tostring(item ~= nil and item:getType() or "nil") .. " -> " .. tostring(extraType))
     local inv = b:getInventory()
     local here = false
     pcall(function() here = inv:contains(item) and not item:isBroken() end)
@@ -2889,10 +2896,12 @@ end
 
 function BridgeInventory.wearOnHer(player, item, variant)
     local b = body()
-    if b == nil or item == nil then return false end
+    log("wearOnHer enter " .. tostring(item ~= nil and item:getType() or "nil"))
+    if b == nil or item == nil then log("wearOnHer reject nil arg") return false end
     local inv = b:getInventory()
     local id = item:getID()
     if item:getContainer() == inv then
+        log("wearOnHer: already in her inventory, finishing now")
         BridgeInventory.finishWear(id, variant)
         return true
     end
@@ -2925,9 +2934,10 @@ end
 
 
 function BridgeInventory.finishWear(id, variant)
+    log("finishWear id=" .. tostring(id) .. " variant=" .. tostring(variant ~= nil))
     BridgeInventory.toWear[id] = nil
     local b = body()
-    if b == nil then return end
+    if b == nil then log("finishWear: no body") return end
     local item = nil
     pcall(function()
         local items = b:getInventory():getItems()
@@ -2940,6 +2950,7 @@ function BridgeInventory.finishWear(id, variant)
         log("wear on her: item " .. tostring(id) .. " did not arrive")
         return
     end
+    log("wear on her: arrived " .. tostring(item:getType()))
 
     if variant ~= nil then
         local _, newItem = BridgeInventory.wearVariant(b, item, variant, false, true, true)
@@ -2948,6 +2959,9 @@ function BridgeInventory.finishWear(id, variant)
         BridgeInventory.wear(b, item, true)
         BridgeInventory.gifted(b, item)
     end
+    local worn = false
+    pcall(function() worn = b:isEquippedClothing(item) end)
+    log("wear on her: done equipped=" .. tostring(worn))
 end
 
 
@@ -3352,6 +3366,8 @@ function BridgeInventory.wearList(player, plan)
     local inv = b:getInventory()
     for _, e in ipairs(plan.entries or {}) do
         local k = e.item
+        log(string.format("wearList %s wear=%s move=%s inHerInv=%s", tostring(k ~= nil and k:getType() or "nil"),
+            tostring(e.wear), tostring(e.move), tostring(k ~= nil and k:getContainer() == inv)))
         if k:getContainer() == inv then
             if e.wear then
                 BridgeInventory.wear(b, k, true)
@@ -3458,6 +3474,9 @@ function BridgeInventory.wearOptions(context, b, player, items, list, showWear)
     local outside = false
     for _, it in ipairs(list) do if it:getContainer() ~= inv then outside = true end end
     local plan = plain and BridgeInventory.wearAllList(b, player, list) or { entries = {} }
+    log(string.format("wearOptions list=%d plain=%s outside=%s clothing=%s container=%s other=%s extra=%s entries=%d",
+        #list, tostring(plain), tostring(outside), tostring(t.clothing ~= nil), tostring(t.container ~= nil),
+        tostring(t.other ~= nil), tostring(t.extra ~= nil), #plan.entries))
 
 
     if plain and outside and #plan.entries == 0 then plain = false end
