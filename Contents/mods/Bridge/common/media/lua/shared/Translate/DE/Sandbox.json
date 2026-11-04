@@ -166,5 +166,5 @@
     "Sandbox_StayWithMe_ForceSpawnNearPlayer": "Erzwinge das Spawnen in der Nähe des Spielers (Debug)",
     "Sandbox_StayWithMe_ForceSpawnNearPlayer_tooltip": "Debug-Option. Wenn diese Option aktiviert ist, erscheint der Begleiter neben dem Spieler, wenn er fehlt, und wird in den Verfolgungsmodus gezwungen. Nur zum Testen verwenden.",
     "Sandbox_StayWithMe_CarSeatPuppet": "Show companion in the car seat (singleplayer)",
-    "Sandbox_StayWithMe_CarSeatPuppet_tooltip": "Singleplayer only. While she rides inside a vehicle, a temporary look-alike sits in a passenger seat so the car does not look empty. It is cosmetic: the real companion is still the one who gets out. Default on."
+    "Sandbox_StayWithMe_CarSeatPuppet_tooltip": "Singleplayer only. While she rides inside a vehicle, a temporary look-alike sits in a passenger seat so the car does not look empty. It is cosmetic: the real companion is still the one who gets out. Default off."
 }

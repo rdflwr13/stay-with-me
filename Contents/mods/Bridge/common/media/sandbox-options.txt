@@ -94,7 +94,7 @@ option StayWithMe.ForceSpawnNearPlayer
 
 option StayWithMe.CarSeatPuppet
 {
-    type = boolean, default = true,
+    type = boolean, default = false,
     page = StayWithMe,
     translation = StayWithMe_CarSeatPuppet,
 }

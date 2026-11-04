@@ -8,6 +8,9 @@ S.FINE = 0.02
 S.COARSE = 0.10
 S.LIMIT = 1.00
 S.SWEEP_TICKS = 18000
+S.IS_CACHE_TICKS = 3
+S.SWEEP_CACHE_TICKS = 60
+S.ENABLED_CACHE_TICKS = 30
 
 S.p = nil
 S.car = nil
@@ -21,6 +24,13 @@ S.playerPrevSeat = nil
 S.swap = false
 S.sweepUntil = nil
 S.sweepQueue = {}
+S.sweepCount = 0
+S.isCache = setmetatable({}, { __mode = "k" })
+S.sweepCache = setmetatable({}, { __mode = "k" })
+S.offsetCache = setmetatable({}, { __mode = "k" })
+S.seatCache = setmetatable({}, { __mode = "k" })
+S.enabledCache = nil
+S.strippedCache = nil
 
 local function log(text)
     if BridgeLog ~= nil and BridgeLog.on() then print("[SeatPuppet] " .. tostring(text)) end
@@ -68,17 +78,29 @@ end
 
 function S.enabled()
     if Bridge ~= nil and Bridge.mp then return false end
-    if BridgeData == nil or type(BridgeData.sandboxFlag) ~= "function" then return false end
-    local ok, v = pcall(BridgeData.sandboxFlag, "CarSeatPuppet", true)
-    return ok and v == true
+    local now = (Bridge ~= nil and Bridge.time) or 0
+    local c = S.enabledCache
+    if c ~= nil and now - c.tick < S.ENABLED_CACHE_TICKS then return c.value end
+    if BridgeData == nil or type(BridgeData.sandboxFlag) ~= "function" then
+        S.enabledCache = { tick = now, value = false }
+        return false
+    end
+    local ok, v = pcall(BridgeData.sandboxFlag, "CarSeatPuppet", false)
+    local value = ok and v == true
+    S.enabledCache = { tick = now, value = value }
+    return value
 end
 
 function S.is(z)
     if z == nil then return false end
     if S.p == nil then return false end
     if z == S.p then return true end
+    local now = (Bridge ~= nil and Bridge.time) or 0
+    local c = S.isCache[z]
+    if c ~= nil and now - c.tick < S.IS_CACHE_TICKS then return c.value end
     local v = false
     pcall(function() v = z:getVariableBoolean(S.VAR) == true end)
+    S.isCache[z] = { tick = now, value = v }
     return v
 end
 
@@ -108,11 +130,28 @@ function S.offsetKey(car, seat)
 end
 
 function S.offset(car, seat)
+    if car ~= nil and seat ~= nil then
+        local bySeat = S.offsetCache[car]
+        if bySeat ~= nil then
+            local hit = bySeat[seat]
+            if hit ~= nil then return { u = hit.u, r = hit.r, f = hit.f } end
+        end
+    end
     local st = store(false)
     local rec = nil
     if st ~= nil and type(st.off) == "table" then rec = st.off[S.offsetKey(car, seat)] end
-    if type(rec) ~= "table" then return { u = 0, r = 0, f = 0 } end
-    return { u = tonumber(rec.u) or 0, r = tonumber(rec.r) or 0, f = tonumber(rec.f) or 0 }
+    local out
+    if type(rec) ~= "table" then
+        out = { u = 0, r = 0, f = 0 }
+    else
+        out = { u = tonumber(rec.u) or 0, r = tonumber(rec.r) or 0, f = tonumber(rec.f) or 0 }
+    end
+    if car ~= nil and seat ~= nil then
+        local bySeat = S.offsetCache[car]
+        if bySeat == nil then bySeat = {}; S.offsetCache[car] = bySeat end
+        bySeat[seat] = out
+    end
+    return { u = out.u, r = out.r, f = out.f }
 end
 
 function S.setOffset(car, seat, t)
@@ -128,6 +167,7 @@ function S.setOffset(car, seat, t)
     else
         st.off[key] = { u = u, r = r, f = f }
     end
+    S.offsetCache[car] = nil
 end
 
 function S.nudge(car, seat, du, dr, df)
@@ -202,31 +242,47 @@ local function targetSeat(car, red)
 end
 
 local function seatPos(car, seat)
-    local pos = nil
-    pcall(function() pos = car:getPassengerPosition(seat, "inside") end)
-    if pos == nil then return nil end
-    local o = nil
-    pcall(function() o = pos:getOffset() end)
-    if o == nil then return nil end
-    local mx, my, mz = 0, 0, 0
-    pcall(function()
-        local model = car:getScript():getModel()
-        if model ~= nil then
-            local mo = model:getOffset()
-            if mo ~= nil then mx, my, mz = mo:x(), mo:y(), mo:z() end
+    local c = nil
+    if car ~= nil and seat ~= nil then
+        local bySeat = S.seatCache[car]
+        if bySeat ~= nil then c = bySeat[seat] end
+    end
+    if c == nil then
+        local pos = nil
+        pcall(function() pos = car:getPassengerPosition(seat, "inside") end)
+        if pos == nil then return nil end
+        local o = nil
+        pcall(function() o = pos:getOffset() end)
+        if o == nil then return nil end
+        local mx, my, mz = 0, 0, 0
+        pcall(function()
+            local model = car:getScript():getModel()
+            if model ~= nil then
+                local mo = model:getOffset()
+                if mo ~= nil then mx, my, mz = mo:x(), mo:y(), mo:z() end
+            end
+        end)
+        c = { ox = o:x(), oy = o:y(), oz = o:z(), mx = mx, my = my, mz = mz }
+        if car ~= nil and seat ~= nil then
+            local bySeat = S.seatCache[car]
+            if bySeat == nil then bySeat = {}; S.seatCache[car] = bySeat end
+            bySeat[seat] = c
         end
-    end)
+    end
     local a = S.offset(car, seat)
+    local h = (c.oy + c.my + a.u) / 2.44949
     local v = nil
     pcall(function()
-        v = car:getWorldPos(o:x() + mx - a.r, 0, o:z() + mz + a.f, Vector3f.new())
+        v = car:getWorldPos(c.ox + c.mx - a.r, h, c.oz + c.mz + a.f, Vector3f.new())
     end)
     if v == nil then return nil end
-    return v:x(), v:y(), v:z() + (o:y() + my + a.u) / 2.44949
+    S.lastX, S.lastY, S.lastZ, S.lastH = v:x(), v:y(), v:z(), h
+    return v:x(), v:y(), v:z()
 end
 
 local function stripped(encoded)
     if encoded == nil or encoded == "" then return nil end
+    if S.strippedCache ~= nil and S.strippedCache.src == encoded then return S.strippedCache.out end
     if BridgeInventory == nil then return nil end
     local ok, list = pcall(BridgeInventory.decode, encoded)
     if not ok or type(list) ~= "table" then return nil end
@@ -237,7 +293,10 @@ local function stripped(encoded)
         end
     end
     local ok2, enc = pcall(BridgeInventory.encode, list)
-    if ok2 and type(enc) == "string" and enc ~= "" then return enc end
+    if ok2 and type(enc) == "string" and enc ~= "" then
+        S.strippedCache = { src = encoded, out = enc }
+        return enc
+    end
     return nil
 end
 
@@ -297,7 +356,11 @@ local function create(car, seat)
     local cy = math.floor(car:getY())
     local cz = math.floor(car:getZ())
     local chance = (BridgeData ~= nil and BridgeData.isFemale(Bridge.store)) and 100 or 0
-    local ok, list = pcall(addZombiesInOutfit, cx, cy, cz, 1, "Naked", chance,
+    local outfit = "Naked"
+    if BridgeBanditsCompat ~= nil and type(BridgeBanditsCompat.outfit) == "function" then
+        outfit = BridgeBanditsCompat.outfit() or "Naked"
+    end
+    local ok, list = pcall(addZombiesInOutfit, cx, cy, cz, 1, outfit, chance,
         false, false, false, false, false, false, 1)
     if not ok or list == nil or list:size() == 0 then
         S.retryAt = (Bridge ~= nil and Bridge.time or 0) + S.RETRY_TICKS
@@ -328,6 +391,9 @@ local function create(car, seat)
     pcall(function() p:setPrimaryHandItem(nil) end)
     pcall(function() p:setSecondaryHandItem(nil) end)
     pcall(function() p:resetModelNextFrame() end)
+    if BridgeVoice ~= nil and type(BridgeVoice.ensure) == "function" then
+        pcall(BridgeVoice.ensure, p)
+    end
     local id = pidOf(p)
     local st = store(true)
     if st ~= nil and id ~= nil then st.ids[id] = true end
@@ -336,7 +402,7 @@ local function create(car, seat)
 end
 
 local function sweepTick()
-    if S.sweepQueue == nil then return end
+    if S.sweepQueue == nil or (S.sweepCount or 0) <= 0 then return end
     local st = store(false)
     local body = (Bridge ~= nil) and Bridge.body or nil
     for z, id in pairs(S.sweepQueue) do
@@ -347,6 +413,7 @@ local function sweepTick()
         end
         if st ~= nil and type(st.ids) == "table" and id ~= nil then st.ids[id] = nil end
     end
+    S.sweepCount = 0
 end
 
 local function trackPlayerSeat(car, red)
@@ -371,6 +438,8 @@ function S.show(car)
     if not S.enabled() then return end
     if S.p ~= nil then S.hide("show") end
     S.car = car
+    S.seatCache[car] = nil
+    S.offsetCache[car] = nil
     S.seat = nil
     S.retryAt = nil
     S.losses = 0
@@ -388,6 +457,8 @@ function S.hide(why)
     S.retryAt = nil
     S.playerSeat, S.playerPrevSeat, S.swap = nil, nil, false
     if p == nil then return end
+    S.isCache[p] = nil
+    S.sweepCache[p] = nil
     if id ~= nil then
         local st = store(false)
         if st ~= nil and type(st.ids) == "table" then st.ids[id] = nil end
@@ -445,6 +516,76 @@ function S.tick()
     place(car, seat)
 end
 
+function S.diagLine()
+    local car = S.car
+    if car == nil and BridgeCar ~= nil then car = BridgeCar.car end
+    local seat = S.seat
+    local a = { u = 0, r = 0, f = 0 }
+    if car ~= nil and seat ~= nil then a = S.offset(car, seat) end
+    local tracked = 0
+    local st = store(false)
+    if st ~= nil and type(st.ids) == "table" then
+        for _ in pairs(st.ids) do tracked = tracked + 1 end
+    end
+    local key = (car ~= nil and seat ~= nil) and S.offsetKey(car, seat) or "-"
+    local carSeat = (BridgeCar ~= nil and BridgeCar.seat ~= nil) and tostring(BridgeCar.seat) or "-"
+    local storeKey = (BridgeData ~= nil and BridgeData.KEY ~= nil) and tostring(BridgeData.KEY) or "NotAlone"
+    local text = string.format(
+        "enabled=%s active=%s seat=%s car_seat=%s key=%s offset=u=%.2f,r=%.2f,f=%.2f losses=%d off=%s tracked=%d store=%s/seatPuppet",
+        tostring(S.enabled()), tostring(S.p ~= nil), seat ~= nil and tostring(seat) or "-", carSeat, key,
+        a.u, a.r, a.f, tonumber(S.losses) or 0, tostring(S.offForEntry == true), tracked, storeKey)
+    if S.p ~= nil then
+        local state = "-"
+        local voice = "-"
+        pcall(function() state = tostring(S.p:getActionStateName()) end)
+        if BridgeVoice ~= nil and type(BridgeVoice.info) == "function" then
+            pcall(function() voice = BridgeVoice.info(S.p) end)
+        end
+        text = text .. " state=" .. state .. " voice=" .. voice
+    end
+    local px, py, pz = nil, nil, nil
+    if S.p ~= nil then
+        pcall(function() px, py, pz = S.p:getX(), S.p:getY(), S.p:getZ() end)
+    end
+    local carZ, upZ, centerZ = nil, nil, nil
+    if car ~= nil then
+        pcall(function() carZ = car:getZ() end)
+        pcall(function()
+            local up = car:getWorldPos(0, 1, 0, Vector3f.new())
+            local center = car:getWorldPos(0, 0, 0, Vector3f.new())
+            if up ~= nil then upZ = up:z() end
+            if center ~= nil then centerZ = center:z() end
+        end)
+    end
+    local upDelta = nil
+    if upZ ~= nil and centerZ ~= nil then upDelta = upZ - centerZ end
+    local function n(v)
+        if v == nil then return "-" end
+        return string.format("%.2f", tonumber(v) or 0)
+    end
+    text = text .. string.format(" puppet=%s,%s,%s target=%s,%s,%s h=%s car_z=%s up=%s center=%s up_delta=%s",
+        n(px), n(py), n(pz), n(S.lastX), n(S.lastY), n(S.lastZ), n(S.lastH),
+        n(carZ), n(upZ), n(centerZ), n(upDelta))
+    return text
+end
+
+function S.offsetLines()
+    local out = {}
+    local st = store(false)
+    if st == nil or type(st.off) ~= "table" then return out end
+    local keys = {}
+    for key in pairs(st.off) do keys[#keys + 1] = key end
+    table.sort(keys)
+    for _, key in ipairs(keys) do
+        local rec = st.off[key]
+        if type(rec) == "table" then
+            out[#out + 1] = string.format("seat_puppet_off[%s] = u=%.2f r=%.2f f=%.2f",
+                tostring(key), tonumber(rec.u) or 0, tonumber(rec.r) or 0, tonumber(rec.f) or 0)
+        end
+    end
+    return out
+end
+
 local function installMutants()
     local m = nil
     pcall(function() m = PZTheMutants end)
@@ -476,6 +617,13 @@ installMutants()
 Events.OnGameStart.Add(function()
     S.sweepUntil = (Bridge ~= nil and Bridge.time or 0) + S.SWEEP_TICKS
     S.sweepQueue = {}
+    S.sweepCount = 0
+    S.isCache = setmetatable({}, { __mode = "k" })
+    S.sweepCache = setmetatable({}, { __mode = "k" })
+    S.offsetCache = setmetatable({}, { __mode = "k" })
+    S.seatCache = setmetatable({}, { __mode = "k" })
+    S.enabledCache = nil
+    S.strippedCache = nil
     installMutants()
 end)
 
@@ -494,20 +642,37 @@ Events.OnZombieUpdate.Add(function(z)
         pcall(function() z:setVehicle4TestCollision(nil) end)
         return
     end
-    if S.sweepUntil == nil or (Bridge ~= nil and Bridge.time or 0) > S.sweepUntil then return end
+    local now = (Bridge ~= nil and Bridge.time) or 0
+    if S.sweepUntil == nil or now > S.sweepUntil then return end
     if Bridge == nil then return end
     if z == Bridge.body or z == S.p then return end
+    local c = S.sweepCache[z]
+    if c ~= nil and now - c.tick < S.SWEEP_CACHE_TICKS then return end
     local id = pidOf(z)
-    if id == nil then return end
+    if id == nil then
+        S.sweepCache[z] = { tick = now, value = false }
+        return
+    end
     local st = store(false)
-    if st == nil or type(st.ids) ~= "table" or not st.ids[id] then return end
+    if st == nil or type(st.ids) ~= "table" or not st.ids[id] then
+        S.sweepCache[z] = { tick = now, value = false }
+        return
+    end
     local companion = false
     if type(Bridge.isCompanion) == "function" then
         pcall(function() companion = Bridge.isCompanion(z) == true end)
     end
-    if companion then return end
+    if companion then
+        S.sweepCache[z] = { tick = now, value = false }
+        return
+    end
     local body = false
     pcall(function() body = z:getVariableBoolean("NotAloneBody") == true end)
-    if body then return end
+    if body then
+        S.sweepCache[z] = { tick = now, value = false }
+        return
+    end
+    if S.sweepQueue[z] == nil then S.sweepCount = (S.sweepCount or 0) + 1 end
     S.sweepQueue[z] = id
+    S.sweepCache[z] = { tick = now, value = true }
 end)

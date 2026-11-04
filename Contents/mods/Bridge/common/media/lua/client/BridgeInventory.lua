@@ -300,7 +300,65 @@ function BridgeInventory.addCustomVisuals(b, rec)
     end
 end
 
+BridgeInventory.modelDiagKeys = setmetatable({}, { __mode = "k" })
 
+local function diagModel(b, rec, female)
+    if b == nil or BridgeData == nil then return end
+    local wantSkin = BridgeData.skinOf(rec)
+    local engineFemale, engineGender, hasDesc, hvFemale, script, hvSkin, isZombie, isBody = nil, nil, nil, nil, nil, nil, nil, nil
+    local playerFemale, playerScript, playerSkin = nil, nil, nil
+    pcall(function() engineFemale = b:isFemale() end)
+    pcall(function() engineGender = tostring(b:getCharacterGender()) end)
+    pcall(function() hasDesc = b:getDescriptor() ~= nil end)
+    pcall(function() isZombie = b:isZombie() end)
+    pcall(function() isBody = (Bridge ~= nil and Bridge.body == b) end)
+    local hv = nil
+    pcall(function() hv = b:getHumanVisual() end)
+    if hv ~= nil then
+        pcall(function() hvFemale = hv:isFemale() end)
+        pcall(function() hvSkin = hv:getSkinTexture() end)
+        pcall(function()
+            local ms = hv:getModelScript()
+            if ms ~= nil then script = ms:getName() end
+        end)
+    end
+    pcall(function()
+        local p = getSpecificPlayer(0)
+        if p ~= nil then
+            playerFemale = p:isFemale()
+            local phv = p:getHumanVisual()
+            if phv ~= nil then
+                playerSkin = phv:getSkinTexture()
+                local pms = phv:getModelScript()
+                if pms ~= nil then playerScript = pms:getName() end
+            end
+        end
+    end)
+    local key = table.concat({ tostring(female), tostring(wantSkin), tostring(engineFemale),
+        tostring(hvFemale), tostring(script), tostring(hvSkin), tostring(isZombie), tostring(isBody) }, "|")
+    if BridgeInventory.modelDiagKeys[b] == key then return end
+    BridgeInventory.modelDiagKeys[b] = key
+    print("[BridgeInventory] model diag: dataFemale=" .. tostring(female)
+        .. " engineFemale=" .. tostring(engineFemale)
+        .. " hvFemale=" .. tostring(hvFemale)
+        .. " gender=" .. tostring(engineGender)
+        .. " desc=" .. tostring(hasDesc)
+        .. " zombie=" .. tostring(isZombie)
+        .. " isBody=" .. tostring(isBody)
+        .. " script=" .. tostring(script)
+        .. " hvSkin=" .. tostring(hvSkin)
+        .. " wantSkin=" .. tostring(wantSkin)
+        .. " playerFemale=" .. tostring(playerFemale)
+        .. " playerScript=" .. tostring(playerScript)
+        .. " playerSkin=" .. tostring(playerSkin))
+    local wantScript = female and "FemaleBody" or "MaleBody"
+    if engineFemale ~= nil and engineFemale ~= female then
+        warn("model diag mismatch: dataFemale=" .. tostring(female) .. " engineFemale=" .. tostring(engineFemale))
+    end
+    if script ~= nil and script ~= wantScript then
+        warn("model diag mismatch: script=" .. tostring(script) .. " want=" .. wantScript)
+    end
+end
 
 function BridgeInventory.skin(b, rec)
     local female = BridgeData.isFemale(rec)
@@ -356,6 +414,7 @@ function BridgeInventory.skin(b, rec)
     if BridgeVoice ~= nil and type(BridgeVoice.applyStyle) == "function" then
         pcall(BridgeVoice.applyStyle, b, BridgeData.voiceOf(rec))
     end
+    pcall(diagModel, b, rec, female)
     return true
 end
 

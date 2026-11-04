@@ -6589,6 +6589,18 @@ function Bridge.diagLines()
 
         pcall(function() add("car", BridgeCar.describe() .. (Bridge.store and Bridge.store.left and " left=1" or "")) end)
 
+        if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.diagLine) == "function" then
+            pcall(function() add("seat_puppet", BridgeSeatPuppet.diagLine()) end)
+        end
+        if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.offsetLines) == "function" then
+            pcall(function()
+                local list = BridgeSeatPuppet.offsetLines()
+                if type(list) == "table" then
+                    for _, l in ipairs(list) do lines[#lines + 1] = tostring(l) end
+                end
+            end)
+        end
+
         add("outfit_guard", string.format("redressed=%d dressed_worn=%s", Bridge.engineRedress or 0, tostring(Bridge.dressedWorn)))
 
         local red = BridgeData.owner()

@@ -166,5 +166,5 @@
     "Sandbox_StayWithMe_ForceSpawnNearPlayer": "Принудительное появление рядом с игроком (отладка)",
     "Sandbox_StayWithMe_ForceSpawnNearPlayer_tooltip": "Вариант отладки. Если этот параметр включен, компаньон возрождается рядом с игроком, если он отсутствует, и принудительно переходит в режим следования. Используйте только для тестирования.",
     "Sandbox_StayWithMe_CarSeatPuppet": "Show companion in the car seat (singleplayer)",
-    "Sandbox_StayWithMe_CarSeatPuppet_tooltip": "Singleplayer only. While she rides inside a vehicle, a temporary look-alike sits in a passenger seat so the car does not look empty. It is cosmetic: the real companion is still the one who gets out. Default on."
+    "Sandbox_StayWithMe_CarSeatPuppet_tooltip": "Singleplayer only. While she rides inside a vehicle, a temporary look-alike sits in a passenger seat so the car does not look empty. It is cosmetic: the real companion is still the one who gets out. Default off."
 }
