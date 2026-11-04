@@ -4,11 +4,24 @@
 
 BridgeMove = BridgeMove or {}
 
+local SPOT = {}
+local SEAT = {}
+local MOURN = {}
+local NAV = {}
+local DOOR = {}
+local ASIDE = {}
+local RUN = {}
+local CROSS = {}
+local STRAIGHT = {}
+local SLOW = {}
+local DOORWAY = {}
+local CHAIR = {}
+
 local FOLLOW_START = 2.0
 local FOLLOW_STOP = 0.9
 local FOLLOW_GAP = 1.2
-local RUN_DIST = 3.5
-local RUN_STOP = 2.0
+RUN.DIST = 3.5
+RUN.STOP = 2.0
 local FOLLOW_SPRINT_HOLD = 30
 local FOLLOW_SPRINT_RATE = 0.08
 
@@ -29,19 +42,19 @@ BridgeMove.redPrev = nil
 
 
 
-local ASIDE_AHEAD = 1.0
-local ASIDE_PUSH = 10
+ASIDE.AHEAD = 1.0
+ASIDE.PUSH = 10
 local PUSH_GRACE = 12
-local ASIDE_PATH = 0.55
-local ASIDE_STEP = 0.5
-local ASIDE_MAX = 45
-local ASIDE_QUIET = 45
+ASIDE.PATH = 0.55
+ASIDE.STEP = 0.5
+ASIDE.MAX = 45
+ASIDE.QUIET = 45
 
 local BACK = { step = 1.2, leash = 2.5, max = 120, quiet = 12, stall = 20, gain = 0.05, bump = "FollowWalkBwd" }
 
 
-local RUN_AHEAD = 2.5
-local RUN_PATH = 0.7
+RUN.AHEAD = 2.5
+RUN.PATH = 0.7
 local COMING_COS = 0.5
 BridgeMove.redStep = 0
 BridgeMove.redHist = nil
@@ -629,25 +642,25 @@ local STOP_GAP = 1.3
 local START_DIST = 2.2
 local START_GOING = 0.85
 local SEE_FAR = 14
-local SLOW_RED = 1.15
-local SLOW_FRAMES = 45
-local SLOW_GO = 0.45
+SLOW.RED = 1.15
+SLOW.FRAMES = 45
+SLOW.GO = 0.45
 local CATCH_FROM = 1.0
 local CATCH_FULL = 2.5
 local NO_LINE_FRAMES = 20
 local AHEAD_PIVOT_DEG = 45
 local STUCK_LEAVE = 1.5
 local STUCK_LEAVE_AGAIN = 3.0
-local NAV_STALL_TICKS = 90
-local NAV_STALL_MOVE = 0.3
-local NAV_PATH_FAIL_LIMIT = 2
-local NAV_DETOUR_TICKS = 150
-local NAV_DETOUR_STEP = 1.6
-local NAV_OPENING_GIVE_UP = 360
-local NAV_FOLLOW_HOLD = 120
-local DOORWAY_STOP = 1.0
-local DOORWAY_ROOM = 1.2
-local DOORWAY_CLEAR = 0.3
+NAV.STALL_TICKS = 90
+NAV.STALL_MOVE = 0.3
+NAV.PATH_FAIL_LIMIT = 2
+NAV.DETOUR_TICKS = 150
+NAV.DETOUR_STEP = 1.6
+NAV.OPENING_GIVE_UP = 360
+NAV.FOLLOW_HOLD = 120
+DOORWAY.STOP = 1.0
+DOORWAY.ROOM = 1.2
+DOORWAY.CLEAR = 0.3
 
 function BridgeMove.addTrail(red)
     local t = BridgeMove.trail
@@ -945,16 +958,16 @@ end
 
 
 
-local SPOT_SIDE = 1.3
-local SPOT_BACK = 0.35
-local SPOT_FAR = 1.0
+SPOT.SIDE = 1.3
+SPOT.BACK = 0.35
+SPOT.FAR = 1.0
 local CORPSE_EXTRA = 1.0
-local SPOT_REACH = 6
-local SPOT_TURN = math.cos(math.rad(50))
-local SPOT_ENTER = 8
-local SPOT_LEAVE = 4
-local SPOT_ARRIVE = 0.35
-local SPOT_START = 0.7
+SPOT.REACH = 6
+SPOT.TURN = math.cos(math.rad(50))
+SPOT.ENTER = 8
+SPOT.LEAVE = 4
+SPOT.ARRIVE = 0.35
+SPOT.START = 0.7
 
 function BridgeMove.keepSide()
     local side = "behind"
@@ -985,7 +998,7 @@ end
 
 
 local function keepExtra()
-    if BridgeMove.keepFar() then return SPOT_FAR end
+    if BridgeMove.keepFar() then return SPOT.FAR end
     return BridgeMove.redDragsCorpse() and CORPSE_EXTRA or 0
 end
 
@@ -1010,18 +1023,18 @@ function BridgeMove.spotPoint(red, keep, far, F, redGoes)
             local fl = math.sqrt(fx * fx + fy * fy)
             if fl > 0.001 then
                 fx, fy = fx / fl, fy / fl
-                if F.spotHx == nil or (F.spotHx * fx + F.spotHy * fy) < SPOT_TURN then F.spotHx, F.spotHy = fx, fy end
+                if F.spotHx == nil or (F.spotHx * fx + F.spotHy * fy) < SPOT.TURN then F.spotHx, F.spotHy = fx, fy end
             end
         end
     end
     local hx, hy = F.spotHx, F.spotHy
     if hx == nil then return nil end
-    local extra = far and SPOT_FAR or 0
+    local extra = far and SPOT.FAR or 0
     local rx, ry = red:getX(), red:getY()
 
     local sgn = (keep == "right") and 1 or -1
-    local side = SPOT_SIDE + extra
-    return rx - hy * side * sgn - hx * SPOT_BACK, ry + hx * side * sgn - hy * SPOT_BACK, hx, hy
+    local side = SPOT.SIDE + extra
+    return rx - hy * side * sgn - hx * SPOT.BACK, ry + hx * side * sgn - hy * SPOT.BACK, hx, hy
 end
 
 
@@ -1104,7 +1117,7 @@ local function followSpot(body, red, F, pf, d, redGoes, running, keep)
     local bx, by = body:getX(), body:getY()
     local toSpot = dist2d(bx, by, px, py)
     local free, why = false, "too far from the spot"
-    if toSpot <= SPOT_REACH then free, why = BridgeMove.spotFree(body, red, px, py) end
+    if toSpot <= SPOT.REACH then free, why = BridgeMove.spotFree(body, red, px, py) end
     local ok = free == true
     if ok then
         F.spotOk, F.spotBad = (F.spotOk or 0) + frameDt(), 0
@@ -1112,8 +1125,8 @@ local function followSpot(body, red, F, pf, d, redGoes, running, keep)
         F.spotOk, F.spotBad = 0, (F.spotBad or 0) + frameDt()
     end
     if F.inSpot then
-        if (F.spotBad or 0) >= SPOT_LEAVE then F.inSpot = false end
-    elseif (F.spotOk or 0) >= SPOT_ENTER then
+        if (F.spotBad or 0) >= SPOT.LEAVE then F.inSpot = false end
+    elseif (F.spotOk or 0) >= SPOT.ENTER then
         F.inSpot = true
     end
     if not F.inSpot then
@@ -1129,8 +1142,8 @@ local function followSpot(body, red, F, pf, d, redGoes, running, keep)
     if redGoes then
         F.spotStand = false
     elseif F.spotStand then
-        if toSpot > SPOT_START then F.spotStand = false end
-    elseif toSpot <= SPOT_ARRIVE then
+        if toSpot > SPOT.START then F.spotStand = false end
+    elseif toSpot <= SPOT.ARRIVE then
         F.spotStand = true
     end
     if F.spotStand then
@@ -1212,22 +1225,22 @@ end
 
 
 
-local SEAT_STAY = 4
+SEAT.STAY = 4
 
 
 
 
 
-local SEAT_RING_MAX = 4
-local SEAT_ARRIVE = 0.3
-local SEAT_NEAR = 0.7
-local SEAT_GAP = 0.25
-local SEAT_EDGE = 0.15
+SEAT.RING_MAX = 4
+SEAT.ARRIVE = 0.3
+SEAT.NEAR = 0.7
+SEAT.GAP = 0.25
+SEAT.EDGE = 0.15
 
 BridgeMove.SEAT_PIVOT_DEG = 15
-local SEAT_GIVE_UP = 360
-local SEAT_DOWN_MAX = 180
-local SEAT_NEAR_GOAL = 2.5
+SEAT.GIVE_UP = 360
+SEAT.DOWN_MAX = 180
+SEAT.NEAR_GOAL = 2.5
 BridgeMove.seat = nil
 BridgeMove.sitDangerLatch = nil
 
@@ -1261,7 +1274,7 @@ function BridgeMove.seatZones(red)
 
 
         BridgeMove.sitDownSince = BridgeMove.sitDownSince or Bridge.time
-        if Bridge.time - BridgeMove.sitDownSince > SEAT_DOWN_MAX then return nil end
+        if Bridge.time - BridgeMove.sitDownSince > SEAT.DOWN_MAX then return nil end
         why = "sitting down"
     elseif ground then
         why = "sits"
@@ -1275,7 +1288,7 @@ function BridgeMove.seatZones(red)
                 local pf = red:getPathFindBehavior2()
                 if not pf:isGoalSitOnFurniture() then return end
                 local gx, gy = pf:getTargetX(), pf:getTargetY()
-                if gx == nil or gx <= 0 or dist2d(red:getX(), red:getY(), gx, gy) > SEAT_NEAR_GOAL then return end
+                if gx == nil or gx <= 0 or dist2d(red:getX(), red:getY(), gx, gy) > SEAT.NEAR_GOAL then return end
 
                 pcall(function() furniture = pf:getGoalSitOnFurnitureObject() end)
                 if furniture == nil then furniture = first.goal[2] end
@@ -1423,7 +1436,7 @@ function BridgeMove.seatSpot(red, zones, bx, by, body, bad)
     local from = seatFrom(red, zones)
     local rx, ry = red:getX(), red:getY()
     local best, bestCost, checked = nil, nil, 0
-    for r = 2, SEAT_RING_MAX do
+    for r = 2, SEAT.RING_MAX do
         for dx = -r, r do
             for dy = -r, r do
                 if math.max(math.abs(dx), math.abs(dy)) == r then
@@ -1555,9 +1568,9 @@ end
 
 
 
-local CHAIR_RING_MAX = 3
-local CHAIR_ARRIVE = 0.2
-local CHAIR_ANIM_MAX = 240
+CHAIR.RING_MAX = 3
+CHAIR.ARRIVE = 0.2
+CHAIR.ANIM_MAX = 240
 local SIT_DIRS = { "N", "S", "W", "E" }
 BridgeMove.CHAIR_POSES = { SitChairDown = true, SitChair = true, SitChairUp = true }
 BridgeMove.seatFlag = false
@@ -1577,8 +1590,8 @@ function BridgeMove.findChair(red, zones, body, bad)
     local bx, by = body:getX(), body:getY()
     local cell = getCell()
     local best, bestCost, seats = nil, nil, 0
-    for dx = -CHAIR_RING_MAX, CHAIR_RING_MAX do
-        for dy = -CHAIR_RING_MAX, CHAIR_RING_MAX do
+    for dx = -CHAIR.RING_MAX, CHAIR.RING_MAX do
+        for dy = -CHAIR.RING_MAX, CHAIR.RING_MAX do
             local ring = math.max(math.abs(dx), math.abs(dy))
             local x, y = rcx + dx, rcy + dy
             if ring >= 2 and not BridgeMove.inSeatZone(zones, x, y) and not (bad and bad[x .. "," .. y]) then
@@ -1696,7 +1709,7 @@ local function animDone(body, S)
     pcall(function() fin = body:getVariableBoolean("BumpAnimFinished") end)
     if bump == S.anim then S.animSeen = true end
     if S.animSeen and (fin or bump ~= S.anim) then return true end
-    return Bridge.time - S.phaseSince > CHAIR_ANIM_MAX
+    return Bridge.time - S.phaseSince > CHAIR.ANIM_MAX
 end
 
 local function startPose(body, S, anim, move)
@@ -1954,7 +1967,7 @@ function BridgeMove.sitDownNear(body, red, zones, S, d, inside)
                 if not S.noSpot then
                     S.noSpot = true
                     log(sformat("seat: player sits, no seat 2-%d cells (%d seats), no floor spot (%d cells), staying%s",
-                        CHAIR_RING_MAX, seats, checked, inside and " in the way" or ""))
+                        CHAIR.RING_MAX, seats, checked, inside and " in the way" or ""))
                 end
                 S.retryAt = Bridge.time + 60
                 return seatStand(body, red, d)
@@ -1963,13 +1976,13 @@ function BridgeMove.sitDownNear(body, red, zones, S, d, inside)
             S.phase, S.goal, S.chair, S.phaseSince, S.path, S.via, S.gate = "go", { x = spot.x + 0.5, y = spot.y + 0.5, floor = true }, nil, Bridge.time, false, nil, nil
             S.away, S.awayDone = nil, false
             log(sformat("seat: player sits, no seat 2-%d cells (%d seats checked), floor at %d,%d (ring %d)",
-                CHAIR_RING_MAX, seats, spot.x, spot.y, spot.ring))
+                CHAIR.RING_MAX, seats, spot.x, spot.y, spot.ring))
         end
     end
     local gx, gy = S.goal.x, S.goal.y
     local toGoal = dist2d(bx, by, gx, gy)
 
-    local arrive = S.goal.floor and SEAT_ARRIVE or (S.path and 0.6 or CHAIR_ARRIVE)
+    local arrive = S.goal.floor and SEAT.ARRIVE or (S.path and 0.6 or CHAIR.ARRIVE)
     if sameZ and toGoal <= arrive then
         if BridgeMove.onPath() then BridgeMove.stopPath(body) end
         BridgeMove.moving = false
@@ -2004,7 +2017,7 @@ function BridgeMove.sitDownNear(body, red, zones, S, d, inside)
 
     if S.giveUpAt == nil or S.goalSince ~= S.phaseSince then
         S.goalSince = S.phaseSince
-        S.giveUpAt = S.phaseSince + SEAT_GIVE_UP + math.floor(60 * dist2d(bx, by, gx, gy))
+        S.giveUpAt = S.phaseSince + SEAT.GIVE_UP + math.floor(60 * dist2d(bx, by, gx, gy))
     end
     if Bridge.time > S.giveUpAt then
         S.bad[key] = true
@@ -2173,7 +2186,7 @@ function BridgeMove.seatStep(body)
 
 
 
-    if not inside and (not sameZ or cells > SEAT_STAY) then
+    if not inside and (not sameZ or cells > SEAT.STAY) then
         if Bridge.time >= (S.freedLog or 0) then
             S.freedLog = Bridge.time + 60
             log(sformat("seat: following, %s (her z=%.2f, floor %d, %d cells)%s", sameZ and "far" or "other floor",
@@ -2192,7 +2205,7 @@ function BridgeMove.seatStep(body)
         S.placed = true
         if BridgeMove.lineClear(seatFrom(red, zones), bx, by, zones.z) then
             local gap = BridgeMove.zoneGap(zones, bx, by)
-            if gap >= SEAT_EDGE then return seatStand(body, red, d) end
+            if gap >= SEAT.EDGE then return seatStand(body, red, d) end
 
             S.spot, S.path, S.spotSince, S.away, S.awayDone = { x = bcx, y = bcy, ring = cells }, false, Bridge.time, nil, true
             S.spotGiveUp = Bridge.time + 120
@@ -2206,7 +2219,7 @@ function BridgeMove.seatStep(body)
             end
             S.spot, S.path, S.spotSince, S.away, S.awayDone = spot, false, Bridge.time, nil, false
             spot.forSight = true
-            S.spotGiveUp = Bridge.time + SEAT_GIVE_UP + math.floor(60 * dist2d(bx, by, spot.x + 0.5, spot.y + 0.5))
+            S.spotGiveUp = Bridge.time + SEAT.GIVE_UP + math.floor(60 * dist2d(bx, by, spot.x + 0.5, spot.y + 0.5))
             log(sformat("seat: out of his sight, %d cells, going once to %d,%d (ring %d, %d cells checked, d=%.2f)",
                 cells, spot.x, spot.y, spot.ring, checked, d))
         end
@@ -2224,14 +2237,14 @@ function BridgeMove.seatStep(body)
             if not S.noSpot then
                 S.noSpot = true
                 log(sformat("seat: no free spot 2-%d cells from player (%d cells checked), staying%s",
-                    SEAT_RING_MAX, checked, inside and " in the way" or ""))
+                    SEAT.RING_MAX, checked, inside and " in the way" or ""))
             end
             return seatStand(body, red, d)
         end
         S.noSpot = false
         S.placed = true
         S.spot, S.path, S.spotSince, S.away, S.awayDone = spot, false, Bridge.time, nil, false
-        S.spotGiveUp = Bridge.time + SEAT_GIVE_UP + math.floor(60 * dist2d(bx, by, spot.x + 0.5, spot.y + 0.5))
+        S.spotGiveUp = Bridge.time + SEAT.GIVE_UP + math.floor(60 * dist2d(bx, by, spot.x + 0.5, spot.y + 0.5))
         log(sformat("seat: in the way, going to %d,%d (ring %d, %d cells checked, d=%.2f, turn %s deg)",
             spot.x, spot.y, spot.ring, checked, d, tostring(BridgeMove.facingOff(body, spot.x + 0.5, spot.y + 0.5))))
     end
@@ -2240,15 +2253,15 @@ function BridgeMove.seatStep(body)
 
 
 
-    local nearOk = not inside and toSpot <= SEAT_NEAR and BridgeMove.zoneGap(zones, bx, by) >= SEAT_GAP
+    local nearOk = not inside and toSpot <= SEAT.NEAR and BridgeMove.zoneGap(zones, bx, by) >= SEAT.GAP
     if nearOk and S.spot.forSight and not BridgeMove.lineClear(seatFrom(red, zones), bx, by, zones.z) then nearOk = false end
-    if sameZ and (toSpot <= SEAT_ARRIVE or nearOk) then
+    if sameZ and (toSpot <= SEAT.ARRIVE or nearOk) then
         log(sformat("seat: at %d,%d after %d ticks, %d cells from player", S.spot.x, S.spot.y,
             Bridge.time - S.spotSince, math.max(math.abs(S.spot.x - rcx), math.abs(S.spot.y - rcy))))
         S.spot, S.path = nil, false
         return seatStand(body, red, d)
     end
-    if Bridge.time > (S.spotGiveUp or (S.spotSince + SEAT_GIVE_UP)) then
+    if Bridge.time > (S.spotGiveUp or (S.spotSince + SEAT.GIVE_UP)) then
         S.bad[S.spot.x .. "," .. S.spot.y] = true
         log(sformat("seat: %d,%d not reached in %d ticks, another spot", S.spot.x, S.spot.y, Bridge.time - S.spotSince))
         S.spot, S.path = nil, false
@@ -2310,8 +2323,8 @@ function BridgeMove.asideStep(body)
     local d = dist2d(bx, by, red:getX(), red:getY())
     if math.abs(body:getZ() - math.floor(t.z or 0)) >= 0.5 then return false end
     local zones = BridgeMove.seatZones(red)
-    local clear = zones ~= nil and toSpot <= SEAT_NEAR and BridgeMove.zoneGap(zones, bx, by) >= SEAT_GAP
-    if toSpot <= SEAT_ARRIVE or clear then
+    local clear = zones ~= nil and toSpot <= SEAT.NEAR and BridgeMove.zoneGap(zones, bx, by) >= SEAT.GAP
+    if toSpot <= SEAT.ARRIVE or clear then
         if BridgeMove.onPath() then BridgeMove.stopPath(body) end
         BridgeMove.moving = false
         Bridge.target = nil
@@ -2345,9 +2358,9 @@ end
 
 
 
-local STRAIGHT_TURN_DEG = 25
-local STRAIGHT_PIVOT_DEG = 60
-local STRAIGHT_TURN_MAX = 8
+STRAIGHT.TURN_DEG = 25
+STRAIGHT.PIVOT_DEG = 60
+STRAIGHT.TURN_MAX = 8
 function BridgeMove.goStraight(body, x, y, z, run, clear, backwards)
     local red = BridgeData.owner()
     if red == nil then return false end
@@ -2388,11 +2401,11 @@ function BridgeMove.goStraight(body, x, y, z, run, clear, backwards)
     if starting then F.pivotFrames = 0 end
     if backwards ~= true then
         local off = BridgeMove.facingOff(body, x, y)
-        if off ~= nil and off > STRAIGHT_TURN_DEG and (F.pivotFrames or 0) < STRAIGHT_TURN_MAX then
+        if off ~= nil and off > STRAIGHT.TURN_DEG and (F.pivotFrames or 0) < STRAIGHT.TURN_MAX then
             F.pivotFrames = (F.pivotFrames or 0) + 1
 
             pcall(function() if isFollowBump(tostring(body:getBumpType())) then BridgeMove.endFollowBump(body, "Stand") end end)
-            local left = BridgeMove.pivotToward(body, x, y, STRAIGHT_PIVOT_DEG)
+            local left = BridgeMove.pivotToward(body, x, y, STRAIGHT.PIVOT_DEG)
             F.pivotTick, F.kind = Bridge.tick, kind
 
             if left ~= nil then return true end
@@ -2427,15 +2440,15 @@ end
 
 
 BridgeMove.MOURN_PIVOT_DEG = 8
-local MOURN_CHEST_BACK = 0.38
-local MOURN_CHEST_FRONT = 0.25
-local MOURN_HEAD_BACK = 0.7
-local MOURN_HEAD_FRONT = 0.5
-local MOURN_FEET_BACK = 0.6
-local MOURN_FEET_FRONT = 0.75
-local MOURN_CLEAR = 0.45
-local MOURN_OFF_OUT = 0.12
-BridgeMove.MOURN_CLEAR = MOURN_CLEAR
+MOURN.CHEST_BACK = 0.38
+MOURN.CHEST_FRONT = 0.25
+MOURN.HEAD_BACK = 0.7
+MOURN.HEAD_FRONT = 0.5
+MOURN.FEET_BACK = 0.6
+MOURN.FEET_FRONT = 0.75
+MOURN.CLEAR = 0.45
+MOURN.OFF_OUT = 0.12
+BridgeMove.MOURN_CLEAR = MOURN.CLEAR
 
 
 
@@ -2454,9 +2467,9 @@ function BridgeMove.corpseLine(red)
     pcall(function() front = red:isFallOnFront() == true end)
     local hx, hy = math.cos(a), math.sin(a)
     if not front then hx, hy = -hx, -hy end
-    local chest = front and MOURN_CHEST_FRONT or MOURN_CHEST_BACK
-    local head = front and MOURN_HEAD_FRONT or MOURN_HEAD_BACK
-    local feet = front and MOURN_FEET_FRONT or MOURN_FEET_BACK
+    local chest = front and MOURN.CHEST_FRONT or MOURN.CHEST_BACK
+    local head = front and MOURN.HEAD_FRONT or MOURN.HEAD_BACK
+    local feet = front and MOURN.FEET_FRONT or MOURN.FEET_BACK
     return { ex1 = rx + hx * head, ey1 = ry + hy * head, ex2 = rx - hx * feet, ey2 = ry - hy * feet,
              hx = hx, hy = hy, cx = rx + hx * chest, cy = ry + hy * chest, z = z, front = front }
 end
@@ -2475,7 +2488,7 @@ end
 
 
 function BridgeMove.mournCrosses(s, ax, ay, bx, by, clear)
-    clear = clear or MOURN_CLEAR
+    clear = clear or MOURN.CLEAR
     for i = 1, 8 do
         local t = i / 8
         local px, py = ax + (bx - ax) * t, ay + (by - ay) * t
@@ -2494,7 +2507,7 @@ function BridgeMove.mournStepOff(body, s)
     if red == nil then return "stuck" end
     local bx, by = body:getX(), body:getY()
     local onD, qx, qy = BridgeMove.mournBodyDist(s, bx, by)
-    if not (onD < MOURN_CLEAR or (s.offing and onD < MOURN_CLEAR + MOURN_OFF_OUT)) then
+    if not (onD < MOURN.CLEAR or (s.offing and onD < MOURN.CLEAR + MOURN.OFF_OUT)) then
         s.offing = false
         return "off"
     end
@@ -2505,7 +2518,7 @@ function BridgeMove.mournStepOff(body, s)
 
         ux, uy, l = -s.hy, s.hx, 1
     end
-    local out = MOURN_CLEAR + MOURN_OFF_OUT + 0.05
+    local out = MOURN.CLEAR + MOURN.OFF_OUT + 0.05
     local tx, ty = qx + ux / l * out, qy + uy / l * out
     if s.logged ~= "off" then
         s.logged = "off"
@@ -2584,7 +2597,7 @@ function BridgeMove.onHisPath(bx, by, rx, ry, vx, vy)
     local ox, oy = bx - rx, by - ry
     local ahead = ux * ox + uy * oy
     local side = -uy * ox + ux * oy
-    if ahead <= 0 or ahead >= ASIDE_AHEAD or math.abs(side) >= ASIDE_PATH then return nil end
+    if ahead <= 0 or ahead >= ASIDE.AHEAD or math.abs(side) >= ASIDE.PATH then return nil end
     return ahead, side, ux, uy
 end
 
@@ -2634,7 +2647,7 @@ function BridgeMove.pushCheck(body, red)
     end
     F.pushSeenIdle = Bridge.time
     F.pushSinceIdle = F.pushSinceIdle or Bridge.time
-    if Bridge.time - F.pushSinceIdle >= ASIDE_PUSH then
+    if Bridge.time - F.pushSinceIdle >= ASIDE.PUSH then
         if contact then
             BridgeMove.passThrough(body, true, sformat("player pressed against her (%.2f)", d))
         else
@@ -2672,7 +2685,7 @@ function BridgeMove.onRunLine(bx, by, rx, ry, fx, fy)
     local ox, oy = bx - rx, by - ry
     local ahead = ux * ox + uy * oy
     local side = -uy * ox + ux * oy
-    if ahead <= -0.2 or ahead >= RUN_AHEAD or math.abs(side) >= RUN_PATH then return nil end
+    if ahead <= -0.2 or ahead >= RUN.AHEAD or math.abs(side) >= RUN.PATH then return nil end
     return ahead, side, ux, uy
 end
 
@@ -3037,7 +3050,7 @@ local function followTrailStep(body)
             return stepAside(body, F, A, d)
         end
         F.asideTo = nil
-        F.asideQuiet = Bridge.time + ASIDE_QUIET
+        F.asideQuiet = Bridge.time + ASIDE.QUIET
 
         BridgeMove.moving = false
         if Bridge.verbose then log(sformat("aside done at %.2f %.2f, %.2f from player", bx, by, d)) end
@@ -3079,7 +3092,7 @@ local function followTrailStep(body)
         elseif BridgeMove.backTick(body, F, red) then
             return true
         end
-    elseif backOk and pushing and coming and kind == "player" and d <= ASIDE_AHEAD + ASIDE_PATH then
+    elseif backOk and pushing and coming and kind == "player" and d <= ASIDE.AHEAD + ASIDE.PATH then
         local line = nil
         if running then
             line = BridgeMove.onRunLine(bx, by, red:getX(), red:getY(), fx, fy)
@@ -3096,11 +3109,11 @@ local function followTrailStep(body)
         if ra ~= nil and ra > 0 then
             local nx, ny = -ruy, rux
             if rs < 0 then nx, ny = -nx, -ny end
-            local tries = { { bx + nx * ASIDE_STEP, by + ny * ASIDE_STEP, "side" },
-                            { bx - nx * ASIDE_STEP, by - ny * ASIDE_STEP, "other side" } }
+            local tries = { { bx + nx * ASIDE.STEP, by + ny * ASIDE.STEP, "side" },
+                            { bx - nx * ASIDE.STEP, by - ny * ASIDE.STEP, "other side" } }
             for _, t in ipairs(tries) do
                 if BridgeMove.lineClear(body, t[1], t[2], tz) then
-                    F.asideTo = { x = t[1], y = t[2], untilT = Bridge.time + ASIDE_MAX }
+                    F.asideTo = { x = t[1], y = t[2], untilT = Bridge.time + ASIDE.MAX }
                     F.cross = nil
                     if Bridge.verbose then
                         log(sformat("aside %s: player runs at her, %.2f ahead, %.2f off his line", t[3], ra, rs))
@@ -3111,7 +3124,7 @@ local function followTrailStep(body)
         end
     end
 
-    local canPush = pushing and kind == "player" and d < ASIDE_AHEAD + ASIDE_PATH and F.cross == nil
+    local canPush = pushing and kind == "player" and d < ASIDE.AHEAD + ASIDE.PATH and F.cross == nil
     local ahead, side, ux, uy = nil, nil, nil, nil
     if canPush then ahead, side, ux, uy = BridgeMove.onHisPath(bx, by, red:getX(), red:getY(), fx, fy) end
 
@@ -3126,7 +3139,7 @@ local function followTrailStep(body)
     end
 
 
-    if Bridge.verbose and d < ASIDE_AHEAD + ASIDE_PATH then
+    if Bridge.verbose and d < ASIDE.AHEAD + ASIDE.PATH then
         local why
         if ahead ~= nil then why = "pushing"
         elseif not pushing then why = "not pressing"
@@ -3152,18 +3165,18 @@ local function followTrailStep(body)
     if ahead ~= nil then
         F.pushSince = F.pushSince or Bridge.time
 
-        if Bridge.time - F.pushSince >= ASIDE_PUSH then
+        if Bridge.time - F.pushSince >= ASIDE.PUSH then
             F.pushSince = nil
 
 
             if Bridge.time > (F.asideQuiet or 0) then
                 local nx, ny = -uy, ux
                 if side < 0 then nx, ny = -nx, -ny end
-                local tries = { { bx + nx * ASIDE_STEP, by + ny * ASIDE_STEP, "side" },
-                                { bx - nx * ASIDE_STEP, by - ny * ASIDE_STEP, "other side" } }
+                local tries = { { bx + nx * ASIDE.STEP, by + ny * ASIDE.STEP, "side" },
+                                { bx - nx * ASIDE.STEP, by - ny * ASIDE.STEP, "other side" } }
                 for _, t in ipairs(tries) do
                     if BridgeMove.lineClear(body, t[1], t[2], tz) then
-                        F.asideTo = { x = t[1], y = t[2], untilT = Bridge.time + ASIDE_MAX }
+                        F.asideTo = { x = t[1], y = t[2], untilT = Bridge.time + ASIDE.MAX }
                         if Bridge.verbose then
                             log(sformat("aside %s: player walks into her, %.2f ahead, %.2f off his line", t[3], ahead, side))
                         end
@@ -3189,16 +3202,16 @@ local function followTrailStep(body)
     local why = nil
     if not redGoes then
         if not sees and extra > 0 then stopAt, why = STOP_GAP, "no line to player" end
-        if along > DOORWAY_STOP and BridgeMove.inDoorway(body) then
+        if along > DOORWAY.STOP and BridgeMove.inDoorway(body) then
 
 
             local room = true
             if sees and d > 0.001 then
-                local k = DOORWAY_ROOM / d
+                local k = DOORWAY.ROOM / d
                 local qx, qy = red:getX() + (body:getX() - red:getX()) * k, red:getY() + (body:getY() - red:getY()) * k
                 room = not BridgeMove.doorwayCell(math.floor(qx), math.floor(qy), math.floor(body:getZ()))
             end
-            if room then stopAt, why = DOORWAY_STOP, "in a doorway" end
+            if room then stopAt, why = DOORWAY.STOP, "in a doorway" end
         end
     end
     if why ~= F.stopWhy then
@@ -3348,16 +3361,16 @@ local function followTrailStep(body)
         local minStep = BridgeMove.speedModel.Walk.a * BridgeMove.speedScale
 
 
-        if redGoes and BridgeMove.redSpeed < minStep * SLOW_RED then
+        if redGoes and BridgeMove.redSpeed < minStep * SLOW.RED then
             F.slowFrames = (F.slowFrames or 0) + frameDt()
         else
             F.slowFrames = 0
         end
-        local slowRed = F.slowFrames >= SLOW_FRAMES
+        local slowRed = F.slowFrames >= SLOW.FRAMES
         if not slowRed then
             F.slowWait = nil
         elseif F.slowWait then
-            if err > SLOW_GO then F.slowWait = nil end
+            if err > SLOW.GO then F.slowWait = nil end
         elseif err <= 0 then
             F.slowWait = true
         end
@@ -3439,9 +3452,9 @@ local function followTrailStep(body)
     if nav ~= nil and pursuing and BridgeMove.moving
             and BridgeMove.cross == nil and BridgeMove.pendingClimb == nil
             and BridgeMove.doorAct == nil and BridgeMove.window == nil then
-        if BridgeNav.stall(body, nav, { ticks = NAV_STALL_TICKS, move = NAV_STALL_MOVE }) == "stalled" then
+        if BridgeNav.stall(body, nav, { ticks = NAV.STALL_TICKS, move = NAV.STALL_MOVE }) == "stalled" then
             local point = BridgeNav.detour(body, math.floor(px), math.floor(py), tz, nav,
-                { step = NAV_DETOUR_STEP, ticks = NAV_DETOUR_TICKS })
+                { step = NAV.DETOUR_STEP, ticks = NAV.DETOUR_TICKS })
             if point ~= nil then
                 px, py = point.x, point.y
                 kind = "detour"
@@ -3593,7 +3606,7 @@ function BridgeMove.inDoorway(body)
     end
     local a = F.doorAt
     if a ~= nil then
-        if Bridge.time - a.tick < 90 and dist2d(a.x, a.y, bx, by) < DOORWAY_CLEAR then return true end
+        if Bridge.time - a.tick < 90 and dist2d(a.x, a.y, bx, by) < DOORWAY.CLEAR then return true end
         F.doorAt = nil
     end
     return false
@@ -3936,9 +3949,9 @@ local function pickWalkType(d)
     if red ~= nil then
         pcall(function() running = red:isRunning() or red:isSprinting() end)
     end
-    if running or d > RUN_DIST then return "Run" end
+    if running or d > RUN.DIST then return "Run" end
 
-    if BridgeMove.walkType == "Run" and d > RUN_STOP then return "Run" end
+    if BridgeMove.walkType == "Run" and d > RUN.STOP then return "Run" end
     if BridgeMove.slowDist > 0 and BridgeMove.redMoving and d < BridgeMove.slowDist then return "SlowWalk" end
     return "Walk"
 end
@@ -4111,16 +4124,16 @@ end
 
 BridgeMove.opened = {}
 BridgeMove.doorLast = "none"
-local DOOR_FORGET = 1800
-local DOOR_BACK = 180
+DOOR.FORGET = 1800
+DOOR.BACK = 180
 
 
 
 
-local DOOR_PASSED = 0.5
-local DOOR_EDGE = 0.4
-local DOOR_REACH = 2.0
-local DOOR_BACK_OFF = 1.2
+DOOR.PASSED = 0.5
+DOOR.EDGE = 0.4
+DOOR.REACH = 2.0
+DOOR.BACK_OFF = 1.2
 local OWN_BEHIND = 4.0
 local OWN_AT_DOOR = 3.0
 
@@ -4264,7 +4277,7 @@ local function doorwayBusy(rec, body)
                         local o = list:get(i)
                         if o ~= body then
                             local _, off = doorSide(rec, o:getX(), o:getY())
-                            if off < DOOR_EDGE then busy = true end
+                            if off < DOOR.EDGE then busy = true end
                         end
                     end
                 end)
@@ -4324,16 +4337,16 @@ function BridgeMove.closeBehind(body)
         pcall(function() open = rec.door:getObjectIndex() ~= -1 and rec.door:IsOpen() end)
         if not open then
             why = "closed by someone else"
-        elseif Bridge.time - rec.tick > DOOR_FORGET then
+        elseif Bridge.time - rec.tick > DOOR.FORGET then
             why = "left open: timeout"
         elseif math.abs(bz - rec.cells[1].z) >= 0.5 then
             why = "left open: other floor"
-        elseif doorReach(rec, bx, by) > DOOR_REACH then
+        elseif doorReach(rec, bx, by) > DOOR.REACH then
             why = "left open: walked away"
         else
             local side, off = doorSide(rec, bx, by)
-            local passed = side ~= rec.side and off >= DOOR_PASSED
-            local back = side == rec.side and off >= DOOR_BACK_OFF and (Bridge.time - rec.tick) >= DOOR_BACK
+            local passed = side ~= rec.side and off >= DOOR.PASSED
+            local back = side == rec.side and off >= DOOR.BACK_OFF and (Bridge.time - rec.tick) >= DOOR.BACK
             if (passed or back) and BridgeMove.doorAct == nil and Bridge.time >= (rec.retryAt or 0)
                 and not BridgeMove.holdDoors then
                 local wait = closeWait(rec, body, passed)
@@ -4973,9 +4986,9 @@ BridgeMove.cross = nil
 BridgeMove.noCrossUntil = 0
 BridgeMove.crossInfo = "none"
 
-local CROSS_LOOK = 0.9
-local CROSS_CALL = 0.55
-local CROSS_WAIT = 90
+CROSS.LOOK = 0.9
+CROSS.CALL = 0.55
+CROSS.WAIT = 90
 local TALL_GRAB_MS = 640
 local TALL_OVER_MS = 1830
 
@@ -5019,7 +5032,7 @@ BridgeMove.beyondEdge = beyondEdge
 
 
 
-local CROSS_MARGIN = 0.3
+CROSS.MARGIN = 0.3
 
 
 
@@ -5060,7 +5073,7 @@ local function backBlocked(from, to)
     if axis ~= lc.axis or edge ~= lc.edge or dir ~= -lc.dir or math.abs(along - lc.along) > BACK_SPAN then return nil end
     local red = BridgeData.owner()
     local now = 0
-    if red ~= nil then now = sideOf(axis, edge, red:getX(), red:getY(), CROSS_MARGIN) end
+    if red ~= nil then now = sideOf(axis, edge, red:getX(), red:getY(), CROSS.MARGIN) end
     if lc.redSide == lc.dir and now == dir then return nil end
     return sformat("crossed here %d ticks ago, player side %d then, %d now", Bridge.time - lc.tick, lc.redSide, now)
 end
@@ -5383,7 +5396,7 @@ local function edgeAhead(body)
     if len < 0.0001 then return nil end
     dx, dy = dx / len, dy / len
     local cell = getCell()
-    for _, s in ipairs({ 0.35, 0.65, CROSS_LOOK }) do
+    for _, s in ipairs({ 0.35, 0.65, CROSS.LOOK }) do
         local nx, ny = math.floor(x + dx * s), math.floor(y + dy * s)
         if nx ~= cur:getX() or ny ~= cur:getY() then
             local candidates = {}
@@ -5468,7 +5481,7 @@ local function crossEnd(body, why)
             local redSide = c.redSide
             if redSide == nil then
                 local red = BridgeData.owner()
-                redSide = red ~= nil and sideOf(axis, edge, red:getX(), red:getY(), CROSS_MARGIN) or 0
+                redSide = red ~= nil and sideOf(axis, edge, red:getX(), red:getY(), CROSS.MARGIN) or 0
             end
             BridgeMove.lastCross = { axis = axis, edge = edge, along = along, dir = dir, tick = Bridge.time, redSide = redSide }
             local ckey = c.from:getX() .. "," .. c.from:getY() .. ">" .. c.to:getX() .. "," .. c.to:getY()
@@ -5573,7 +5586,7 @@ function BridgeMove.crossStep(body)
 
 
         local goal = BridgeMove.goal
-        if goal == nil or not beyondEdge(from, to, goal.x, goal.y, CROSS_MARGIN) then
+        if goal == nil or not beyondEdge(from, to, goal.x, goal.y, CROSS.MARGIN) then
             if BridgeMove.edgeLogged ~= key then
                 BridgeMove.edgeLogged = key
                 log("edge " .. kind .. " ahead, goal on this side")
@@ -5614,7 +5627,7 @@ function BridgeMove.crossStep(body)
 
         if red0 ~= nil then
             local axis, edge = lineOf(from, to)
-            c.redSide = sideOf(axis, edge, red0:getX(), red0:getY(), CROSS_MARGIN)
+            c.redSide = sideOf(axis, edge, red0:getX(), red0:getY(), CROSS.MARGIN)
         end
         BridgeMove.cross = c
         BridgeMove.crossInfo = "cross " .. kind
@@ -5654,7 +5667,7 @@ function BridgeMove.crossStep(body)
                     BridgeMove.applyAnimVars(body)
                     BridgeMove.followBump(body, "Walk")
                     BridgeMove.turnToward(body, ex, ey, 180)
-                    if Bridge.time - c.tick > CROSS_WAIT then crossEnd(body, "tall fence not reached") return false end
+                    if Bridge.time - c.tick > CROSS.WAIT then crossEnd(body, "tall fence not reached") return false end
                     return true
                 end
                 BridgeMove.steering = false
@@ -5671,7 +5684,7 @@ function BridgeMove.crossStep(body)
                 crossEnd(body, "left the edge") return false
             end
             if edgeDist(body, c.from, c.to) > (((BridgeTask ~= nil and BridgeTask.active) or BridgeMove.forceCross) and 1.5 or 0.45) then
-                if Bridge.time - c.tick > CROSS_WAIT then crossEnd(body, "tall fence not reached") return false end
+                if Bridge.time - c.tick > CROSS.WAIT then crossEnd(body, "tall fence not reached") return false end
                 return false
             end
             BridgeMove.steering = false
@@ -5727,7 +5740,7 @@ function BridgeMove.crossStep(body)
         crossEnd(body, "done")
         return true
     end
-    if Bridge.time - c.tick > CROSS_WAIT then
+    if Bridge.time - c.tick > CROSS.WAIT then
         crossEnd(body, "not started in " .. asn)
         return true
     end
@@ -5752,7 +5765,7 @@ function BridgeMove.crossStep(body)
         BridgeMove.applyAnimVars(body)
         BridgeMove.followBump(body, "Walk")
         BridgeMove.turnToward(body, ex, ey, 180)
-        if edgeDist(body, c.from, c.to) <= CROSS_CALL and Bridge.time - (c.asked or -99) >= 3 then
+        if edgeDist(body, c.from, c.to) <= CROSS.CALL and Bridge.time - (c.asked or -99) >= 3 then
             c.asked = Bridge.time
             BridgeMove.steering = false
             BridgeMove.endFollowBump(body, "")
@@ -5813,7 +5826,7 @@ function BridgeMove.crossStep(body)
         crossEnd(body, "item in hands")
         return true
     end
-    if edgeDist(body, c.from, c.to) <= CROSS_CALL and Bridge.time - (c.asked or -99) >= 3 then
+    if edgeDist(body, c.from, c.to) <= CROSS.CALL and Bridge.time - (c.asked or -99) >= 3 then
         c.asked = Bridge.time
         if c.kind == "window" and not BridgeMove.glassStep(body, c.object) then
             crossEnd(body, "glass first")
@@ -6002,7 +6015,7 @@ BridgeMove.doorAct = nil
 local DOOR_HAND = { open = 10, close = 4 }
 local DOOR_HAND_BIG = { open = 16, close = 8 }
 local DOOR_AFTER = { open = 6, close = 4 }
-local DOOR_ACT_MAX = 150
+DOOR.ACT_MAX = 150
 
 function BridgeMove.startDoorAct(body, want, door, rec, fx, fy, passed)
     if BridgeMove.doorAct ~= nil or door == nil then return false end
@@ -6019,7 +6032,7 @@ function BridgeMove.doorStep(body)
     local a = BridgeMove.doorAct
     if a == nil then return false end
 
-    if Bridge.time - a.lastFrame > 10 or Bridge.time - a.t0 > DOOR_ACT_MAX then
+    if Bridge.time - a.lastFrame > 10 or Bridge.time - a.t0 > DOOR.ACT_MAX then
         BridgeMove.doorAct = nil
         return false
     end
@@ -6495,9 +6508,9 @@ function BridgeMove.update(body)
                 nav.openingKey, nav.openingSince = nil, nil
             else
                 local openStatus, openReason = BridgeNav.opening(nav, {
-                    giveUp = NAV_OPENING_GIVE_UP, target = { x = gx, y = gy, z = gz } })
+                    giveUp = NAV.OPENING_GIVE_UP, target = { x = gx, y = gy, z = gz } })
                 if openStatus == "stale" then
-                    BridgeMove.follow.navHoldUntil = Bridge.time + NAV_FOLLOW_HOLD
+                    BridgeMove.follow.navHoldUntil = Bridge.time + NAV.FOLLOW_HOLD
                     BridgeMove.follow.navReason = openReason
                     BridgeMove.follow.navStatus = "stale"
                     nav.status = "stale"
@@ -6662,9 +6675,9 @@ function BridgeMove.update(body)
     end
     if Bridge.follow then
         local nav = BridgeMove.navState()
-        if nav ~= nil and BridgeNav.notePathFail(nav, { limit = NAV_PATH_FAIL_LIMIT }) == "failed" then
+        if nav ~= nil and BridgeNav.notePathFail(nav, { limit = NAV.PATH_FAIL_LIMIT }) == "failed" then
             local reason = BridgeNav.blockedReason(Bridge.target)
-            BridgeMove.follow.navHoldUntil = Bridge.time + NAV_FOLLOW_HOLD
+            BridgeMove.follow.navHoldUntil = Bridge.time + NAV.FOLLOW_HOLD
             BridgeMove.follow.navReason = reason
             BridgeMove.follow.navStatus = "failed"
             nav.status = "failed"
@@ -6971,7 +6984,7 @@ end
 function BridgeMove.toCar(body, vehicle)
     local d = dist2d(body:getX(), body:getY(), vehicle:getX(), vehicle:getY())
     if d > 2.4 then
-        BridgeMove.walkType = (d > RUN_DIST) and "Run" or "Walk"
+        BridgeMove.walkType = (d > RUN.DIST) and "Run" or "Walk"
         BridgeMove.goToward(body, vehicle:getX(), vehicle:getY(), vehicle:getZ())
         return true
     end
