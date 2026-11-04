@@ -1014,6 +1014,7 @@ local function syncGunState(who, rec)
     rec.gunReloadVirtual = nil
     rec.gunReloadSavedRounds = nil
     rec.gunReloadBaseRounds = nil
+    rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
     local body = currentBody(who, rec)
     local item = gunItemFor(body, rec)
     if item == nil then
@@ -1022,6 +1023,63 @@ local function syncGunState(who, rec)
     end
     rec.gunRounds = BridgeGunRules.roundsOf(item)
     return item
+end
+
+
+local function serverHome(h)
+    if type(h) ~= "table" then return nil end
+    local z1, z2 = h.z1, h.z2
+    if type(z1) ~= "number" or type(z2) ~= "number" then
+        z1, z2 = h.z, h.z
+    end
+    z1, z2 = math.floor(z1), math.floor(z2)
+    if z1 > h.z then z1 = h.z end
+    if z2 < h.z then z2 = h.z end
+    if (z2 - z1 + 1) > BridgeData.HOME_MAX_FLOORS then z2 = z1 + BridgeData.HOME_MAX_FLOORS - 1 end
+    local out = { x = h.x, y = h.y, z = h.z, w = h.w, h = h.h }
+    if z1 < z2 then
+        out.z1, out.z2 = z1, z2
+    else
+        out.z1, out.z2 = h.z, h.z
+    end
+
+    local cell = nil
+    pcall(function() cell = getCell() end)
+    if cell ~= nil and h.bld ~= nil then
+        local sq = nil
+        pcall(function() sq = cell:getGridSquare(h.x, h.y, h.z) end)
+        local got = BridgeData.buildingIdOf(sq)
+        if got ~= nil and got == h.bld then
+            out.bld = h.bld
+            local def = nil
+            pcall(function()
+                local b = sq ~= nil and sq:getBuilding() or nil
+                def = b ~= nil and b:getDef() or nil
+            end)
+            if def ~= nil then
+                local minZ, maxZ = nil, nil
+                pcall(function() minZ, maxZ = def:getMinLevel(), def:getMaxLevel() end)
+                if minZ ~= nil and maxZ ~= nil then
+                    if out.z1 < minZ then out.z1 = minZ end
+                    if out.z2 > maxZ then out.z2 = maxZ end
+                end
+            end
+        end
+    end
+    if out.z1 > h.z or out.z2 < h.z or out.z1 >= out.z2 then
+        out.z1, out.z2 = h.z, h.z
+    end
+    local clean = BridgeData.cleanHome(out)
+    if clean ~= nil then
+        if clean.z1 ~= h.z1 or clean.z2 ~= h.z2 or clean.bld ~= h.bld then
+            log(string.format("home clamp %d,%d z%s..z%s bld=%s (was z%s..z%s bld=%s)",
+                clean.x, clean.y, tostring(clean.z1), tostring(clean.z2), tostring(clean.bld),
+                tostring(h.z1), tostring(h.z2), tostring(h.bld)))
+        end
+        return clean
+    end
+    log("home clamp failed: keeping the request")
+    return h
 end
 
 
@@ -1082,6 +1140,7 @@ BridgeServer.Commands.state = function(player, args)
                 rec.gunReloadVirtual = nil
                 rec.gunReloadSavedRounds = nil
                 rec.gunReloadBaseRounds = nil
+                rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
                 changed = true
             end
         elseif type(gt) == "string" and #gt <= 64 and BridgeGunRules ~= nil and BridgeGunRules.validType(gt) then
@@ -1104,6 +1163,7 @@ BridgeServer.Commands.state = function(player, args)
                 rec.gunReloadFamily, rec.gunReloadRounds = nil, nil
                 rec.gunReloadVirtual = nil
                 rec.gunReloadSavedRounds, rec.gunReloadBaseRounds = nil, nil
+                rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
             end
             if rec.gunReloadStage == nil then
                 local body = currentBody(player:getUsername(), rec)
@@ -1206,6 +1266,55 @@ BridgeServer.Commands.state = function(player, args)
             if not same then
                 rec.lootCats = cats
                 changed = true
+            end
+        end
+    end
+    if args.storeCats ~= nil then
+        local cats = BridgeData.cleanLootCats(args.storeCats)
+        if cats ~= nil then
+            local old = BridgeData.cleanLootCats(rec.storeCats) or {}
+            local same = true
+            for k, v in pairs(old) do if cats[k] ~= v then same = false break end end
+            for k, v in pairs(cats) do if old[k] ~= v then same = false break end end
+            if not same then
+                rec.storeCats = cats
+                changed = true
+            end
+        end
+    end
+    if args.storeRefs ~= nil then
+        local refs = BridgeData.cleanStoreRefs(args.storeRefs)
+        if refs ~= nil then
+            local all = BridgeData.optionOf(rec, "homeAllFloors")
+            local h = BridgeData.homeOf(rec)
+            if type(h) ~= "table" then
+                if #refs == 0 and type(rec.storeRefs) == "table" and #rec.storeRefs > 0 then
+                    rec.storeRefs = {}
+                    changed = true
+                    log("store refs cleared by " .. tostring(player:getUsername()))
+                else
+                    log("store refs ignored: no home")
+                end
+            else
+                local kept = {}
+                for i = 1, #refs do
+                    local r = refs[i]
+                    local inside = false
+                    pcall(function() inside = BridgeData.homeHas(h, r.x, r.y, r.z, 0, all) == true end)
+                    if inside then kept[#kept + 1] = r end
+                end
+                local old = BridgeData.cleanStoreRefs(rec.storeRefs) or {}
+                local same = #old == #kept
+                if same then
+                    for i = 1, #old do
+                        if BridgeData.storeRefKey(old[i]) ~= BridgeData.storeRefKey(kept[i]) then same = false break end
+                    end
+                end
+                if not same then
+                    rec.storeRefs = kept
+                    changed = true
+                    log(string.format("store refs %d by %s", #kept, tostring(player:getUsername())))
+                end
             end
         end
     end
@@ -1423,6 +1532,13 @@ BridgeServer.Commands.state = function(player, args)
         local cities = BridgeData.cleanCities(args.cities)
         if cities ~= nil then rec.cities = cities end
     end
+    if args.lastFight ~= nil then
+        local lastFight = BridgeData.cleanLastFight(args.lastFight)
+        if lastFight ~= nil then
+            rec.lastFight = lastFight
+            changed = true
+        end
+    end
     if args.skills ~= nil then
         local skills = BridgeData.cleanSkills(args.skills)
         if skills ~= nil then
@@ -1538,11 +1654,14 @@ BridgeServer.Commands.state = function(player, args)
     if args.home ~= nil then
         local h = BridgeData.cleanHome(args.home)
         if h ~= nil then
-            rec.home = h
+            rec.home = serverHome(h) or h
             changed = true
+        else
+            log("home rejected: bad home from " .. tostring(player:getUsername()))
         end
     elseif args.clearHome then
         rec.home = nil
+        log("home cleared for " .. tostring(player:getUsername()))
         changed = true
     end
     if genderDenied ~= nil then
@@ -1651,6 +1770,24 @@ BridgeServer.Commands.mood = function(player, args)
         sendServerCommand(player, "Bridge", "mood", { talk = tostring(args.talk), done = done })
         log("mood " .. tostring(args.talk) .. " for " .. tostring(who) .. ": " .. BridgeMood.describe(done))
     end
+end
+
+
+BridgeServer.wakeAt = {}
+local WAKE_GAP_MS = 2000
+BridgeServer.Commands.wakeMood = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    if not BridgeData.optionOf(rec, "mood") then return end
+    local tier = args and tostring(args.tier or "") or ""
+    if tier ~= "Far" and tier ~= "Near" and tier ~= "Close" then return end
+    if rec.bodyId == nil and not inCarWith(player, rec) then return end
+    local now = nowMs()
+    if now - (BridgeServer.wakeAt[who] or 0) < WAKE_GAP_MS then return end
+    BridgeServer.wakeAt[who] = now
+    local done, mask = BridgeMood.apply(player, BridgeMood.wakeDeltas(tier))
+    if mask > 0 then pcall(function() syncPlayerStats(player, mask) end) end
+    log("wake mood " .. tier .. " for " .. tostring(who) .. ": " .. BridgeMood.describe(done))
 end
 
 
@@ -2020,6 +2157,7 @@ local function clearReload(rec, who)
     rec.gunReloadVirtual = nil
     rec.gunReloadClientAmmo = nil
     rec.gunReloadSavedRounds, rec.gunReloadBaseRounds = nil, nil
+    rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
 end
 
 
@@ -2116,16 +2254,25 @@ BridgeServer.Commands.gunShot = function(player, args)
     if held ~= nil then BridgeGunRules.setRounds(held, rounds, true) end
 
     local chance = BridgeGunRules.hitChance(desc, d, false, aimLevel)
-    local hit = ZombRand(100) < chance
     local shotgun = (tonumber(desc.projectileCount) or 1) > 1
+    local aty = BridgeGunRules.atyOn()
+    local hit = false
+    local plan = { kind = nil, extras = {}, primaryShare = 1 }
+    if aty then
+        plan = BridgeGunRules.atyPlan(body, target, desc,
+            gunExtraCandidates(body, player, target, modeRange), modeRange)
+        hit = true
+        chance = 100
+    else
+        hit = ZombRand(100) < chance
+        if shotgun or (hit and desc.piercingBullets == true) then
+            plan = BridgeGunRules.multiPlan(body, target, desc,
+                gunExtraCandidates(body, player, target, modeRange), modeRange, {})
+        end
+    end
     local crit = false
     if shotgun or hit then
         crit = ZombRand(100) < (desc.critChance or 0)
-    end
-    local plan = { kind = nil, extras = {}, primaryShare = 1 }
-    if shotgun or (hit and desc.piercingBullets == true) then
-        plan = BridgeGunRules.multiPlan(body, target, desc,
-            gunExtraCandidates(body, player, target, modeRange), modeRange, {})
     end
     local extras = {}
     local extraHits, extraKills, glass = 0, 0, 0
@@ -2159,6 +2306,7 @@ BridgeServer.Commands.gunShot = function(player, args)
                 if echance > BridgeGunRules.MAX_CHANCE then echance = BridgeGunRules.MAX_CHANCE end
                 ehit = ZombRand(100) < echance
             end
+            if ex.forceHit == true then ehit = true end
             local entry = { x = z:getX(), y = z:getY(), z = z:getZ(), hit = ehit, crit = false,
                 damage = 0, killed = false, hpAfter = 0, reaction = nil }
             pcall(function() entry.id = z:getOnlineID() end)
@@ -2293,6 +2441,14 @@ BridgeServer.Commands.gunLoadOne = function(player, args)
                 end)
                 if maxAmmo > 0 and rounds > maxAmmo then rounds = maxAmmo end
                 BridgeGunRules.setRounds(magazine, rounds, false)
+                local itemType = type(args) == "table" and args.itemType or nil
+                if itemType ~= nil then
+                    pcall(function()
+                        local scriptItem = instanceItem(itemType)
+                        local ammo = scriptItem and scriptItem:getAmmoType() or nil
+                        if ammo ~= nil then magazine:setAmmoType(ammo) end
+                    end)
+                end
                 local container = nil
                 pcall(function() container = magazine:getContainer() end)
                 if BridgeGunRules.canSync(container) then
@@ -2321,7 +2477,17 @@ BridgeServer.Commands.gunLoadOne = function(player, args)
     rec.gunReloadUsed = used
     rec.gunRounds = math.max(0, (tonumber(rec.gunReloadBaseRounds) or 0) + used)
     local held = body ~= nil and gunItemFor(body, rec) or nil
-    if held ~= nil then BridgeGunRules.setRounds(held, rec.gunRounds, true) end
+    if held ~= nil then
+        BridgeGunRules.setRounds(held, rec.gunRounds, true)
+        local itemType = type(args) == "table" and args.itemType or nil
+        if itemType ~= nil then
+            pcall(function()
+                local scriptItem = instanceItem(itemType)
+                local ammo = scriptItem and scriptItem:getAmmoType() or nil
+                if ammo ~= nil then held:setAmmoType(ammo) end
+            end)
+        end
+    end
     logf("gunLoadOne used=%d/%d rounds=%d", used, needed, rec.gunRounds)
 end
 
@@ -2341,6 +2507,105 @@ BridgeServer.Commands.gunReload = function(player, args)
     if action == "cancel" then
         clearReload(rec, who)
         return answer(true, nil, { rounds = rec.gunRounds or 0 })
+    end
+    if action == "eject" then
+        if rec.bodyId == nil then return answer(false, "no companion") end
+        local body = currentBody(who, rec)
+        if body == nil then return answer(false, "no companion body") end
+        if rec.gunReloadStage ~= nil then
+            if reloadStale(rec) then
+                clearReload(rec, who)
+                log("gunReload cleared stale reload for " .. tostring(who))
+            else
+                return answer(false, "already reloading")
+            end
+        end
+        local item = nil
+        if type(args) == "table" and args.itemId ~= nil then
+            pcall(function() item = BridgeGunRules.findItemById(body, tonumber(args.itemId)) end)
+        end
+        if item == nil then item = gunItemFor(body, rec) end
+        if item == nil then return answer(false, "gun not found") end
+        if not BridgeGunRules.isGun(item) then return answer(false, "invalid gun") end
+        local desc = BridgeGunRules.describe(item)
+        if desc.magazineType == nil and desc.hasClipProfile ~= true then
+            return answer(false, "no magazine profile")
+        end
+        if desc.reloadFamily == "revolver" then return answer(false, "revolver") end
+        if BridgeGunRules.gunsmith ~= nil then
+            local internal = false
+            pcall(function() internal = BridgeGunRules.gunsmith.isInternal(item) == true end)
+            if internal then return answer(false, "internal magazine") end
+        end
+        local clip = false
+        pcall(function() clip = item:isContainsClip() == true end)
+        local rounds = BridgeGunRules.roundsOf(item)
+        if not clip and rounds <= 0 then return answer(false, "nothing to eject") end
+        local base = (desc.reloadFamily == "rifle") and 45 or 36
+        local ejectMs = (base / BridgeGunRules.reloadFactor(reloadLevel(rec))) * (1000 / 60)
+        if ejectMs < 1 then ejectMs = 1 end
+        rec.gunReloadStage = "eject"
+        rec.gunReloadUntil = getTimestampMs() + ejectMs
+        rec.gunEjectId = item:getID()
+        rec.gunEjectFamily = desc.reloadFamily
+        rec.gunEjectType = desc.magazineType
+        logf("gunReload eject gun=%s rounds=%d clip=%s", tostring(desc.fullType), rounds, tostring(clip))
+        answer(true, nil, { total = math.floor(ejectMs), family = desc.reloadFamily, rounds = rounds })
+        return
+    end
+    if action == "ejectDone" then
+        if rec.gunReloadStage ~= "eject" then return answer(false, "not ejecting") end
+        local now = getTimestampMs()
+        if rec.gunReloadUntil ~= nil and now < rec.gunReloadUntil - 1500 then
+            return answer(false, "too soon")
+        end
+        if rec.bodyId == nil then return answer(false, "no companion") end
+        local body = currentBody(who, rec)
+        if body == nil then return answer(false, "no companion body") end
+        local item = nil
+        if rec.gunEjectId ~= nil then
+            pcall(function() item = BridgeGunRules.findItemById(body, rec.gunEjectId) end)
+        end
+        if item == nil then
+            clearReload(rec, who)
+            return answer(false, "gun missing")
+        end
+        local desc = BridgeGunRules.describe(item)
+        local magType = nil
+        pcall(function() magType = item:getMagazineType() end)
+        if type(magType) ~= "string" or magType == "" then
+            pcall(function()
+                local part = item:getWeaponPart("Clip")
+                if part ~= nil then magType = part:getFullType() end
+            end)
+        end
+        if type(magType) == "string" and magType ~= "" then desc.magazineType = magType end
+        local rounds = BridgeGunRules.roundsOf(item)
+        local ammoList = BridgeGunRules.ammoListOf(item)
+        local magazine = BridgeGunRules.stashMagazine(body, desc, rounds, nil, ammoList)
+        if magazine == nil then
+            clearReload(rec, who)
+            return answer(false, "no magazine")
+        end
+        BridgeGunRules.setRounds(item, 0, false)
+        local assigned = gunItemFor(body, rec)
+        local isAssigned = assigned ~= nil and assigned:getID() == item:getID()
+        if isAssigned then rec.gunRounds = 0 end
+        if magazine ~= nil then
+            local dest = nil
+            pcall(function() dest = magazine:getContainer() end)
+            if dest == nil then dest = body:getInventory() end
+            pcall(function() sendAddItemToContainer(dest, magazine) end)
+            pcall(function() sendItemStats(magazine) end)
+        end
+        pcall(function() sendItemStats(item) end)
+        local magId = nil
+        if magazine ~= nil then pcall(function() magId = magazine:getID() end) end
+        clearReload(rec, who)
+        logf("gunReload eject done gun=%s rounds=%d mag=%s",
+            tostring(desc.fullType), rounds, tostring(magId or "-"))
+        answer(true, nil, { rounds = rounds, magRounds = rounds, itemId = item:getID() })
+        return
     end
     if rec.bodyId == nil then return answer(false, "no companion") end
     local body = currentBody(who, rec)
@@ -2371,7 +2636,7 @@ BridgeServer.Commands.gunReload = function(player, args)
         if rounds > 0 then
             local ok = false
             if idle then
-                if desc.magazineType ~= nil then
+                if desc.magazineType ~= nil or desc.hasClipProfile == true then
                     ok = rounds <= math.floor(maxAmmo * 0.25)
                 else
                     ok = rounds < maxAmmo
@@ -2383,28 +2648,50 @@ BridgeServer.Commands.gunReload = function(player, args)
         rec.gunReloadBaseRounds = rounds
         local needed = 0
         local magazine = nil
+        local external = false
         local clientAvailable = math.max(0, math.floor(tonumber(args.available) or 0))
         local clientNeeded = math.min(clientAvailable, math.max(1, maxAmmo - rounds))
         rec.gunReloadClientAmmo = nil
         if virtual then
-            needed = desc.magazineType ~= nil and clientAvailable or clientNeeded
+            needed = (desc.magazineType ~= nil or desc.hasClipProfile == true) and clientAvailable or clientNeeded
             if needed > maxAmmo then needed = maxAmmo end
             if needed < 1 then return answer(false, "no ammo") end
             rec.gunReloadClientAmmo = true
             rec.gunReloadMagId = nil
+            external = desc.magazineType ~= nil or desc.hasClipProfile == true
         elseif desc.magazineType ~= nil then
             local count = 0
             magazine, count = BridgeGunRules.findLoadedMagazine(body, desc)
             if magazine == nil then return answer(false, "no magazine") end
             needed = count
             rec.gunReloadMagId = magazine:getID()
+            external = true
+        elseif desc.hasClipProfile == true then
+            local count = 0
+            magazine, count = BridgeGunRules.findLoadedMagazine(body, desc)
+            if magazine ~= nil and count > 0 then
+                needed = count
+                rec.gunReloadMagId = magazine:getID()
+                external = true
+            else
+                needed = clientNeeded
+                if needed < 1 then return answer(false, "no ammo") end
+                rec.gunReloadClientAmmo = true
+                rec.gunReloadMagId = nil
+            end
         else
             needed = clientNeeded
             if needed < 1 then return answer(false, "no ammo") end
             rec.gunReloadClientAmmo = true
             rec.gunReloadMagId = nil
         end
-        local totalMs = reloadTotalMs(desc, needed, reloadLevel(rec))
+        local timingDesc = desc
+        if desc.external ~= external then
+            timingDesc = {}
+            for k, v in pairs(desc) do timingDesc[k] = v end
+            timingDesc.external = external
+        end
+        local totalMs = reloadTotalMs(timingDesc, needed, reloadLevel(rec))
         if BridgeServer.gunDesc ~= nil then BridgeServer.gunDesc[who] = nil end
         rec.gunReloadStage = "loading"
         rec.gunReloadUntil = getTimestampMs() + totalMs
@@ -2413,10 +2700,10 @@ BridgeServer.Commands.gunReload = function(player, args)
         rec.gunReloadUsed = 0
         rec.gunReloadVirtual = virtual or nil
         logf("gunReload start base=%d needed=%d external=%s virtual=%s clientAmmo=%s",
-            rounds, needed, tostring(desc.external == true), tostring(virtual),
+            rounds, needed, tostring(external), tostring(virtual),
             tostring(rec.gunReloadClientAmmo == true))
         answer(true, nil, { rounds = rounds, base = rounds, needed = needed, total = math.floor(totalMs),
-            external = desc.external == true, family = desc.reloadFamily, virtual = virtual,
+            external = external, family = desc.reloadFamily, virtual = virtual,
             clientAmmo = rec.gunReloadClientAmmo == true })
         return
     end
@@ -2426,7 +2713,8 @@ BridgeServer.Commands.gunReload = function(player, args)
         if rec.gunReloadUntil ~= nil and now < rec.gunReloadUntil - 1500 then
             return answer(false, "too soon")
         end
-        if rec.gunReloadClientAmmo and desc.magazineType ~= nil then
+        if rec.gunReloadClientAmmo and rec.gunReloadVirtual == true
+                and (desc.magazineType ~= nil or desc.hasClipProfile == true) then
             local needed = math.floor(tonumber(rec.gunReloadRounds) or 0)
             local maxAmmo = math.max(1, tonumber(args.maxAmmo) or tonumber(desc.maxAmmo) or needed)
             if needed > maxAmmo then needed = maxAmmo end
@@ -2438,7 +2726,9 @@ BridgeServer.Commands.gunReload = function(player, args)
             if held ~= nil then
                 BridgeGunRules.setRounds(held, needed, true)
                 pcall(function() held:setMaxAmmo(maxAmmo) end)
-                if args.magType ~= nil then pcall(function() held:setMagazineType(args.magType) end) end
+                if args.magType ~= nil and not (desc.clipSet and desc.clipSet[args.magType]) then
+                    pcall(function() held:setMagazineType(args.magType) end)
+                end
             end
             clearReload(rec, who)
             logf("gunReload external complete needed=%d rounds=%d", needed, needed)
@@ -2493,27 +2783,30 @@ BridgeServer.Commands.gunReload = function(player, args)
             return answer(false, "gun missing")
         end
         local rounds = 0
-        if desc.magazineType ~= nil then
+        if rec.gunReloadMagId ~= nil and (desc.magazineType ~= nil or desc.hasClipProfile == true) then
             local magazine = nil
-            if rec.gunReloadMagId ~= nil then
-                pcall(function() magazine = BridgeGunRules.findItemById(body, rec.gunReloadMagId) end)
-            end
+            pcall(function() magazine = BridgeGunRules.findItemById(body, rec.gunReloadMagId) end)
             if magazine == nil or BridgeGunRules.roundsOf(magazine) <= 0 then
                 clearReload(rec, who)
                 return answer(false, "magazine gone")
             end
-            rounds = BridgeGunRules.roundsOf(magazine)
             local magCap, magType = 0, nil
             pcall(function() magCap = math.floor(tonumber(magazine:getMaxAmmo()) or 0) end)
             pcall(function() magType = magazine:getFullType() end)
-            BridgeGunRules.removeItem(magazine)
-            local hadClip = false
-            pcall(function() hadClip = held:isContainsClip() == true end)
-            BridgeGunRules.setRounds(held, rounds, true)
-            if magCap > 0 then pcall(function() held:setMaxAmmo(magCap) end) end
-            if magType ~= nil then pcall(function() held:setMagazineType(magType) end) end
-            if hadClip or (rec.gunReloadSavedRounds or 0) > 0 then
-                BridgeGunRules.stashMagazine(body, desc, rec.gunReloadSavedRounds or 0)
+            local isClip = type(desc.clipSet) == "table" and magType ~= nil and desc.clipSet[magType] == true
+            if isClip then
+                rounds = BridgeGunRules.insertMagazine(body, held, magazine, desc)
+            else
+                rounds = BridgeGunRules.roundsOf(magazine)
+                BridgeGunRules.removeItem(magazine)
+                local hadClip = false
+                pcall(function() hadClip = held:isContainsClip() == true end)
+                BridgeGunRules.setRounds(held, rounds, true)
+                if magCap > 0 then pcall(function() held:setMaxAmmo(magCap) end) end
+                if magType ~= nil then pcall(function() held:setMagazineType(magType) end) end
+                if hadClip or (rec.gunReloadSavedRounds or 0) > 0 then
+                    BridgeGunRules.stashMagazine(body, desc, rec.gunReloadSavedRounds or 0)
+                end
             end
         else
             local needed = math.floor(tonumber(args.rounds) or tonumber(rec.gunReloadRounds) or 1)
@@ -3172,59 +3465,83 @@ end
 local FETCH_MARGIN = 6
 
 
-local function homeRectOf(rec)
+local function homeRectOf(rec, allFloors)
     local h = rec ~= nil and rec.home or nil
     if type(h) ~= "table" then return nil end
     if type(h.x) ~= "number" or type(h.y) ~= "number" or type(h.z) ~= "number"
         or type(h.w) ~= "number" or type(h.h) ~= "number" then return nil end
-    return h.x, h.y, h.x + h.w - 1, h.y + h.h - 1, h.z
+    local z1, z2 = BridgeData.homeRange(h, allFloors == true)
+    if z1 == nil then z1, z2 = h.z, h.z end
+    return h, h.x, h.y, h.x + h.w - 1, h.y + h.h - 1, z1, z2
+end
+
+
+local function homeFloors(h, z1, z2, body)
+    local out = {}
+    if z1 == nil or z2 == nil then return out end
+    local base = nil
+    if body ~= nil then pcall(function() base = math.floor(body:getZ()) end) end
+    base = base or h.z
+    for z = z1, z2 do out[#out + 1] = z end
+    table.sort(out, function(a, c)
+        local da, dc = math.abs(a - base), math.abs(c - base)
+        if da == dc then return a > c end
+        return da < dc
+    end)
+    return out
 end
 
 
 local function findHomeItem(rec, body, player, wantId)
-    local x1, y1, x2, y2, z = homeRectOf(rec)
-    if x1 == nil or wantId == nil then return nil, nil end
+    local all = BridgeData.optionOf(rec, "homeAllFloors")
+    local h, x1, y1, x2, y2, z1, z2 = homeRectOf(rec, all)
+    if h == nil or wantId == nil then return nil, nil end
     local found, foundC = nil, nil
     local seen = {}
-    for x = x1, x2 do
+    local floors = homeFloors(h, z1, z2, body)
+    for fi = 1, #floors do
         if found ~= nil then break end
-        for y = y1, y2 do
+        local z = floors[fi]
+        for x = x1, x2 do
             if found ~= nil then break end
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
-            if sq ~= nil then
-                local function scan(objs)
-                    if objs == nil or found ~= nil then return end
-                    for i = 0, objs:size() - 1 do
-                        if found ~= nil then return end
-                        local o = objs:get(i)
-                        if o ~= nil then
-                            local n = 0
-                            pcall(function() n = o:getContainerCount() end)
-                            for j = 0, n - 1 do
-                                if found ~= nil then return end
-                                local c = nil
-                                pcall(function() c = o:getContainerByIndex(j) end)
-                                if c ~= nil and not seen[c] then
-                                    seen[c] = true
-                                    local skip = false
-                                    pcall(function() skip = body ~= nil and c == body:getInventory() end)
-                                    if not skip then
-                                        pcall(function()
-                                            if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
-                                        end)
-                                    end
-                                    if not skip then
-                                        local list = nil
-                                        pcall(function() list = c:getItems() end)
-                                        if list ~= nil then
-                                            for k = 0, list:size() - 1 do
-                                                local it = list:get(k)
-                                                local id = nil
-                                                pcall(function() if it ~= nil then id = it:getID() end end)
-                                                if id ~= nil and id == wantId then
-                                                    found, foundC = it, c
-                                                    return
+            for y = y1, y2 do
+                if found ~= nil then break end
+                local sq = nil
+                pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+                if sq ~= nil and BridgeData.homeBuildingOk(h, sq) then
+                    local function scan(objs)
+                        if objs == nil or found ~= nil then return end
+                        for i = 0, objs:size() - 1 do
+                            if found ~= nil then return end
+                            local o = objs:get(i)
+                            if o ~= nil then
+                                local n = 0
+                                pcall(function() n = o:getContainerCount() end)
+                                for j = 0, n - 1 do
+                                    if found ~= nil then return end
+                                    local c = nil
+                                    pcall(function() c = o:getContainerByIndex(j) end)
+                                    if c ~= nil and not seen[c] then
+                                        seen[c] = true
+                                        local skip = false
+                                        pcall(function() skip = body ~= nil and c == body:getInventory() end)
+                                        if not skip then
+                                            pcall(function()
+                                                if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
+                                            end)
+                                        end
+                                        if not skip then
+                                            local list = nil
+                                            pcall(function() list = c:getItems() end)
+                                            if list ~= nil then
+                                                for k = 0, list:size() - 1 do
+                                                    local it = list:get(k)
+                                                    local id = nil
+                                                    pcall(function() if it ~= nil then id = it:getID() end end)
+                                                    if id ~= nil and id == wantId then
+                                                        found, foundC = it, c
+                                                        return
+                                                    end
                                                 end
                                             end
                                         end
@@ -3233,10 +3550,10 @@ local function findHomeItem(rec, body, player, wantId)
                             end
                         end
                     end
+                    pcall(function() scan(sq:getObjects()) end)
+                    pcall(function() scan(sq:getSpecialObjects()) end)
+                    pcall(function() scan(sq:getStaticMovingObjects()) end)
                 end
-                pcall(function() scan(sq:getObjects()) end)
-                pcall(function() scan(sq:getSpecialObjects()) end)
-                pcall(function() scan(sq:getStaticMovingObjects()) end)
             end
         end
     end
@@ -3245,56 +3562,62 @@ end
 
 
 local function collectHomeItems(rec, body, player, fullType, want)
-    local x1, y1, x2, y2, z = homeRectOf(rec)
+    local all = BridgeData.optionOf(rec, "homeAllFloors")
+    local h, x1, y1, x2, y2, z1, z2 = homeRectOf(rec, all)
     local out, total = {}, 0
-    if x1 == nil or type(fullType) ~= "string" then return out, total end
+    if h == nil or type(fullType) ~= "string" then return out, total end
     local need = math.floor(tonumber(want) or 0)
     if need <= 0 then need = 1 end
     local seen = {}
-    for x = x1, x2 do
+    local floors = homeFloors(h, z1, z2, body)
+    for fi = 1, #floors do
         if total >= need then break end
-        for y = y1, y2 do
+        local z = floors[fi]
+        for x = x1, x2 do
             if total >= need then break end
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
-            if sq ~= nil then
-                local function scan(objs)
-                    if objs == nil or total >= need then return end
-                    for i = 0, objs:size() - 1 do
-                        if total >= need then return end
-                        local o = objs:get(i)
-                        if o ~= nil then
-                            local n = 0
-                            pcall(function() n = o:getContainerCount() end)
-                            for j = 0, n - 1 do
-                                if total >= need then return end
-                                local c = nil
-                                pcall(function() c = o:getContainerByIndex(j) end)
-                                if c ~= nil and not seen[c] then
-                                    seen[c] = true
-                                    local skip = false
-                                    pcall(function() skip = body ~= nil and c == body:getInventory() end)
-                                    if not skip then
-                                        pcall(function()
-                                            if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
-                                        end)
-                                    end
-                                    if not skip then
-                                        local list = nil
-                                        pcall(function() list = c:getItems() end)
-                                        if list ~= nil then
-                                            for k = 0, list:size() - 1 do
-                                                if total >= need then return end
-                                                local it = list:get(k)
-                                                local full = nil
-                                                pcall(function() if it ~= nil then full = it:getFullType() end end)
-                                                if full == fullType then
-                                                    local cnt = 0
-                                                    pcall(function() cnt = it:getCount() end)
-                                                    cnt = math.floor(tonumber(cnt) or 1)
-                                                    if cnt < 1 then cnt = 1 end
-                                                    out[#out + 1] = { item = it, container = c, count = cnt }
-                                                    total = total + cnt
+            for y = y1, y2 do
+                if total >= need then break end
+                local sq = nil
+                pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+                if sq ~= nil and BridgeData.homeBuildingOk(h, sq) then
+                    local function scan(objs)
+                        if objs == nil or total >= need then return end
+                        for i = 0, objs:size() - 1 do
+                            if total >= need then return end
+                            local o = objs:get(i)
+                            if o ~= nil then
+                                local n = 0
+                                pcall(function() n = o:getContainerCount() end)
+                                for j = 0, n - 1 do
+                                    if total >= need then return end
+                                    local c = nil
+                                    pcall(function() c = o:getContainerByIndex(j) end)
+                                    if c ~= nil and not seen[c] then
+                                        seen[c] = true
+                                        local skip = false
+                                        pcall(function() skip = body ~= nil and c == body:getInventory() end)
+                                        if not skip then
+                                            pcall(function()
+                                                if instanceof(o, "IsoThumpable") and o:isLockedToCharacter(player) then skip = true end
+                                            end)
+                                        end
+                                        if not skip then
+                                            local list = nil
+                                            pcall(function() list = c:getItems() end)
+                                            if list ~= nil then
+                                                for k = 0, list:size() - 1 do
+                                                    if total >= need then return end
+                                                    local it = list:get(k)
+                                                    local full = nil
+                                                    pcall(function() if it ~= nil then full = it:getFullType() end end)
+                                                    if full == fullType then
+                                                        local cnt = 0
+                                                        pcall(function() cnt = it:getCount() end)
+                                                        cnt = math.floor(tonumber(cnt) or 1)
+                                                        if cnt < 1 then cnt = 1 end
+                                                        out[#out + 1] = { item = it, container = c, count = cnt }
+                                                        total = total + cnt
+                                                    end
                                                 end
                                             end
                                         end
@@ -3303,10 +3626,10 @@ local function collectHomeItems(rec, body, player, fullType, want)
                             end
                         end
                     end
+                    pcall(function() scan(sq:getObjects()) end)
+                    pcall(function() scan(sq:getSpecialObjects()) end)
+                    pcall(function() scan(sq:getStaticMovingObjects()) end)
                 end
-                pcall(function() scan(sq:getObjects()) end)
-                pcall(function() scan(sq:getSpecialObjects()) end)
-                pcall(function() scan(sq:getStaticMovingObjects()) end)
             end
         end
     end
@@ -3324,16 +3647,15 @@ BridgeServer.Commands.fetchSupply = function(player, args)
             { id = wantId, ids = (wantId ~= nil) and { wantId } or {}, token = args.token, why = why })
     end
     if rec.bodyId == nil then return fail("no body") end
-    local x1, y1, x2, y2, z = homeRectOf(rec)
-    if x1 == nil then return fail("no home") end
+    local all = BridgeData.optionOf(rec, "homeAllFloors")
+    local h = homeRectOf(rec, all)
+    if h == nil then return fail("no home") end
     local body = BridgeServer.bodies[who] or currentBody(who, rec)
     if body == nil then return fail("no body") end
     local bx, by, bz = nil, nil, nil
     pcall(function() bx, by, bz = math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()) end)
     if bx == nil then return fail("no position") end
-    if math.abs((bz or 0) - z) >= 1
-            or bx < x1 - FETCH_MARGIN or bx > x2 + FETCH_MARGIN
-            or by < y1 - FETCH_MARGIN or by > y2 + FETCH_MARGIN then
+    if not BridgeData.homeHas(h, bx, by, bz, FETCH_MARGIN, all) then
         return fail("not at home")
     end
 
@@ -3509,15 +3831,121 @@ BridgeServer.Commands.take = function(player, args)
     local rec = record(who)
     local recs = args.recs
     if type(recs) ~= "table" then recs = (type(args.rec) == "table") and { args.rec } or {} end
-    local function answer(ok, ids, why, direct)
+    local function answer(ok, ids, why, direct, home)
         if args.token ~= nil then
             sendServerCommand(player, "Bridge", "took", { token = args.token, ok = ok, ids = ids, id = (ids and ids[1]) or nil,
-                why = why, iseq = rec.iseq, direct = direct == true })
+                why = why, iseq = rec.iseq, direct = direct == true, home = home == true })
         end
     end
     if #recs == 0 or type(recs[1]) ~= "table" or type(recs[1].t) ~= "string" then return answer(false, nil, "no record") end
     if rec.bodyId == nil and args.returnId == nil and not rec.parked then return answer(false, nil, "no body") end
     local list = BridgeItems.decode(rec.items or "")
+    if args.deposit == true then
+        local function refText()
+            local r = args.destRef
+            if type(r) ~= "table" then return "?" end
+            return string.format("%s@%s,%s,%s", tostring(r.kind), tostring(r.x), tostring(r.y), tostring(r.z))
+        end
+        local function fail(reason)
+            log(string.format("deposit refused: %s n=%d dest=%s home=%s", tostring(reason), #recs, refText(),
+                tostring(args.home == true)))
+            return answer(false, nil, reason)
+        end
+        if type(args.destRef) ~= "table" then return fail("no destination") end
+        local body = BridgeServer.bodies[who] or currentBody(who, rec)
+        if body == nil then return fail("no body") end
+        local ref = args.destRef
+        local destSq = nil
+        if args.home == true then
+            if ref.kind == "body" or ref.kind == "floor" then return fail("not a storage container") end
+            local member = BridgeData.storeRefInList(rec, ref)
+            log(string.format("deposit home ref=%s member=%s", refText(), tostring(member)))
+            if not member then return fail("not marked storage") end
+        end
+        if args.home == true then
+            local all = BridgeData.optionOf(rec, "homeAllFloors")
+            local h = homeRectOf(rec, all)
+            if h == nil then return fail("no home") end
+            local bx, by, bz = nil, nil, nil
+            pcall(function() bx, by, bz = math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()) end)
+            if bx == nil then return fail("no position") end
+            if not BridgeData.homeHas(h, bx, by, bz, 0, all) then return fail("not at home") end
+            if tonumber(ref.x) == nil or tonumber(ref.y) == nil or tonumber(ref.z) == nil then
+                return fail("bad destination")
+            end
+            if not BridgeData.homeHas(h, ref.x, ref.y, ref.z, 0, all) then
+                return fail("destination outside home")
+            end
+            pcall(function() destSq = getCell():getGridSquare(math.floor(ref.x), math.floor(ref.y), math.floor(ref.z)) end)
+        else
+            local _, sq = companionAtRelaxed(player, ref, 6)
+            destSq = sq
+        end
+        if destSq == nil then return fail("no destination square") end
+        local destC = BridgeServer.resolveRef(destSq, ref, player)
+        if destC == nil then return fail("no destination") end
+        local out = list
+        for i = 1, #recs do
+            local idx = matchRecord(out, recs[i], nil)
+            if idx == nil then return fail("not in body snapshot") end
+            out = removeSubtree(out, idx)
+        end
+        local wsum = 0
+        for i = 1, #recs do
+            local probe = instanceItem(recs[i].t)
+            if probe == nil then return fail("bad item") end
+            local allowed = true
+            pcall(function() allowed = destC:isItemAllowed(probe) ~= false end)
+            if not allowed then return fail("item not allowed") end
+            local w = 0
+            pcall(function() w = probe:getUnequippedWeight() or 0 end)
+            wsum = wsum + (tonumber(w) or 0)
+        end
+        local free = nil
+        pcall(function() free = destC:getEffectiveCapacity(player) - destC:getContentsWeight() end)
+        local cap, load = nil, nil
+        pcall(function()
+            cap = destC:getEffectiveCapacity(player)
+            load = destC:getContentsWeight()
+        end)
+        log(string.format("deposit check n=%d dest=%s type=%s wsum=%.2f free=%s cap=%s load=%s",
+            #recs, refText(), tostring(destC:getType()), wsum, tostring(free), tostring(cap), tostring(load)))
+        if type(free) ~= "number" or wsum > free + 0.001 then return fail("no room") end
+        local made = {}
+        local ok, err = pcall(function()
+            for i = 1, #recs do
+                local item = BridgeItems.make(destC, recs[i])
+                if item == nil then error("AddItem returned nil") end
+                pcall(function() sendAddItemToContainer(destC, item) end)
+                pcall(function() sendItemStats(item) end)
+                made[#made + 1] = item
+            end
+        end)
+        if not ok then
+            for i = 1, #made do
+                local item = made[i]
+                pcall(function() destC:Remove(item) end)
+                pcall(function() sendRemoveItemFromContainer(destC, item) end)
+            end
+            log("deposit take failed: " .. tostring(err))
+            return fail(tostring(err))
+        end
+        BridgeItems.set(rec, BridgeItems.encode(out))
+        rec.saved = 1
+        rec.iseq = (rec.iseq or 0) + 1
+        local outIds = {}
+        for i = 1, #made do
+            outIds[i] = made[i]:getID()
+            local gone = {}
+            flatten(recs[i], nil, gone)
+            journalNote("T", who, rec, outIds[i], gone)
+        end
+        transmit()
+        answer(true, outIds, nil, true, args.home == true)
+        log(string.format("deposit take %d item(s) by %s dest=%s home=%s", #made, tostring(who), refText(),
+            tostring(args.home == true)))
+        return
+    end
     local flags = { w = args.w == true, h = tonumber(args.h), top = args.top == true }
     local out = list
     for i = 1, #recs do

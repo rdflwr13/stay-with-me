@@ -22,8 +22,27 @@ BridgeSleep.ours = {}
 BridgeSleep.CLOSE = 3
 BridgeSleep.SEEN = 7
 
+BridgeSleep.calmEnabled = true
+BridgeSleep.parkFallback = true
+BridgeSleep.window = nil
+BridgeSleep.queue = {}
+BridgeSleep.request = {}
+BridgeSleep.letting = false
+BridgeSleep.noWindow = 0
+BridgeSleep.noWindowSaid = false
+BridgeSleep.lastVerdict = nil
+BridgeSleep.sweep = {}
+BridgeSleep.GETTERS = { "getNumVisibleZombies", "getNumVeryCloseZombies", "getNumChasingZombies" }
+
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeSleep] " .. tostring(text)) end end
 local function warn(text) print("[BridgeSleep] " .. tostring(text)) end
+
+local function benign(z)
+    if z == nil or BridgeData == nil or type(BridgeData.harmless) ~= "function" then return false end
+    local yes = false
+    pcall(function() yes = BridgeData.harmless(z) == true end)
+    return yes
+end
 
 function BridgeSleep.tentSleepWrapper()
     local tents = rawget(_G, "TentSleepImmersion")
@@ -53,6 +72,171 @@ function BridgeSleep.blocks(playerObj, z)
 end
 
 
+function BridgeSleep.statsIndex(playerObj)
+    local idx, stats = nil, nil
+    pcall(function()
+        stats = playerObj:getStats()
+        local meta = getmetatable(stats)
+        if meta ~= nil and type(meta.__index) == "table" then idx = meta.__index end
+    end)
+    return idx, stats
+end
+
+
+function BridgeSleep.calmOpen(playerObj)
+    if playerObj == nil or BridgeSleep.window ~= nil then return nil end
+    local asleep = false
+    pcall(function() asleep = playerObj:isAsleep() == true end)
+    if asleep then return nil end
+    local idx, stats = BridgeSleep.statsIndex(playerObj)
+    if idx == nil or stats == nil then
+        BridgeSleep.noWindow = BridgeSleep.noWindow + 1
+        if not BridgeSleep.noWindowSaid then
+            BridgeSleep.noWindowSaid = true
+            log("stats method table is not a table: sleep window disabled")
+        end
+        return nil
+    end
+    local saved = {}
+    for _, name in ipairs(BridgeSleep.GETTERS) do
+        local real = idx[name]
+        saved[name] = real
+        if type(real) == "function" then
+            idx[name] = function(s, ...)
+                if s == stats then return 0 end
+                return real(s, ...)
+            end
+        end
+    end
+    BridgeSleep.window = stats
+    log("calm window open")
+    return function()
+        if BridgeSleep.window ~= stats then return end
+        for _, name in ipairs(BridgeSleep.GETTERS) do
+            idx[name] = saved[name]
+        end
+        BridgeSleep.window = nil
+        log("calm window close")
+    end
+end
+
+
+function BridgeSleep.engineCounts(playerObj, z)
+    if playerObj == nil or z == nil then return false, false, false end
+    local dead, dragged = false, false
+    pcall(function() dead = z:isDead() == true end)
+    if BridgeZScan ~= nil and type(BridgeZScan.isDragged) == "function" then
+        pcall(function() dragged = BridgeZScan.isDragged(z) == true end)
+    elseif BridgeData ~= nil and type(BridgeData.dragged) == "function" then
+        pcall(function() dragged = BridgeData.dragged(z) == true end)
+    end
+    if dead or dragged then return false, false, false end
+    local chasing = false
+    pcall(function() chasing = z:getTarget() == playerObj end)
+    local zz, dx, dy, d2 = z:getZ(), z:getX() - playerObj:getX(), z:getY() - playerObj:getY(), 0
+    d2 = dx * dx + dy * dy
+    local close = d2 < BridgeSleep.CLOSE * BridgeSleep.CLOSE
+    local visible = false
+    if zz >= playerObj:getZ() - 1 and d2 < BridgeSleep.SEEN * BridgeSleep.SEEN then
+        local same = false
+        pcall(function()
+            local a, b = z:getCurrentSquare(), playerObj:getCurrentSquare()
+            if a ~= nil and b ~= nil then same = a:getRoom() == b:getRoom() end
+        end)
+        if same then
+            pcall(function() visible = playerObj:CanSee(z) == true end)
+        end
+    end
+    return visible, close, chasing
+end
+
+
+function BridgeSleep.calm(playerObj)
+    if playerObj == nil then return false, "no player" end
+    local v, c, ch = 0, 0, 0
+    local ok = pcall(function()
+        local st = playerObj:getStats()
+        v = tonumber(st:getNumVisibleZombies()) or 0
+        c = tonumber(st:getNumVeryCloseZombies()) or 0
+        ch = tonumber(st:getNumChasingZombies()) or 0
+    end)
+    if not ok then return false, "counters unavailable" end
+    if v <= 0 and c <= 0 and ch <= 0 then
+        BridgeSleep.lastVerdict = "nothing counted"
+        return true, BridgeSleep.lastVerdict
+    end
+    local matchV, matchC, matchCh = 0, 0, 0
+    local function tally(z)
+        if z == nil then return true end
+        local alive = false
+        pcall(function() alive = z:isAlive() == true end)
+        if not alive then return true end
+        local visible, close, chasing = BridgeSleep.engineCounts(playerObj, z)
+        local companion = false
+        if BridgeZScan ~= nil and type(BridgeZScan.isCompanion) == "function" then
+            pcall(function() companion = BridgeZScan.isCompanion(z) == true end)
+        elseif Bridge ~= nil and type(Bridge.isCompanion) == "function" then
+            pcall(function() companion = Bridge.isCompanion(z) == true end)
+        end
+        companion = companion or benign(z)
+        if not companion then
+            if visible or close or chasing then
+                BridgeSleep.lastVerdict = "real " .. (chasing and "chasing" or close and "very close" or "visible")
+                return false
+            end
+            return true
+        end
+        if visible then matchV = matchV + 1 end
+        if close then matchC = matchC + 1 end
+        if chasing then matchCh = matchCh + 1 end
+        return true
+    end
+    if BridgeZScan ~= nil and type(BridgeZScan.near) == "function" then
+        local px, py, pz = playerObj:getX(), playerObj:getY(), playerObj:getZ()
+        local nearRefs = nil
+        pcall(function()
+            nearRefs = BridgeZScan.near(px, py, BridgeSleep.SEEN, { z = pz, zTol = 1.5, tag = "sleep.calm" })
+        end)
+        if nearRefs ~= nil then
+            local okNear, foundReal = pcall(function()
+                for i = 0, nearRefs:size() - 1 do
+                    if not tally(nearRefs:get(i)) then return true end
+                end
+                return false
+            end)
+            if okNear and foundReal then return false, BridgeSleep.lastVerdict end
+            if okNear and matchV >= v and matchC >= c and matchCh >= ch then
+                BridgeSleep.lastVerdict = "only companion"
+                return true, BridgeSleep.lastVerdict
+            end
+            matchV, matchC, matchCh = 0, 0, 0
+        end
+    end
+    local refs = nil
+    if BridgeZScan ~= nil and type(BridgeZScan.find) == "function" then
+        pcall(function() refs = BridgeZScan.find(function(z) return z ~= nil end, nil, { tag = "sleep.calm" }) end)
+    end
+    if refs ~= nil then
+        for i = 1, #refs do
+            if not tally(refs[i]) then return false, BridgeSleep.lastVerdict end
+        end
+    else
+        local cell = getCell()
+        local list = cell ~= nil and cell:getZombieList() or nil
+        if list == nil then return false, "no zombie list" end
+        for i = 0, list:size() - 1 do
+            if not tally(list:get(i)) then return false, BridgeSleep.lastVerdict end
+        end
+    end
+    if matchV < v or matchC < c or matchCh < ch then
+        BridgeSleep.lastVerdict = "unaccounted counter"
+        return false, BridgeSleep.lastVerdict
+    end
+    BridgeSleep.lastVerdict = "only companion"
+    return true, BridgeSleep.lastVerdict
+end
+
+
 
 function BridgeSleep.onlyCompanions(playerObj)
     if playerObj == nil then return false end
@@ -64,6 +248,7 @@ function BridgeSleep.onlyCompanions(playerObj)
     if BridgeZScan ~= nil then
         refs = BridgeZScan.find(function(z)
             return z ~= nil and z:isAlive() and not BridgeZScan.isCompanion(z) and not BridgeZScan.isDragged(z)
+                and not benign(z)
         end, nil, { tag = "sleep.only" })
     end
     if refs ~= nil then
@@ -83,7 +268,8 @@ function BridgeSleep.onlyCompanions(playerObj)
     for i = 0, list:size() - 1 do
         local z = list:get(i)
 
-        if z ~= nil and z:isAlive() and not Bridge.isCompanion(z) and not BridgeData.dragged(z) then
+        if z ~= nil and z:isAlive() and not Bridge.isCompanion(z) and not BridgeData.dragged(z)
+                and not benign(z) then
             local block, why = BridgeSleep.blocks(playerObj, z)
             if block then
                 local d = 0
@@ -155,6 +341,7 @@ end
 
 if Events ~= nil and Events.OnTick ~= nil then
     Events.OnTick.Add(function() pcall(BridgeSleep.tickPending) end)
+    Events.OnTick.Add(function() pcall(BridgeSleep.flushQueue) end)
 end
 
 
@@ -166,6 +353,55 @@ end
 
 
 
+function BridgeSleep.queueSleep(original, playerNum, ...)
+    if BridgeSleep.letting or type(original) ~= "function" then return false end
+    BridgeSleep.queue[playerNum] = { original = original, args = { ... }, at = Bridge.time }
+    log("sleep queued for player " .. tostring(playerNum))
+    return true
+end
+
+
+function BridgeSleep.flushQueue()
+    if BridgeSleep.letting then return end
+    local pending = {}
+    for num, entry in pairs(BridgeSleep.queue) do pending[#pending + 1] = { num = num, entry = entry } end
+    if #pending == 0 then return end
+    local okAll, errAll = pcall(function()
+        for _, item in ipairs(pending) do
+            local num, entry = item.num, item.entry
+            BridgeSleep.queue[num] = nil
+            local p = nil
+            pcall(function() p = getSpecificPlayer(num) end)
+            local drop = p == nil
+            if not drop then
+                local dead, asleep = false, false
+                pcall(function() dead = p:isDead() == true end)
+                pcall(function() asleep = p:isAsleep() == true end)
+                drop = dead or asleep or (Bridge.time - entry.at) > 5
+            end
+            if not drop then
+                local calm = false
+                pcall(function() calm = BridgeSleep.calm(p) == true end)
+                if not calm then
+                    log("sleep queue: not calm any more, the game decides")
+                    pcall(entry.original, unpack(entry.args))
+                else
+                    BridgeSleep.letting = true
+                    local close = BridgeSleep.calmOpen(p)
+                    local ok, err = pcall(entry.original, unpack(entry.args))
+                    if close ~= nil then close() end
+                    BridgeSleep.letting = false
+                    if not ok then warn("queued sleep call failed: " .. tostring(err)) end
+                    log("sleep let through")
+                end
+            end
+        end
+    end)
+    BridgeSleep.letting = false
+    if not okAll then warn("sleep queue failed: " .. tostring(errAll)) end
+end
+
+
 local function makeSleepWrapper(original)
     local w
     local active = false
@@ -175,13 +411,25 @@ local function makeSleepWrapper(original)
             if base ~= nil and not BridgeSleep.ours[base] then return base(player, bed) end
             return nil
         end
-        if BridgeSleep.replaying then return original(player, bed) end
+        if BridgeSleep.replaying or BridgeSleep.letting then return original(player, bed) end
         active = true
         local ok, result = pcall(function()
-            local okOnly, only = pcall(function() return BridgeSleep.onlyCompanions(getSpecificPlayer(player)) end)
-            if okOnly and only then
-                return BridgeSleep.sleepAfterPark(player, bed, original)
+            local playerObj = getSpecificPlayer(player)
+            if Bridge.mp then
+                local okOnly, only = pcall(function() return BridgeSleep.onlyCompanions(playerObj) end)
+                if okOnly and only then
+                    return BridgeSleep.sleepAfterPark(player, bed, original)
+                end
+                return original(player, bed)
             end
+            if not BridgeSleep.calmEnabled then return original(player, bed) end
+            local calm, verdict = BridgeSleep.calm(playerObj)
+            if calm then
+                log("sleep gate calm: " .. tostring(verdict))
+                BridgeSleep.queueSleep(original, player, player, bed)
+                return nil
+            end
+            log("sleep gate blocked: " .. tostring(verdict))
             return original(player, bed)
         end)
         active = false
@@ -263,8 +511,8 @@ function BridgeSleep.fixSleepOption(playerNum, context, worldobjects, test)
         local tip = o.toolTip
         local desc = tip ~= nil and tip.description or nil
         if isSleepOption(o) and o.notAvailable and type(desc) == "string" and string.find(desc, notSafe, 1, true) ~= nil then
-            local ok, only = pcall(function() return BridgeSleep.onlyCompanions(playerObj) end)
-            if ok and only then
+            local ok, calm = pcall(function() return BridgeSleep.calm(playerObj) == true end)
+            if ok and calm then
 
                 local needed = true
                 pcall(function() if isClient() then needed = getServerOptions():getBoolean("SleepNeeded") end end)
@@ -278,10 +526,43 @@ function BridgeSleep.fixSleepOption(playerNum, context, worldobjects, test)
                 else
                     o.notAvailable = false
                     if rest == desc then o.toolTip = nil else tip.description = rest end
+                    if not o.bridgeCalmWrapped and type(o.onSelect) == "function" then
+                        o.bridgeCalmWrapped = true
+                        o.bridgeCalmOnSelect = o.onSelect
+                        local saved = o.onSelect
+                        o.onSelect = function(...)
+                            if BridgeSleep.parkFallback and not Bridge.mp and not BridgeSleep.ownsGate() then
+                                if Bridge ~= nil then pcall(function() Bridge.sleepParkNow() end) end
+                                log("park fallback: foreign gate")
+                            end
+                            return saved(...)
+                        end
+                    end
+                    BridgeSleep.request[playerNum] = Bridge.time
                     log("sleep option: only companions near, enabled")
                 end
             end
         end
+    end
+    if not BridgeSleep.sweeping then BridgeSleep.sweep[playerNum] = Bridge.time + 1 end
+end
+
+
+function BridgeSleep.lateMenuSweep()
+    for num, at in pairs(BridgeSleep.sweep) do
+        if Bridge.time >= at then
+            BridgeSleep.sweep[num] = nil
+            local ctx = nil
+            pcall(function() ctx = getPlayerContextMenu(num) end)
+            if ctx ~= nil then
+                BridgeSleep.sweeping = true
+                pcall(BridgeSleep.fixSleepOption, num, ctx, nil, false)
+                BridgeSleep.sweeping = false
+            end
+        end
+    end
+    for num, at in pairs(BridgeSleep.request) do
+        if Bridge.time - at > 10 then BridgeSleep.request[num] = nil end
     end
 end
 
@@ -291,8 +572,19 @@ if Events ~= nil and Events.OnFillWorldObjectContextMenu ~= nil then
         pcall(BridgeSleep.fixSleepOption, playerNum, context, worldobjects, test)
     end)
 end
+if Events ~= nil and Events.OnTick ~= nil then
+    Events.OnTick.Add(function() pcall(BridgeSleep.lateMenuSweep) end)
+end
 if Events ~= nil and Events.OnGameStart ~= nil then
-    Events.OnGameStart.Add(function() pcall(BridgeSleep.wrap, "game start") end)
+    Events.OnGameStart.Add(function()
+        BridgeSleep.queue = {}
+        BridgeSleep.request = {}
+        BridgeSleep.sweep = {}
+        BridgeSleep.window = nil
+        BridgeSleep.letting = false
+        pcall(BridgeSleep.wrap, "game start")
+        pcall(BridgeSleep.wrapVehicle)
+    end)
 end
 
 
@@ -304,6 +596,260 @@ end
 
 
 
+
+
+function BridgeSleep.ownsGate()
+    if ISWorldObjectContextMenu == nil then return false end
+    local top = ISWorldObjectContextMenu.onSleepWalkToComplete
+    if top == nil then return false end
+    if BridgeSleep.ours[top] or top == BridgeSleep.wrapper then return true end
+    local tents = rawget(_G, "TentSleepImmersion")
+    if tents ~= nil and top == tents._sleepWalkWrapper and BridgeSleep.ours[tents._vanillaSleepWalkToComplete] then
+        return true
+    end
+    return false
+end
+
+
+function BridgeSleep.wrapVehicle()
+    local V = ISVehicleMenu
+    if V == nil then return end
+    if type(V.showRadialMenu) == "function"
+        and (not V.bridgeSleepWrapped or V.showRadialMenu ~= BridgeSleep.vehicleRadial) then
+        local original = V.showRadialMenu
+        local wrapper = function(playerObj, ...)
+            local calm = false
+            pcall(function() calm = BridgeSleep.calm(playerObj) == true end)
+            if not calm then return original(playerObj, ...) end
+            local close = BridgeSleep.calmOpen(playerObj)
+            local ok, err = pcall(original, playerObj, ...)
+            if close ~= nil then close() end
+            if not ok then warn("vehicle sleep radial failed: " .. tostring(err)) end
+        end
+        V.showRadialMenu = wrapper
+        BridgeSleep.vehicleRadial = wrapper
+        V.bridgeSleepWrapped = true
+    end
+    if type(V.onSleep) == "function"
+        and (not V.bridgeSleepSleepWrapped or V.onSleep ~= BridgeSleep.vehicleSleep) then
+        local original = V.onSleep
+        local wrapper = function(playerObj, ...)
+            local calm = false
+            pcall(function() calm = BridgeSleep.calm(playerObj) == true end)
+            if not calm then return original(playerObj, ...) end
+            local close = BridgeSleep.calmOpen(playerObj)
+            local ok, err = pcall(original, playerObj, ...)
+            if close ~= nil then close() end
+            if not ok then warn("vehicle sleep call failed: " .. tostring(err)) end
+        end
+        V.onSleep = wrapper
+        BridgeSleep.vehicleSleep = wrapper
+        V.bridgeSleepSleepWrapped = true
+    end
+    if type(V.onConfirmSleep) == "function"
+        and (not V.bridgeSleepConfirmWrapped or V.onConfirmSleep ~= BridgeSleep.vehicleConfirm) then
+        local original = V.onConfirmSleep
+        local wrapper = function(this, button, player, bed)
+            local p = nil
+            pcall(function() p = getSpecificPlayer(player) end)
+            local yes = button ~= nil and button.internal == "YES"
+            local calm = false
+            if p ~= nil and yes then pcall(function() calm = BridgeSleep.calm(p) == true end) end
+            if not calm then return original(this, button, player, bed) end
+            if BridgeSleep.parkFallback and not Bridge.mp and not BridgeSleep.ownsGate() then
+                if Bridge ~= nil then pcall(function() Bridge.sleepParkNow() end) end
+                log("park fallback: foreign vehicle gate")
+            end
+            local close = BridgeSleep.calmOpen(p)
+            local ok, err = pcall(original, this, button, player, bed)
+            if close ~= nil then close() end
+            if not ok then warn("vehicle sleep confirm failed: " .. tostring(err)) end
+        end
+        V.onConfirmSleep = wrapper
+        BridgeSleep.vehicleConfirm = wrapper
+        V.bridgeSleepConfirmWrapped = true
+    end
+end
+
+pcall(BridgeSleep.wrapVehicle)
+
+
+function BridgeSleep.statusText()
+    local depth = 0
+    for _ in pairs(BridgeSleep.queue) do depth = depth + 1 end
+    return string.format("sleep calm=%s park=%s window=%s queue=%d noWindow=%d verdict=%s",
+        tostring(BridgeSleep.calmEnabled), tostring(BridgeSleep.parkFallback), tostring(BridgeSleep.window ~= nil),
+        depth, BridgeSleep.noWindow, tostring(BridgeSleep.lastVerdict or "-"))
+end
+
+
+function BridgeSleep.set(key, value)
+    if key == nil or key == "status" then return BridgeSleep.statusText() end
+    if key ~= "calm" and key ~= "park" then return "sleepfix [calm on|off] [park on|off] [status]" end
+    local on = value ~= "off" and value ~= "false" and value ~= "0" and value ~= false
+    if key == "calm" then
+        BridgeSleep.calmEnabled = on
+        log("calm window " .. (on and "on" or "off"))
+    else
+        BridgeSleep.parkFallback = on
+        log("park fallback " .. (on and "on" or "off"))
+    end
+    return BridgeSleep.statusText()
+end
+
+
+function BridgeSleep.selftest()
+    local checks, fails = 0, {}
+    local function check(name, got, want)
+        checks = checks + 1
+        if got ~= want then
+            fails[#fails + 1] = string.format("%s got=%s want=%s", name, tostring(got), tostring(want))
+        end
+    end
+    local function statsStub(v, c, ch, fatigue)
+        local idx = {}
+        idx.getNumVisibleZombies = function() return v end
+        idx.getNumVeryCloseZombies = function() return c end
+        idx.getNumChasingZombies = function() return ch end
+        idx.get = function(_, stat) return fatigue == nil and 0.5 or fatigue end
+        return setmetatable({}, { __index = idx }), idx
+    end
+    local squareStub = { getRoom = function() return nil end }
+    local function playerStub(st, asleep)
+        return {
+            getStats = function() return st end,
+            isAsleep = function() return asleep == true end,
+            isDead = function() return false end,
+            getX = function() return 0 end,
+            getY = function() return 0 end,
+            getZ = function() return 0 end,
+            getCurrentSquare = function() return squareStub end,
+            CanSee = function() return true end,
+        }
+    end
+    local function zombieStub(x, y, z, target)
+        return {
+            isAlive = function() return true end,
+            isDead = function() return false end,
+            getX = function() return x end,
+            getY = function() return y end,
+            getZ = function() return z end,
+            getTarget = function() return target end,
+            getCurrentSquare = function() return squareStub end,
+        }
+    end
+    local st, idx = statsStub(0, 0, 0)
+    local p = playerStub(st, false)
+    local v, c, ch = BridgeSleep.engineCounts(p, zombieStub(2, 0, 1, nil))
+    check("close any floor", c, true)
+    v, c, ch = BridgeSleep.engineCounts(p, zombieStub(4, 0, 0, nil))
+    check("visible four tiles", v, true)
+    v, c, ch = BridgeSleep.engineCounts(p, zombieStub(8, 0, 0, nil))
+    check("not visible eight tiles", v, false)
+    local chaser = zombieStub(20, 0, 0, p)
+    v, c, ch = BridgeSleep.engineCounts(p, chaser)
+    check("chasing far", ch, true)
+    local oldFind, oldComp, oldDragged = BridgeZScan.find, BridgeZScan.isCompanion, BridgeZScan.isDragged
+    local oldGetText, oldGetPlayer, oldIsClient, oldCharStat = getText, getSpecificPlayer, isClient, CharacterStat
+    local refs = {}
+    BridgeZScan.find = function(fn)
+        local out = {}
+        for i = 1, #refs do
+            local z = refs[i]
+            if fn == nil or fn(z) then out[#out + 1] = z end
+        end
+        return out
+    end
+    BridgeZScan.isCompanion = function(z) return z.companion == true end
+    BridgeZScan.isDragged = function() return false end
+    local okAll, errAll = pcall(function()
+        local s1 = statsStub(1, 0, 0)
+        local p1 = playerStub(s1, false)
+        local z1 = zombieStub(4, 0, 0, nil)
+        z1.companion = true
+        refs = { z1 }
+        check("calm one companion", BridgeSleep.calm(p1), true)
+        local s2 = statsStub(2, 0, 0)
+        refs = { z1 }
+        check("calm unaccounted", BridgeSleep.calm(playerStub(s2, false)), false)
+        refs = {}
+        check("calm no match", BridgeSleep.calm(p1), false)
+        local z2 = zombieStub(4, 0, 0, nil)
+        refs = { z2 }
+        check("calm real visible", BridgeSleep.calm(p1), false)
+        check("calm nothing counted", BridgeSleep.calm(playerStub(statsStub(0, 0, 0), false)), true)
+        local zm4 = zombieStub(4, 0, 0, nil)
+        zm4.getVariableBoolean = function(_, name) return name == "WPCompanion" end
+        zm4.hasModData = function() return false end
+        refs = { zm4 }
+        check("calm marked harmless", BridgeSleep.calm(p1), true)
+        check("only companions marked", BridgeSleep.onlyCompanions(p1), true)
+        local zm1 = zombieStub(1, 0, 0, nil)
+        zm1.getVariableBoolean = function(_, name) return name == "WPCompanion" end
+        zm1.hasModData = function() return false end
+        refs = { zm1 }
+        check("search marked block", BridgeSleep.searchZombieBlock(playerStub(statsStub(1, 0, 0), false)), false)
+        local oldBridge = Bridge
+        Bridge = { alive = function() return true end, body = zombieStub(0.5, 0, 0, nil), BODY_VAR = "NotAloneBody" }
+        check("speed marked block", BridgeSleep.speedBlocker(playerStub(statsStub(0, 0, 0), false)), nil)
+        Bridge = oldBridge
+        local s3 = statsStub(0, 0, 0)
+        local p3 = playerStub(s3, false)
+        local close = BridgeSleep.calmOpen(p3)
+        check("window open", BridgeSleep.window ~= nil, true)
+        check("window visible getter", s3:getNumVisibleZombies(), 0)
+        check("window close", type(close), "function")
+        if close ~= nil then close() end
+        check("window restored", BridgeSleep.window, nil)
+        check("window awake refused", BridgeSleep.calmOpen(playerStub(s3, true)), nil)
+        BridgeSleep.queue = {}
+        BridgeSleep.letting = false
+        local fired = 0
+        local function original() fired = fired + 1 end
+        check("queue accepted", BridgeSleep.queueSleep(original, 7, 7, nil), true)
+        check("queue replaced", BridgeSleep.queueSleep(original, 7, 7, nil), true)
+        local depth = 0
+        for _ in pairs(BridgeSleep.queue) do depth = depth + 1 end
+        check("queue depth one", depth, 1)
+        BridgeSleep.letting = true
+        check("queue while letting", BridgeSleep.queueSleep(original, 8, 8, nil), false)
+        BridgeSleep.letting = false
+        BridgeSleep.queue[9] = { original = original, args = { 9, nil }, at = Bridge.time - 10 }
+        BridgeSleep.flushQueue()
+        check("queue timeout dropped", BridgeSleep.queue[9], nil)
+        check("queue timeout not fired", fired, 0)
+        local sFix = statsStub(0, 0, 0, 0.5)
+        local pFix = playerStub(sFix, false)
+        getText = function(k) return k end
+        getSpecificPlayer = function() return pFix end
+        isClient = function() return false end
+        CharacterStat = { FATIGUE = 1 }
+        local opt = { name = "ContextMenu_Sleep", notAvailable = true,
+            toolTip = { description = "IGUI_Sleep_NotSafe <BR> " }, onSelect = function() end }
+        BridgeSleep.fixSleepOption(0, { options = { opt } })
+        check("fix clears", opt.notAvailable, false)
+        check("fix wraps", opt.bridgeCalmWrapped, true)
+        local wrapped = opt.onSelect
+        BridgeSleep.fixSleepOption(0, { options = { opt } })
+        check("fix wraps once", opt.onSelect, wrapped)
+        local sTired = statsStub(0, 0, 0, 0.1)
+        local pTired = playerStub(sTired, false)
+        getSpecificPlayer = function() return pTired end
+        local optTired = { name = "ContextMenu_Sleep", notAvailable = true,
+            toolTip = { description = "IGUI_Sleep_NotSafe <BR> " }, onSelect = function() end }
+        BridgeSleep.fixSleepOption(0, { options = { optTired } })
+        check("fix tired stays unavailable", optTired.notAvailable, true)
+        check("fix tired text", optTired.toolTip.description, "IGUI_Sleep_NotTiredEnough <BR> ")
+        BridgeSleep.queue = {}
+    end)
+    BridgeZScan.find, BridgeZScan.isCompanion, BridgeZScan.isDragged = oldFind, oldComp, oldDragged
+    getText, getSpecificPlayer, isClient, CharacterStat = oldGetText, oldGetPlayer, oldIsClient, oldCharStat
+    BridgeSleep.window = nil
+    check("selftest body", okAll, true)
+    if not okAll then fails[#fails + 1] = "selftest error: " .. tostring(errAll) end
+    if #fails == 0 then return string.format("sleepselftest PASS (%d checks)", checks) end
+    return string.format("sleepselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
+end
 
 
 BridgeSleep.SEARCH_CLOSE = 3
@@ -333,10 +879,11 @@ function BridgeSleep.searchZombieBlock(playerObj)
             local dx, dy = z:getX() - px, z:getY() - py
             local d2 = dx * dx + dy * dy
             local floor = math.abs(z:getZ() - pz) < 1
-            if z:getVariableBoolean(Bridge.BODY_VAR) then
+            local own = z:getVariableBoolean(Bridge.BODY_VAR) == true
+            if own or benign(z) then
                 if d2 < close2 then ownClose = ownClose + 1 end
                 if d2 < seen2 then ownSeen = ownSeen + 1 end
-                if z:getTarget() == playerObj then ownChasing = ownChasing + 1 end
+                if own and z:getTarget() == playerObj then ownChasing = ownChasing + 1 end
             elseif floor and d2 < close2 then
                 return true
             end
@@ -349,10 +896,11 @@ function BridgeSleep.searchZombieBlock(playerObj)
                 local dx, dy = z:getX() - px, z:getY() - py
                 local d2 = dx * dx + dy * dy
                 local floor = math.abs(z:getZ() - pz) < 1
-                if z:getVariableBoolean(Bridge.BODY_VAR) then
+                local own = z:getVariableBoolean(Bridge.BODY_VAR) == true
+                if own or benign(z) then
                     if d2 < close2 then ownClose = ownClose + 1 end
                     if d2 < seen2 then ownSeen = ownSeen + 1 end
-                    if z:getTarget() == playerObj then ownChasing = ownChasing + 1 end
+                    if own and z:getTarget() == playerObj then ownChasing = ownChasing + 1 end
                 elseif floor and d2 < close2 then
                     return true
                 end
@@ -459,6 +1007,7 @@ function BridgeSleep.speedBlocker(playerObj)
     if BridgeZScan ~= nil then
         refs = BridgeZScan.find(function(z)
             return z ~= nil and z:isAlive() and not BridgeZScan.isCompanion(z) and not BridgeZScan.isDragged(z)
+                and not benign(z)
         end, nil, { tag = "sleep.speed" })
     end
     if refs ~= nil then
@@ -482,7 +1031,8 @@ function BridgeSleep.speedBlocker(playerObj)
     for i = 0, list:size() - 1 do
         local z = list:get(i)
 
-        if z ~= nil and z:isAlive() and not Bridge.isCompanion(z) and not BridgeData.dragged(z) then
+        if z ~= nil and z:isAlive() and not Bridge.isCompanion(z) and not BridgeData.dragged(z)
+                and not benign(z) then
             local zx, zy = z:getX() - playerObj:getX(), z:getY() - playerObj:getY()
             local d2 = zx * zx + zy * zy
             if d2 < 4 * 4 then return "zombie within 4" end
@@ -608,6 +1158,282 @@ if BridgeSleep.speedKeepEnabled then
     Events.OnPlayerUpdate.Add(BridgeSleep.onPlayerUpdate)
     Events.OnTick.Add(function() BridgeSleep.keepSpeed("tick") end)
     Events.OnPreUIDraw.Add(function() BridgeSleep.keepSpeed("ui") end)
+end
+
+
+BridgeSleep.talk = BridgeSleep.talk or {}
+local talk = BridgeSleep.talk
+talk.SEC = 60
+talk.WAKE_TIMEOUT = 10 * talk.SEC
+talk.WAKE_MIN_HOURS = 1
+talk.WATCH_EVERY = 15
+talk.WAKE_STALE = 5 * talk.SEC
+talk.WAKE_DELAY = 2 * talk.SEC
+talk.SLEEP_WAIT = 2 * talk.SEC
+talk.state = nil
+talk.pendingSleep = nil
+talk.pendingWake = nil
+talk.asleep = false
+
+local function talkOwner()
+    local red = nil
+    pcall(function() red = BridgeData.owner() end)
+    return red
+end
+
+local function talkHours()
+    local h = 0
+    pcall(function() h = getGameTime():getWorldAgeHours() end)
+    return tonumber(h) or 0
+end
+
+local function talkTier()
+    local t = nil
+    pcall(function() t = BridgeMoments.group() end)
+    if t ~= "Far" and t ~= "Near" and t ~= "Close" then t = "Far" end
+    return t
+end
+
+local function talkInCarWith(red)
+    local yes = false
+    pcall(function() yes = BridgeCar ~= nil and BridgeCar.withRed(red) == true end)
+    return yes
+end
+
+local function talkSpeak(text, allowHidden)
+    if text == nil or text == "" then return false end
+    if Bridge == nil then return false end
+    if not allowHidden then
+        if Bridge.alive() ~= true or Bridge.hiddenSince ~= nil then return false end
+    end
+    local ok = pcall(function() Bridge.say(text) end)
+    if ok then Bridge.lastSpokeAt = Bridge.time end
+    return ok
+end
+
+local function talkClearStale()
+    local st = talk.state
+    if st ~= nil and st.handled and not talk.asleep
+        and Bridge.time - (st.at or Bridge.time) > talk.WAKE_STALE then
+        talk.state = nil
+    end
+end
+
+function talk.goodnight(body, kind)
+    if Bridge == nil then return false end
+    talkClearStale()
+    local st = talk.state
+    if st ~= nil and st.handled then return false end
+    local red = talkOwner()
+    if red == nil then return false end
+    local car = kind == "car"
+    if car and not talkInCarWith(red) then return false end
+    talk.state = { together = true, inCar = car, sleptAt = talkHours(), handled = true, at = Bridge.time }
+    talk.pendingWake = nil
+    local event = car and "EvSleepCar" or "EvSleep"
+    local text = nil
+    pcall(function() text = BridgeMoments.line(event) end)
+    if text == nil or text == "" then
+        talk.pendingSleep = nil
+        log("goodnight skipped: no line")
+        return true
+    end
+    talk.pendingSleep = { text = text, at = Bridge.time + 1, kind = kind, allowHidden = car }
+    log("goodnight queued: " .. tostring(kind))
+    return true
+end
+
+local function talkWakeEvent(kind)
+    local h = 0
+    pcall(function() h = getGameTime():getHour() end)
+    h = tonumber(h) or 0
+    local base
+    if h >= 5 and h <= 11 then base = "EvWakeMorning"
+    elseif h >= 12 and h <= 17 then base = "EvWakeLate"
+    else base = "EvWakeNight" end
+    if kind == "car" then base = base .. "Car" end
+    return base
+end
+
+local function talkFootDanger()
+    local danger = false
+    pcall(function()
+        if BridgeTask ~= nil and type(BridgeTask.dangerNear) == "function" and Bridge.body ~= nil then
+            danger = BridgeTask.dangerNear(Bridge.body) == true
+        end
+    end)
+    return danger
+end
+
+local function talkCarDanger(red)
+    local danger = false
+    pcall(function()
+        if BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle") then danger = true return end
+        local stats = red:getStats()
+        local close = tonumber(stats:getNumVeryCloseZombies()) or 0
+        local chasing = tonumber(stats:getNumChasingZombies()) or 0
+        danger = close > 0 or chasing > 0
+    end)
+    return danger
+end
+
+local function talkApplyMood(red, t)
+    if BridgeData == nil or type(BridgeData.optionOf) ~= "function" then return end
+    local on = false
+    pcall(function() on = BridgeData.optionOf(Bridge.store, "mood") == true end)
+    if not on then log("wake mood skipped: option off") return end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(red, "Bridge", "wakeMood", { tier = t }) end)
+        log("wake mood asked: " .. tostring(t))
+        return
+    end
+    local deltas = nil
+    pcall(function() deltas = BridgeMood.wakeDeltas(t) end)
+    if type(deltas) ~= "table" or type(BridgeMood.apply) ~= "function" then return end
+    local done = nil
+    pcall(function() done = BridgeMood.apply(red, deltas) end)
+    if type(done) == "table" then
+        log("wake mood applied: " .. BridgeMood.describe(done))
+    else
+        log("wake mood applied: nothing")
+    end
+end
+
+local function talkOnSleepStart(red)
+    talkClearStale()
+    local st = talk.state
+    if st ~= nil and st.handled then return end
+    if talkInCarWith(red) then
+        talk.goodnight(nil, "car")
+    end
+end
+
+local function talkOnWake(red)
+    local st = talk.state
+    talk.state = nil
+    talk.pendingSleep = nil
+    talk.pendingWake = nil
+    if st == nil or not st.together then log("wake skipped: not together") return end
+    if talkHours() - st.sleptAt < talk.WAKE_MIN_HOURS then log("wake skipped: too short") return end
+    local kind = st.inCar and "car" or "foot"
+    local event = talkWakeEvent(kind)
+    local text = nil
+    pcall(function() text = BridgeMoments.line(event) end)
+    if text == nil or text == "" then log("wake skipped: no line") return end
+    talk.pendingWake = { kind = kind, event = event, text = text, at = nil, since = Bridge.time, tier = talkTier() }
+end
+
+local function talkSleepTick()
+    local p = talk.pendingSleep
+    if p == nil then return end
+    if talkSpeak(p.text, p.allowHidden == true) then
+        talk.pendingSleep = nil
+        log("goodnight spoken: " .. tostring(p.kind))
+        return
+    end
+    if Bridge.time - p.at > talk.SLEEP_WAIT then
+        talk.pendingSleep = nil
+        log("goodnight dropped: body not visible")
+    end
+end
+
+local function talkWakeReady(red, p)
+    if p.kind == "car" then
+        return talkInCarWith(red) or (Bridge.alive() == true and Bridge.hiddenSince == nil)
+    end
+    return Bridge.alive() == true and Bridge.hiddenSince == nil
+end
+
+local function talkWakeTick(red)
+    local p = talk.pendingWake
+    if p == nil then return end
+    if p.at == nil then
+        if talkWakeReady(red, p) then
+            p.at = Bridge.time + talk.WAKE_DELAY
+            log("wake scheduled +2s")
+        elseif Bridge.time - p.since > talk.WAKE_TIMEOUT then
+            talk.pendingWake = nil
+            log("wake skipped: timeout")
+        end
+        return
+    end
+    if Bridge.time < p.at then return end
+    if not talkWakeReady(red, p) then
+        if Bridge.time - p.at > talk.WAKE_TIMEOUT then
+            talk.pendingWake = nil
+            log("wake skipped: timeout")
+        end
+        return
+    end
+    local danger = false
+    if p.kind == "car" then danger = talkCarDanger(red) else danger = talkFootDanger() end
+    if danger then
+        talk.pendingWake = nil
+        log("wake skipped: danger")
+        return
+    end
+    if talkSpeak(p.text, p.kind == "car") then
+        log("wake accepted: " .. tostring(p.event))
+        talkApplyMood(red, p.tier)
+    else
+        log("wake dropped: body not visible")
+    end
+    talk.pendingWake = nil
+end
+
+function talk.tick()
+    if Bridge == nil then return end
+    local red = talkOwner()
+    if red == nil then return end
+    if Bridge.tick % talk.WATCH_EVERY == 0 then
+        local asleep = false
+        pcall(function() asleep = red:isAsleep() == true end)
+        local was = talk.asleep
+        talk.asleep = asleep
+        if asleep and not was then
+            talkOnSleepStart(red)
+        elseif was and not asleep then
+            talkOnWake(red)
+        end
+    end
+    if talk.pendingSleep ~= nil then talkSleepTick() end
+    if talk.pendingWake ~= nil then talkWakeTick(red) end
+end
+
+if Events ~= nil and Events.OnTick ~= nil then
+    Events.OnTick.Add(function() pcall(talk.tick) end)
+end
+
+
+function BridgeSleep.hookSleepTalk()
+    if ISWorldObjectContextMenu == nil or type(ISWorldObjectContextMenu.onSleep) ~= "function" then return end
+    if ISWorldObjectContextMenu.bridgeSleepTalkHooked then return end
+    ISWorldObjectContextMenu.bridgeSleepTalkHooked = true
+    local base = ISWorldObjectContextMenu.onSleep
+    ISWorldObjectContextMenu.onSleep = function(...)
+        local red = nil
+        pcall(function() red = BridgeData.owner() end)
+        if red ~= nil and Bridge ~= nil and Bridge.alive() == true and Bridge.kind == "zombie" then
+            local near = false
+            pcall(function()
+                local dx, dy = Bridge.body:getX() - red:getX(), Bridge.body:getY() - red:getY()
+                near = dx * dx + dy * dy < 20 * 20 and math.abs(Bridge.body:getZ() - red:getZ()) < 2
+            end)
+            local inCar = false
+            pcall(function()
+                inCar = red:getVehicle() ~= nil or (BridgeCar ~= nil and BridgeCar.withRed(red) == true)
+            end)
+            if near and not inCar then
+                pcall(talk.goodnight, Bridge.body, "foot")
+            end
+        end
+        return base(...)
+    end
+    log("sleep menu goodnight hooked")
+end
+
+if Events ~= nil and Events.OnGameStart ~= nil then
+    Events.OnGameStart.Add(function() pcall(BridgeSleep.hookSleepTalk) end)
 end
 
 log("loaded")

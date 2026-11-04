@@ -8,6 +8,7 @@ BridgeTask.LOOTING_ENABLED = 1
 BridgeTask.SIT_ENABLED = 1
 BridgeTask.LAY_ENABLED = 1
 BridgeTask.MOVE_CORPSES_ENABLED = 1
+BridgeTask.DEPOSIT_ENABLED = 1
 
 
 
@@ -21,6 +22,7 @@ local function ffMult()
     if m > 10 then m = 10 end
     return m
 end
+BridgeTask.ffMult = ffMult
 
 BridgeTask.CHOP_RANGE = 1.45
 BridgeTask.STOP_DIST = 0.9
@@ -188,6 +190,10 @@ BridgeTask.LOOT_ITEM_TIME = 0.5 * SECOND
 BridgeTask.LOOT_SAY_COOLDOWN = 25 * SECOND
 BridgeTask.LOOT_SCAN_BUDGET = 200
 BridgeTask.LOOT_BATCH_MAX = 20
+BridgeTask.TRANSFER_WEIGHT_BUDGET = 3.0
+BridgeTask.TRANSFER_MAX_BATCH = 100
+BridgeTask.TRANSFER_MIN_BATCH = 1
+BridgeTask.transferMode = "weight"
 BridgeTask.OPENING_GIVE_UP = 6 * SECOND
 
 
@@ -1762,6 +1768,7 @@ function BridgeTask.reset()
     BridgeTask.phase = nil
     BridgeTask.info = "reset"
     BridgeTask.pendingStart = nil
+    BridgeTask.depositFull, BridgeTask.depositCount = nil, nil
     BridgeTask.deferred = {}
     BridgeTask.needImplement, BridgeTask.needFluid = nil, nil
     BridgeTask.needPetrol, BridgeTask.needAshTool = nil, nil
@@ -1890,6 +1897,16 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     end
 
     BridgeTask.kind = kind
+    BridgeTask.lootDestsBody = nil
+    BridgeTask.lootDestsCache = nil
+    BridgeTask.lootSrcCache = nil
+    for i = 1, #targets do
+        local t = targets[i]
+        if type(t) == "table" then
+            t._lootCache = nil
+            t._lootCacheSize = nil
+        end
+    end
     BridgeTask.queue = {}
     for i = 1, #targets do BridgeTask.queue[i] = targets[i] end
     if BridgeWorkSelect ~= nil and BridgeWorkSelect.sortTargets ~= nil then
@@ -2129,6 +2146,8 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     elseif kind == "shower" then
     elseif kind == "pryDoor" then
         Bridge.speak("PryStart")
+    elseif kind == "deposit" then
+        Bridge.speak("JobDepositStart")
     elseif startText ~= nil then
         Bridge.speakText(startText)
     else
@@ -2153,6 +2172,7 @@ function BridgeTask.cancel(reason)
     BridgeTask.phase = nil
     BridgeTask.info = "cancel " .. tostring(reason)
     BridgeTask.pendingStart = nil
+    BridgeTask.depositFull, BridgeTask.depositCount = nil, nil
     BridgeTask.target = nil
     BridgeTask.needImplement, BridgeTask.needFluid = nil, nil
     BridgeTask.needPetrol, BridgeTask.needAshTool = nil, nil
@@ -2264,6 +2284,10 @@ function BridgeTask.finish()
     Bridge.target = nil
     local wasLootFull = BridgeTask.lootFull == true
     local wasGrabOnly = BridgeTask.grabOnly == true
+    local depositFull = BridgeTask.depositFull == true
+    local depositCount = tonumber(BridgeTask.depositCount)
+    BridgeTask.depositFull = nil
+    BridgeTask.depositCount = nil
     BridgeTask.lootList = nil
     BridgeTask.lootIdx = nil
     BridgeTask.lootPending = nil
@@ -2278,6 +2302,9 @@ function BridgeTask.finish()
     BridgeTask.lootFull = false
     if body ~= nil then pcall(function() BridgeMove.stopPath(body) end) end
     if Bridge.setMode ~= nil then Bridge.setMode(prev) end
+    if finishKind == "deposit" or finishKind == "lootArea" then
+        if BridgeBackup ~= nil and type(BridgeBackup.flushNow) == "function" then pcall(BridgeBackup.flushNow) end
+    end
     if body ~= nil then pcall(endCleanHands, body) end
     if body ~= nil then pcall(stopCleanSound, body) end
     if body ~= nil then pcall(restoreHands, body) end
@@ -2297,7 +2324,13 @@ function BridgeTask.finish()
     end
 
 
-    if clearNeed then
+    if depositCount ~= nil and depositCount > 0 then
+        if depositFull then
+            Bridge.speak(depositCount == 1 and "JobDepositDoneFullOne" or "JobDepositDoneFull", depositCount)
+        else
+            Bridge.speak(depositCount == 1 and "JobDepositDoneOne" or "JobDepositDone", depositCount)
+        end
+    elseif clearNeed then
         Bridge.speak((BridgeTask.doneCount or 0) > 0 and "JobPartialNeedCutTool" or "JobNeedCutTool")
     elseif needText ~= nil then
         Bridge.speakText(needText)
@@ -2317,9 +2350,12 @@ function BridgeTask.finish()
         if finishKind == "sit" or finishKind == "lay" or finishKind == "exercise" or finishKind == "washSink"
                 or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor"
                 or finishKind == "shower" then
+        elseif depositFull then
+            Bridge.speak("JobLootFull")
         elseif wasLootFull then
             Bridge.speak("JobLootFull")
         elseif wasGrabOnly then
+            Bridge.speak("JobDone")
         else
             Bridge.speak("JobDone")
         end
@@ -4238,6 +4274,17 @@ function BridgeTask.lootDests(body)
     return out
 end
 
+function BridgeTask.lootDestsCached(body)
+    if body == nil then return {} end
+    if BridgeTask.lootDestsBody == body and BridgeTask.lootDestsCache ~= nil then
+        return BridgeTask.lootDestsCache
+    end
+    local d = BridgeTask.lootDests(body)
+    BridgeTask.lootDestsBody = body
+    BridgeTask.lootDestsCache = d
+    return d
+end
+
 function BridgeTask.lootDestFor(body, item, dests)
     if item == nil or dests == nil then return nil end
     if BridgeInventory ~= nil and type(BridgeInventory.capBlocked) == "function" and BridgeInventory.capBlocked() then
@@ -4245,7 +4292,7 @@ function BridgeTask.lootDestFor(body, item, dests)
     end
     for i = 1, #dests do
         local ok = nil
-        pcall(function() ok = BridgeInventory.roomVerdict(dests[i], item) end)
+        pcall(function() ok = BridgeInventory.roomVerdict(dests[i], item, nil, true) end)
         if ok == true then return dests[i] end
     end
     return nil
@@ -4260,6 +4307,68 @@ function BridgeTask.lootWeight(item)
     end
     if type(w) ~= "number" or w < 0 then w = 0 end
     return w
+end
+
+function BridgeTask.actualWeight(item)
+    return BridgeTask.lootWeight(item)
+end
+
+function BridgeTask.batchWeight(item)
+    local w = BridgeTask.actualWeight(item)
+    if w > 3 then w = 3 end
+    return w
+end
+
+function BridgeTask.transferTime(group, chr)
+    if chr == nil and BridgeData ~= nil and type(BridgeData.owner) == "function" then
+        pcall(function() chr = BridgeData.owner() end)
+    end
+    local w = 0
+    for i = 1, #(group or {}) do w = w + BridgeTask.batchWeight(group[i]) end
+    if w > 3 then w = 3 end
+    local t = 50 * w + 25
+    pcall(function()
+        if chr == nil then return end
+        if chr:hasTrait(CharacterTrait.DEXTROUS) then t = t * 0.5 end
+        if chr:hasTrait(CharacterTrait.ALL_THUMBS) or chr:isWearingAwkwardGloves() then t = t * 2 end
+        if chr:isTimedActionInstant() then t = 1 end
+    end)
+    if t < 30 then t = 30 end
+    return math.floor(t + 0.5)
+end
+
+function BridgeTask.remainingCapacity(cont, chr)
+    if cont == nil then return math.huge end
+    local cap, load = nil, nil
+    pcall(function() cap = cont:getEffectiveCapacity(chr) end)
+    if type(cap) ~= "number" or cap <= 0 then return math.huge end
+    pcall(function() load = cont:getContentsWeight() end)
+    if type(load) ~= "number" then load = 0 end
+    pcall(function() load = ItemContainer.floatingPointCorrection(load) end)
+    if type(load) ~= "number" then return math.huge end
+    local free = cap - load
+    if free < 0 then free = 0 end
+    return free
+end
+
+function BridgeTask.batchLimit(item, remainingCapacity)
+    local budget = tonumber(BridgeTask.TRANSFER_WEIGHT_BUDGET) or 3
+    local maxBatch = tonumber(BridgeTask.TRANSFER_MAX_BATCH) or 100
+    local minBatch = tonumber(BridgeTask.TRANSFER_MIN_BATCH) or 1
+    local w = BridgeTask.batchWeight(item)
+    if w < 0.001 then w = 0.001 end
+    local cap = math.floor(budget / w)
+    if cap < minBatch then cap = minBatch end
+    if cap > maxBatch then cap = maxBatch end
+    local left = tonumber(remainingCapacity)
+    if left ~= nil and left ~= math.huge then
+        local aw = BridgeTask.actualWeight(item)
+        if aw < 0.001 then aw = 0.001 end
+        local byCapacity = math.floor(left / aw)
+        if byCapacity < minBatch then byCapacity = minBatch end
+        if cap > byCapacity then cap = byCapacity end
+    end
+    return cap
 end
 
 local lootTraceSeen = {}
@@ -4308,10 +4417,15 @@ function BridgeTask.lootFilter(item, kind)
 end
 
 function BridgeTask.lootItems(body, target)
-    local items = {}
-    if target == nil then return items end
+    if target == nil then return {} end
     local c = target.cont
-    if c == nil then return items end
+    if c == nil then return {} end
+    local size = 0
+    pcall(function() size = c:getItems():size() end)
+    if target._lootCache ~= nil and target._lootCacheSize == size then
+        return target._lootCache
+    end
+    local items = {}
     if type(target.only) == "table" and #target.only > 0 then
         for i = 1, #target.only do
             local it = target.only[i]
@@ -4320,6 +4434,8 @@ function BridgeTask.lootItems(body, target)
             if present then items[#items + 1] = { item = it, w = BridgeTask.lootWeight(it) } end
         end
         table.sort(items, function(a, b) return a.w < b.w end)
+        target._lootCache = items
+        target._lootCacheSize = size
         return items
     end
     pcall(function()
@@ -4337,12 +4453,14 @@ function BridgeTask.lootItems(body, target)
         end
     end)
     table.sort(items, function(a, b) return a.w < b.w end)
+    target._lootCache = items
+    target._lootCacheSize = size
     return items
 end
 
 function BridgeTask.lootScan(body)
     if body == nil then return false, false end
-    local dests = BridgeTask.lootDests(body)
+    local dests = BridgeTask.lootDestsCached(body)
     local budget = BridgeTask.LOOT_SCAN_BUDGET
     local wanted = false
     for i = 1, #BridgeTask.queue do
@@ -4387,41 +4505,91 @@ function BridgeTask.lootTake(body, target, item, dest)
     pcall(function()
         local only = (target ~= nil and type(target.only) == "table" and #target.only > 0)
             and target.only or nil
-        local cap = BridgeTask.LOOT_BATCH_MAX or 20
+        local weightMode = BridgeTask.transferMode ~= "legacy"
         local full = item:getFullType()
         local group = { item }
+        local cap = BridgeTask.LOOT_BATCH_MAX or 20
+        local remaining = math.huge
+        local budget, actual = 0, 0
+        if weightMode and type(BridgeTask.batchLimit) == "function" then
+            remaining = BridgeTask.remainingCapacity(dest, chr)
+            cap = BridgeTask.batchLimit(item, remaining)
+            budget = BridgeTask.batchWeight(item)
+            actual = BridgeTask.actualWeight(item)
+        end
+        local function fits(it)
+            if #group >= cap then return false end
+            if not weightMode then return true end
+            local bw = BridgeTask.batchWeight(it)
+            local aw = BridgeTask.actualWeight(it)
+            if budget + bw > BridgeTask.TRANSFER_WEIGHT_BUDGET + 1e-9 then return false end
+            if remaining ~= math.huge and actual + aw > remaining + 1e-9 then return false end
+            budget = budget + bw
+            actual = actual + aw
+            return true
+        end
         if only ~= nil then
             for i = 1, #only do
-                if #group >= cap then break end
                 local it = only[i]
-                if it ~= item and it:getContainer() == src and it:getFullType() == full then
+                local same = false
+                if it ~= item then
+                    pcall(function() same = it:getContainer() == src and it:getFullType() == full end)
+                end
+                if same then
+                    if not fits(it) then break end
                     group[#group + 1] = it
                 end
             end
         else
-            local list = src:getItems()
-            for i = 0, list:size() - 1 do
-                if #group >= cap then break end
-                local it = list:get(i)
-                if it ~= nil and it ~= item and it:getFullType() == full then
+            local size = 0
+            pcall(function() size = src:getItems():size() end)
+            local cache = BridgeTask.lootSrcCache
+            if cache == nil or cache.src ~= src or size > (cache.size or 0) then
+                cache = { src = src, size = size, entries = {} }
+                pcall(function()
+                    local list = src:getItems()
+                    for i = 0, list:size() - 1 do
+                        local it = list:get(i)
+                        if it ~= nil then
+                            local f = nil
+                            pcall(function() f = it:getFullType() end)
+                            cache.entries[#cache.entries + 1] = { item = it, full = f }
+                        end
+                    end
+                end)
+                BridgeTask.lootSrcCache = cache
+            end
+            for i = 1, #cache.entries do
+                local e = cache.entries[i]
+                local it = e.item
+                local same = false
+                if it ~= nil and it ~= item and e.full == full then
+                    pcall(function() same = it:getContainer() == src end)
+                end
+                if same then
+                    if not fits(it) then break end
                     group[#group + 1] = it
                 end
             end
         end
+        local t = BridgeTask.transferTime(group)
+        act.maxTime = t
+        act.bridgeMinTime = t
         if #group > 1 then
             if isClient() then
                 if act.bridgeRelay ~= nil then
-                    act.queueList = { { items = group, time = act.maxTime, type = full } }
+                    act.queueList = { { items = group, time = t, type = full } }
                     act.bridgeRelay.group = group
                 else
                     act.group = group
                 end
             else
-                act.queueList = { { items = group, time = act.maxTime, type = full } }
+                act.queueList = { { items = group, time = t, type = full } }
             end
         end
     end)
     pcall(function() act.bridgeHerLoot = BridgeTask.lootAnim(src) end)
+    act.bridgeWithdrawTask = true
     BridgeTask.lootAct = act
     BridgeTask.lootSrc = src
     local ok = false
@@ -4656,7 +4824,7 @@ function BridgeTask.kinds.lootArea.update(body)
             moving = (asn == "walktoward" or asn == "pathfind")
                 or (BridgeMove ~= nil and BridgeMove.moving == true)
         end)
-        if moving and (Bridge.time - (BridgeTask.since or Bridge.time)) < 3 * SECOND then
+        if moving and (Bridge.time - (BridgeTask.since or Bridge.time)) < (3 * SECOND) / ffMult() then
             BridgeTask.forceIdle(body)
             BridgeTask.info = "settling"
             return true
@@ -4672,7 +4840,7 @@ function BridgeTask.kinds.lootArea.update(body)
         BridgeTask.lootList = list
         BridgeTask.lootIdx = 0
     end
-    local dests = BridgeTask.lootDests(body)
+    local dests = BridgeTask.lootDestsCached(body)
     while true do
         BridgeTask.lootIdx = (BridgeTask.lootIdx or 0) + 1
         local entry = list[BridgeTask.lootIdx]
@@ -4707,7 +4875,7 @@ function BridgeTask.kinds.lootArea.update(body)
             elseif BridgeTask.lootTake(body, target, item, dest) then
                 BridgeTask.lootPending = item
                 BridgeTask.lootPendingAt = Bridge.time
-                BridgeTask.lootNextAt = Bridge.time + BridgeTask.LOOT_ITEM_TIME
+                BridgeTask.lootNextAt = Bridge.time + BridgeTask.LOOT_ITEM_TIME / ffMult()
                 pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
                 return true
             end
@@ -4725,7 +4893,32 @@ function BridgeTask.kinds.lootArea.leave(body)
     BridgeTask.lootIdx = nil
     BridgeTask.lootPending = nil
     BridgeTask.lootPendingAt = nil
+    BridgeTask.lootDestsBody = nil
+    BridgeTask.lootDestsCache = nil
+    BridgeTask.lootSrcCache = nil
     BridgeTask.deferred = {}
+end
+
+
+BridgeTask.kinds.deposit = {}
+BridgeTask.kinds.deposit.noTargets = true
+
+function BridgeTask.kinds.deposit.available(body)
+    return BridgeTask.DEPOSIT_ENABLED == 1
+end
+
+function BridgeTask.kinds.deposit.missing(body)
+    return nil
+end
+
+function BridgeTask.kinds.deposit.update(body)
+    if BridgeTask.DEPOSIT_ENABLED ~= 1 then return BridgeTask.finish() end
+    if BridgeDeposit == nil or type(BridgeDeposit.update) ~= "function" then return BridgeTask.finish() end
+    return BridgeDeposit.update(body)
+end
+
+function BridgeTask.kinds.deposit.leave(body)
+    if BridgeDeposit ~= nil and type(BridgeDeposit.clear) == "function" then pcall(BridgeDeposit.clear) end
 end
 
 

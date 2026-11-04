@@ -34,7 +34,9 @@ end
 local function tick()
     local want = nil
     if atyOn() and Bridge ~= nil and Bridge.body ~= nil and BridgeGunfight ~= nil
-        and BridgeFight ~= nil and BridgeFight.state == "gun"
+        and BridgeFight ~= nil
+        and (BridgeFight.state == "gun"
+            or (BridgeFight.state == "step" and BridgeFight.stepOwner == "gun"))
         and BridgeGunfight.drawn == true and BridgeGunfight.target ~= nil
         and (BridgeGunfight.state == "aim" or BridgeGunfight.state == "backstep") then
         want = BridgeGunfight.target
@@ -1411,4 +1413,294 @@ do
     function BridgeEFZCompat.updateGrip() return gripUpdate() end
 
     Events.OnTick.Add(function() pcall(gripUpdate) end)
+
+    local SWM_VAR = "NotAloneBody"
+    local SWM_NEAR2 = 20 * 20
+    local swmWrapped = {}
+
+    local function swmIsBody(z)
+        if z == nil then return false end
+
+        local yes = false
+        pcall(function()
+            if type(z.getVariableBoolean) == "function" then
+                yes = z:getVariableBoolean(SWM_VAR) == true
+            end
+        end)
+        if yes then return true end
+
+        pcall(function()
+            if type(z.hasModData) == "function" and z:hasModData() then
+                local md = z:getModData()
+                yes = type(md) == "table" and md.notAloneBody == true
+            end
+        end)
+
+        return yes == true
+    end
+
+    local function swmCountersFired(player)
+        local stats = player:getStats()
+        if stats == nil then return false end
+        return stats:getNumVisibleZombies() > 0
+                or stats:getNumChasingZombies() > 0
+                or stats:getNumVeryCloseZombies() > 0
+    end
+
+    local function swmOnlyOursNear(player)
+        if player == nil or not swmCountersFired(player) then return false end
+
+        local cell = getCell()
+        if cell == nil then return false end
+        local list = cell:getZombieList()
+        if list == nil then return false end
+
+        local px, py, pz = player:getX(), player:getY(), player:getZ()
+        local seen = 0
+
+        for i = 0, list:size() - 1 do
+            local z = list:get(i)
+            if z ~= nil and not z:isDead() then
+                local dx, dy = z:getX() - px, z:getY() - py
+                if (dx * dx + dy * dy) <= SWM_NEAR2
+                        and math.abs(z:getZ() - pz) < 1 then
+                    seen = seen + 1
+                    if not swmIsBody(z) then return false end
+                    if z:getTarget() == player then return false end
+                end
+            end
+        end
+
+        return seen > 0
+    end
+
+    local function swmBystander(z, player)
+        if not swmIsBody(z) then return nil end
+        return true
+    end
+
+    local function swmInstallHook()
+        local tests = AutoAll.bystanderTests
+        if type(tests) ~= "table" then return false end
+        for i = 1, #tests do
+            if tests[i] == swmBystander then return true end
+        end
+        table.insert(tests, swmBystander)
+        return true
+    end
+
+    local function swmWrapSafety(host, name)
+        if type(host) ~= "table" then return false end
+        local original = host[name]
+        if type(original) ~= "function" then return false end
+        if type(host.opt) ~= "function" then return false end
+
+        swmWrapped[host] = swmWrapped[host] or {}
+        if swmWrapped[host][name] then return true end
+        swmWrapped[host][name] = true
+
+        host[name] = function(state)
+            local player = state and state.player
+            if player == nil then return original(state) end
+
+            local stopOn = false
+            pcall(function() stopOn = host.opt("stopZombie") == true end)
+            if not stopOn then return original(state) end
+
+            local ok, ours = pcall(swmOnlyOursNear, player)
+            if not (ok and ours) then return original(state) end
+
+            local opt = host.opt
+            host.opt = function(key)
+                if key == "stopZombie" then return false end
+                return opt(key)
+            end
+
+            local okRun, reason = pcall(original, state)
+            host.opt = opt
+            if not okRun then error(reason, 0) end
+            return reason
+        end
+
+        return true
+    end
+
+    local function swmInstallAutoAll()
+        if type(AutoAll) ~= "table" then return end
+
+        if type(AutoAll.onlyBystandersNear) == "function"
+                and type(AutoAll.bystanderTests) == "table" then
+            if swmInstallHook() then
+                print("[Bridge] Auto All: companion added to bystander filter")
+            end
+            return
+        end
+
+        local wrapped = false
+        if type(AutoAll.checkSafety) == "function"
+                and type(AutoAll.opt) == "function" then
+            wrapped = swmWrapSafety(AutoAll, "checkSafety") or wrapped
+        end
+        if type(MuscleManager) == "table" then
+            wrapped = swmWrapSafety(MuscleManager, "checkSafety") or wrapped
+        end
+        if wrapped then
+            print("[Bridge] Auto All BETA: companion-safe zombie stop installed")
+        end
+    end
+
+    Events.OnGameStart.Add(swmInstallAutoAll)
+end
+
+do
+BridgeCompatNPCVision = BridgeCompatNPCVision or {}
+
+local RETRY_EVERY = 60
+local retryTick = 0
+local installed = false
+local originalEnemy = nil
+local wrapper = nil
+local logged = false
+
+local observeInstalled = false
+local originalObserve = nil
+local observeWrapper = nil
+local observeLogged = false
+
+local function nvn()
+    local N = rawget(_G, "NPCVisionNative")
+    return type(N) == "table" and N or nil
+end
+
+local function isCompanion(z)
+    if z == nil then return false end
+    if Bridge ~= nil and Bridge.body == z then return true end
+    if BridgeCompatKnox ~= nil and type(BridgeCompatKnox.isOurBody) == "function" then
+        return BridgeCompatKnox.isOurBody(z) == true
+    end
+    return false
+end
+
+function BridgeCompatNPCVision.install()
+    if installed then return true end
+    local N = nvn()
+    local B = N ~= nil and N.Bandits110 or nil
+    if type(B) ~= "table" or type(B.enemy) ~= "function" then return false end
+
+    if B.enemy ~= wrapper then
+        originalEnemy = B.enemy
+        wrapper = function(actor, target)
+            if isCompanion(target) then return false end
+            return originalEnemy(actor, target)
+        end
+        B.enemy = wrapper
+    end
+
+    installed = true
+    if not logged then
+        logged = true
+        print("[BridgeCompat] NPC Vision target shim installed")
+    end
+    return true
+end
+
+local function companionOnlyNear(pos)
+    if Bridge == nil or Bridge.body == nil or pos == nil then return false end
+    local cell = getCell()
+    if cell == nil then return false end
+    local list = cell:getZombieList()
+    if list == nil then return false end
+    local n = list:size()
+    if n > 512 then return false end
+    local ours = 0
+    for i = 0, n - 1 do
+        local z = list:get(i)
+        if z ~= nil and not z:isDead() and math.floor(z:getZ()) == math.floor(pos.z) then
+            local dx, dy = z:getX() - pos.x, z:getY() - pos.y
+            if dx * dx + dy * dy <= 144 then
+                if not isCompanion(z) then return false end
+                ours = ours + 1
+            end
+        end
+    end
+    return ours > 0
+end
+
+function BridgeCompatNPCVision.installObserve()
+    if observeInstalled then return true end
+    local N = nvn()
+    local R = N ~= nil and N.Runtime or nil
+    if type(R) ~= "table" or type(R.observe) ~= "function" then
+        if not observeLogged and BridgeLog ~= nil and BridgeLog.on() then
+            observeLogged = true
+            print("[BridgeCompat] NPC Vision Runtime.observe not found, guard sensor shim skipped")
+        end
+        return false
+    end
+    if R.observe ~= observeWrapper then
+        originalObserve = R.observe
+        observeWrapper = function(e, r, pos)
+            if companionOnlyNear(pos) then
+                if e ~= nil and R.clock ~= nil then e.sensorAt = R.clock + 0.75 end
+                return nil
+            end
+            return originalObserve(e, r, pos)
+        end
+        R.observe = observeWrapper
+    end
+    observeInstalled = true
+    return true
+end
+
+function BridgeCompatNPCVision.uninstall()
+    local N = nvn()
+    local B = N ~= nil and N.Bandits110 or nil
+    if installed and type(B) == "table" and wrapper ~= nil and B.enemy == wrapper then
+        B.enemy = originalEnemy
+    end
+    local R = N ~= nil and N.Runtime or nil
+    if observeInstalled and type(R) == "table" and observeWrapper ~= nil and R.observe == observeWrapper then
+        R.observe = originalObserve
+    end
+    installed, originalEnemy, wrapper, logged = false, nil, nil, false
+    observeInstalled, originalObserve, observeWrapper, observeLogged = false, nil, nil, false
+end
+
+function BridgeCompatNPCVision.status()
+    local N = nvn()
+    return string.format("installed=%s observe=%s module=%s",
+        tostring(installed), tostring(observeInstalled), tostring(N ~= nil and N.Bandits110 ~= nil))
+end
+
+function BridgeCompatNPCVision.selftest()
+    local companion = {
+        getVariableBoolean = function(_, name) return name == "NotAloneBody" end,
+        hasModData = function() return false end,
+    }
+    local zombie = {
+        getVariableBoolean = function() return false end,
+        hasModData = function() return false end,
+    }
+    local savedBridge = Bridge
+    Bridge = { mp = false, body = companion, bodyIndex = {} }
+    local okCompanion = (isCompanion(companion) == true)
+    local okZombie = (isCompanion(zombie) == false)
+    Bridge = savedBridge
+    if okCompanion and okZombie then return "NPCVISION SHIM SELFTEST PASS" end
+    return string.format("NPCVISION SHIM SELFTEST FAIL companion=%s zombie=%s",
+        tostring(okCompanion), tostring(okZombie))
+end
+
+Events.OnGameStart.Add(function()
+    pcall(BridgeCompatNPCVision.install)
+    pcall(BridgeCompatNPCVision.installObserve)
+end)
+
+Events.OnTick.Add(function()
+    if installed and observeInstalled then return end
+    retryTick = retryTick + 1
+    if retryTick % RETRY_EVERY ~= 0 then return end
+    pcall(BridgeCompatNPCVision.install)
+    pcall(BridgeCompatNPCVision.installObserve)
+end)
 end

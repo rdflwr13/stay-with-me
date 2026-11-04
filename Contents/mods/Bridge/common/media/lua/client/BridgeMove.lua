@@ -9,6 +9,8 @@ local FOLLOW_STOP = 0.9
 local FOLLOW_GAP = 1.2
 local RUN_DIST = 3.5
 local RUN_STOP = 2.0
+local FOLLOW_SPRINT_HOLD = 30
+local FOLLOW_SPRINT_RATE = 0.08
 
 BridgeMove.moving = false
 BridgeMove.pathing = false
@@ -27,13 +29,15 @@ BridgeMove.redPrev = nil
 
 
 
-local ASIDE_AHEAD = 0.7
-local ASIDE_PUSH = 20
+local ASIDE_AHEAD = 1.0
+local ASIDE_PUSH = 10
 local PUSH_GRACE = 12
 local ASIDE_PATH = 0.55
 local ASIDE_STEP = 0.5
 local ASIDE_MAX = 45
-local ASIDE_QUIET = 90
+local ASIDE_QUIET = 45
+
+local BACK = { step = 1.2, leash = 2.5, max = 120, quiet = 12, stall = 20, gain = 0.05, bump = "FollowWalkBwd" }
 
 
 local RUN_AHEAD = 2.5
@@ -74,10 +78,13 @@ BridgeMove.redSpeed = 0
 BridgeMove.stepPerMul = 0.07
 BridgeMove.walkFrames = 0
 BridgeMove.follow = {kind = "none", s = 0, want = 0, gap = 0}
+BridgeMove.sprintSince = nil
+BridgeMove.followPriorityHold = false
 BridgeMove.noCollide = false
 BridgeMove.collideOff = false
 BridgeMove.bumpMove = "face"
 BridgeMove.followWs = nil
+BridgeMove.backActive = false
 BridgeMove.turnLimit = nil
 BridgeMove.doorGhost = true
 
@@ -109,6 +116,97 @@ local function log(text)
     print("[BridgeMove] " .. text)
 end
 local function warn(text) print("[BridgeMove] " .. tostring(text)) end
+
+
+function BridgeMove.followDebug(tag, body, why, pend, force)
+    if not force and (BridgeGunfight == nil or BridgeGunfight.magCareStage == nil) then return end
+    if body == nil then return end
+    if BridgeLog == nil or not BridgeLog.on() then return end
+    local now = Bridge.time or 0
+    local key = tostring(tag) .. "|" .. tostring(why) .. "|" .. tostring(BridgeMove.moving)
+        .. "|" .. tostring(BridgeMove.steering) .. "|" .. tostring(BridgeMove.pathing)
+    if not force and BridgeMove.followDbgKey == key and now - (BridgeMove.followDbgAt or -999) < 10 then return end
+    BridgeMove.followDbgKey, BridgeMove.followDbgAt = key, now
+    local bump, asn, bmoving = "?", "?", "?"
+    pcall(function()
+        bump = tostring(body:getBumpType())
+        asn = tostring(body:getActionStateName())
+        bmoving = tostring(body:getVariableBoolean("bMoving"))
+    end)
+    local red = nil
+    pcall(function() red = BridgeData.owner() end)
+    local d = -1
+    if red ~= nil then
+        pcall(function()
+            local dx, dy = body:getX() - red:getX(), body:getY() - red:getY()
+            d = math.sqrt(dx * dx + dy * dy)
+        end)
+    end
+    local care, flee = "nil", "false"
+    if BridgeGunfight ~= nil then
+        care = tostring(BridgeGunfight.magCareStage)
+        flee = tostring(BridgeGunfight.reloadFlee)
+    end
+    local onPath = false
+    if type(BridgeMove.onPath) == "function" then onPath = BridgeMove.onPath() == true end
+    log(string.format("FOLLOWDBG %s why=%s t=%d bump=%s asn=%s bMoving=%s mv=%s steer=%s path=%s onPath=%s pend=%s d=%.2f redMoving=%s care=%s flee=%s",
+        tostring(tag), tostring(why), now, bump, asn, bmoving, tostring(BridgeMove.moving),
+        tostring(BridgeMove.steering), tostring(BridgeMove.pathing), tostring(onPath),
+        tostring(pend), d, tostring(BridgeMove.redMoving), care, flee))
+end
+
+
+function BridgeMove.followPriority(body, red)
+    if not Bridge.follow or Bridge.mode ~= "follow" then
+        local wasHold = BridgeMove.followPriorityHold == true
+        BridgeMove.sprintSince = nil
+        BridgeMove.followPriorityHold = false
+        if wasHold and BridgeGunfight ~= nil and type(BridgeGunfight.endFollowHold) == "function" then
+            pcall(BridgeGunfight.endFollowHold)
+        end
+        return false
+    end
+    if body == nil or red == nil then return false end
+    local sprinting = false
+    pcall(function() sprinting = red:isSprinting() == true end)
+    if not sprinting and (BridgeMove.redSpeed or 0) >= FOLLOW_SPRINT_RATE then sprinting = true end
+    if sprinting then
+        if BridgeMove.sprintSince == nil then
+            BridgeMove.sprintSince = Bridge.time or 0
+            if Bridge.verbose then log("follow priority: sprint hold start") end
+        end
+        if not BridgeMove.followPriorityHold
+                and (Bridge.time or 0) - BridgeMove.sprintSince >= FOLLOW_SPRINT_HOLD then
+            BridgeMove.followPriorityHold = true
+            if Bridge.verbose then log("follow priority: engaged after sprint hold") end
+        end
+    else
+        BridgeMove.sprintSince = nil
+    end
+    if not BridgeMove.followPriorityHold then return false end
+    if BridgeFight ~= nil and BridgeFight.state == "swing" then return false end
+    local d = 0
+    pcall(function()
+        local dx, dy = body:getX() - red:getX(), body:getY() - red:getY()
+        d = math.sqrt(dx * dx + dy * dy)
+    end)
+    if BridgeGunfight ~= nil then
+        local away = BridgeMove.redMoving == true and (BridgeMove.redSpeed or 0) >= FOLLOW_SPRINT_RATE
+        if not away and (BridgeGunfight.fireUntil ~= nil or BridgeGunfight.pendingShot ~= nil) then
+            return false
+        end
+    end
+    if not sprinting and d <= FOLLOW_STOP + 0.5 then
+        BridgeMove.followPriorityHold = false
+        BridgeMove.sprintSince = nil
+        if BridgeGunfight ~= nil and type(BridgeGunfight.endFollowHold) == "function" then
+            pcall(BridgeGunfight.endFollowHold)
+        end
+        if Bridge.verbose then log("follow priority: released") end
+        return false
+    end
+    return true
+end
 
 
 
@@ -272,6 +370,7 @@ end
 
 function BridgeMove.followBump(body, walk)
     local want = walk == "Run" and "FollowRun" or "FollowWalk"
+    BridgeMove.followDebug("followBump", body, want)
     pcall(function()
         body:setVariable("bPathfind", false)
         body:setMoving(false)
@@ -288,6 +387,7 @@ end
 function BridgeMove.endFollowBump(body, to)
     pcall(function()
         if isFollowBump(tostring(body:getBumpType())) then
+            BridgeMove.followDebug("endFollowBump", body, tostring(to))
             if to == "" then
 
 
@@ -801,7 +901,9 @@ local function drive(body, red, F, pf, bx, by, px, py, want, kind, running, d, e
         local pivotDeg = nil
         if kind == "seat" or kind == "aside" then pivotDeg = BridgeMove.SEAT_PIVOT_DEG
         elseif kind == "mourn" then pivotDeg = BridgeMove.MOURN_PIVOT_DEG end
-        if pivotDeg ~= nil and BridgeMove.pivotToward(body, px, py, pivotDeg) ~= nil then
+        if BridgeMove.backwardsStep then
+
+        elseif pivotDeg ~= nil and BridgeMove.pivotToward(body, px, py, pivotDeg) ~= nil then
 
         else
 
@@ -2246,7 +2348,7 @@ end
 local STRAIGHT_TURN_DEG = 25
 local STRAIGHT_PIVOT_DEG = 60
 local STRAIGHT_TURN_MAX = 8
-function BridgeMove.goStraight(body, x, y, z, run, clear)
+function BridgeMove.goStraight(body, x, y, z, run, clear, backwards)
     local red = BridgeData.owner()
     if red == nil then return false end
     local F = BridgeMove.follow
@@ -2284,15 +2386,17 @@ function BridgeMove.goStraight(body, x, y, z, run, clear)
     local kind = run and "straight-run" or "straight"
     local starting = (F.frame ~= Bridge.tick - 1 and F.pivotTick ~= Bridge.tick - 1) or F.kind ~= kind
     if starting then F.pivotFrames = 0 end
-    local off = BridgeMove.facingOff(body, x, y)
-    if off ~= nil and off > STRAIGHT_TURN_DEG and (F.pivotFrames or 0) < STRAIGHT_TURN_MAX then
-        F.pivotFrames = (F.pivotFrames or 0) + 1
+    if backwards ~= true then
+        local off = BridgeMove.facingOff(body, x, y)
+        if off ~= nil and off > STRAIGHT_TURN_DEG and (F.pivotFrames or 0) < STRAIGHT_TURN_MAX then
+            F.pivotFrames = (F.pivotFrames or 0) + 1
 
-        pcall(function() if isFollowBump(tostring(body:getBumpType())) then BridgeMove.endFollowBump(body, "Stand") end end)
-        local left = BridgeMove.pivotToward(body, x, y, STRAIGHT_PIVOT_DEG)
-        F.pivotTick, F.kind = Bridge.tick, kind
+            pcall(function() if isFollowBump(tostring(body:getBumpType())) then BridgeMove.endFollowBump(body, "Stand") end end)
+            local left = BridgeMove.pivotToward(body, x, y, STRAIGHT_PIVOT_DEG)
+            F.pivotTick, F.kind = Bridge.tick, kind
 
-        if left ~= nil then return true end
+            if left ~= nil then return true end
+        end
     end
     local M = BridgeMove.speedModel
     local want = run and (M.Run.a + M.Run.b * 0.8) or (M.Walk.a + M.Walk.b * 0.8)
@@ -2300,7 +2404,10 @@ function BridgeMove.goStraight(body, x, y, z, run, clear)
     want = want * clamp(0.4 + 0.6 * toGoal, 0.5, 1.0)
     BridgeMove.walkType = run and "Run" or "Walk"
     freshDrive(F)
-    if drive(body, red, F, pf, bx, by, x, y, want, run and "straight-run" or "straight", run == true, d, toGoal) then
+    BridgeMove.backwardsStep = backwards == true or nil
+    local moved = drive(body, red, F, pf, bx, by, x, y, want, run and "straight-run" or "straight", run == true, d, toGoal)
+    BridgeMove.backwardsStep = nil
+    if moved then
         return true
     end
     BridgeMove.steering = false
@@ -2458,6 +2565,18 @@ end
 
 
 
+function BridgeMove.pushDir(red)
+    local vx, vy = BridgeMove.redVx or 0, BridgeMove.redVy or 0
+    if vx * vx + vy * vy > 0.000225 then return vx, vy end
+    local fx, fy = 0, 0
+    pcall(function()
+        local f = red:getForwardDirection()
+        fx, fy = f:getX(), f:getY()
+    end)
+    return fx, fy
+end
+
+
 function BridgeMove.onHisPath(bx, by, rx, ry, vx, vy)
     local vl = math.sqrt(vx * vx + vy * vy)
     if vl <= 0.01 then return nil end
@@ -2490,28 +2609,38 @@ end
 function BridgeMove.pushCheck(body, red)
     local F = BridgeMove.follow
     if F == nil or red == nil then return end
+    if F.back ~= nil then
+        F.pushSinceIdle = nil
+        return
+    end
     local pushing, fx, fy = false, 0, 0
     pcall(function()
         pushing = red:isPlayerMoving() == true
-        if pushing then
-            local fwd = red:getForwardDirection()
-            fx, fy = fwd:getX(), fwd:getY()
-        end
+        if not pushing then pushing = red:pressedMovement(true) == true end
     end)
-    local ahead = nil
+    if pushing then fx, fy = BridgeMove.pushDir(red) end
+    local ahead, d = nil, 0
     if pushing then
-        pcall(function() ahead = BridgeMove.onHisPath(body:getX(), body:getY(), red:getX(), red:getY(), fx, fy) end)
+        pcall(function()
+            ahead = BridgeMove.onHisPath(body:getX(), body:getY(), red:getX(), red:getY(), fx, fy)
+            d = dist2d(body:getX(), body:getY(), red:getX(), red:getY())
+        end)
     end
+    local contact = pushing and ahead == nil and Bridge.follow and Bridge.pose == nil and d > 0 and d < 0.75
 
-    if ahead == nil then
+    if ahead == nil and not contact then
         if F.pushSeenIdle == nil or Bridge.time - F.pushSeenIdle > PUSH_GRACE then F.pushSinceIdle = nil end
         return
     end
     F.pushSeenIdle = Bridge.time
     F.pushSinceIdle = F.pushSinceIdle or Bridge.time
     if Bridge.time - F.pushSinceIdle >= ASIDE_PUSH then
-        BridgeMove.passThrough(body, true, sformat("player keeps pushing while she %s (%.2f ahead)",
-            Bridge.pose ~= nil and "sits" or "waits", ahead))
+        if contact then
+            BridgeMove.passThrough(body, true, sformat("player pressed against her (%.2f)", d))
+        else
+            BridgeMove.passThrough(body, true, sformat("player keeps pushing while she %s (%.2f ahead)",
+                Bridge.pose ~= nil and "sits" or (Bridge.follow and "follows" or "waits"), ahead))
+        end
     end
 end
 
@@ -2519,14 +2648,19 @@ end
 function BridgeMove.passTick(body, red)
     local F = BridgeMove.follow
     if F == nil or not F.passing then return end
-    local close, pushing = false, false
+    local d2, pushing = math.huge, false
     pcall(function()
         local dx, dy = body:getX() - red:getX(), body:getY() - red:getY()
-        close = dx * dx + dy * dy < 1.0
+        d2 = dx * dx + dy * dy
         pushing = red:isPlayerMoving() == true
     end)
-    if close and pushing then F.passUntil = Bridge.time + PASS_KEEP return end
-    if Bridge.time >= (F.passUntil or 0) then BridgeMove.passThrough(body, false, close and "player stopped" or "player passed") end
+    if d2 < 0.64 then
+        F.passUntil = Bridge.time + PASS_KEEP
+        return
+    end
+    if Bridge.time >= (F.passUntil or 0) then
+        BridgeMove.passThrough(body, false, d2 < 1.0 and "player stopped" or "player passed")
+    end
 end
 
 
@@ -2582,6 +2716,116 @@ local function stepAside(body, F, A, d)
     BridgeMove.pathResult = "follow-aside"
     trackStep(body)
     BridgeMove.traceFrame(body, d, false, false)
+    return true
+end
+
+function BridgeMove.backClear(body, x, y, z)
+    if not BridgeMove.lineClear(body, x, y, z) then return false end
+    if BridgeFight ~= nil and BridgeFight.clearAt ~= nil then
+        return BridgeFight.clearAt(body, x, y, z, nil) == true
+    end
+    return true
+end
+
+function BridgeMove.backGoal(body, red, vx, vy, d)
+    local vl = math.sqrt(vx * vx + vy * vy)
+    if vl <= 0.01 then return nil end
+    local ux, uy = vx / vl, vy / vl
+    local bx, by, bz = body:getX(), body:getY(), body:getZ()
+    local rx, ry = red:getX(), red:getY()
+    local scales = { 1.0, 0.6, 0.35 }
+    for i = 1, #scales do
+        local len = BACK.step * scales[i]
+        local x, y = bx + ux * len, by + uy * len
+        local rd = dist2d(x, y, rx, ry)
+        if rd >= d + 0.2 * len and rd <= BACK.leash and BridgeMove.backClear(body, x, y, bz) then
+            return x, y
+        end
+    end
+    return nil
+end
+
+function BridgeMove.backEnd(body, F, why, d)
+    local bump = ""
+    pcall(function() bump = tostring(body:getBumpType()) end)
+    if bump == BACK.bump then pcall(function() body:setBumpType("") end) end
+    local fightOwns = BridgeFight ~= nil and BridgeFight.state == "step" and BridgeFight.stepBump ~= nil
+    if not fightOwns then pcall(function() body:setAnimatingBackwards(false) end) end
+    BridgeMove.backActive = false
+    F.back = nil
+    F.backQuiet = Bridge.time + BACK.quiet
+    BridgeMove.moving = false
+    if Bridge.verbose then
+        log(sformat("follow back end: %s, d %.2f, %d flips", tostring(why), d or 0, F.backFlips or 0))
+    end
+end
+
+function BridgeMove.backStart(body, F, red, vx, vy, d)
+    if F.asideTo ~= nil then return false end
+    local gx, gy = BridgeMove.backGoal(body, red, vx, vy, d)
+    if gx == nil then return false end
+    F.back = { x = gx, y = gy, z = body:getZ(), tick = Bridge.time, lastD = d, lastCheck = Bridge.time,
+               axisX = vx, axisY = vy, retargetAt = Bridge.time, count = 0, stall = 0 }
+    F.backFlips = 0
+    F.pushSince, F.pushSeen = nil, nil
+    if Bridge.verbose then
+        log(sformat("follow back: d %.2f, goal %.2f %.2f, player %.2f %.2f", d, gx, gy, red:getX(), red:getY()))
+    end
+    return true
+end
+
+function BridgeMove.backTick(body, F, red)
+    local b = F.back
+    local bx, by = body:getX(), body:getY()
+    local d = dist2d(bx, by, red:getX(), red:getY())
+    if Bridge.time - b.lastCheck >= 4 then
+        b.lastCheck = Bridge.time
+        if d < b.lastD + BACK.gain then b.stall = (b.stall or 0) + 4 else b.stall = 0 end
+        b.lastD = d
+    end
+    b.count = b.count + 1
+    if d >= BACK.leash then
+        BridgeMove.backEnd(body, F, "leash", d)
+        return false
+    end
+    if (b.stall or 0) >= BACK.stall then
+        BridgeMove.backEnd(body, F, "stall", d)
+        return false
+    end
+    if Bridge.time - b.tick >= BACK.max then
+        BridgeMove.backEnd(body, F, "timeout", d)
+        return false
+    end
+    local ux, uy = BridgeMove.pushDir(red)
+    local ul = math.sqrt(ux * ux + uy * uy)
+    if ul > 0.01 then
+        ux, uy = ux / ul, uy / ul
+        if (b.axisX or 0) * ux + (b.axisY or 0) * uy < 0 then F.backFlips = (F.backFlips or 0) + 1 end
+        b.axisX, b.axisY = ux, uy
+    end
+    local gx, gy = BridgeMove.backGoal(body, red, ux, uy, d)
+    if gx == nil then
+        BridgeMove.backEnd(body, F, "blocked", d)
+        return false
+    end
+    local moved = BridgeMove.goStraight(body, gx, gy, body:getZ(), false, BridgeMove.backClear, true)
+    if not moved then
+        BridgeMove.backEnd(body, F, "no move", d)
+        return false
+    end
+    pcall(function() body:setBumpType(BACK.bump) end)
+    pcall(function() body:setAnimatingBackwards(true) end)
+    pcall(function() body:faceLocationF(red:getX(), red:getY()) end)
+    BridgeMove.backActive = true
+    BridgeMove.walkType = "Walk"
+    BridgeMove.moving = true
+    F.kind, F.s, F.want = "back", 1.0, 0
+    BridgeMove.pathResult = "follow-back"
+    trackStep(body)
+    BridgeMove.traceFrame(body, d, false, false)
+    if (b.count % 15) == 0 and Bridge.verbose then
+        log(sformat("follow back: d %.2f, goal %.2f %.2f, player %.2f %.2f", d, gx, gy, red:getX(), red:getY()))
+    end
     return true
 end
 
@@ -2802,15 +3046,14 @@ local function followTrailStep(body)
 
 
 
-    local pushing, fx, fy = false, 0, 0
-    pcall(function()
-        pushing = red:isPlayerMoving() == true
-        if pushing then
-            local fwd = red:getForwardDirection()
-            fx, fy = fwd:getX(), fwd:getY()
-        end
-    end)
-    if not pushing and redGoes then fx, fy, pushing = BridgeMove.redVx or 0, BridgeMove.redVy or 0, true end
+    local pushing = false
+    local fx, fy = 0, 0
+    pcall(function() pushing = red:isPlayerMoving() == true end)
+    if pushing then
+        fx, fy = BridgeMove.pushDir(red)
+    elseif redGoes then
+        fx, fy, pushing = BridgeMove.redVx or 0, BridgeMove.redVy or 0, true
+    end
 
 
 
@@ -2823,6 +3066,30 @@ local function followTrailStep(body)
     end
 
 
+
+    local backCalm = (BridgeFight == nil or BridgeFight.state == nil or BridgeFight.state == "idle")
+        and (BridgeGunfight == nil or BridgeGunfight.state == nil or BridgeGunfight.state == "idle")
+    local backOk = Bridge.backEnabled ~= false and backCalm and F.passing ~= true
+        and Bridge.time >= (F.backQuiet or 0)
+        and (F.pathUntil == nil or Bridge.time >= F.pathUntil)
+        and BridgeMove.cross == nil and F.cross == nil and Bridge.pose == nil
+    if F.back ~= nil then
+        if not backOk or not (pushing and coming) then
+            BridgeMove.backEnd(body, F, backOk and "player stopped" or "busy", d)
+        elseif BridgeMove.backTick(body, F, red) then
+            return true
+        end
+    elseif backOk and pushing and coming and kind == "player" and d <= ASIDE_AHEAD + ASIDE_PATH then
+        local line = nil
+        if running then
+            line = BridgeMove.onRunLine(bx, by, red:getX(), red:getY(), fx, fy)
+        else
+            line = BridgeMove.onHisPath(bx, by, red:getX(), red:getY(), fx, fy)
+        end
+        if line ~= nil and BridgeMove.backStart(body, F, red, fx, fy, d) then
+            if BridgeMove.backTick(body, F, red) then return true end
+        end
+    end
 
     if running and kind == "player" and F.asideTo == nil and Bridge.time > (F.asideQuiet or 0) then
         local ra, rs, rux, ruy = BridgeMove.onRunLine(bx, by, red:getX(), red:getY(), fx, fy)
@@ -3208,6 +3475,7 @@ end
 
 local function kindGroup(kind)
     kind = tostring(kind)
+    if kind == "back" then return "backing up" end
     if kind == "player" or kind == "rope" or kind == "player-narrow" or kind == "rope-narrow" then return "to player" end
     if kind == "trail" or kind == "trail-narrow" then return "trail" end
     if kind:sub(1, 4) == "path" or kind == "stuck-path" then return "engine " .. kind end
@@ -3418,12 +3686,14 @@ end
 
 
 
+local function stepNeedsClimbImpl(a, b)
+    return a:getWindowTo(b) ~= nil or a:getWindowFrameTo(b) ~= nil or a:isHoppableTo(b)
+end
+
 local function stepNeedsClimb(a, b)
-    local yes = false
-    pcall(function()
-        yes = a:getWindowTo(b) ~= nil or a:getWindowFrameTo(b) ~= nil or a:isHoppableTo(b)
-    end)
-    return yes
+    local ok, yes = pcall(stepNeedsClimbImpl, a, b)
+    if not ok then return false end
+    return yes and true or false
 end
 
 
@@ -3435,6 +3705,11 @@ end
 
 
 
+local function engineBlockedImpl(a, b)
+    if not (a:HasStairs() or b:HasStairs()) then return false end
+    return a:testCollideAdjacentAdvanced(b:getX() - a:getX(), b:getY() - a:getY(), 0, false) == true
+end
+
 local function engineBlocked(a, b)
     if BridgeMove.engineTest == nil then
         local has = false
@@ -3443,16 +3718,8 @@ local function engineBlocked(a, b)
         log("engine collide test " .. (has and "available" or "missing: line check as before"))
     end
     if not BridgeMove.engineTest then return false end
-
-
-
-
-    local blocked = false
-    pcall(function()
-        if not (a:HasStairs() or b:HasStairs()) then return end
-        blocked = a:testCollideAdjacentAdvanced(b:getX() - a:getX(), b:getY() - a:getY(), 0, false) == true
-    end)
-    return blocked
+    local ok, blocked = pcall(engineBlockedImpl, a, b)
+    return ok and blocked == true
 end
 BridgeMove.engineBlocked = engineBlocked
 
@@ -3475,48 +3742,47 @@ end
 
 
 
-function BridgeMove.lineClear(body, gx, gy, gz)
-    local ok = false
-    pcall(function()
-        if math.abs(body:getZ() - gz) >= 0.5 then return end
-        local cell = getCell()
-        local bx, by = body:getX(), body:getY()
-        local z = math.floor(gz)
-        local dist = math.sqrt((gx - bx) ^ 2 + (gy - by) ^ 2)
-        local steps = math.max(1, math.ceil(dist / 0.4))
-        local prev = cell:getGridSquare(math.floor(bx), math.floor(by), z)
-        if prev == nil then return end
+local function lineClearImpl(body, gx, gy, gz)
+    if math.abs(body:getZ() - gz) >= 0.5 then return false end
+    local cell = getCell()
+    local bx, by = body:getX(), body:getY()
+    local z = math.floor(gz)
+    local dx, dy = gx - bx, gy - by
+    local dist = math.sqrt(dx ^ 2 + dy ^ 2)
+    local steps = math.max(1, math.ceil(dist / 0.4))
+    local prev = cell:getGridSquare(math.floor(bx), math.floor(by), z)
+    if prev == nil then return false end
+    local prevX, prevY = prev:getX(), prev:getY()
 
-
-
-
-        local cars = true
-        for i = 1, steps do
-            local t = i / steps
-            local sx, sy = math.floor(bx + (gx - bx) * t), math.floor(by + (gy - by) * t)
-            if sx ~= prev:getX() or sy ~= prev:getY() then
-                local sq = cell:getGridSquare(sx, sy, z)
-                if sq == nil then return end
-                if sx ~= prev:getX() and sy ~= prev:getY() then
-                    local a = cell:getGridSquare(sx, prev:getY(), z)
-                    local b = cell:getGridSquare(prev:getX(), sy, z)
-                    if a == nil or b == nil or prev:isBlockedTo(a) or a:isBlockedTo(sq) or prev:isBlockedTo(b) or b:isBlockedTo(sq) then return end
-                    if stepNeedsClimb(prev, a) or stepNeedsClimb(a, sq) or stepNeedsClimb(prev, b) or stepNeedsClimb(b, sq) then return end
-                    if not a:isFree(false) or not b:isFree(false) then return end
-                    if engineBlocked(prev, a) or engineBlocked(a, sq) or engineBlocked(prev, b) or engineBlocked(b, sq) then return end
-                    if cars and (underCar(a) or underCar(b)) then return end
-                elseif prev:isBlockedTo(sq) or stepNeedsClimb(prev, sq) or engineBlocked(prev, sq) then
-                    return
-                end
-                if i < steps and not sq:isFree(false) then return end
-
-                if i < steps and cars and underCar(sq) then return end
-                prev = sq
+    local cars = true
+    for i = 1, steps do
+        local t = i / steps
+        local sx, sy = math.floor(bx + dx * t), math.floor(by + dy * t)
+        if sx ~= prevX or sy ~= prevY then
+            local sq = cell:getGridSquare(sx, sy, z)
+            if sq == nil then return false end
+            if sx ~= prevX and sy ~= prevY then
+                local a = cell:getGridSquare(sx, prevY, z)
+                local b = cell:getGridSquare(prevX, sy, z)
+                if a == nil or b == nil or prev:isBlockedTo(a) or a:isBlockedTo(sq) or prev:isBlockedTo(b) or b:isBlockedTo(sq) then return false end
+                if stepNeedsClimb(prev, a) or stepNeedsClimb(a, sq) or stepNeedsClimb(prev, b) or stepNeedsClimb(b, sq) then return false end
+                if not a:isFree(false) or not b:isFree(false) then return false end
+                if engineBlocked(prev, a) or engineBlocked(a, sq) or engineBlocked(prev, b) or engineBlocked(b, sq) then return false end
+                if cars and (underCar(a) or underCar(b)) then return false end
+            elseif prev:isBlockedTo(sq) or stepNeedsClimb(prev, sq) or engineBlocked(prev, sq) then
+                return false
             end
+            if i < steps and not sq:isFree(false) then return false end
+            if i < steps and cars and underCar(sq) then return false end
+            prev, prevX, prevY = sq, sx, sy
         end
-        ok = true
-    end)
-    return ok
+    end
+    return true
+end
+
+function BridgeMove.lineClear(body, gx, gy, gz)
+    local ok, clear = pcall(lineClearImpl, body, gx, gy, gz)
+    return ok and clear == true
 end
 
 function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
@@ -3596,9 +3862,13 @@ function BridgeMove.traceFrame(body, d, needPath, stalled)
 end
 
 function BridgeMove.currentGoal(body)
+    BridgeMove.followDebug("goal-enter", body, "enter")
     if Bridge.follow then
         local red = BridgeData.owner()
-        if red == nil then return nil end
+        if red == nil then
+            BridgeMove.followDebug("goal-exit", body, "red-nil")
+            return nil
+        end
 
 
 
@@ -3607,6 +3877,7 @@ function BridgeMove.currentGoal(body)
         pcall(function() pend = BridgeInventory ~= nil and BridgeInventory.transferPending(body) end)
         if pend then
             BridgeMove.moving = false
+            BridgeMove.followDebug("goal-exit", body, "pend", true)
             return nil
         end
         local d = dist2d(body:getX(), body:getY(), red:getX(), red:getY())
@@ -3622,8 +3893,27 @@ function BridgeMove.currentGoal(body)
                 Bridge.holdPos = nil
             end
         end
-        if not BridgeMove.moving then return nil end
+        if not BridgeMove.moving then
+            BridgeMove.followDebug("goal-exit", body, "stopped")
+            return nil
+        end
+        if BridgeGunfight ~= nil and type(BridgeGunfight.holdBand) == "function"
+                and BridgeMove.followPriorityHold ~= true then
+            local hold = false
+            pcall(function() hold = BridgeGunfight.holdBand(body) == true end)
+            if hold then
+                BridgeMove.moving = false
+                BridgeMove.steering = false
+                local t = BridgeGunfight.target
+                if t ~= nil then
+                    pcall(function() body:faceLocationF(t:getX(), t:getY()) end)
+                end
+                BridgeMove.followDebug("goal-exit", body, "hold-band")
+                return nil
+            end
+        end
         local gx, gy, gz = nearRed(red, body)
+        BridgeMove.followDebug("goal-exit", body, "goal")
         return gx, gy, gz, d
     end
     if Bridge.target then
@@ -6013,6 +6303,11 @@ local function pickSpeed(d)
 end
 
 function BridgeMove.update(body)
+    BridgeMove.followDebug("update-enter", body, "entry")
+    if not Bridge.follow and BridgeMove.follow ~= nil
+            and (BridgeMove.follow.back ~= nil or BridgeMove.backActive) then
+        BridgeMove.backEnd(body, BridgeMove.follow, "follow off", nil)
+    end
     if Bridge.verbose and Bridge.tick - (BridgeMove.traceArm or -9999) >= 60 then
         BridgeMove.traceArm = Bridge.tick
         BridgeMove.traceUntil = Bridge.tick + 60 * 60 * 5
@@ -6069,13 +6364,17 @@ function BridgeMove.update(body)
     if Bridge.time < (BridgeMove.unPathfindUntil or 0) and BridgeMove.cross == nil then
         pcall(function() body:setVariable("bPathfind", false) end)
     end
-    if BridgeMove.climbStep(body) then return end
+    if BridgeMove.climbStep(body) then
+        BridgeMove.followDebug("update-exit", body, "climb")
+        return
+    end
     local okCross, crossing = pcall(function() return BridgeMove.crossStep(body) end)
     if not okCross then
         BridgeMove.crossInfo = "error: " .. tostring(crossing)
         BridgeMove.cross = nil
         pcall(function() body:setVariable("bPathfind", false) end)
     elseif crossing then
+        BridgeMove.followDebug("update-exit", body, "cross")
         trackStep(body)
         return
     end
@@ -6085,11 +6384,13 @@ function BridgeMove.update(body)
         BridgeMove.doorLast = "error: " .. tostring(atDoor)
         BridgeMove.doorAct = nil
     elseif atDoor then
+        BridgeMove.followDebug("update-exit", body, "door")
         trackStep(body)
         return
     end
 
     if BridgeAim ~= nil and BridgeAim.step(body, BridgeData.owner()) then
+        BridgeMove.followDebug("update-exit", body, "aim")
         trackStep(body)
         return
     end
@@ -6109,7 +6410,10 @@ function BridgeMove.update(body)
             BridgeMove.seat = nil
         else
             BridgeMove.seatInfo = nil
-            if seated then return end
+            if seated then
+                BridgeMove.followDebug("update-exit", body, "seat")
+                return
+            end
         end
     end
 
@@ -6160,7 +6464,10 @@ function BridgeMove.update(body)
         end
     end
 
-    if BridgeMove.steerMode and Bridge.follow and not pendHere and BridgeMove.followTrail(body) then return end
+    if BridgeMove.steerMode and Bridge.follow and not pendHere and BridgeMove.followTrail(body) then
+        BridgeMove.followDebug("update-exit", body, "trail")
+        return
+    end
 
     BridgeMove.setCollide(body, true)
     if BridgeMove.steering then
@@ -6213,6 +6520,7 @@ function BridgeMove.update(body)
             local red = BridgeData.owner()
             if red ~= nil then pcall(function() body:faceLocationF(red:getX(), red:getY()) end) end
         end
+        BridgeMove.followDebug("update-exit", body, "gx-nil")
         return
     end
 
@@ -6402,6 +6710,17 @@ function BridgeMove.set(name, value)
         BridgeMove.navEnabled = value ~= "off"
         BridgeMove.navReset()
         return "nav " .. (BridgeMove.navEnabled and "on" or "off")
+    elseif name == "back" then
+        Bridge.backEnabled = value ~= "off"
+        if Bridge.backEnabled == false and BridgeMove.follow ~= nil then
+            if BridgeMove.follow.back ~= nil and Bridge.body ~= nil then
+                BridgeMove.backEnd(Bridge.body, BridgeMove.follow, "off", nil)
+            end
+            BridgeMove.follow.back = nil
+            BridgeMove.follow.backQuiet = 0
+            BridgeMove.backActive = false
+        end
+        return "back " .. (Bridge.backEnabled == false and "off" or "on")
     elseif name == "runreplan" then
         BridgeMove.runReplan = tonumber(value) or BridgeMove.runReplan
         return "runreplan " .. tostring(BridgeMove.runReplan)
@@ -6539,6 +6858,14 @@ function BridgeMove.reset(body)
         if BridgeMove.follow ~= nil and BridgeMove.follow.passing then pcall(function() body:setSolid(true) end) end
     end
     BridgeMove.collideOff = false
+    if BridgeMove.follow ~= nil then
+        if body ~= nil and (BridgeMove.follow.back ~= nil or BridgeMove.backActive) then
+            BridgeMove.backEnd(body, BridgeMove.follow, "reset", nil)
+        end
+        BridgeMove.follow.back = nil
+        BridgeMove.follow.backQuiet = 0
+    end
+    BridgeMove.backActive = false
     BridgeMove.trail = {}
     BridgeMove.follow.cross = nil
     BridgeMove.redVx, BridgeMove.redVy, BridgeMove.redPrevPos = 0, 0, nil

@@ -48,6 +48,16 @@ local function isWeapon(item)
     return yes
 end
 
+local function isHandWeapon(item)
+    if isWeapon(item) then return true end
+    local gun = false
+    pcall(function()
+        gun = item ~= nil and BridgeGunRules ~= nil and type(BridgeGunRules.isGun) == "function"
+            and BridgeGunRules.isGun(item) == true
+    end)
+    return gun
+end
+
 local function inBody(body, item)
     local ok = false
     pcall(function()
@@ -296,8 +306,9 @@ local function clearHands(body)
     BridgeWeapon.heldId = nil
     pcall(function()
         local p = body:getPrimaryHandItem()
+        local s = body:getSecondaryHandItem()
         body:setPrimaryHandItem(nil)
-        if body:getSecondaryHandItem() == p then body:setSecondaryHandItem(nil) end
+        if s ~= nil and (s == p or isHandWeapon(s)) then body:setSecondaryHandItem(nil) end
     end)
 end
 
@@ -311,6 +322,7 @@ function BridgeWeapon.draw(body)
     if BridgeWeapon.drawPaused(item) then return false end
     local hand = body:getPrimaryHandItem()
     if hand == item then return false end
+    if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
     if hand ~= nil then clearHands(body) end
     detach(body)
     pcall(function()
@@ -341,9 +353,18 @@ function BridgeWeapon.putAway(body)
         end
         BridgeWeapon.info = "put away " .. tostring(item:getType())
         changed = true
+    else
+        local sec = body:getSecondaryHandItem()
+        if sec ~= nil and isHandWeapon(sec) then
+            clearHands(body)
+            changed = true
+        end
     end
     if syncModel(body) then changed = true end
-    if changed then refresh(body) end
+    if changed then
+        if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+        refresh(body)
+    end
     return changed
 end
 

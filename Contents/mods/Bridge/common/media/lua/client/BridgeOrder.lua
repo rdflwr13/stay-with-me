@@ -205,16 +205,14 @@ function BridgeOrder.heightFor(width)
     end
     if n < 1 then n = 1 end
     local gap = PAD / 2
-    return PAD + hintH + n * rowH + PAD + btnH + gap + btnH + gap + btnH + PAD
+    return PAD + hintH + n * rowH + PAD + btnH + gap + btnH + PAD
 end
 
 function BridgeOrder:applyHeight(h)
     self:setHeight(h)
     if self.list == nil or self.upBtn == nil then return end
     local gap = PAD / 2
-    local collapseY = h - PAD - self.btnH
-    if collapseY < 0 then collapseY = 0 end
-    local lootY = collapseY - gap - self.btnH
+    local lootY = h - PAD - self.btnH
     if lootY < 0 then lootY = 0 end
     local rowY = lootY - gap - self.btnH
     if rowY < 0 then rowY = 0 end
@@ -231,11 +229,6 @@ function BridgeOrder:applyHeight(h)
         self.lootTick:setWidth(self.width - PAD * 2)
         self.lootTick:setY(lootY)
     end
-    if self.collapseTick ~= nil then
-        self.collapseTick:setX(PAD)
-        self.collapseTick:setWidth(self.width - PAD * 2)
-        self.collapseTick:setY(collapseY)
-    end
 end
 
 function BridgeOrder:createChildren()
@@ -248,8 +241,7 @@ function BridgeOrder:createChildren()
 
     local listY = PAD + self.hintH
     local gap = PAD / 2
-    local collapseY = self.height - PAD - btnH
-    local lootY = collapseY - gap - btnH
+    local lootY = self.height - PAD - btnH
     local rowY = lootY - gap - btnH
     if rowY < listY then rowY = listY end
     local listH = math.max(btnH, rowY - listY - PAD)
@@ -286,13 +278,6 @@ function BridgeOrder:createChildren()
     self.lootTick:addOption(tr("OptLootMenu"))
     self.lootTick.tooltip = tr("OptLootMenuTip")
     self:addChild(self.lootTick)
-
-    self.collapseTick = ISTickBox:new(PAD, collapseY, self.width - PAD * 2, btnH, "", self, BridgeOrder.onOptionTick, "collapseActions")
-    self.collapseTick:initialise()
-    self.collapseTick:instantiate()
-    self.collapseTick:addOption(tr("OptCollapseActions"))
-    self.collapseTick.tooltip = tr("OptCollapseActionsTip")
-    self:addChild(self.collapseTick)
 
     self.key = nil
     self:refresh()
@@ -333,10 +318,6 @@ function BridgeOrder:prerender()
     if self.lootTick ~= nil then
         local want = BridgeData.optionOf(Bridge.store, "lootMenu")
         if self.lootTick:isSelected(1) ~= want then self.lootTick:setSelected(1, want) end
-    end
-    if self.collapseTick ~= nil then
-        local want = BridgeData.optionOf(Bridge.store, "collapseActions")
-        if self.collapseTick:isSelected(1) ~= want then self.collapseTick:setSelected(1, want) end
     end
 end
 

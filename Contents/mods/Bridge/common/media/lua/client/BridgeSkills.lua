@@ -171,6 +171,7 @@ BridgeSkills.xpMultiplier = xpMultiplier
 
 
 function BridgeSkills.add(perk, amount, reason, skipMultiplier)
+    if BridgeMeet ~= nil and type(BridgeMeet.quietCombat) == "function" and BridgeMeet.quietCombat() then return 0 end
     local s = BridgeSkills.store()
     if s == nil or s[perk] == nil then return 0 end
     amount = tonumber(amount)

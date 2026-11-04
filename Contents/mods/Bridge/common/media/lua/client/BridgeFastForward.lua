@@ -116,7 +116,7 @@ BridgeFastForward.MOVE_HOLD = 10
 local HOLD_SKIP = { [""] = true, ["nil"] = true, Stand = true, StandSneak = true, Stand2h = true, StandSneak2h = true,
     FollowWalk = true, FollowRun = true, FollowWalkSneak = true, FollowRunSneak = true, FollowWalk2h = true,
     FollowRun2h = true, FollowWalkSneak2h = true, FollowRunSneak2h = true, StartMove = true, StartMove2h = true,
-    StartMoveSneak = true, StartMoveSneak2h = true,
+    StartMoveSneak = true, StartMoveSneak2h = true, FollowWalkBwd = true,
     ClimbFenceEnd = true, ClimbFenceTall = true, ClimbFenceTallStart = true, ClimbWindow = true, Scramble = true }
 
 
@@ -202,7 +202,8 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
                 or BridgeTask.kind == "cleanUp" or BridgeTask.kind == "moveCorpses"
                 or BridgeTask.kind == "washSink" or BridgeTask.kind == "fillWater"
                 or BridgeTask.kind == "emptyFluid" or BridgeTask.kind == "pryDoor"
-                or BridgeTask.kind == "shower")
+                or BridgeTask.kind == "shower" or BridgeTask.kind == "deposit"
+                or BridgeTask.kind == "lootArea")
         end
     end)
     if job and not seated and not ffJob then return "job" end
@@ -423,7 +424,10 @@ function BridgeFastForward.calm(b, now)
             local z = zl:get(i)
             if z ~= b then
                 local zx, zy = z:getX() - bx, z:getY() - by
-                if zx * zx + zy * zy <= keep * keep and not z:isDead() then zombies[#zombies + 1] = z end
+                if zx * zx + zy * zy <= keep * keep and not z:isDead()
+                        and not (BridgeData ~= nil and BridgeData.harmless(z)) then
+                    zombies[#zombies + 1] = z
+                end
             end
         end
         local near2 = BridgeFastForward.ZOMBIE_NEAR * BridgeFastForward.ZOMBIE_NEAR
@@ -733,7 +737,8 @@ function BridgeFastForward.tick()
                 or BridgeTask.kind == "moveCorpses"
                 or BridgeTask.kind == "washSink" or BridgeTask.kind == "fillWater"
                 or BridgeTask.kind == "emptyFluid" or BridgeTask.kind == "pryDoor"
-                or BridgeTask.kind == "shower") then
+                or BridgeTask.kind == "shower" or BridgeTask.kind == "deposit"
+                or BridgeTask.kind == "lootArea") then
         pcall(function() BridgeTask.update(Bridge.body) end)
         if Bridge.every(120) then
             log("ff drive: " .. tostring(BridgeTask.kind) .. " time=" .. string.format("%.1f", Bridge.time or 0))

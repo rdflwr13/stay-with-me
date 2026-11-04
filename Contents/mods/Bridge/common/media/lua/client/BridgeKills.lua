@@ -21,6 +21,7 @@ end
 
 function BridgeKills.credit(z)
     if z == nil then return false end
+    if BridgeMeet ~= nil and type(BridgeMeet.quietCombat) == "function" and BridgeMeet.quietCombat() then return false end
     if isBodyZ(z) then return false end
     local pending = BridgeKills.pending
     pending[z] = { t = Bridge.time }

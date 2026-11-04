@@ -1,8 +1,6 @@
 version=1
 id=3800989007
 title=Stay With Me
-description=Stay With Me [B42 - NPC Companion]
-description=
 description=[img]https://i.imgur.com/ygV11m7.png[/img]
 description=[url=https://steamcommunity.com/sharedfiles/filedetails/changelog/3800989007][img]https://i.imgur.com/LGZ0Bwx.png[/img][/url]
 description= 
@@ -90,6 +88,7 @@ description=[/list]
 description= 
 description=[h2]Recommended[/h2]
 description=[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3414634809]Spongie's Character Customisation[/url]: adds faces, skin details and muscle tone to her appearance.
+description=[url=https://steamcommunity.com/workshop/filedetails/?id=3592172476][B42:SP/MP] Take A Bath And Shower[/url]: allows her to take a shower.
 description= 
 description=[quote][url=https://steamcommunity.com/workshop/filedetails/discussion/3800989007/586186803158075336/]Full list of compatible mods[/url]
 description=[/quote]

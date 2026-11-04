@@ -56,13 +56,6 @@ option StayWithMe.RomanceRequirementDays
     translation = StayWithMe_RomanceRequirementDays,
 }
 
-option StayWithMe.RelationshipLossOnHit
-{
-    type = integer, min = 0, max = 50, default = 8,
-    page = StayWithMe,
-    translation = StayWithMe_RelationshipLossOnHit,
-}
-
 option StayWithMe.CarryCapacityBonus
 {
     type = integer, min = 0, max = 20, default = 0,
@@ -75,4 +68,26 @@ option StayWithMe.MoodEffectMultiplier
     type = double, min = 0, max = 3, default = 1.0,
     page = StayWithMe,
     translation = StayWithMe_MoodEffectMultiplier,
+}
+
+option StayWithMe.CompanionWheelKey
+{
+    type = enum, numValues = 139, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_CompanionWheelKey,
+    valueTranslation = StayWithMe_CompanionWheelKey_Values,
+}
+
+option StayWithMe.CompanionWheelController
+{
+    type = boolean, default = true,
+    page = StayWithMe,
+    translation = StayWithMe_CompanionWheelController,
+}
+
+option StayWithMe.ForceSpawnNearPlayer
+{
+    type = boolean, default = false,
+    page = StayWithMe,
+    translation = StayWithMe_ForceSpawnNearPlayer,
 }

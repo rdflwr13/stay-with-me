@@ -3,17 +3,32 @@ BridgeCallout = BridgeCallout or {}
 BridgeCallout.SEC = 60
 
 BridgeCallout.HORDE_COUNT = 10
-BridgeCallout.BEHIND_DIST = 6
 BridgeCallout.SPOT_DIST = 15
 BridgeCallout.SPOT_MIN_DIST = 8
 BridgeCallout.LULL_DIST = 8
-BridgeCallout.FLANK_DIST = 8
-BridgeCallout.CRAWLER_DIST = 3
-BridgeCallout.BREACH_DIST = 5
 BridgeCallout.MELEE_DIST = 6
 BridgeCallout.COMBAT_GRACE = 4
 BridgeCallout.FINISH_HP = 0.5
 BridgeCallout.PLAYER_HIT_DROP = 1.0
+
+BridgeCallout.SWARM_RADIUS = 2
+BridgeCallout.SWARM_PLAYER = 6
+BridgeCallout.FIGHT_SCAN_SEC = 0.25
+BridgeCallout.FIGHT_LONG_SEC = 45
+BridgeCallout.FIGHT_HEAVY_PEAK = 6
+BridgeCallout.FIGHT_AFTERMATH_SEC = 10
+BridgeCallout.FIGHT_AFTERMATH_PEAK = 4
+BridgeCallout.AFTERMATH_DELAY_SEC = 30
+BridgeCallout.TENSE_DELAY_SEC = 60
+BridgeCallout.REMARK_SLOT_CD = 600
+BridgeCallout.REMARK_GAP = 4
+BridgeCallout.WEAPON_LOW = 0.15
+BridgeCallout.LASTFIGHT_MIN_HOURS = 1
+BridgeCallout.LASTFIGHT_MAX_HOURS = 24
+BridgeCallout.AMMO_NEAR = 12
+BridgeCallout.SCAN_FIGHT = 15
+BridgeCallout.SCAN_IDLE = 30
+BridgeCallout.SCAN_QUIET = 60
 
 BridgeCallout.PLACE_GAP = 60 * 60
 BridgeCallout.PLACE_DWELL = 3 * 60
@@ -25,12 +40,14 @@ BridgeCallout.HOME_WITH = 12
 BridgeCallout.HOME_HOURS = 1.0
 BridgeCallout.HOME_GAP = 60 * 60
 
+BridgeCallout.MARK_EVENT = "EvMarkStorage"
+BridgeCallout.UNMARK_EVENT = "EvUnmarkStorage"
+BridgeCallout.MARK_GAP = 4
+
 BridgeCallout.SWING_COMBAT_QUIET = 60
 BridgeCallout.SWING_ZOMBIE_DIST = 10
 BridgeCallout.SWING_Z_TOL = 0.8
 BridgeCallout.SWING_RANGE_TOL = 0.3
-
-BridgeCallout.FLANK_SIGN = -1
 
 BridgeCallout.CITY_MIN_AWAY = 24
 BridgeCallout.CITY_DWELL    = 20 * BridgeCallout.SEC
@@ -61,6 +78,20 @@ BridgeCallout.finisherTarget = nil
 BridgeCallout.info = "none"
 BridgeCallout.lastCombatAt = -99999
 BridgeCallout.attackPrev = false
+
+BridgeCallout.drawnPrev = false
+BridgeCallout.scanAt = -99999
+BridgeCallout.recordOn = false
+BridgeCallout.fightTime = 0
+BridgeCallout.fightPeak = 0
+BridgeCallout.fightGun = false
+BridgeCallout.fightHit = false
+BridgeCallout.fightWritten = false
+BridgeCallout.aftermathAt = nil
+BridgeCallout.tenseAt = nil
+BridgeCallout.redWindedSaid = false
+BridgeCallout.weaponLowItem = nil
+BridgeCallout.weaponLowSaid = false
 
 BridgeCallout.placeKey = nil
 BridgeCallout.placeSince = 0
@@ -93,7 +124,6 @@ BridgeCallout.DEBUG = 0
 
 
 BridgeCallout.SAY = {
-    EvBehind     = 0,
     EvEngage     = 1,
     EvKill       = 1,
     EvHorde4     = 1,
@@ -104,11 +134,8 @@ BridgeCallout.SAY = {
     EvSpot       = 1,
     EvLull       = 1,
     EvPlayerHit  = 1,
-    EvFlankLeft  = 0,
-    EvFlankRight = 0,
     EvFinisher   = 1,
-    EvCrawler    = 0,
-    EvBreach     = 0,
+    EvFinisherGun = 1,
     EvLostTarget = 1,
     EvTaunt      = 1,
     EvAimClear   = 1,
@@ -121,6 +148,29 @@ BridgeCallout.SAY = {
     EvLowAmmo    = 1,
     EvLineOfFire = 1,
     EvGunKill    = 1,
+    EvClimbUp    = 1,
+    EvClimbDown  = 1,
+    EvGunEngage  = 1,
+    EvSwitchToMelee = 1,
+    EvSwitchToGun = 1,
+    EvNoShot     = 1,
+    EvReloadCancel = 1,
+    EvGunMultiKill = 1,
+    EvUnarmed    = 1,
+    EvCantReach  = 1,
+    EvInTheWay   = 1,
+    EvShove      = 1,
+    EvRedWinded  = 1,
+    EvNoSpare    = 1,
+    EvMagLow     = 1,
+    EvNoRoom     = 1,
+    EvRedWeaponLow = 1,
+    EvSwarmed    = 1,
+    EvStillOnUs  = 1,
+    EvAfterFightTired = 1,
+    EvAfterFightGun = 1,
+    EvAfterFightHard = 1,
+    EvAfterFightLong = 1,
 }
 
 
@@ -134,7 +184,6 @@ BridgeCallout.MILESTONE_AFTER = 3
 
 
 BridgeCallout.EVENTS = {
-    EvBehind     = { slot = "Behind",     cooldown = 45 },
     EvEngage     = { slot = "Engage",     cooldown = 25 },
     EvKill       = { slot = "Kill",       cooldown = 20 },
     EvHorde4     = { slot = "Horde",      cooldown = BridgeCallout.HORDE_CD },
@@ -145,23 +194,43 @@ BridgeCallout.EVENTS = {
     EvSpot       = { slot = "Spot",       cooldown = 120 },
     EvLull       = { slot = "Lull",       cooldown = 150 },
     EvPlayerHit  = { slot = "PlayerHit",  cooldown = 30 },
-    EvFlankLeft  = { slot = "Flank",      cooldown = 45 },
-    EvFlankRight = { slot = "Flank",      cooldown = 45 },
     EvFinisher   = { slot = "Finisher",   cooldown = 30 },
-    EvCrawler    = { slot = "Crawler",    cooldown = 60 },
-    EvBreach     = { slot = "Breach",     cooldown = 90 },
+    EvFinisherGun = { slot = "Finisher",  cooldown = 30 },
     EvLostTarget = { slot = "LostTarget", cooldown = 60 },
     EvTaunt      = { slot = "Taunt",      cooldown = 150 },
     EvAimClear   = { slot = "AimClear",   cooldown = 15 },
     EvAimOnMe    = { slot = "AimOnMe",    cooldown = 15 },
     EvTorchLow   = { slot = "TorchLow",   cooldown = 300 },
     EvSwingAtMe  = { slot = "SwingAtMe",  cooldown = 30 },
-    EvReload     = { slot = "Reload",     cooldown = 20 },
-    EvReloadLoose = { slot = "Reload",    cooldown = 20 },
-    EvOutOfAmmo  = { slot = "OutOfAmmo",  cooldown = 30 },
-    EvLowAmmo    = { slot = "LowAmmo",    cooldown = 45 },
+    EvReload     = { slot = "Reload",     cooldown = 12 },
+    EvReloadLoose = { slot = "Reload",    cooldown = 12 },
+    EvOutOfAmmo  = { slot = "OutOfAmmo",  cooldown = 20 },
+    EvLowAmmo    = { slot = "LowAmmo",    cooldown = 30 },
     EvLineOfFire = { slot = "LineOfFire", cooldown = 15 },
     EvGunKill    = { slot = "GunKill",    cooldown = 20 },
+    EvClimbUp    = { slot = "Climb",      cooldown = 60 },
+    EvClimbDown  = { slot = "Climb",      cooldown = 60 },
+    EvGunEngage  = { slot = "GunEngage",  cooldown = 30 },
+    EvSwitchToMelee = { slot = "Switch",  cooldown = 20 },
+    EvSwitchToGun = { slot = "Switch",    cooldown = 20 },
+    EvNoShot     = { slot = "NoShot",     cooldown = 20 },
+    EvReloadCancel = { slot = "ReloadCancel", cooldown = 20 },
+    EvGunMultiKill = { slot = "GunKill",  cooldown = 20 },
+    EvUnarmed    = { slot = "Unarmed",    cooldown = 300 },
+    EvCantReach  = { slot = "CantReach",  cooldown = 60 },
+    EvInTheWay   = { slot = "InWay",      cooldown = 30 },
+    EvShove      = { slot = "Shove",      cooldown = 20 },
+    EvRedWinded  = { slot = "RedWinded",  cooldown = 120 },
+    EvNoSpare    = { slot = "NoSpare",    cooldown = 300 },
+    EvMagLow     = { slot = "MagLow",     cooldown = 20 },
+    EvNoRoom     = { slot = "NoRoom",     cooldown = 60 },
+    EvRedWeaponLow = { slot = "RedWeaponLow", cooldown = 600 },
+    EvSwarmed    = { slot = "Swarmed",    cooldown = 120 },
+    EvStillOnUs  = { slot = "AfterFight", cooldown = 60 },
+    EvAfterFightTired = { slot = "AfterFight", cooldown = 120 },
+    EvAfterFightGun = { slot = "AfterFight", cooldown = 120 },
+    EvAfterFightHard = { slot = "AfterFight", cooldown = 120 },
+    EvAfterFightLong = { slot = "AfterFight", cooldown = 120 },
 }
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeCallout] " .. tostring(text)) end end
@@ -189,15 +258,6 @@ local function deadZ(z)
     local dead = false
     pcall(function() dead = (not z:isAlive()) or z:isDead() or z:getHealth() <= 0 end)
     return dead == true
-end
-
-local function proneZ(z)
-    local prone = false
-    pcall(function()
-        local asn = z:getActionStateName()
-        prone = z:isProne() or z:isCrawling() or asn == "onground" or asn == "sitonground"
-    end)
-    return prone == true
 end
 
 local function attackSignals(red)
@@ -235,38 +295,58 @@ local function gunThreat()
     local active = false
     pcall(function() active = BridgeFight ~= nil and BridgeFight.state == "gun" end)
     if active then return true end
+    local now = Bridge.time or 0
+    if BridgeCallout.gunThreatAt == now then return BridgeCallout.gunThreatValue == true end
     local body, red = Bridge.body, nil
     pcall(function() red = BridgeData.owner() end)
-    if body == nil and red == nil then return false end
+    if body == nil and red == nil then
+        BridgeCallout.gunThreatAt, BridgeCallout.gunThreatValue = now, false
+        return false
+    end
     local near = false
-    pcall(function()
-        local bx, by, rx, ry = nil, nil, nil, nil
-        if body ~= nil then bx, by = body:getX(), body:getY() end
-        if red ~= nil then rx, ry = red:getX(), red:getY() end
-        local wx, wy = bx or rx, by or ry
-        local list = nil
-        if BridgeZS ~= nil and wx ~= nil and wy ~= nil then
-            list = BridgeZS.nearUnion(wx, wy, rx or wx, ry or wy, 15.1)
+    local frame = nil
+    pcall(function() if BridgeScan ~= nil then frame = BridgeScan.frame(body, red) end end)
+    if frame ~= nil then
+        local entries = frame.entries or {}
+        for i = 1, #entries do
+            local e = entries[i]
+            if e.alive and not e.comp and not e.harm
+                and math.abs(e.zc) < 1 and (e.dc <= 15.1 or e.dp <= 15.1) then
+                near = true
+                break
+            end
         end
-        if list == nil then list = getCell():getZombieList() end
-        for i = 0, list:size() - 1 do
-            local z = list:get(i)
-            if z ~= nil and z ~= body and z ~= red and not isBodyZ(z) and not BridgeData.harmless(z) then
-                local alive = false
-                pcall(function() alive = z:isAlive() and z:getHealth() > 0 end)
-                if alive then
-                    if body ~= nil then
-                        local dx, dy = z:getX() - body:getX(), z:getY() - body:getY()
-                        if dx * dx + dy * dy <= 225 and math.abs(z:getZ() - body:getZ()) < 1 then near = true return end
-                    end
-                    if red ~= nil then
-                        local dx, dy = z:getX() - red:getX(), z:getY() - red:getY()
-                        if dx * dx + dy * dy <= 225 and math.abs(z:getZ() - red:getZ()) < 1 then near = true return end
+    else
+        pcall(function()
+            local bx, by, rx, ry = nil, nil, nil, nil
+            if body ~= nil then bx, by = body:getX(), body:getY() end
+            if red ~= nil then rx, ry = red:getX(), red:getY() end
+            local wx, wy = bx or rx, by or ry
+            local list = nil
+            if BridgeZS ~= nil and wx ~= nil and wy ~= nil then
+                list = BridgeZS.nearUnion(wx, wy, rx or wx, ry or wy, 15.1)
+            end
+            if list == nil then list = getCell():getZombieList() end
+            for i = 0, list:size() - 1 do
+                local z = list:get(i)
+                if z ~= nil and z ~= body and z ~= red and not isBodyZ(z) and not BridgeData.harmless(z) then
+                    local alive = false
+                    pcall(function() alive = z:isAlive() and z:getHealth() > 0 end)
+                    if alive then
+                        if body ~= nil then
+                            local dx, dy = z:getX() - body:getX(), z:getY() - body:getY()
+                            if dx * dx + dy * dy <= 225 and math.abs(z:getZ() - body:getZ()) < 1 then near = true return end
+                        end
+                        if red ~= nil then
+                            local dx, dy = z:getX() - red:getX(), z:getY() - red:getY()
+                            if dx * dx + dy * dy <= 225 and math.abs(z:getZ() - red:getZ()) < 1 then near = true return end
+                        end
                     end
                 end
             end
-        end
-    end)
+        end)
+    end
+    BridgeCallout.gunThreatAt, BridgeCallout.gunThreatValue = now, near
     return near
 end
 
@@ -307,6 +387,41 @@ local function carQuiet()
     return inside == true
 end
 
+local function clearOneShots()
+    BridgeCallout.aftermathAt = nil
+    BridgeCallout.tenseAt = nil
+end
+
+local function ammoThreat()
+    if BridgeCallout.ENABLED == 0 then return false end
+    if not Bridge.alive() then return false end
+    if Bridge.mode == "rest" then return false end
+    if BridgeFastForward ~= nil and BridgeFastForward.active() then return false end
+    if carQuiet() then return false end
+    local usable = false
+    pcall(function()
+        usable = BridgeGunfight ~= nil and type(BridgeGunfight.hasGun) == "function"
+            and BridgeGunfight.hasGun() == true
+    end)
+    if not usable then return false end
+    local active = false
+    pcall(function() active = BridgeFight ~= nil and BridgeFight.state == "gun" end)
+    if active then return true end
+    local body, red = Bridge.body, nil
+    pcall(function() red = BridgeData.owner() end)
+    if body == nil or red == nil then return false end
+    local asleep = false
+    pcall(function() asleep = red:isAsleep() == true end)
+    if asleep then return false end
+    local near = false
+    pcall(function()
+        local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
+        near = dx * dx + dy * dy <= BridgeCallout.AMMO_NEAR * BridgeCallout.AMMO_NEAR
+            and math.abs(red:getZ() - body:getZ()) < 1
+    end)
+    return near
+end
+
 local function dropCarLines()
     BridgeCallout.deferred = {}
     BridgeCallout.pendingKill = nil
@@ -315,6 +430,7 @@ local function dropCarLines()
     BridgeCallout.fightingAt = -99999
     BridgeCallout.finisherTarget = nil
     BridgeCallout.lastHealth = nil
+    clearOneShots()
 end
 
 
@@ -352,6 +468,7 @@ end
 
 
 local function say(event)
+    if BridgeMeet ~= nil and type(BridgeMeet.quietCombat) == "function" and BridgeMeet.quietCombat() then return false end
     if carQuiet() then dropCarLines() return false end
     if BridgeCallout.ENABLED == 0 then return false end
     if trySay(event) then return true end
@@ -374,58 +491,64 @@ local function flush()
     return false
 end
 
-local scanFacts = { near8 = 0, behind = false, flank = false, flankSide = nil,
-    crawler = false, breach = false, spot = false, anyThreatInSwing = false }
+local scanFacts = { near8 = 0, spot = false, anyThreatInSwing = false }
 
 local function scanWorld(body, red, wantClear)
     local facts = scanFacts
     facts.near8 = 0
-    facts.behind = false
-    facts.flank = false
-    facts.flankSide = nil
-    facts.crawler = false
-    facts.breach = false
     facts.spot = false
     facts.anyThreatInSwing = false
 
     local S = BridgeCallout.SAY
-    local wantNear = S.EvLull ~= 0
-    local wantBehind = S.EvBehind ~= 0
-    local wantFlank = S.EvFlankLeft ~= 0 or S.EvFlankRight ~= 0
+    local wantNear = S.EvLull ~= 0 or S.EvStillOnUs ~= 0
     local wantSpot = S.EvSpot ~= 0
-    local wantCrawler = S.EvCrawler ~= 0
-    local wantBreach = S.EvBreach ~= 0
     local wantBody = wantNear
-    local wantRed = wantBehind or wantFlank or wantSpot or wantCrawler or wantBreach
+    local wantRed = wantSpot
     if not (wantBody or wantRed or wantClear) then
         return facts
     end
 
     local near2 = 8 * 8
-    local behind2 = BridgeCallout.BEHIND_DIST * BridgeCallout.BEHIND_DIST
-    local flank2 = BridgeCallout.FLANK_DIST * BridgeCallout.FLANK_DIST
     local spotMin2 = BridgeCallout.SPOT_MIN_DIST * BridgeCallout.SPOT_MIN_DIST
     local spot2 = BridgeCallout.SPOT_DIST * BridgeCallout.SPOT_DIST
-    local crawler2 = BridgeCallout.CRAWLER_DIST * BridgeCallout.CRAWLER_DIST
-    local breach2 = BridgeCallout.BREACH_DIST * BridgeCallout.BREACH_DIST
     local swing2 = BridgeCallout.SWING_ZOMBIE_DIST * BridgeCallout.SWING_ZOMBIE_DIST
 
-    local t = (wantBehind or wantFlank or wantSpot) and target() or nil
-    local fx, fy = nil, nil
-    if wantFlank then
-        local ax, ay = 0, 0
-        pcall(function()
-            local f = red:getForwardDirection()
-            ax, ay = f:getX(), f:getY()
-        end)
-        local fl = math.sqrt(ax * ax + ay * ay)
-        if fl >= 0.01 then fx, fy = ax / fl, ay / fl end
-    end
+    local t = wantSpot and target() or nil
 
     local bodyx, bodyy, bodyz = 0, 0, 0
     local redx, redy, redz = 0, 0, 0
     pcall(function() bodyx, bodyy, bodyz = body:getX(), body:getY(), body:getZ() end)
     pcall(function() redx, redy, redz = red:getX(), red:getY(), red:getZ() end)
+
+    local frame = nil
+    pcall(function() if BridgeScan ~= nil then frame = BridgeScan.frame(body, red) end end)
+    if frame ~= nil then
+        local entries = frame.entries or {}
+        for i = 1, #entries do
+            local e = entries[i]
+            if e.alive and not e.comp and not e.harm then
+                local relevant = false
+                if wantNear and math.abs(e.zp) < 0.8 and e.dp2 < near2 then relevant = true end
+                if not relevant and wantRed and math.abs(e.zc) < 1 and e.dc2 < spot2 then relevant = true end
+                local clearRel = wantClear and math.abs(e.zc) < 1 and e.dc2 < swing2
+                if relevant or clearRel then
+                    if not e.remote then
+                        if wantNear and math.abs(e.zp) < 0.8 and e.dp2 < near2 then
+                            facts.near8 = facts.near8 + 1
+                        end
+                        if wantSpot and not facts.spot and e.z ~= t
+                            and e.dc2 > spotMin2 and e.dc2 < spot2 and e.seenR then
+                            facts.spot = true
+                        end
+                    end
+                    if clearRel and not facts.anyThreatInSwing and e.seenP then
+                        facts.anyThreatInSwing = true
+                    end
+                end
+            end
+        end
+        return facts
+    end
 
     pcall(function()
         local list = nil
@@ -450,7 +573,7 @@ local function scanWorld(body, red, wantClear)
                     if wantNear and math.abs(dzBody) < 0.8 and bd2 < near2 then
                         relevant = true
                     end
-                    if not relevant and wantRed and inRedBand and (rd2 < spot2 or bd2 < breach2) then
+                    if not relevant and wantRed and inRedBand and rd2 < spot2 then
                         relevant = true
                     end
                     local clearRel = wantClear and inRedBand and rd2 < swing2
@@ -463,42 +586,11 @@ local function scanWorld(body, red, wantClear)
                                     facts.near8 = facts.near8 + 1
                                 end
                                 if inRedBand then
-                                    if wantBehind and not facts.behind and z ~= t and rd2 < behind2 then
-                                        local seeBody, seeRed = false, false
-                                        pcall(function() seeBody = body:CanSee(z) end)
-                                        pcall(function() seeRed = red:CanSee(z) end)
-                                        if seeBody and not seeRed then facts.behind = true end
-                                    end
-                                    if wantFlank and not facts.flank and z ~= t and fx ~= nil
-                                        and rd2 > 2.25 and rd2 < flank2 then
-                                        local d = math.sqrt(rd2)
-                                        local cross = fx * (ry / d) - fy * (rx / d)
-                                        if math.abs(cross) >= 0.7 then
-                                            local seen = false
-                                            pcall(function() seen = red:CanSee(z) end)
-                                            if seen then
-                                                facts.flank = true
-                                                facts.flankSide = (cross * BridgeCallout.FLANK_SIGN) > 0 and "left" or "right"
-                                            end
-                                        end
-                                    end
                                     if wantSpot and not facts.spot and z ~= t
                                         and rd2 > spotMin2 and rd2 < spot2 then
                                         local seen = false
                                         pcall(function() seen = BridgeFight.visible(z, red) end)
                                         if seen then facts.spot = true end
-                                    end
-                                    if wantCrawler and not facts.crawler and proneZ(z)
-                                        and math.min(bd2, rd2) < crawler2 then
-                                        local seen = false
-                                        pcall(function() seen = red:CanSee(z) or body:CanSee(z) end)
-                                        if seen then facts.crawler = true end
-                                    end
-                                    if wantBreach and not facts.breach and tostring(z:getActionStateName()) == "thump"
-                                        and math.min(bd2, rd2) < breach2 then
-                                        local seen = false
-                                        pcall(function() seen = red:CanSee(z) or body:CanSee(z) end)
-                                        if seen then facts.breach = true end
                                     end
                                 end
                             end
@@ -576,12 +668,12 @@ end
 
 local function scanFinisher()
     local t = target()
-    if t == nil then return false end
-    if t == BridgeCallout.finisherTarget then return false end
+    if t == nil then return nil end
+    if t == BridgeCallout.finisherTarget then return nil end
     local hp, low = 1, false
     pcall(function() hp = t:getHealth() low = hp <= BridgeCallout.FINISH_HP end)
-    if low then BridgeCallout.finisherTarget = t return true end
-    return false
+    if low then BridgeCallout.finisherTarget = t return t end
+    return nil
 end
 
 function BridgeCallout.engage(z)
@@ -646,19 +738,91 @@ function BridgeCallout.lostTarget()
 end
 
 function BridgeCallout.reloading(hasMag)
-    if not gunThreat() then return false end
+    if not ammoThreat() then return false end
     if hasMag == false then return say("EvReloadLoose") end
     return say("EvReload")
 end
 
+function BridgeCallout.climb(direction)
+    if direction == "down" then return say("EvClimbDown") end
+    return say("EvClimbUp")
+end
+
 function BridgeCallout.outOfAmmo()
-    if not gunThreat() then return false end
+    if not ammoThreat() then return false end
     return say("EvOutOfAmmo")
 end
 
 function BridgeCallout.lowAmmo()
-    if not gunThreat() then return false end
+    if not ammoThreat() then return false end
     return say("EvLowAmmo")
+end
+
+function BridgeCallout.lowMag()
+    if not ammoThreat() then return false end
+    return say("EvMagLow")
+end
+
+function BridgeCallout.noSpare()
+    if not ammoThreat() then return false end
+    return say("EvNoSpare")
+end
+
+function BridgeCallout.reloadCancel()
+    if not gunThreat() then return false end
+    return say("EvReloadCancel")
+end
+
+function BridgeCallout.gunEngage()
+    return say("EvGunEngage")
+end
+
+function BridgeCallout.noShot()
+    return say("EvNoShot")
+end
+
+function BridgeCallout.gunMultiKill()
+    return say("EvGunMultiKill")
+end
+
+function BridgeCallout.switchToMelee()
+    return say("EvSwitchToMelee")
+end
+
+function BridgeCallout.switchToGun()
+    return say("EvSwitchToGun")
+end
+
+function BridgeCallout.unarmed()
+    return say("EvUnarmed")
+end
+
+function BridgeCallout.cantReach()
+    return say("EvCantReach")
+end
+
+function BridgeCallout.inTheWay()
+    return say("EvInTheWay")
+end
+
+function BridgeCallout.shove()
+    return say("EvShove")
+end
+
+function BridgeCallout.noRoom()
+    return say("EvNoRoom")
+end
+
+function BridgeCallout.redWinded()
+    return say("EvRedWinded")
+end
+
+function BridgeCallout.redWeaponLow()
+    return say("EvRedWeaponLow")
+end
+
+function BridgeCallout.swarmed()
+    return say("EvSwarmed")
 end
 
 function BridgeCallout.lineOfFire()
@@ -690,10 +854,6 @@ end
 
 function BridgeCallout.swingAtMe()
     return say("EvSwingAtMe")
-end
-
-function BridgeCallout.behind()
-    return say("EvBehind")
 end
 
 function BridgeCallout.horde(n)
@@ -979,11 +1139,12 @@ local function placeTick(body, red)
 end
 
 
-local function homeAreaHas(home, x, y, margin)
+local function homeAreaHas(home, x, y, z, margin)
     if home == nil then return false end
-    local x1, y1 = home.x - margin, home.y - margin
-    local x2, y2 = home.x + home.w - 1 + margin, home.y + home.h - 1 + margin
-    return x >= x1 and x <= x2 and y >= y1 and y <= y2
+    local module = rawget(_G, "BridgeHome")
+    if type(module) ~= "table" or type(module.contains) ~= "function" then return false end
+    local ok, yes = pcall(module.contains, x, y, z, margin)
+    return ok and yes == true
 end
 
 
@@ -1018,6 +1179,23 @@ local function homeFire()
 end
 
 
+function BridgeCallout.markSay(marked)
+    if BridgeCallout.ENABLED == 0 then return false end
+    if BridgeMenu == nil or type(BridgeMenu.inTalkRange) ~= "function" then return false end
+    if not BridgeMenu.inTalkRange() then return false end
+    local red = BridgeData.owner()
+    if red == nil or not homeCanSpeak(red) then return false end
+    local event = marked and BridgeCallout.MARK_EVENT or BridgeCallout.UNMARK_EVENT
+    local slot = marked and "StorageMark" or "StorageUnmark"
+    local said = false
+    pcall(function()
+        said = BridgeMoments.say(event, BridgeCallout.MARK_GAP, true, slot) == true
+    end)
+    if said then vlog("storage mark spoken " .. tostring(marked == true)) end
+    return said
+end
+
+
 function BridgeCallout.homeReset()
     BridgeCallout.homeHours = 0
     BridgeCallout.homeFired = false
@@ -1032,10 +1210,10 @@ function BridgeCallout.homeCanReturn(red, body)
     if BridgeCallout.homeHours < BridgeCallout.HOME_HOURS then return false end
     local home = BridgeHome ~= nil and BridgeHome.get() or nil
     if home == nil or body == nil or red == nil then return false end
-    local bx, by = nil, nil
-    pcall(function() bx, by = body:getX(), body:getY() end)
+    local bx, by, bz = nil, nil, nil
+    pcall(function() bx, by, bz = body:getX(), body:getY(), body:getZ() end)
     if bx == nil or by == nil then return false end
-    if not homeAreaHas(home, bx, by, BridgeCallout.HOME_NEAR) then return false end
+    if not homeAreaHas(home, bx, by, bz, BridgeCallout.HOME_NEAR) then return false end
     if not homeWithPlayer(red, bx, by) then return false end
     return homeCanSpeak(red)
 end
@@ -1076,11 +1254,11 @@ function BridgeCallout.homeTrack(body, red)
         return
     end
 
-    local bx, by = nil, nil
-    pcall(function() bx, by = body:getX(), body:getY() end)
+    local bx, by, bz = nil, nil, nil
+    pcall(function() bx, by, bz = body:getX(), body:getY(), body:getZ() end)
     if bx == nil or by == nil then return end
 
-    local atHome = homeAreaHas(home, bx, by, BridgeCallout.HOME_NEAR)
+    local atHome = homeAreaHas(home, bx, by, bz, BridgeCallout.HOME_NEAR)
 
     if atHome then
         BridgeCallout.homeInfo = "home"
@@ -1135,7 +1313,16 @@ end
 function BridgeCallout.homeStatus()
     local h = BridgeHome ~= nil and BridgeHome.get() or nil
     local loc = "none"
-    if h ~= nil then loc = string.format("%d,%d z%d %dx%d", h.x, h.y, h.z, h.w, h.h) end
+    local all = false
+    local pending = false
+    if h ~= nil then
+        all = BridgeHome ~= nil and type(BridgeHome.allFloorsOn) == "function" and BridgeHome.allFloorsOn() or false
+        local z1, z2 = BridgeData.homeRange(h, all)
+        pending = BridgeHome ~= nil and type(BridgeHome.allFloorsPending) == "function"
+            and BridgeHome.allFloorsPending(h) == true or false
+        loc = string.format("%d,%d z%d..z%d %dx%d all=%s pending=%s", h.x, h.y, z1, z2, h.w, h.h,
+            all and "on" or "off", tostring(pending))
+    end
     return string.format("%s away=%.2fh fired=%s suppress=%s info=%s",
         loc, BridgeCallout.homeHours, tostring(BridgeCallout.homeFired),
         tostring(BridgeCallout.homeSuppress), tostring(BridgeCallout.homeInfo))
@@ -1153,9 +1340,9 @@ function BridgeCallout.homeCommand(parts)
     if sub == "why" or sub == "diag" then
         local red = BridgeData.owner()
         local body = Bridge.body
-        local bx, by = nil, nil
-        if body ~= nil then pcall(function() bx, by = body:getX(), body:getY() end) end
-        local atHome = home ~= nil and bx ~= nil and homeAreaHas(home, bx, by, BridgeCallout.HOME_NEAR)
+        local bx, by, bz = nil, nil, nil
+        if body ~= nil then pcall(function() bx, by, bz = body:getX(), body:getY(), body:getZ() end) end
+        local atHome = home ~= nil and bx ~= nil and homeAreaHas(home, bx, by, bz, BridgeCallout.HOME_NEAR)
         local withYou = (bx ~= nil and red ~= nil) and homeWithPlayer(red, bx, by) or false
         local quiet = carQuiet()
         local asleep, fighting, ff, group = "?", "?", "?", "?"
@@ -1215,7 +1402,35 @@ function BridgeCallout.homeCommand(parts)
         end
         local got = BridgeHome ~= nil and BridgeHome.get() or nil
         if got == nil then return "home set failed: " .. tostring(res) end
-        return string.format("home set %d,%d z%d %dx%d", got.x, got.y, got.z, got.w, got.h)
+        local all = BridgeHome ~= nil and type(BridgeHome.allFloorsOn) == "function" and BridgeHome.allFloorsOn() or false
+        local z1, z2 = BridgeData.homeRange(got, all)
+        return string.format("home set %d,%d z%d..z%d %dx%d all=%s", got.x, got.y, z1, z2, got.w, got.h,
+            all and "on" or "off")
+    end
+
+    if sub == "all" then
+        if BridgeHome == nil then return "home all: home not loaded" end
+        local how = parts[4]
+        if how ~= "on" and how ~= "off" then return "home all [on | off]" end
+        if Bridge == nil or type(Bridge.setOption) ~= "function" then return "home all: no bridge" end
+        Bridge.setOption("homeAllFloors", how == "on")
+        pcall(function() BridgeHome.onAllFloorsChanged(how == "on") end)
+        local got = BridgeHome.get()
+        if got == nil then return string.format("home all=%s", how) end
+        local z1, z2 = BridgeData.homeRange(got, how == "on")
+        local pending = type(BridgeHome.allFloorsPending) == "function" and BridgeHome.allFloorsPending(got) or false
+        return string.format("home all=%s z%d..z%d pending=%s", how, z1, z2, tostring(pending))
+    end
+
+    if sub == "floors" then
+        if home == nil then return "home floors: none set" end
+        if BridgeHome == nil or type(BridgeHome.includedFloors) ~= "function" then return "home floors: home not loaded" end
+        local all = type(BridgeHome.allFloorsOn) == "function" and BridgeHome.allFloorsOn() or false
+        local floors = BridgeHome.includedFloors(home, all)
+        local partsOut = {}
+        for index = 1, #floors do partsOut[#partsOut + 1] = string.format("z%d", floors[index]) end
+        return string.format("home floors all=%s [%s] bld=%s", all and "on" or "off",
+            table.concat(partsOut, " "), tostring(home.bld))
     end
 
     if sub == "away" then
@@ -1253,7 +1468,7 @@ function BridgeCallout.homeCommand(parts)
         return "home state reset (suppressed until next arrival)"
     end
 
-    return "home [status | why | set [x y z w h] | clear | away <hours> | fire | exit | reset]"
+    return "home [status | why | set [x y z w h] | clear | away <hours> | fire | exit | reset | all on|off | floors]"
 end
 
 
@@ -1536,6 +1751,241 @@ function BridgeCallout.citiesCommand(sub, a)
 end
 
 
+local function fightNow()
+    local fighting = false
+    pcall(function() if BridgeFight ~= nil then fighting = BridgeFight.state ~= "idle" end end)
+    return fighting
+end
+
+
+local function scanInterval(body, red)
+    if Bridge.mode == "rest" then return BridgeCallout.SCAN_QUIET end
+    if BridgeFastForward ~= nil and BridgeFastForward.active() then return BridgeCallout.SCAN_QUIET end
+    local inCar = false
+    pcall(function() inCar = red ~= nil and red:getVehicle() ~= nil end)
+    if inCar then return BridgeCallout.SCAN_QUIET end
+    if fightNow() then return BridgeCallout.SCAN_FIGHT end
+    if Bridge.time - BridgeCallout.lastCombatAt < BridgeCallout.COMBAT_GRACE * BridgeCallout.SEC then
+        return BridgeCallout.SCAN_FIGHT
+    end
+    local near = false
+    pcall(function()
+        if BridgeScan == nil or red == nil then return end
+        local frame = BridgeScan.frame(body, red)
+        if frame ~= nil and frame.countNear ~= nil then near = frame.countNear(15, "companion") > 0 end
+    end)
+    if near then return BridgeCallout.SCAN_FIGHT end
+    return BridgeCallout.SCAN_IDLE
+end
+
+
+local function peakThreats(body, red)
+    local n = 0
+    local frame = nil
+    pcall(function() if BridgeScan ~= nil then frame = BridgeScan.frame(body, red) end end)
+    if frame ~= nil then
+        local entries = frame.entries or {}
+        for i = 1, #entries do
+            local e = entries[i]
+            if e.threat then
+                if (e.dc <= 8 and math.abs(e.zc) < 1) or (e.dp <= 8 and math.abs(e.zp) < 1) then
+                    n = n + 1
+                end
+            end
+        end
+        return n
+    end
+    pcall(function()
+        if BridgeHorde ~= nil and type(BridgeHorde.count) == "function" then
+            n = BridgeHorde.count(body:getX(), body:getY(), body:getZ(), 8)
+        end
+    end)
+    return tonumber(n) or 0
+end
+
+
+local function startFightRecord()
+    BridgeCallout.recordOn = true
+    BridgeCallout.fightTime = 0
+    BridgeCallout.fightPeak = 0
+    BridgeCallout.fightGun = false
+    BridgeCallout.fightHit = false
+    BridgeCallout.fightWritten = false
+    BridgeCallout.redWindedSaid = false
+    clearOneShots()
+end
+
+
+local function writeLastFight()
+    if BridgeCallout.fightWritten then return end
+    BridgeCallout.fightWritten = true
+    local age = 0
+    pcall(function() age = getGameTime():getWorldAgeHours() end)
+    local rec = {
+        d = BridgeCallout.fightTime,
+        p = BridgeCallout.fightPeak,
+        m = BridgeCallout.fightGun and "gun" or "melee",
+        h = BridgeCallout.fightHit and 1 or 0,
+        a = tonumber(age) or 0,
+    }
+    if Bridge.store ~= nil then Bridge.store.lastFight = rec end
+    if Bridge.mp then
+        pcall(function()
+            sendClientCommand(BridgeData.owner(), "Bridge", "state", { lastFight = rec })
+        end)
+    end
+end
+
+
+local function endFightLine(facts)
+    local heavy = BridgeCallout.fightPeak >= BridgeCallout.FIGHT_HEAVY_PEAK or BridgeCallout.fightHit
+    local long = BridgeCallout.fightTime >= BridgeCallout.FIGHT_LONG_SEC
+    if facts ~= nil and facts.near8 > 0 then return "EvStillOnUs" end
+    if not BridgeCallout.fightGun then
+        local tired, threshold = 0, 0.5
+        pcall(function() tired = tonumber(BridgeFight.fatigue) or 0 end)
+        pcall(function()
+            if BridgeFight ~= nil and type(BridgeFight.tiredThreshold) == "function" then
+                threshold = tonumber(BridgeFight.tiredThreshold()) or 0.5
+            end
+        end)
+        if tired >= (tonumber(threshold) or 0.5) then return "EvAfterFightTired" end
+    end
+    if BridgeCallout.fightGun and (heavy or long) then return "EvAfterFightGun" end
+    if heavy then return "EvAfterFightHard" end
+    if long then return "EvAfterFightLong" end
+    return nil
+end
+
+
+local function checkOneShots(body, red)
+    local now = Bridge.time
+    if BridgeCallout.aftermathAt ~= nil and now >= BridgeCallout.aftermathAt then
+        BridgeCallout.aftermathAt = nil
+        if now - BridgeCallout.lastAny >= BridgeCallout.REMARK_GAP * BridgeCallout.SEC then
+            local ok = true
+            local pd, sameZ, alive, asleep, inCar = 99, false, false, true, true
+            pcall(function()
+                local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
+                pd = math.sqrt(dx * dx + dy * dy)
+                sameZ = math.abs(red:getZ() - body:getZ()) < 1
+                alive = body:isAlive() == true
+                asleep = red:isAsleep() == true
+                inCar = red:getVehicle() ~= nil
+            end)
+            if ok and fightNow() then ok = false end
+            if ok and not noZombiesInSight(red, body, 8) then ok = false end
+            if ok and (not alive or pd > BridgeCallout.AMMO_NEAR or not sameZ or asleep or inCar) then ok = false end
+            if ok then
+                pcall(function()
+                    BridgeSocial.sayExact("RemarkAfterFight", BridgeCallout.REMARK_SLOT_CD * BridgeCallout.SEC,
+                        "RemarkAfterFight")
+                end)
+            end
+        end
+    end
+    if BridgeCallout.tenseAt ~= nil and now >= BridgeCallout.tenseAt then
+        BridgeCallout.tenseAt = nil
+        if now - BridgeCallout.lastAny >= BridgeCallout.REMARK_GAP * BridgeCallout.SEC then
+            local calm = not fightNow()
+            local ok = false
+            pcall(function() ok = BridgeSocial.unseenNearby(red) == true end)
+            if calm and ok then
+                pcall(function()
+                    BridgeSocial.sayExact("RemarkTense", BridgeCallout.REMARK_SLOT_CD * BridgeCallout.SEC, "RemarkTense")
+                end)
+            end
+        end
+    end
+end
+
+
+local function checkRedWinded(red, engaged)
+    if BridgeCallout.redWindedSaid then return end
+    if not engaged then return end
+    local low = false
+    pcall(function()
+        if not Bridge.alive() then return end
+        local v = nil
+        pcall(function() v = red:getVehicle() end)
+        if v ~= nil then return end
+        local asleep = false
+        pcall(function() asleep = red:isAsleep() == true end)
+        if asleep then return end
+        local endur, warn = 1, 0.5
+        pcall(function() endur = red:getStats():get(CharacterStat.ENDURANCE) end)
+        pcall(function() warn = red:getStats():getEnduranceWarning() end)
+        low = type(endur) == "number" and type(warn) == "number" and endur < warn
+    end)
+    if not low then return end
+    BridgeCallout.redWindedSaid = true
+    BridgeCallout.redWinded()
+end
+
+
+local function checkWeaponLow(red)
+    local item = nil
+    pcall(function() item = red:getPrimaryHandItem() end)
+    if item == nil then
+        BridgeCallout.weaponLowItem = nil
+        BridgeCallout.weaponLowSaid = false
+        return
+    end
+    local ranged = false
+    pcall(function() ranged = item:isRanged() == true end)
+    if ranged then
+        BridgeCallout.weaponLowItem = nil
+        BridgeCallout.weaponLowSaid = false
+        return
+    end
+    local cond, max = nil, nil
+    pcall(function() cond = item:getCondition() max = item:getConditionMax() end)
+    if type(cond) ~= "number" or type(max) ~= "number" or max <= 0 then
+        BridgeCallout.weaponLowItem = nil
+        BridgeCallout.weaponLowSaid = false
+        return
+    end
+    if BridgeCallout.weaponLowItem ~= item then
+        BridgeCallout.weaponLowItem = item
+        BridgeCallout.weaponLowSaid = false
+    end
+    if (cond / max) > BridgeCallout.WEAPON_LOW then
+        BridgeCallout.weaponLowSaid = false
+        return
+    end
+    if BridgeCallout.weaponLowSaid then return end
+    BridgeCallout.weaponLowSaid = true
+    BridgeCallout.redWeaponLow()
+end
+
+
+local function checkSwitch()
+    local drawn = false
+    pcall(function() drawn = BridgeGunfight ~= nil and BridgeGunfight.drawn == true end)
+    local prev = BridgeCallout.drawnPrev
+    local fighting = fightNow()
+    if drawn ~= prev and fighting then
+        if drawn then
+            local gunMode = false
+            pcall(function()
+                gunMode = (BridgeFight ~= nil and BridgeFight.state == "gun")
+                    or (BridgeGunfight ~= nil and BridgeGunfight.target ~= nil)
+            end)
+            if gunMode then BridgeCallout.switchToGun() end
+        else
+            local meleeMode = false
+            pcall(function()
+                meleeMode = (BridgeFight ~= nil and BridgeFight.state == "swing")
+                    or (BridgeGunfight ~= nil and (BridgeGunfight.stance == "melee"
+                        or BridgeGunfight.meleeFallback == true))
+            end)
+            if meleeMode then BridgeCallout.switchToMelee() end
+        end
+    end
+    BridgeCallout.drawnPrev = drawn
+end
+
+
 function BridgeCallout.update(body)
     if body == nil then return end
     local scanDue = Bridge.every(15)
@@ -1548,10 +1998,20 @@ function BridgeCallout.update(body)
         return
     end
     if BridgeCallout.ENABLED == 0 then return end
-    if not scanDue then return end
-    if not Bridge.alive() then return end
     local red = BridgeData.owner()
+    local interval = scanInterval(body, red)
+    if Bridge.time - (BridgeCallout.scanAt or 0) < interval then return end
+    BridgeCallout.scanAt = Bridge.time
+    if not Bridge.alive() then
+        BridgeCallout.recordOn = false
+        clearOneShots()
+        return
+    end
     if red == nil then return end
+
+    local asleep = false
+    pcall(function() asleep = red:isAsleep() == true end)
+    if asleep then clearOneShots() end
 
     placeTick(body, red)
 
@@ -1571,17 +2031,29 @@ function BridgeCallout.update(body)
     local attackingNow = h2h or atk
     BridgeCallout.attackPrev = attackingNow
 
-    if flush() then return end
-
-    local fighting = false
-    pcall(function() if BridgeFight ~= nil then fighting = BridgeFight.state ~= "idle" end end)
+    local fighting = fightNow()
+    local stepSec = interval / BridgeCallout.SEC
     if fighting then
         BridgeCallout.wasFighting = true
         BridgeCallout.fightingAt = Bridge.time
         BridgeCallout.lastCombatAt = Bridge.time
+        if not BridgeCallout.recordOn then startFightRecord() end
+        BridgeCallout.fightTime = BridgeCallout.fightTime + stepSec
+        local peak = peakThreats(body, red)
+        if peak > BridgeCallout.fightPeak then BridgeCallout.fightPeak = peak end
+        local gunNow = false
+        pcall(function() gunNow = BridgeFight ~= nil and BridgeFight.state == "gun" end)
+        if gunNow then BridgeCallout.fightGun = true end
     end
     if not fighting then BridgeCallout.finisherTarget = nil end
     local engaged = fighting or (Bridge.time - BridgeCallout.fightingAt < BridgeCallout.COMBAT_GRACE * BridgeCallout.SEC)
+
+    if flush() then return end
+
+    checkSwitch()
+    checkRedWinded(red, engaged)
+    if engaged then checkWeaponLow(red) end
+    checkOneShots(body, red)
 
     local pk = BridgeCallout.pendingKill
     if pk ~= nil then
@@ -1595,6 +2067,7 @@ function BridgeCallout.update(body)
         if fighting and BridgeCallout.lastHealth ~= nil
             and BridgeCallout.lastHealth - health >= BridgeCallout.PLAYER_HIT_DROP then
             say("EvPlayerHit")
+            BridgeCallout.fightHit = true
         end
         BridgeCallout.lastHealth = health
     end
@@ -1605,7 +2078,12 @@ function BridgeCallout.update(body)
             local hx, hy, hz = nil, nil, nil
             pcall(function() hx, hy, hz = red:getX(), red:getY(), red:getZ() end)
             if hx ~= nil then
-                local n = BridgeHorde.count(hx, hy, hz, BridgeHorde.RADIUS)
+                local raw = BridgeHorde.count(hx, hy, hz, BridgeHorde.RADIUS)
+                local n = 0
+                if raw >= BridgeHorde.TIERS[1] then
+                    n = BridgeHorde.countSeen(hx, hy, hz, BridgeHorde.RADIUS, body, red, raw)
+                    vlog(string.format("horde: raw=%d seen=%d at %.1f,%.1f", raw, n, hx, hy))
+                end
                 local tiers = BridgeHorde.TIERS
                 for i = #tiers, 1, -1 do
                     local t = tiers[i]
@@ -1620,13 +2098,31 @@ function BridgeCallout.update(body)
 
     local facts = scanWorld(body, red, not engaged)
 
-    if facts.breach and say("EvBreach") then return end
-
     if fighting then
-        if facts.behind and say("EvBehind") then return end
-        if facts.flank and say(facts.flankSide == "left" and "EvFlankLeft" or "EvFlankRight") then return end
-        if facts.crawler and say("EvCrawler") then return end
-        if BridgeCallout.SAY.EvFinisher ~= 0 and scanFinisher() and say("EvFinisher") then return end
+        local crowd, playerDist = 0, 99
+        pcall(function()
+            if BridgeFight ~= nil and type(BridgeFight.crowdAround) == "function" then
+                crowd = BridgeFight.crowdAround(body, BridgeCallout.SWARM_RADIUS) or 0
+            end
+            local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
+            playerDist = math.sqrt(dx * dx + dy * dy)
+        end)
+        if BridgeCallout.SAY.EvSwarmed ~= 0 and crowd >= 3
+            and playerDist > BridgeCallout.SWARM_PLAYER then
+            BridgeCallout.swarmed()
+            return
+        end
+        if BridgeCallout.SAY.EvFinisher ~= 0 or BridgeCallout.SAY.EvFinisherGun ~= 0 then
+            local ft = scanFinisher()
+            if ft ~= nil then
+                local gunFinisher = false
+                pcall(function()
+                    gunFinisher = BridgeFight ~= nil and BridgeFight.state == "gun"
+                        and BridgeGunfight ~= nil and BridgeGunfight.target == ft
+                end)
+                if say(gunFinisher and "EvFinisherGun" or "EvFinisher") then return end
+            end
+        end
         if BridgeCallout.SAY.EvTaunt ~= 0 and nearTarget(body) then
             local n = #BridgeCallout.AMBIENT
             local start = ZombRand(n)
@@ -1641,7 +2137,20 @@ function BridgeCallout.update(body)
 
     if BridgeCallout.wasFighting then
         BridgeCallout.wasFighting = false
-        if facts.near8 == 0 and say("EvLull") then return end
+        BridgeCallout.recordOn = false
+        local line = endFightLine(facts)
+        if line ~= nil and BridgeCallout.SAY[line] == 0 then line = nil end
+        if line ~= nil then
+            say(line)
+        elseif facts.near8 == 0 then
+            say("EvLull")
+        end
+        if BridgeCallout.fightTime >= BridgeCallout.FIGHT_AFTERMATH_SEC
+            or BridgeCallout.fightPeak >= BridgeCallout.FIGHT_AFTERMATH_PEAK then
+            BridgeCallout.aftermathAt = Bridge.time + BridgeCallout.AFTERMATH_DELAY_SEC * BridgeCallout.SEC
+        end
+        BridgeCallout.tenseAt = Bridge.time + BridgeCallout.TENSE_DELAY_SEC * BridgeCallout.SEC
+        writeLastFight()
         return
     end
 

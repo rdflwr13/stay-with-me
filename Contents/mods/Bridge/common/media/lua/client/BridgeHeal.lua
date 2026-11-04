@@ -275,25 +275,56 @@ local function findBulletTool(body, red)
 end
 
 
-local function findSuture(body, red, used)
-    local suture = findItem(body, red, used, function(it) return it:getType() == "SutureNeedle" end)
-    if suture ~= nil then return suture, nil end
-    local needle = findItem(body, red, nil, function(it) return it:getType() == "Needle" or hasTag(it, "SEWING_NEEDLE") end)
-    local thread = findItem(body, red, used, function(it)
+local function findSutureNeedle(body, red, used)
+    return findItem(body, red, used, function(it) return it:getType() == "SutureNeedle" end)
+end
+
+
+local function findNeedle(body, red)
+    return findItem(body, red, nil, function(it) return it:getType() == "Needle" or hasTag(it, "SEWING_NEEDLE") end)
+end
+
+
+local function findThread(body, red, used)
+    return findItem(body, red, used, function(it)
         return (it:getType() == "Thread" or hasTag(it, "THREAD")) and it:getCurrentUsesFloat() > 0
     end)
+end
+
+
+local function findSuture(body, red, used)
+    local suture = findSutureNeedle(body, red, used)
+    if suture ~= nil then return suture, nil end
+    local needle = findNeedle(body, red)
+    local thread = findThread(body, red, used)
     if needle ~= nil and thread ~= nil then return needle, thread end
     return nil, nil
 end
 
-local function findSplint(body, red, used)
-    local splint = findItem(body, red, used, function(it) return it:getType() == "Splint" end)
-    if splint ~= nil then return splint, nil end
-    local plank = findItem(body, red, used, function(it)
+
+local function findSplintItem(body, red, used)
+    return findItem(body, red, used, function(it) return it:getType() == "Splint" end)
+end
+
+
+local function findSplintPlank(body, red, used)
+    return findItem(body, red, used, function(it)
         local t = it:getType()
         return t == "Plank" or t == "TreeBranch" or t == "TreeBranch2" or t == "WoodenStick" or t == "WoodenStick2"
     end)
-    local sheet = findItem(body, red, used, function(it) return it:getType() == "RippedSheets" end)
+end
+
+
+local function findSplintSheet(body, red, used)
+    return findItem(body, red, used, function(it) return it:getType() == "RippedSheets" end)
+end
+
+
+local function findSplint(body, red, used)
+    local splint = findSplintItem(body, red, used)
+    if splint ~= nil then return splint, nil end
+    local plank = findSplintPlank(body, red, used)
+    local sheet = findSplintSheet(body, red, used)
     if plank ~= nil and sheet ~= nil then return plank, sheet end
     return nil, nil
 end
@@ -302,10 +333,18 @@ end
 
 function BridgeHeal.hasFor(body, red, kind)
     if kind == "bandage" then return bestBandage(body, red, nil) ~= nil end
+    if kind == "dirtyBandage" then return dirtyBandage(body, red, nil) ~= nil end
     if kind == "suture" then return (findSuture(body, red, nil)) ~= nil end
+    if kind == "sutureNeedle" then return findSutureNeedle(body, red, nil) ~= nil end
+    if kind == "needle" then return findNeedle(body, red) ~= nil end
+    if kind == "thread" then return findThread(body, red, nil) ~= nil end
     if kind == "glass" then return findGlassTool(body, red) ~= nil end
     if kind == "bullet" then return findBulletTool(body, red) ~= nil end
+    if kind == "tweezers" then return findGlassTool(body, red) ~= nil end
     if kind == "splint" then return (findSplint(body, red, nil)) ~= nil end
+    if kind == "plank" then return findSplintPlank(body, red, nil) ~= nil end
+    if kind == "sheet" then return findSplintSheet(body, red, nil) ~= nil end
+    if kind == "burnBandage" then return burnBandage(body, red, nil) ~= nil end
     if kind == "disinfect" then return findDisinfectant(body, red, nil) ~= nil end
     return false
 end
@@ -615,17 +654,45 @@ function BridgeHeal.start(body, red, byRequest)
     local fetched = false
     if BridgeFetch ~= nil and type(BridgeFetch.available) == "function" and lacking ~= nil
             and BridgeFetch.available() and type(BridgeFetch.pull) == "function" then
-        if lacking.Bandage and not BridgeHeal.hasFor(body, red, "bandage") then
-            pcall(function()
-                local res = BridgeFetch.pull("bandage")
-                if res == "moved" or res == "requested" then fetched = true end
-            end)
+        local function pullNeed(id)
+            local res = nil
+            pcall(function() res = BridgeFetch.pull(id) end)
+            if res == "moved" or res == "requested" then fetched = true end
+            return res or "failed"
         end
-        if lacking.Disinfectant and not BridgeHeal.hasFor(body, red, "disinfect") then
-            pcall(function()
-                local res = BridgeFetch.pull("disinfectant")
-                if res == "moved" or res == "requested" then fetched = true end
-            end)
+        local function missing(kind)
+            return not BridgeHeal.hasFor(body, red, kind)
+        end
+        local function absentResult(res)
+            return res ~= "moved" and res ~= "requested" and res ~= "have"
+        end
+
+        if lacking.Bandage and missing("bandage") then
+            local res = pullNeed("bandage")
+            if absentResult(res) then
+                local bleeding = false
+                for _, w in ipairs(wounds) do
+                    if w.bleeding and not w.bandaged then bleeding = true break end
+                end
+                if bleeding and missing("dirtyBandage") then pullNeed("dirtyBandage") end
+            end
+        end
+        if lacking.Disinfectant and missing("disinfect") then pullNeed("disinfectant") end
+        if lacking.Suture and missing("suture") then
+            local res = pullNeed("sutureNeedle")
+            if absentResult(res) then
+                if missing("needle") then pullNeed("needle") end
+                if missing("thread") then pullNeed("thread") end
+            end
+        end
+        if lacking.Tweezers and missing("tweezers") then pullNeed("tweezers") end
+        if lacking.BurnBandage and missing("burnBandage") then pullNeed("burnBandage") end
+        if lacking.Splint and missing("splint") then
+            local res = pullNeed("splint")
+            if absentResult(res) then
+                if missing("plank") then pullNeed("splintPlank") end
+                if missing("sheet") then pullNeed("splintSheet") end
+            end
         end
     end
     if fetched then

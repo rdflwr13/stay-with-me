@@ -27,8 +27,6 @@ BridgeTorch.info = "off"
 BridgeTorch.lamps = {}
 BridgeTorch.sent = {}
 BridgeTorch.pending = {}
-BridgeTorch.litFlag = {}
-BridgeTorch.litAt = {}
 BridgeTorch.dbg = {}
 
 
@@ -134,6 +132,9 @@ local function push(body, want, range)
 
 
     BridgeTorchShared.apply(body, want, range)
+    if BridgeLight ~= nil and type(BridgeLight.invalidate) == "function" then
+        pcall(BridgeLight.invalidate, "beam")
+    end
     if Bridge.mp then
         pcall(function()
             sendClientCommand(BridgeData.owner(), "Bridge", "torch", { on = want, range = range })
@@ -204,7 +205,12 @@ local function probeTick()
         if (getTimestampMs() - (p.at or 0)) >= 50 then
             local v = nil
             if p.body ~= nil then
-                pcall(function() v = BridgeTorchShared.darkAt(p.body) end)
+                if BridgeLight ~= nil and type(BridgeLight.probe) == "function" then
+                    pcall(function() v = BridgeLight.probe(p.body) end)
+                end
+                if v == nil then
+                    pcall(function() v = BridgeTorchShared.darkAt(p.body) end)
+                end
             end
             v = tonumber(v)
             if v ~= nil then
@@ -319,19 +325,26 @@ function BridgeTorch.update(body)
 
 
 
-        local raw = BridgeTorchShared.darkAt(body)
+        local entry = nil
+        if BridgeLight ~= nil and type(BridgeLight.at) == "function" then
+            local ok, got = pcall(BridgeLight.at, body)
+            if ok then entry = got end
+        end
+        local raw = entry ~= nil and entry.raw or BridgeTorchShared.darkAt(body)
         local onNow = BridgeTorchShared.isOn(body)
 
 
 
         local external, why = false, "none"
-        if BridgeTorch.externalLight ~= nil then
+        if entry ~= nil then
+            external, why = entry.external == true, entry.why or "none"
+        elseif BridgeTorch.externalLight ~= nil then
             local ok, e, w = pcall(BridgeTorch.externalLight, body, red)
             if ok then external, why = (e == true), (w or "?") end
-        end
-        if not external and BridgeTorch.roomLit ~= nil then
-            local ok, rl, rw = pcall(BridgeTorch.roomLit, body)
-            if ok and rl == true then external, why = true, (rw or "roomLight") end
+            if not external and BridgeTorch.roomLit ~= nil then
+                local ok2, rl, rw = pcall(BridgeTorch.roomLit, body)
+                if ok2 and rl == true then external, why = true, (rw or "roomLight") end
+            end
         end
 
         local lvl = raw
@@ -505,7 +518,7 @@ function BridgeTorch.update(body)
 
     if not Bridge.mp then
         if BridgeTorchShared.isOn(body) and Bridge.every(60) then
-            local empty = BridgeTorchShared.drain(body)
+            local empty, why = BridgeTorchShared.drain(body)
             if empty then
                 BridgeTorch.sent[key] = false
                 BridgeTorchShared.apply(body, false)
@@ -569,6 +582,12 @@ end
 
 
 function BridgeTorch.darkHere(body)
+    if BridgeLight ~= nil and type(BridgeLight.at) == "function" then
+        local ok, e = pcall(BridgeLight.at, body)
+        if ok and e ~= nil and e.at ~= nil and (getTimestampMs() - e.at) <= 3000 then
+            return e.dark, e.inside, e.lvl or e.raw, e.external, e.why
+        end
+    end
     local d = BridgeTorch.sensed[BridgeTorchShared.keyOf(body)]
     if d == nil or (getTimestampMs() - (d.at or 0)) > 3000 then return nil end
     return d.dark, d.inside, d.lvl, d.external, d.why
@@ -619,6 +638,9 @@ function BridgeTorch.offForCar(body, why)
 
     local cell = getCell()
     if cell ~= nil then releaseEntry(cell, key) end
+    if BridgeLight ~= nil and type(BridgeLight.invalidate) == "function" then
+        pcall(BridgeLight.invalidate, "beam")
+    end
     pcall(invalidateLights)
 
     BridgeTorch.info = "off: " .. tostring(why or "car")

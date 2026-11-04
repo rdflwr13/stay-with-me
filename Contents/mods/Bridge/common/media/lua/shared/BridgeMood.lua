@@ -37,6 +37,23 @@ BridgeMood.TIERS = {
 }
 
 
+BridgeMood.WAKE = {
+    Far   = { bored = 1, unhappy = 0.5, stress = 0.01, anger = 0.05 },
+    Near  = { bored = 2, unhappy = 1,   stress = 0.02, anger = 0.1 },
+    Close = { bored = 3, unhappy = 2,   stress = 0.03, anger = 0.15 },
+}
+
+
+function BridgeMood.wakeDeltas(tier)
+    local base = BridgeMood.WAKE[tier]
+    if type(base) ~= "table" then base = BridgeMood.WAKE.Far end
+    local m = BridgeData.sandboxNumber("MoodEffectMultiplier", 1, 0, 3)
+    local out = {}
+    for key, v in pairs(base) do out[key] = v * m end
+    return out
+end
+
+
 
 BridgeMood.TALK = {
     Chat = { bored = { 10, 20 } },

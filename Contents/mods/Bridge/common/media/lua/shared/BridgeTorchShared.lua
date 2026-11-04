@@ -181,6 +181,12 @@ function BridgeTorchShared.canLight(item)
     return not BridgeTorchShared.isExcluded(item)
 end
 
+function BridgeTorchShared.isDrainable(item)
+    if item == nil then return false end
+    local ok, value = pcall(function() return item:IsDrainable() == true end)
+    return ok and value == true
+end
+
 
 
 
@@ -330,6 +336,15 @@ end
 
 
 
+local rejectedLight = {}
+local function noteRejectedLight(item)
+    if type(BridgeTorch) ~= "table" or BridgeTorch.DEBUG ~= true then return end
+    local t = typeOf(item)
+    if t == nil or rejectedLight[t] then return end
+    rejectedLight[t] = true
+    log("ignoring non-drainable light " .. t)
+end
+
 function BridgeTorchShared.findTorch(body)
     if body == nil then return nil end
 
@@ -354,12 +369,17 @@ function BridgeTorchShared.findTorch(body)
 
 
     local listed = bestOf(function(it)
-        return BridgeTorchShared.isListedTorch(it) and BridgeTorchShared.canLight(it)
+        if not BridgeTorchShared.isListedTorch(it) then return false end
+        if not BridgeTorchShared.isDrainable(it) then noteRejectedLight(it) return false end
+        return BridgeTorchShared.canLight(it)
     end)
     if listed ~= nil then BridgeTorchShared.pullToMain(body, listed) return listed end
 
     local generic = bestOf(function(it)
-        return not BridgeTorchShared.isListedTorch(it) and BridgeTorchShared.canLight(it)
+        if BridgeTorchShared.isListedTorch(it) then return false end
+        if not BridgeTorchShared.canLight(it) then return false end
+        if not BridgeTorchShared.isDrainable(it) then noteRejectedLight(it) return false end
+        return true
     end)
     if generic ~= nil then BridgeTorchShared.pullToMain(body, generic) return generic end
 
@@ -368,7 +388,7 @@ function BridgeTorchShared.findTorch(body)
 
 
     local dead = bestOf(function(it)
-        return BridgeTorchShared.isListedTorch(it)
+        return BridgeTorchShared.isListedTorch(it) and BridgeTorchShared.isDrainable(it)
     end, true)
     if dead ~= nil then BridgeTorchShared.pullToMain(body, dead) end
     return dead
@@ -460,24 +480,6 @@ local function ownerNear(body, red)
     end)
     return near
 end
-
-
-
-local function playerTorchOn(red)
-    local on = false
-    pcall(function() on = red ~= nil and red:getTorchStrength() > BridgeTorchShared.CFG.TORCH end)
-    if not on then
-        pcall(function()
-            on = BridgeAmbient ~= nil and BridgeAmbient.prev ~= nil and BridgeAmbient.prev.torchOn == true
-        end)
-    end
-    return on == true
-end
-
-
-
-
-
 
 
 
@@ -585,12 +587,28 @@ local function gameMinutesSince(body)
 end
 
 
+local function setTorchCharge(item, value)
+    if item == nil then return false end
+    local ok = false
+    pcall(function()
+        if type(item.setUsedDelta) == "function" then
+            item:setUsedDelta(value)
+            ok = true
+        elseif type(item.setCurrentUsesFloat) == "function" then
+            item:setCurrentUsesFloat(value)
+            ok = true
+        end
+    end)
+    return ok
+end
+
 function BridgeTorchShared.drain(body, dt)
-    if body == nil then return true end
+    if body == nil then return false, "none" end
     local item = BridgeTorchShared.findTorch(body)
-    if item == nil then return true end
+    if item == nil then return false, "none" end
+    if not BridgeTorchShared.isDrainable(item) then return false, "not-drainable" end
     local c = BridgeTorchShared.charge(item)
-    if c <= 0.0001 then return true end
+    if c <= 0.0001 then return true, "empty" end
 
     local rate = BridgeTorchShared.CFG.DEFAULT_USE_DELTA
     pcall(function()
@@ -600,18 +618,19 @@ function BridgeTorchShared.drain(body, dt)
     rate = rate * BridgeTorchShared.CFG.DRAIN_SCALE
 
     local minutes = gameMinutesSince(body)
-    if minutes <= 0 then return false end
+    if minutes <= 0 then return false, "wait" end
 
     local key = BridgeTorchShared.keyOf(body)
     local acc = (BridgeTorchShared.stepAcc[key] or 0) + minutes
     local steps = math.floor(acc / 10)
     BridgeTorchShared.stepAcc[key] = acc - steps * 10
-    if steps <= 0 then return false end
+    if steps <= 0 then return false, "wait" end
 
     local left = c - rate * steps
     if left < 0 then left = 0 end
-    pcall(function() item:setUsedDelta(left) end)
-    return left <= 0.0001
+    setTorchCharge(item, left)
+    if left <= 0.0001 then return true, "empty" end
+    return false, "ok"
 end
 
 
@@ -635,6 +654,7 @@ function BridgeTorchShared.swapBattery(body)
 
     local item = BridgeTorchShared.findTorch(body)
     if item == nil then return false end
+    if not BridgeTorchShared.isDrainable(item) then return false end
 
     local removed, removedFrom = false, nil
     pcall(function()
@@ -645,7 +665,7 @@ function BridgeTorchShared.swapBattery(body)
     end)
     if not removed then return false end
 
-    pcall(function() item:setUsedDelta(batteryCharge) end)
+    setTorchCharge(item, batteryCharge)
 
 
     pcall(function()

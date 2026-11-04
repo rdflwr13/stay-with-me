@@ -164,6 +164,21 @@ end
 
 local function zombiesNear(red, dist)
     local near = false
+    if red == nil then return false end
+    local frame = nil
+    pcall(function() if BridgeScan ~= nil then frame = BridgeScan.frame(Bridge.body, red) end end)
+    if frame ~= nil then
+        local entries = frame.entries or {}
+        for i = 1, #entries do
+            local e = entries[i]
+            if e.alive and not e.comp and not e.harm and e.seenP
+                and e.dp < dist and math.abs(e.zp) < 1 then
+                near = true
+                break
+            end
+        end
+        return near
+    end
     pcall(function()
         local list = nil
         if BridgeZScan ~= nil then

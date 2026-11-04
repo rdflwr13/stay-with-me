@@ -9,6 +9,7 @@ S.BUCKET = 8
 
 S.TAGS = {
     ["callout.scan"] = true,
+    ["scan.frame"] = true,
     ["fight.crowd"] = true,
     ["fight.pick"] = true,
     ["fight.extra"] = true,
@@ -19,6 +20,7 @@ S.TAGS = {
     ["gun.target"] = true,
     ["gun.extra"] = true,
     ["horde.count"] = true,
+    ["horde.count.seen"] = true,
     ["horde.cone"] = true,
     ["task.danger"] = true,
     ["ambient.danger"] = true,
@@ -97,9 +99,10 @@ local function toList(arr, opts)
 end
 
 local function nowMs()
-    local t = 0
-    if getTimestampMs ~= nil then pcall(function() t = getTimestampMs() end) end
-    return t
+    if getTimestampMs == nil then return 0 end
+    local ok, t = pcall(getTimestampMs)
+    if ok and type(t) == "number" then return t end
+    return 0
 end
 
 local function tickNow()
@@ -221,12 +224,15 @@ local function newMemo(tick)
         tick = tick,
         alive = setmetatable({}, { __mode = "k" }),
         health = setmetatable({}, { __mode = "k" }),
+        bod = setmetatable({}, { __mode = "k" }),
         comp = setmetatable({}, { __mode = "k" }),
         rem = setmetatable({}, { __mode = "k" }),
         harm = setmetatable({}, { __mode = "k" }),
         drag = setmetatable({}, { __mode = "k" }),
         risen = setmetatable({}, { __mode = "k" }),
         threat = setmetatable({}, { __mode = "k" }),
+        vis = setmetatable({}, { __mode = "k" }),
+        q = {},
     }
 end
 
@@ -395,6 +401,133 @@ function S.isThreat(z)
     return v
 end
 
+local function currentMemo()
+    if snap == nil or memo == nil then return nil end
+    if snap.tick ~= tickNow() then return nil end
+    if memo.tick ~= snap.tick then return nil end
+    return memo
+end
+
+function S.cachedBodyVar(z)
+    if z == nil then return nil end
+    local m = currentMemo()
+    if m == nil then return nil end
+    return m.bod[z]
+end
+
+function S.cachedCompanion(z)
+    if z == nil then return nil end
+    local m = currentMemo()
+    if m == nil then return nil end
+    return m.comp[z]
+end
+
+function S.cachedRemote(z)
+    if z == nil then return nil end
+    local m = currentMemo()
+    if m == nil then return nil end
+    return m.rem[z]
+end
+
+function S.cachedHarmless(z)
+    if z == nil then return nil end
+    local m = currentMemo()
+    if m == nil then return nil end
+    return m.harm[z]
+end
+
+function S.cachedOutfit(z)
+    return nil
+end
+
+local MEMO_MAX = 32
+
+local function round2(v)
+    return string.format("%.4f", tonumber(v) or 0)
+end
+
+
+local function filterKey(f)
+    if f == nil then return "-" end
+    if type(f) == "string" then return "s:" .. f end
+    return "f:" .. tostring(f)
+end
+
+
+local function memGet(kind, key)
+    local m = memoNow()
+    local bucket = m.q[kind]
+    if bucket == nil then return nil end
+    local v = bucket[key]
+    if v ~= nil then S.stats.memoHits = S.stats.memoHits + 1 end
+    return v
+end
+
+
+local function memPut(kind, key, value)
+    local m = memoNow()
+    local bucket = m.q[kind]
+    if bucket == nil then
+        bucket = { n = 0 }
+        m.q[kind] = bucket
+    end
+    if bucket.n >= MEMO_MAX then return end
+    bucket[key] = value
+    bucket.n = bucket.n + 1
+end
+
+
+local function visGet(viewer, z)
+    if viewer == nil or z == nil then return nil end
+    local m = memoNow()
+    local byViewer = m.vis[viewer]
+    if byViewer == nil then return nil end
+    local v = byViewer[z]
+    if v ~= nil then S.stats.memoHits = S.stats.memoHits + 1 end
+    return v
+end
+
+
+local function visPut(viewer, z, v)
+    if viewer == nil or z == nil then return end
+    local m = memoNow()
+    local byViewer = m.vis[viewer]
+    if byViewer == nil then
+        byViewer = setmetatable({}, { __mode = "k" })
+        m.vis[viewer] = byViewer
+    end
+    byViewer[z] = v
+end
+
+
+function S.canSee(z, a, b)
+    if z == nil then return false end
+    local seen = false
+    if a ~= nil then
+        local v = visGet(a, z)
+        if v == nil then
+            local got = false
+            pcall(function() got = a:CanSee(z) == true end)
+            S.stats.memoMisses = S.stats.memoMisses + 1
+            visPut(a, z, got)
+            v = got
+        end
+        seen = v
+    end
+    if not seen and b ~= nil and b ~= a then
+        local v = visGet(b, z)
+        if v == nil then
+            local got = false
+            pcall(function() got = b:CanSee(z) == true end)
+            S.stats.memoMisses = S.stats.memoMisses + 1
+            visPut(b, z, got)
+            v = got
+        end
+        seen = v
+    end
+    return seen
+end
+
 local PROFILES = {
     canonical = function(z) return S.isThreat(z) end,
     alert = function(z)
@@ -431,6 +564,24 @@ local function readRawList()
     return nil
 end
 
+local function readZombieList(cell)
+    if type(S.listProvider) == "function" then return S.listProvider() end
+    return cell:getZombieList()
+end
+
+local function fillRefs(list, refs)
+    local n = 0
+    local sz = list:size()
+    for i = 0, sz - 1 do
+        local z = list:get(i)
+        if z ~= nil then
+            n = n + 1
+            refs[n] = z
+        end
+    end
+    return n
+end
+
 local function buildRefs()
     local started = nowMs()
     local tick = tickNow()
@@ -442,10 +593,7 @@ local function buildRefs()
         S.stats.fallbacks = S.stats.fallbacks + 1
         return nil
     end
-    local ok, list = pcall(function()
-        if type(S.listProvider) == "function" then return S.listProvider() end
-        return cell:getZombieList()
-    end)
+    local ok, list = pcall(readZombieList, cell)
     S.stats.listReads = S.stats.listReads + 1
     if not ok or list == nil then
         S.stats.lastError = "nil zombie list: " .. tostring(list)
@@ -455,20 +603,14 @@ local function buildRefs()
         return nil
     end
 
-    local refs, n = {}, 0
-    local ok2, err = pcall(function()
-        local sz = list:size()
-        for i = 0, sz - 1 do
-            local z = list:get(i)
-            if z ~= nil then
-                n = n + 1
-                refs[n] = z
-            end
-        end
-    end)
+    local refs = {}
+    local ok2, n = pcall(fillRefs, list, refs)
+    if ok2 then
+        n = tonumber(n) or 0
+    end
     if not ok2 then
-        S.stats.lastError = "ref build failed: " .. tostring(err)
-        warn("refbuild", "ref build failed: " .. tostring(err))
+        S.stats.lastError = "ref build failed: " .. tostring(n)
+        warn("refbuild", "ref build failed: " .. tostring(n))
         failedTick, failedCell = tick, cell
         S.stats.fallbacks = S.stats.fallbacks + 1
         return nil
@@ -476,6 +618,7 @@ local function buildRefs()
 
     snap = {
         tick = tick,
+        listTick = tick,
         cell = cell,
         refs = refs,
         n = n,
@@ -499,60 +642,131 @@ local function buildRefs()
     return snap
 end
 
-local function refreshRefs()
+local buildCoords
+
+local function refreshRefs(maxAge)
+    maxAge = tonumber(maxAge) or 1
+    if maxAge < 1 then maxAge = 1 end
     local tick = tickNow()
     local cell = cellNow()
     S.stats.tick = tick
-    if snap ~= nil and (snap.tick ~= tick or snap.cell ~= cell) then
-        local reason = snap.tick ~= tick and "tick" or "cell"
+    local rebuild, listRead = false, false
+    if snap == nil then
+        rebuild, listRead = true, true
+    elseif snap.cell ~= cell then
         local inv = S.stats.invalidations
-        inv[reason] = (inv[reason] or 0) + 1
-        if reason ~= "tick" then thrashCheck() end
+        inv.cell = (inv.cell or 0) + 1
+        thrashCheck()
         snap = nil
         failedTick, failedCell = nil, nil
+        rebuild, listRead = true, true
+    elseif maxAge <= 1 then
+        if snap.tick ~= tick then
+            local inv = S.stats.invalidations
+            inv.tick = (inv.tick or 0) + 1
+            snap = nil
+            failedTick, failedCell = nil, nil
+            rebuild, listRead = true, true
+        end
+    elseif tick - (snap.tick or tick) >= maxAge then
+        local listAge = tonumber(S.listAge) or 15
+        if listAge < 1 then listAge = 1 end
+        if tick - (snap.listTick or snap.tick or tick) >= listAge then
+            snap = nil
+            failedTick, failedCell = nil, nil
+            rebuild, listRead = true, true
+        else
+            rebuild, listRead = true, false
+        end
     end
-    if memo ~= nil and memo.tick ~= tick then memo = nil end
-    if snap ~= nil then return snap end
-    if failedTick == tick and failedCell == cell then return nil end
-    return buildRefs()
+    if not rebuild then return snap end
+    if listRead then
+        if failedTick == tick and failedCell == cell then return nil end
+        return buildRefs()
+    end
+    if snap == nil then return nil end
+    snap.tick = tick
+    snap.level = 0
+    return buildCoords()
 end
 
-local function buildCoords()
+local function readCoords(z, xs, ys, zs, i)
+    xs[i] = z:getX()
+    ys[i] = z:getY()
+    zs[i] = z:getZ()
+end
+
+local function readFlags(z, alive, bod, rem, i, var, remoteHook, isClientNow)
+    alive[i] = z:isAlive() == true
+    bod[i] = z:getVariableBoolean(var) == true
+    if type(remoteHook) == "function" then
+        rem[i] = remoteHook(z) == true
+    elseif isClientNow then
+        rem[i] = z:isRemoteZombie() == true
+    else
+        rem[i] = false
+    end
+end
+
+local scratch = { xs = {}, ys = {}, zs = {}, alive = {}, bod = {}, rem = {}, n = 0 }
+
+local function ensureBuckets(s)
+    if s.buckets ~= nil or s.n <= S.BUCKET_AT then return end
+    local xs, ys = s.xs, s.ys
+    if xs == nil or ys == nil then return end
+    local buckets = {}
+    local B = S.BUCKET
+    for i = 1, s.n do
+        if xs[i] ~= nil and ys[i] ~= nil then
+            local bx = math.floor(xs[i] / B)
+            local by = math.floor(ys[i] / B)
+            local layer = buckets[bx]
+            if layer == nil then layer = {}; buckets[bx] = layer end
+            local col = layer[by]
+            if col == nil then col = {}; layer[by] = col end
+            col[#col + 1] = i
+        end
+    end
+    s.buckets = buckets
+end
+
+buildCoords = function()
     local s = snap
     if s == nil then return nil end
     if s.level >= 1 then return s end
     local started = nowMs()
-    local xs, ys, zs, alive, bod, rem = {}, {}, {}, {}, {}, {}
+    local reuse = not quietSelf
+    local xs = reuse and scratch.xs or {}
+    local ys = reuse and scratch.ys or {}
+    local zs = reuse and scratch.zs or {}
+    local alive = reuse and scratch.alive or {}
+    local bod = reuse and scratch.bod or {}
+    local rem = reuse and scratch.rem or {}
     local isClientNow = clientNow()
     local remoteHook = S.isRemoteOf
     local var = bodyVar()
     for i = 1, s.n do
         local z = s.refs[i]
-        local ok = pcall(function()
-            xs[i] = z:getX()
-            ys[i] = z:getY()
-            zs[i] = z:getZ()
-        end)
+        xs[i], ys[i], zs[i] = nil, nil, nil
+        alive[i], bod[i], rem[i] = nil, nil, nil
+        local ok = pcall(readCoords, z, xs, ys, zs, i)
         if not ok then
             xs[i], ys[i], zs[i] = nil, nil, nil
         else
-            pcall(function()
-                alive[i] = z:isAlive() == true
-                bod[i] = z:getVariableBoolean(var) == true
-            end)
-            if type(remoteHook) == "function" then
-                local okR, r = pcall(remoteHook, z)
-                if okR then rem[i] = r == true end
-            elseif isClientNow then
-                pcall(function() rem[i] = z:isRemoteZombie() == true end)
-            else
-                rem[i] = false
-            end
+            pcall(readFlags, z, alive, bod, rem, i, var, remoteHook, isClientNow)
         end
     end
+    if reuse and scratch.n > s.n then
+        for i = s.n + 1, scratch.n do
+            xs[i], ys[i], zs[i] = nil, nil, nil
+            alive[i], bod[i], rem[i] = nil, nil, nil
+        end
+    end
+    if reuse then scratch.n = s.n end
     s.xs, s.ys, s.zs = xs, ys, zs
     s.alive, s.bod, s.rem = alive, bod, rem
     s.level = 1
+    s.buckets = nil
 
     local m = memoNow()
     for i = 1, s.n do
@@ -560,25 +774,9 @@ local function buildCoords()
         if z ~= nil then
             if alive[i] ~= nil then m.alive[z] = alive[i] end
             if rem[i] ~= nil then m.rem[z] = rem[i] end
+            if bod[i] ~= nil then m.bod[z] = bod[i] end
             if bod[i] == true then m.comp[z] = true end
         end
-    end
-
-    if s.n > S.BUCKET_AT then
-        local buckets = {}
-        local B = S.BUCKET
-        for i = 1, s.n do
-            if xs[i] ~= nil and ys[i] ~= nil then
-                local bx = math.floor(xs[i] / B)
-                local by = math.floor(ys[i] / B)
-                local layer = buckets[bx]
-                if layer == nil then layer = {}; buckets[bx] = layer end
-                local col = layer[by]
-                if col == nil then col = {}; layer[by] = col end
-                col[#col + 1] = i
-            end
-        end
-        s.buckets = buckets
     end
 
     S.stats.coordBuilds = S.stats.coordBuilds + 1
@@ -589,8 +787,8 @@ local function buildCoords()
     return s
 end
 
-local function ensureCoords()
-    local s = refreshRefs()
+local function ensureCoords(maxAge)
+    local s = refreshRefs(maxAge)
     if s == nil then return nil end
     if s.level >= 1 then return s end
     return buildCoords()
@@ -600,10 +798,43 @@ function S.refresh()
     return refreshRefs()
 end
 
+S.listAge = 15
+
+S.TAG_AGE = {
+    ["mood.calm"] = "zscan",
+    ["social.busy"] = "zscan",
+    ["ambient.danger"] = "zscan",
+    ["moments.danger"] = "zscan",
+    ["drive.greet"] = "zscan",
+    ["drive.exit"] = "zscan",
+    ["fastforward.sight"] = "zscan",
+    ["watch.others"] = "zscan",
+    ["callout.scan"] = "zscanShort",
+    ["horde.count"] = "zscanShort",
+    ["horde.count.seen"] = "zscanShort",
+    ["horde.cone"] = "zscanShort",
+    ["server.othersNear"] = "zscanShort",
+    ["heal.threat"] = "zscanTight",
+    ["wash.threat"] = "zscanTight",
+    ["task.danger"] = "zscanTight",
+}
+
 local function optsTag(opts)
     if type(opts) ~= "table" then return nil end
     if type(opts.tag) == "string" then return opts.tag end
     return nil
+end
+
+local function optsAge(opts)
+    if type(opts) ~= "table" then return 1 end
+    local age = tonumber(opts.age)
+    if age ~= nil and age >= 1 then return math.floor(age) end
+    local kind = opts.tag ~= nil and S.TAG_AGE[opts.tag] or nil
+    if kind ~= nil and BridgePerf ~= nil and type(BridgePerf.age) == "function" then
+        local v = tonumber(BridgePerf.age(kind, 1))
+        if v ~= nil and v >= 1 then return math.floor(v) end
+    end
+    return 1
 end
 
 local function optsZ(opts)
@@ -714,6 +945,7 @@ end
 
 local function gatherRadius(s, out, x, y, radius, seen)
     local r2 = radius * radius
+    if radius > 0 then ensureBuckets(s) end
     if s.buckets ~= nil then
         local B = S.BUCKET
         local minBX, maxBX = math.floor((x - radius) / B), math.floor((x + radius) / B)
@@ -858,7 +1090,7 @@ function S.near(x, y, r, opts)
     end
     beginQuery("Near", tag)
     local started = nowMs()
-    local s = ensureCoords()
+    local s = ensureCoords(optsAge(opts))
     if s == nil then
         finishQuery("near", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return nil
@@ -868,10 +1100,22 @@ function S.near(x, y, r, opts)
         finishQuery("near", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return adapter({})
     end
-    local idxs = {}
-    local scanned, rejZ, rejF = scanNear(s, idxs, x, y, tonumber(r) or 0, opts)
-    local ms = nowMs() - started
-    finishQuery("near", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    local idxs = nil
+    local zf, tol = optsZ(opts)
+    local fn = type(opts) == "table" and opts.filter or nil
+    local key = "N|" .. round2(x) .. "|" .. round2(y) .. "|" .. round2(r)
+        .. "|" .. round2(zf or -999999) .. "|" .. round2(tol) .. "|" .. filterKey(fn)
+    idxs = memGet("near", key)
+    if idxs == nil then
+        S.stats.memoMisses = S.stats.memoMisses + 1
+        idxs = {}
+        local scanned, rejZ, rejF = scanNear(s, idxs, x, y, tonumber(r) or 0, opts)
+        memPut("near", key, idxs)
+        local ms = nowMs() - started
+        finishQuery("near", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    else
+        finishQuery("near", tag, #idxs, 0, #idxs, 0, 0, nowMs() - started)
+    end
     return toList(refsOf(s, idxs), opts)
 end
 
@@ -887,7 +1131,7 @@ function S.nearUnion(x1, y1, x2, y2, r, opts)
     end
     beginQuery("Union", tag)
     local started = nowMs()
-    local s = ensureCoords()
+    local s = ensureCoords(optsAge(opts))
     if s == nil then
         finishQuery("union", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return nil
@@ -898,10 +1142,22 @@ function S.nearUnion(x1, y1, x2, y2, r, opts)
         return adapter({})
     end
     x2, y2 = tonumber(x2) or x1, tonumber(y2) or y1
-    local idxs = {}
-    local scanned, rejZ, rejF = scanUnion(s, idxs, x1, y1, x2, y2, tonumber(r) or 0, opts)
-    local ms = nowMs() - started
-    finishQuery("union", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    local idxs = nil
+    local zf, tol = optsZ(opts)
+    local fn = type(opts) == "table" and opts.filter or nil
+    local key = "U|" .. round2(x1) .. "|" .. round2(y1) .. "|" .. round2(x2) .. "|" .. round2(y2)
+        .. "|" .. round2(r) .. "|" .. round2(zf or -999999) .. "|" .. round2(tol) .. "|" .. filterKey(fn)
+    idxs = memGet("union", key)
+    if idxs == nil then
+        S.stats.memoMisses = S.stats.memoMisses + 1
+        idxs = {}
+        local scanned, rejZ, rejF = scanUnion(s, idxs, x1, y1, x2, y2, tonumber(r) or 0, opts)
+        memPut("union", key, idxs)
+        local ms = nowMs() - started
+        finishQuery("union", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    else
+        finishQuery("union", tag, #idxs, 0, #idxs, 0, 0, nowMs() - started)
+    end
     return toList(refsOf(s, idxs), opts)
 end
 
@@ -917,7 +1173,7 @@ function S.cone(x, y, fx, fy, minD, maxD, half, opts)
     end
     beginQuery("Cone", tag)
     local started = nowMs()
-    local s = ensureCoords()
+    local s = ensureCoords(optsAge(opts))
     if s == nil then
         finishQuery("cone", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return nil
@@ -927,10 +1183,23 @@ function S.cone(x, y, fx, fy, minD, maxD, half, opts)
     minD = tonumber(minD) or 0
     maxD = tonumber(maxD) or 0
     half = tonumber(half) or 0
-    local idxs = {}
-    local scanned, rejZ, rejF = scanCone(s, idxs, x, y, fx, fy, minD, maxD, half, opts)
-    local ms = nowMs() - started
-    finishQuery("cone", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    local idxs = nil
+    local zf, tol = optsZ(opts)
+    local fn = type(opts) == "table" and opts.filter or nil
+    local key = "C|" .. round2(x) .. "|" .. round2(y) .. "|" .. round2(fx) .. "|" .. round2(fy)
+        .. "|" .. round2(minD) .. "|" .. round2(maxD) .. "|" .. round2(half)
+        .. "|" .. round2(zf or -999999) .. "|" .. round2(tol) .. "|" .. filterKey(fn)
+    idxs = memGet("cone", key)
+    if idxs == nil then
+        S.stats.memoMisses = S.stats.memoMisses + 1
+        idxs = {}
+        local scanned, rejZ, rejF = scanCone(s, idxs, x, y, fx, fy, minD, maxD, half, opts)
+        memPut("cone", key, idxs)
+        local ms = nowMs() - started
+        finishQuery("cone", tag, #idxs, rejZ + rejF, scanned, rejZ, rejF, ms)
+    else
+        finishQuery("cone", tag, #idxs, 0, #idxs, 0, 0, nowMs() - started)
+    end
     return toList(refsOf(s, idxs), opts)
 end
 
@@ -979,7 +1248,7 @@ function S.count(cx, cy, cz, r, filterOrProfile, opts)
 
     beginQuery("Count", tag)
     local started = nowMs()
-    local s = ensureCoords()
+    local s = ensureCoords(optsAge(opts))
     if s == nil then
         finishQuery("count", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return 0
@@ -991,6 +1260,14 @@ function S.count(cx, cy, cz, r, filterOrProfile, opts)
     end
     local r2 = (tonumber(r) or 0) ^ 2
     local fn = filterOf(filterOrProfile)
+    local key = "K|" .. round2(x) .. "|" .. round2(y) .. "|" .. round2(czz or -999999) .. "|" .. round2(r)
+        .. "|" .. round2(tol) .. "|" .. filterKey(filterOrProfile)
+    local cached = memGet("count", key)
+    if cached ~= nil then
+        finishQuery("count", tag, cached, 0, 0, 0, 0, nowMs() - started)
+        return cached
+    end
+    S.stats.memoMisses = S.stats.memoMisses + 1
     local idxs, seen = {}, {}
     gatherRadius(s, idxs, x, y, tonumber(r) or 0, seen)
     local n, scanned, rejZ, rejF = 0, 0, 0, 0
@@ -1011,8 +1288,23 @@ function S.count(cx, cy, cz, r, filterOrProfile, opts)
             end
         end
     end
+    memPut("count", key, n)
     local ms = nowMs() - started
     finishQuery("count", tag, n, rejZ + rejF, scanned, rejZ, rejF, ms)
+    return n
+end
+
+function S.countSeen(cx, cy, cz, r, a, b, opts)
+    local tol = type(opts) == "table" and (tonumber(opts.zTol) or 0.8) or 0.8
+    local key = "S|" .. round2(cx) .. "|" .. round2(cy) .. "|" .. round2(cz or -999999) .. "|" .. round2(r)
+        .. "|" .. round2(tol) .. "|" .. tostring(a) .. "|" .. tostring(b)
+    local cached = memGet("countSeen", key)
+    if cached ~= nil then return cached end
+    S.stats.memoMisses = S.stats.memoMisses + 1
+    local n = S.count(cx, cy, cz, r, function(z)
+        return S.isThreat(z) and S.canSee(z, a, b)
+    end, opts)
+    memPut("countSeen", key, tonumber(n) or 0)
     return n
 end
 
@@ -1052,7 +1344,7 @@ function S.find(pred, maxN, opts)
     end
 
     beginQuery("Find", tag)
-    local s = refreshRefs()
+    local s = refreshRefs(optsAge(opts))
     if s == nil then
         finishQuery("find", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return nil
@@ -1082,7 +1374,7 @@ function S.list(opts)
         finishQuery("list", tag, list ~= nil and list:size() or 0, 0, 0, 0, 0, 0)
         return list
     end
-    local s = refreshRefs()
+    local s = refreshRefs(optsAge(opts))
     if s == nil then
         finishQuery("list", tag, 0, 0, 0, 0, 0, nowMs() - started)
         return nil
@@ -1359,6 +1651,36 @@ function S.selftest()
         check("count sleep", S.count(0, 0, 0, 5, "sleep") == 5, S.count(0, 0, 0, 5, "sleep"))
         check("count raw", S.count(0, 0, 0, 5, "raw") == 7, S.count(0, 0, 0, 5, "raw"))
         check("count z-band", S.count(0, 0, 0, 5, "raw", { zTol = 0.1 }) == 7, S.count(0, 0, 0, 5, "raw", { zTol = 0.1 }))
+    end
+
+    do
+        local V1 = { CanSee = function(_, z) return z.id == "V1" or z.id == "V2" or z.id == "HM" or z.id == "Z5" end }
+        local V2 = { CanSee = function(_, z) return z.id == "V2" end }
+        local none = {}
+        local z1 = fakeZombie(1, 0, 0, { id = "V1" })
+        local z2 = fakeZombie(1, 0, 0, { id = "V2" })
+        local z3 = fakeZombie(1, 0, 0, { id = "V3" })
+        local z4 = fakeZombie(1, 0, 0, { id = "V4" })
+        setList({ z1, z2, z3, z4 })
+
+        check("canSee nil", S.canSee(nil, V1, V1) == false)
+        check("canSee primary", S.canSee(z1, V1, V1) == true)
+        check("canSee secondary", S.canSee(z2, none, V1) == true)
+        check("canSee neither", S.canSee(z3, none, V2) == false)
+        check("canSee no method", S.canSee(z1, none, nil) == false)
+        check("countSeen two", S.countSeen(0, 0, 0, 5, V1, V1) == 2, S.countSeen(0, 0, 0, 5, V1, V1))
+
+        local hm = fakeZombie(1, 0, 0, { id = "HM", harmless = true })
+        setList({ z1, z2, hm })
+        check("countSeen excludes harmless", S.countSeen(0, 0, 0, 5, V1, V1) == 2,
+            S.countSeen(0, 0, 0, 5, V1, V1))
+
+        local z5 = fakeZombie(1, 0, 0.5, { id = "Z5" })
+        setList({ z1, z5 })
+        check("countSeen z-band default", S.countSeen(0, 0, 0, 5, V1, V1) == 2,
+            S.countSeen(0, 0, 0, 5, V1, V1))
+        check("countSeen z-band tight", S.countSeen(0, 0, 0, 5, V1, V1, { zTol = 0.1 }) == 1,
+            S.countSeen(0, 0, 0, 5, V1, V1, { zTol = 0.1 }))
     end
 
     do

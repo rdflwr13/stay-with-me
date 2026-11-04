@@ -97,6 +97,24 @@ end
 
 
 
+BridgeData.GIRLFRIEND_MARK = "WPCompanion"
+
+function BridgeData.girlfriendPeaceful(z)
+    if z == nil then return false end
+    local yes = false
+    pcall(function()
+        if z:getVariableBoolean(BridgeData.GIRLFRIEND_MARK) then yes = true return end
+    end)
+    if yes then return true end
+    pcall(function()
+        if z.hasModData == nil or not z:hasModData() then return end
+        local data = z:getModData()
+        if data ~= nil and data[BridgeData.GIRLFRIEND_MARK] == true then yes = true end
+    end)
+    return yes
+end
+
+
 BridgeData.FOREIGN_MODDATA = BridgeData.FOREIGN_MODDATA or { "ProjectALifeOwned", "ProjectALifeActor" }
 
 
@@ -286,8 +304,8 @@ function BridgeData.npcfwPeaceful(z)
 end
 
 function BridgeData.harmless(z)
-    return BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.foreignPeaceful(z)
-        or BridgeData.npcfwPeaceful(z)
+    return BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.girlfriendPeaceful(z)
+        or BridgeData.foreignPeaceful(z) or BridgeData.npcfwPeaceful(z)
 end
 
 
@@ -413,11 +431,12 @@ BridgeData.DEFAULT_GUN_USE = "always"
 BridgeData.AMMO_RESERVES = { free = true, conserve = true, emergency = true }
 BridgeData.DEFAULT_AMMO_RESERVE = "free"
 
-BridgeData.OPTIONS = { autoHeal = true, hitMatters = false, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
+BridgeData.OPTIONS = { autoHeal = true, gifts = true, redKit = true, mood = true, sitWithRed = true, xpPopups = false,
     relPopups = false, romance = true, fatigueBar = false, torch = "auto", equipScale = 1, exerciseWithMe = false, homeResources = true,
-    homeAmmo = false,
-    collapseActions = true, gunMelee = true, gunReloadIdle = true, gunMagCare = false, gunUse = "always",
-    ammoReserve = "free", lootMenu = true }
+    homeAmmo = false, homeAllFloors = false, startUnarmed = false,
+    gunMelee = true, gunReloadIdle = true, gunMagCare = false, gunUse = "always",
+    ammoReserve = "free", lootMenu = true,
+    storeMatch = true, storeKeepTools = true, storeKeepMeds = true, storeKeepLight = true }
 BridgeData.HAIR_MAX = 40
 BridgeData.GENDER_SWAP_COOLDOWN = 60
 BridgeData.GENDER_COMBAT_GRACE = 15
@@ -466,10 +485,6 @@ function BridgeData.homeResources(rec)
     return BridgeData.optionOf(rec, "homeResources")
 end
 
-
-function BridgeData.collapseActions(rec)
-    return BridgeData.optionOf(rec, "collapseActions")
-end
 
 
 
@@ -651,6 +666,90 @@ function BridgeData.lootPoolAllowed(rec, pool, item)
     return BridgeData.lootCatOn(rec, cat)
 end
 
+function BridgeData.storeCatsOf(rec)
+    if type(rec) ~= "table" then return {} end
+    if type(rec.storeCats) ~= "table" then rec.storeCats = {} end
+    return rec.storeCats
+end
+
+function BridgeData.storeCatOn(rec, pool)
+    if pool == nil or type(rec) ~= "table" or type(rec.storeCats) ~= "table" then return true end
+    return rec.storeCats[pool] ~= false
+end
+
+function BridgeData.storePoolAllowed(rec, pool, item)
+    if item ~= nil then
+        local food, water, booze = false, false, false
+        pcall(function() food = item:IsFood() == true end)
+        pcall(function() water = item:isWaterSource() == true end)
+        pcall(function() booze = item:isAlcoholic() == true end)
+        if food or water or booze then
+            return BridgeData.storeCatOn(rec, booze and "ReceiveBooze" or "ReceiveFood")
+        end
+    end
+    local cat = nil
+    if pool ~= nil and pool ~= "ReceiveItem" then
+        cat = BridgeData.LOOT_POOL_GROUP[pool]
+        if cat == nil and BridgeData.LOOT_CAT_SET[pool] then cat = pool end
+    end
+    if cat == nil and item ~= nil then cat = BridgeData.lootCatPrefix(item) end
+    if cat == nil and pool ~= nil and BridgeData.LOOT_CAT_SET[pool] then cat = pool end
+    if cat == nil then return true end
+    return BridgeData.storeCatOn(rec, cat)
+end
+
+function BridgeData.storeRefKey(ref)
+    if type(ref) ~= "table" then return nil end
+    local kind = ref.kind
+    if kind ~= "obj" and kind ~= "veh" then return nil end
+    local x, y, z = tonumber(ref.x), tonumber(ref.y), tonumber(ref.z)
+    if x == nil or y == nil or z == nil then return nil end
+    if kind == "obj" then
+        local o, c = tonumber(ref.o), tonumber(ref.c)
+        if o == nil or c == nil or o < 0 or c < -1 then return nil end
+        return string.format("obj:%d:%d:%d:%d:%d", math.floor(x), math.floor(y), math.floor(z), math.floor(o), math.floor(c))
+    end
+    if ref.v == nil or ref.p == nil or tostring(ref.p) == "" then return nil end
+    return string.format("veh:%s:%s", tostring(ref.v), tostring(ref.p))
+end
+
+function BridgeData.cleanStoreRefs(value)
+    if type(value) ~= "table" then return nil end
+    local out, seen = {}, {}
+    for i = 1, #value do
+        local ref = value[i]
+        local key = BridgeData.storeRefKey(ref)
+        if key ~= nil and not seen[key] then
+            seen[key] = true
+            local clean = {
+                kind = ref.kind,
+                x = math.floor(tonumber(ref.x)),
+                y = math.floor(tonumber(ref.y)),
+                z = math.floor(tonumber(ref.z)),
+            }
+            if ref.kind == "obj" then
+                clean.o = math.floor(tonumber(ref.o))
+                clean.c = math.floor(tonumber(ref.c))
+            else
+                clean.v = ref.v
+                clean.p = tostring(ref.p)
+            end
+            out[#out + 1] = clean
+            if #out >= 128 then break end
+        end
+    end
+    return out
+end
+
+function BridgeData.storeRefInList(rec, ref)
+    local key = BridgeData.storeRefKey(ref)
+    if key == nil or type(rec) ~= "table" or type(rec.storeRefs) ~= "table" then return false end
+    for i = 1, #rec.storeRefs do
+        if BridgeData.storeRefKey(rec.storeRefs[i]) == key then return true end
+    end
+    return false
+end
+
 function BridgeData.lootOption(rec, key)
     if type(rec) == "table" and rec[key] ~= nil then return rec[key] == true end
     return BridgeData.LOOT_DEFAULTS[key] == true
@@ -671,7 +770,7 @@ function BridgeData.lootMaxWeight(rec)
 end
 
 
-BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "fight", "torch", "jobs", "keep", "cancel" }
+BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs", "keep", "cancel" }
 BridgeData.MENU_ORDER_SET = {}
 for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do BridgeData.MENU_ORDER_SET[id] = true end
 
@@ -738,6 +837,8 @@ end
 
 BridgeData.HOME_MIN = 4
 BridgeData.HOME_MAX = 40
+BridgeData.HOME_MAX_FLOORS = 6
+BridgeData.HOME_BLD_MAX = 64
 
 
 function BridgeData.cleanHome(t)
@@ -750,7 +851,72 @@ function BridgeData.cleanHome(t)
     end
     if out.w < BridgeData.HOME_MIN or out.w > BridgeData.HOME_MAX then return nil end
     if out.h < BridgeData.HOME_MIN or out.h > BridgeData.HOME_MAX then return nil end
+    local hasLow = t.z1 ~= nil
+    local hasHigh = t.z2 ~= nil
+    if hasLow ~= hasHigh then return nil end
+    if hasLow then
+        local z1 = tonumber(t.z1)
+        local z2 = tonumber(t.z2)
+        if z1 == nil or z2 == nil or z1 ~= z1 or z2 ~= z2 then return nil end
+        z1, z2 = math.floor(z1), math.floor(z2)
+        if z1 > out.z or out.z > z2 then return nil end
+        if z2 - z1 + 1 > BridgeData.HOME_MAX_FLOORS then return nil end
+        out.z1, out.z2 = z1, z2
+    end
+    if type(t.bld) == "string" and #t.bld > 0 and #t.bld <= BridgeData.HOME_BLD_MAX then
+        out.bld = t.bld
+    end
     return out
+end
+
+
+function BridgeData.homeRange(h, allFloors)
+    if type(h) ~= "table" then return nil, nil end
+    if allFloors and type(h.z1) == "number" and type(h.z2) == "number" then return h.z1, h.z2 end
+    return h.z, h.z
+end
+
+
+function BridgeData.homeHas(h, x, y, z, margin, allFloors)
+    if type(h) ~= "table" or x == nil or y == nil or z == nil then return false end
+    margin = tonumber(margin) or 0
+    local z1, z2 = BridgeData.homeRange(h, allFloors)
+    if z1 == nil then return false end
+    local fz = math.floor(z)
+    if fz < z1 or fz > z2 then return false end
+    return x >= (h.x - margin) and x <= (h.x + h.w - 1 + margin)
+        and y >= (h.y - margin) and y <= (h.y + h.h - 1 + margin)
+end
+
+
+function BridgeData.buildingIdOf(sq)
+    if sq == nil then return nil end
+    local b = nil
+    local doors = rawget(_G, "BridgeDoors")
+    if type(doors) == "table" and type(doors.buildingOf) == "function" then
+        local ok, found = pcall(doors.buildingOf, sq)
+        if ok then b = found end
+    end
+    if b == nil then pcall(function() b = sq:getBuilding() end) end
+    if b == nil then return nil end
+    local id = nil
+    pcall(function()
+        local def = b:getDef()
+        if def ~= nil and type(def.getIDString) == "function" then id = tostring(def:getIDString()) end
+        if id == nil or id == "" then id = tostring(b:getID()) end
+    end)
+    if id == nil or id == "" or id == "0" or id == "nil" then return nil end
+    return id
+end
+
+
+function BridgeData.homeBuildingOk(h, sq)
+    if type(h) ~= "table" then return false end
+    local want = h.bld
+    if want == nil then return true end
+    local got = BridgeData.buildingIdOf(sq)
+    if got == nil then return true end
+    return got == want
 end
 
 
@@ -882,7 +1048,7 @@ BridgeData.GENDERED_KEYS = {
     Talk_Thanks = true, Talk_Comfort = true, Rel_Crush = true, InvAssign = true, LookDefault = true,
     TalkCantBusy = true, TalkCantRepeat = true, TalkCantFull = true, TalkCantAfterFight = true,
     CombatAggressive = true, CombatAggressiveTip = true, CombatGuardTip = true,
-    OptAutoHeal = true, OptAutoHealTip = true, OptHitMatters = true, OptGifts = true,
+    OptAutoHeal = true, OptAutoHealTip = true, OptGifts = true,
     OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRelPopupsTip = true, OptRomanceTip = true,
     OptFatigueBar = true, OptFatigueBarTip = true,
     OptSitWithRed = true, OptSitWithRedTip = true,
@@ -1569,6 +1735,31 @@ function BridgeData.cleanCount(n)
 end
 
 
+function BridgeData.cleanLastFight(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    local d = tonumber(t.d)
+    if d == nil or d ~= d then d = 0 end
+    if d < 0 then d = 0 end
+    if d > 3600 then d = 3600 end
+    out.d = d
+    local p = tonumber(t.p)
+    if p == nil or p ~= p then p = 0 end
+    p = math.floor(p)
+    if p < 0 then p = 0 end
+    if p > 200 then p = 200 end
+    out.p = p
+    out.m = (t.m == "gun") and "gun" or "melee"
+    out.h = (t.h == 1 or t.h == true) and 1 or 0
+    local a = tonumber(t.a)
+    if a == nil or a ~= a then a = 0 end
+    if a < 0 then a = 0 end
+    if a > 100000000 then a = 100000000 end
+    out.a = a
+    return out
+end
+
+
 function BridgeData.relTier(rel)
     local f = rel and rel.f or 0
     if f < 0 then return "Cold" end
@@ -1647,4 +1838,48 @@ function BridgeData.levelFromXp(perkKey, xp)
         lvl = n
     end
     return lvl
+end
+
+
+function BridgeData.selftest()
+    local checks, fails = 0, {}
+    local function check(name, got, want)
+        checks = checks + 1
+        if got ~= want then
+            fails[#fails + 1] = string.format("%s got=%s want=%s", name, tostring(got), tostring(want))
+        end
+    end
+    local function markStub(varMark, dataMark, bodyMark)
+        local bodyVar = (Bridge ~= nil and Bridge.BODY_VAR) or "NotAloneBody"
+        local data = {}
+        if dataMark then data[BridgeData.GIRLFRIEND_MARK] = true end
+        return {
+            getVariableBoolean = function(_, name)
+                if name == BridgeData.GIRLFRIEND_MARK then return varMark == true end
+                if name == bodyVar then return bodyMark == true end
+                return false
+            end,
+            hasModData = function() return true end,
+            getModData = function() return data end,
+            isReanimatedForGrappleOnly = function() return false end,
+        }
+    end
+    local okAll, errAll = pcall(function()
+        local plain = markStub(false, false, false)
+        check("plain girlfriend", BridgeData.girlfriendPeaceful(plain), false)
+        check("plain harmless", BridgeData.harmless(plain), false)
+        local varOnly = markStub(true, false, false)
+        check("variable girlfriend", BridgeData.girlfriendPeaceful(varOnly), true)
+        check("variable harmless", BridgeData.harmless(varOnly), true)
+        local dataOnly = markStub(false, true, false)
+        check("moddata girlfriend", BridgeData.girlfriendPeaceful(dataOnly), true)
+        check("moddata harmless", BridgeData.harmless(dataOnly), true)
+        local ownBody = markStub(false, false, true)
+        check("own body girlfriend", BridgeData.girlfriendPeaceful(ownBody), false)
+        check("nil girlfriend", BridgeData.girlfriendPeaceful(nil), false)
+        check("bare stub girlfriend", BridgeData.girlfriendPeaceful({}), false)
+    end)
+    if not okAll then fails[#fails + 1] = "selftest error: " .. tostring(errAll) end
+    if #fails == 0 then return string.format("dataselftest PASS (%d checks)", checks) end
+    return string.format("dataselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
 end

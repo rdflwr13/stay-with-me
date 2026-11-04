@@ -31,6 +31,8 @@ local ROW = 6
 local BOX = 8
 local AVATAR_BORDER = 2
 local AVATAR_W, AVATAR_H = 128, 256
+local BLOCK_TICKS = 15
+local LOOKS_TICKS = 15
 
 
 local FONT_S, FONT_M, BTN_H = 0, 0, 0
@@ -50,11 +52,11 @@ end
 
 
 local CAP = {
-    ["а"] = "А", ["б"] = "Б", ["в"] = "В", ["г"] = "Г", ["д"] = "Д", ["е"] = "Е", ["ё"] = "Ё",
-    ["ж"] = "Ж", ["з"] = "З", ["и"] = "И", ["й"] = "Й", ["к"] = "К", ["л"] = "Л", ["м"] = "М",
-    ["н"] = "Н", ["о"] = "О", ["п"] = "П", ["р"] = "Р", ["с"] = "С", ["т"] = "Т", ["у"] = "У",
-    ["ф"] = "Ф", ["х"] = "Х", ["ц"] = "Ц", ["ч"] = "Ч", ["ш"] = "Ш", ["щ"] = "Щ", ["ъ"] = "Ъ",
-    ["ы"] = "Ы", ["ь"] = "Ь", ["э"] = "Э", ["ю"] = "Ю", ["я"] = "Я",
+    ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??",
+    ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??",
+    ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??",
+    ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??",
+    ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??", ["??"] = "??",
 }
 
 local function capFirst(text)
@@ -100,6 +102,28 @@ end
 
 local function name() return Bridge.companionName() end
 
+local function wrapHintText(font, text, maxW)
+    local lines, line = {}, ""
+    for word in string.gmatch(tostring(text or ""), "%S+") do
+        local trial = (line == "") and word or (line .. " " .. word)
+        if line ~= "" and getTextManager():MeasureStringX(font, trial) > maxW then
+            lines[#lines + 1] = line
+            line = word
+        else
+            line = trial
+        end
+    end
+    if line ~= "" then lines[#lines + 1] = line end
+    if #lines == 0 then lines[1] = tostring(text or "") end
+    return lines
+end
+
+function BridgeWindow.hintLines(width, key, who)
+    refreshFonts()
+    local lines = wrapHintText(UIFont.Small, tr(key, who), math.max(40, (width or 0) - PAD * 2))
+    return lines, #lines * (FONT_S + 2) + 4
+end
+
 
 
 
@@ -127,8 +151,33 @@ function BridgeWindow.lookKey(st, itemsKey)
 end
 
 
+function BridgeWindow.dollKey(st)
+    local app = BridgeData.appearanceOf(st)
+    local function rawList(v)
+        if type(v) == "table" then return table.concat(v, ",") end
+        return tostring(v or "")
+    end
+    local function rawColor(c)
+        if type(c) ~= "table" then return "" end
+        return tostring(c.r) .. "," .. tostring(c.g) .. "," .. tostring(c.b)
+    end
+    return table.concat({
+        BridgeData.genderOf(st),
+        tostring(app ~= nil and app.skin or ""),
+        tostring(app ~= nil and app.hair or ""),
+        rawColor(app ~= nil and app.hairColor or nil),
+        tostring(app ~= nil and app.face or ""),
+        rawList(app ~= nil and app.details or nil),
+        tostring(app ~= nil and app.muscle or ""),
+        rawList(app ~= nil and app.makeup or nil),
+        tostring(app ~= nil and app.beard or ""),
+        rawColor(app ~= nil and app.beardColor or nil),
+    }, "|")
+end
 
-function BridgeWindow.makeDesc(st, furSpecies)
+
+
+function BridgeWindow.makeDesc(st, furSpecies, starterOutfit)
     local desc = SurvivorFactory.CreateSurvivor()
     desc:setFemale(BridgeData.isFemale(st))
     pcall(function() desc:getWornItems():clear() end)
@@ -153,6 +202,32 @@ function BridgeWindow.makeDesc(st, furSpecies)
                 if type(t) == "string" and string.sub(t, 1, 6) == "Furry_" then return end
             end
             BridgeItems.apply(item, rec)
+            local loc = nil
+            if item:IsClothing() then loc = item:getBodyLocation() end
+            if loc == nil then loc = item:canBeEquipped() end
+            if loc ~= nil then desc:setWornItem(loc, item) end
+        end)
+    end
+    local clothing = nil
+    if starterOutfit == true then
+        clothing = BridgeData.STARTER[BridgeData.genderOf(st)] or {}
+    elseif type(starterOutfit) == "table" then
+        clothing = starterOutfit
+    end
+    for _, e in ipairs(clothing or {}) do
+        pcall(function()
+            local item = instanceItem(e.t)
+            local tint = e.tint
+            if item == nil and e.alt ~= nil then
+                item = instanceItem(e.alt)
+                tint = e.altTint or e.tint
+            end
+            if item == nil then return end
+            if e.tc ~= nil then pcall(function() item:getVisual():setTextureChoice(e.tc) end) end
+            if e.bt ~= nil then pcall(function() item:getVisual():setBaseTexture(e.bt) end) end
+            if tint ~= nil then
+                pcall(function() item:getVisual():setTint(ImmutableColor.new(tint[1], tint[2], tint[3], 1)) end)
+            end
             local loc = nil
             if item:IsClothing() then loc = item:getBodyLocation() end
             if loc == nil then loc = item:canBeEquipped() end
@@ -195,7 +270,9 @@ function BridgeWindow.addCustomDesc(desc, st)
             desc:setWornItem(item:getBodyLocation(), item)
         end)
     end
-    if BridgeData.spnccOn(BridgeData.genderOf(st)) then
+    local gender = BridgeData.genderOf(st)
+    local muscleOn = BridgeData.muscleOf(st) > 0 and BridgeData.spnccMuscle(gender) ~= nil
+    if BridgeData.spnccOn(gender) or muscleOn then
         local face = BridgeData.faceEntry(st)
         if face ~= nil then add(face.id, BridgeData.spnccTexture(face, idx)) end
         for _, d in ipairs(BridgeData.detailEntries(st)) do
@@ -203,7 +280,7 @@ function BridgeWindow.addCustomDesc(desc, st)
         end
         local m = BridgeData.muscleOf(st)
         if m > 0 then
-            local mid = BridgeData.spnccMuscle(BridgeData.genderOf(st))
+            local mid = BridgeData.spnccMuscle(gender)
             if mid ~= nil then add(mid, idx + (m == 2 and 5 or 0)) end
         end
     end
@@ -250,12 +327,19 @@ function BridgeWindowInfo:createChildren()
     self.exerBtn:instantiate()
     self.exerBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.exerBtn)
+    self.lookItemsSrc = false
+    self.lookItemsKey = nil
 end
 
 
 function BridgeWindowInfo:refreshAvatar()
     local st = Bridge.store
-    local key = BridgeWindow.lookKey(st)
+    local items = st ~= nil and st.items or nil
+    if items ~= self.lookItemsSrc then
+        self.lookItemsSrc = items
+        self.lookItemsKey = BridgeItems.lookKey(BridgeItems.decode(items or ""))
+    end
+    local key = BridgeWindow.dollKey(st) .. "|" .. (self.lookItemsKey or "")
     if key == self.avatarKey then return end
     self.avatarKey = key
     local ok, err = pcall(function() self.avatar:setSurvivorDesc(BridgeWindow.makeDesc(st)) end)
@@ -420,10 +504,16 @@ function BridgeWindowInfo:render()
     self.callBtn:setY(y)
     y = y + BTN_H + GROUP
 
-    local shown = tr("LookDefault")
-    if BridgeLooks ~= nil and type(BridgeLooks.shown) == "function" then
-        local n = BridgeLooks.shown(Bridge.store)
-        if type(n) == "string" and n ~= "" then shown = n end
+    local shown = self.shownLook
+    if self.avatarKey ~= self.shownAvatarKey or shown == nil or (Bridge.time or 0) >= (self.shownAt or 0) then
+        shown = tr("LookDefault")
+        if BridgeLooks ~= nil and type(BridgeLooks.shown) == "function" then
+            local n = BridgeLooks.shown(Bridge.store)
+            if type(n) == "string" and n ~= "" then shown = n end
+        end
+        self.shownLook = shown
+        self.shownAvatarKey = self.avatarKey
+        self.shownAt = (Bridge.time or 0) + LOOKS_TICKS
     end
     self:drawEnds(x, y, colW, tr("WindowAppearance"), shown, 1, 1, 1, 0.6, 0.6, 0.6)
     y = y + FONT_S + PAD
@@ -458,10 +548,15 @@ function BridgeWindowInfo:render()
         if btn.setWidth ~= nil then btn:setWidth(iw) end
         btn:setY(lineY)
         btn:setTitle(tr("Exercise"))
-        local reason = nil
-        if BridgeExercise ~= nil and BridgeExercise.blockReason ~= nil then
-            pcall(function() reason = BridgeExercise.blockReason() end)
+        if self.blockAt == nil or (Bridge.time or 0) >= self.blockAt then
+            local reason = nil
+            if BridgeExercise ~= nil and BridgeExercise.blockReason ~= nil then
+                pcall(function() reason = BridgeExercise.blockReason() end)
+            end
+            self.blockReason = reason
+            self.blockAt = (Bridge.time or 0) + BLOCK_TICKS
         end
+        local reason = self.blockReason
         btn:setEnable(reason == nil)
         if reason == nil then
             btn.tooltip = tr("ExReadyNow")
@@ -483,6 +578,7 @@ function BridgeWindowInfo:render()
 end
 
 function BridgeWindowInfo:onExercise()
+    self.blockAt = nil
     if BridgeMenu ~= nil and BridgeMenu.onExercise ~= nil then BridgeMenu.onExercise() end
 end
 
@@ -564,7 +660,6 @@ BridgeWindow.TICKS = {
     { key = "autoHeal", label = "OptAutoHeal", tip = "OptAutoHealTip" },
 
     { key = "redKit", label = "OptRedKit", tip = "OptRedKitTip" },
-    { key = "hitMatters", label = "OptHitMatters", tip = "OptHitMattersTip" },
     { key = "gifts", label = "OptGifts", tip = "OptGiftsTip" },
     { key = "romance", label = "OptRomance", tip = "OptRomanceTip" },
     { key = "mood", label = "OptMood", tip = "OptMoodTip" },
@@ -577,7 +672,8 @@ BridgeWindow.TICKS = {
 
 function BridgeWindowSettings:createChildren()
     ISPanel.createChildren(self)
-    local y = PAD
+    self.hintLines, self.hintH = BridgeWindow.hintLines(self.width, "SettingsHint", name())
+    local y = PAD + self.hintH
     self.ticks = {}
     for i, entry in ipairs(BridgeWindow.TICKS) do
         local tick = ISTickBox:new(PAD, y, self.width - PAD * 2, BTN_H, "", self, BridgeWindowSettings.onTick, entry.key)
@@ -662,6 +758,11 @@ end
 
 function BridgeWindowSettings:render()
     if Bridge == nil or Bridge.store == nil then return end
+    local hy = PAD
+    for _, line in ipairs(self.hintLines or {}) do
+        self:drawText(line, PAD, hy, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        hy = hy + getTextManager():getFontHeight(UIFont.Small) + 2
+    end
     if self.frameY == nil then return end
     self:drawRect(self.frameX, self.frameY, self.frameW, self.frameH, 0.4, 0.07, 0.07, 0.07)
     self:drawRectBorder(self.frameX, self.frameY, self.frameW, self.frameH, 0.55, 0.32, 0.32, 0.32)
@@ -768,13 +869,28 @@ end
 
 BridgeLootSettings = ISPanel:derive("BridgeLootSettings")
 
+function BridgeLootSettings.lootOptionsHeight()
+    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    local btnH = fontS + 6
+    return 2 * (btnH + PAD) + (fontS + 4) + btnH + PAD
+end
+
+function BridgeLootSettings.storeOptionsHeight()
+    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    local btnH = fontS + 6
+    return 4 * (btnH + PAD)
+end
+
 function BridgeLootSettings.heightFor(width)
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
     local rowH = math.max(fontS + LOOT_ROW_PAD * 2, 20)
     local listH = math.min(#BridgeData.LOOT_CATS * rowH + 4, 260)
-    local controls = (btnH + PAD) * 2 + (fontS + 4) + btnH + PAD
-    return PAD + listH + PAD + controls
+    local mode = BridgeWindow.lootMode or "loot"
+    local hintKey = mode == "store" and "StorageHint" or "LootHint"
+    local _, hintH = BridgeWindow.hintLines(width, hintKey, name())
+    local opts = mode == "store" and BridgeLootSettings.storeOptionsHeight() or BridgeLootSettings.lootOptionsHeight()
+    return PAD + btnH + PAD + hintH + listH + PAD + opts + PAD
 end
 
 function BridgeLootSettings:createChildren()
@@ -782,16 +898,40 @@ function BridgeLootSettings:createChildren()
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
     self.btnH = btnH
-    local controls = (btnH + PAD) * 2 + (fontS + 4) + btnH + PAD
-    local listH = math.max(btnH, self.height - PAD - PAD - controls)
-    self.list = BridgeLootList:new(PAD, PAD, self.width - PAD * 2, listH)
+    self.mode = BridgeWindow.lootMode or "loot"
+    self.hints = {
+        loot = { BridgeWindow.hintLines(self.width, "LootHint", name()) },
+        store = { BridgeWindow.hintLines(self.width, "StorageHint", name()) },
+    }
+    self.hints.loot = { lines = self.hints.loot[1], h = self.hints.loot[2] }
+    self.hints.store = { lines = self.hints.store[1], h = self.hints.store[2] }
+    self.hintH = math.max(self.hints.loot.h, self.hints.store.h)
+
+    local switchY = PAD
+    local gap = PAD
+    local half = math.max(40, math.floor((self.width - PAD * 3) / 2))
+    self.lootBtn = ISButton:new(PAD, switchY, half, btnH, tr("WindowLoot"), self, BridgeLootSettings.onModeLoot)
+    self.lootBtn:initialise()
+    self.lootBtn:instantiate()
+    self.lootBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+    self:addChild(self.lootBtn)
+    self.storeBtn = ISButton:new(PAD + half + gap, switchY, half, btnH, tr("WindowStorage"), self, BridgeLootSettings.onModeStore)
+    self.storeBtn:initialise()
+    self.storeBtn:instantiate()
+    self.storeBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+    self:addChild(self.storeBtn)
+
+    local listY = PAD + btnH + PAD + self.hintH
+    local rowH = math.max(fontS + LOOT_ROW_PAD * 2, 20)
+    local listH = math.min(#BridgeData.LOOT_CATS * rowH + 4, 260)
+    self.list = BridgeLootList:new(PAD, listY, self.width - PAD * 2, listH)
     self.list:initialise()
     self.list:instantiate()
     self.list.onToggle = function(item) self:onToggleCat(item) end
     self:addChild(self.list)
 
-    local ty = PAD + listH + PAD
-    self.ticks = {}
+    local ty = listY + listH + PAD
+    self.lootTicks = {}
     for i, entry in ipairs(BridgeWindow.LOOT_TICKS) do
         local tick = ISTickBox:new(PAD, ty, self.width - PAD * 2, btnH, "", self, BridgeLootSettings.onTick, entry.key)
         tick:initialise()
@@ -799,7 +939,7 @@ function BridgeLootSettings:createChildren()
         tick:addOption(tr(entry.label))
         tick.tooltip = tr(entry.tip)
         self:addChild(tick)
-        self.ticks[i] = tick
+        self.lootTicks[i] = tick
         ty = ty + btnH + PAD
     end
     self.weightLabelY = ty
@@ -813,19 +953,68 @@ function BridgeLootSettings:createChildren()
     end
     self:addChild(self.weightCombo)
 
+    ty = listY + listH + PAD
+    self.storeTicks = {}
+    for i, entry in ipairs(BridgeWindow.STORE_TICKS) do
+        local tick = ISTickBox:new(PAD, ty, self.width - PAD * 2, btnH, "", self, BridgeLootSettings.onTick, entry.key)
+        tick:initialise()
+        tick:instantiate()
+        tick:addOption(tr(entry.label))
+        tick.tooltip = tr(entry.tip)
+        self:addChild(tick)
+        self.storeTicks[i] = tick
+        ty = ty + btnH + PAD
+    end
+
+    self:applyMode()
+    self:applyHeight(self.height)
+end
+
+function BridgeLootSettings:applyMode()
+    local store = self.mode == "store"
+    for _, tick in ipairs(self.lootTicks or {}) do tick:setVisible(not store) end
+    for _, tick in ipairs(self.storeTicks or {}) do tick:setVisible(store) end
+    if self.weightCombo ~= nil then self.weightCombo:setVisible(not store) end
+    local active = { r = 0.25, g = 0.45, b = 0.75, a = 0.55 }
+    local idle = { r = 0.12, g = 0.12, b = 0.12, a = 0.35 }
+    if self.lootBtn ~= nil then self.lootBtn.backgroundColor = store and idle or active end
+    if self.storeBtn ~= nil then self.storeBtn.backgroundColor = store and active or idle end
     self:refresh()
+end
+
+function BridgeLootSettings:setMode(mode)
+    if mode ~= "loot" and mode ~= "store" then return end
+    self.mode = mode
+    BridgeWindow.lootMode = mode
+    self:applyMode()
+    if BridgeWindow ~= nil and type(BridgeWindow.contentHeight) == "function" then
+        self:applyHeight(BridgeWindow.contentHeight("loot", self.width))
+    end
+end
+
+function BridgeLootSettings:onModeLoot()
+    self:setMode("loot")
+end
+
+function BridgeLootSettings:onModeStore()
+    self:setMode("store")
 end
 
 function BridgeLootSettings:refresh()
     local list = self.list
     if list == nil or Bridge == nil or Bridge.store == nil then return end
     local keep = list.selected
+    local store = self.mode == "store"
     list.items = {}
     list.count = 0
     list:setScrollHeight(0)
     for _, entry in ipairs(BridgeData.LOOT_CATS) do
         local on = true
-        pcall(function() on = BridgeData.lootCatOn(Bridge.store, entry.id) end)
+        if store then
+            pcall(function() on = BridgeData.storeCatOn(Bridge.store, entry.id) end)
+        else
+            pcall(function() on = BridgeData.lootCatOn(Bridge.store, entry.id) end)
+        end
         local item = list:addItem(tr(entry.label), nil)
         item.id = entry.id
         item.on = on
@@ -840,7 +1029,15 @@ function BridgeLootSettings:prerender()
     if Bridge == nil or Bridge.store == nil then return end
     for i, entry in ipairs(BridgeWindow.LOOT_TICKS) do
         local want = BridgeData.lootOption(Bridge.store, entry.key)
-        if self.ticks[i] ~= nil and self.ticks[i]:isSelected(1) ~= want then self.ticks[i]:setSelected(1, want) end
+        if self.lootTicks[i] ~= nil and self.lootTicks[i]:isSelected(1) ~= want then
+            self.lootTicks[i]:setSelected(1, want)
+        end
+    end
+    for i, entry in ipairs(BridgeWindow.STORE_TICKS) do
+        local want = BridgeData.optionOf(Bridge.store, entry.key)
+        if self.storeTicks[i] ~= nil and self.storeTicks[i]:isSelected(1) ~= want then
+            self.storeTicks[i]:setSelected(1, want)
+        end
     end
     if self.weightCombo ~= nil then
         local w = BridgeData.lootMaxWeight(Bridge.store)
@@ -850,16 +1047,33 @@ end
 
 function BridgeLootSettings:render()
     if Bridge == nil or Bridge.store == nil then return end
-    self:drawText(tr("LootMaxWeight"), PAD, self.weightLabelY, 1, 1, 1, 1, UIFont.Small)
+    local hint = self.hints ~= nil and self.hints[self.mode] or nil
+    local y = PAD + (self.btnH or 0) + PAD
+    for _, line in ipairs((hint ~= nil and hint.lines) or {}) do
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        y = y + getTextManager():getFontHeight(UIFont.Small) + 2
+    end
+    if self.mode ~= "store" then
+        self:drawText(tr("LootMaxWeight"), PAD, self.weightLabelY, 1, 1, 1, 1, UIFont.Small)
+    end
 end
 
 function BridgeLootSettings:onToggleCat(item)
-    if item == nil or Bridge == nil or type(Bridge.setLootCat) ~= "function" then return end
-    Bridge.setLootCat(item.id, item.on == true)
+    if item == nil or Bridge == nil then return end
+    if self.mode == "store" then
+        if type(Bridge.setStoreCat) == "function" then Bridge.setStoreCat(item.id, item.on == true) end
+    elseif type(Bridge.setLootCat) == "function" then
+        Bridge.setLootCat(item.id, item.on == true)
+    end
 end
 
 function BridgeLootSettings:onTick(index, selected, key)
-    if Bridge ~= nil and type(Bridge.setLootOption) == "function" then Bridge.setLootOption(key, selected == true) end
+    if Bridge == nil then return end
+    if key ~= nil and string.sub(tostring(key), 1, 5) == "store" then
+        if type(Bridge.setOption) == "function" then Bridge.setOption(key, selected == true) end
+    elseif type(Bridge.setLootOption) == "function" then
+        Bridge.setLootOption(key, selected == true)
+    end
 end
 
 function BridgeLootSettings:onWeight(combo)
@@ -872,19 +1086,33 @@ function BridgeLootSettings:applyHeight(h)
     self:setHeight(h)
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = self.btnH or (fontS + 6)
-    local controls = (btnH + PAD) * 2 + (fontS + 4) + btnH + PAD
-    local listH = h - PAD - PAD - controls
+    local lootLines, lootH = BridgeWindow.hintLines(self.width, "LootHint", name())
+    local storeLines, storeH = BridgeWindow.hintLines(self.width, "StorageHint", name())
+    self.hints = { loot = { lines = lootLines, h = lootH }, store = { lines = storeLines, h = storeH } }
+    local store = self.mode == "store"
+    self.hintH = store and storeH or lootH
+    local optsH = store and BridgeLootSettings.storeOptionsHeight() or BridgeLootSettings.lootOptionsHeight()
+    local listH = h - PAD - btnH - PAD - self.hintH - PAD - optsH - PAD
     if listH < 0 then listH = 0 end
+    local listY = PAD + btnH + PAD + self.hintH
     if self.list ~= nil then
+        self.list:setY(listY)
         self.list:setHeight(listH)
     end
-    local ty = PAD + listH + PAD
-    for _, tick in ipairs(self.ticks or {}) do
-        tick:setY(ty)
-        ty = ty + btnH + PAD
+    local ty = listY + listH + PAD
+    if store then
+        for _, tick in ipairs(self.storeTicks or {}) do
+            tick:setY(ty)
+            ty = ty + btnH + PAD
+        end
+    else
+        for _, tick in ipairs(self.lootTicks or {}) do
+            tick:setY(ty)
+            ty = ty + btnH + PAD
+        end
+        self.weightLabelY = ty
+        if self.weightCombo ~= nil then self.weightCombo:setY(ty + fontS + 4) end
     end
-    self.weightLabelY = ty
-    if self.weightCombo ~= nil then self.weightCombo:setY(ty + fontS + 4) end
 end
 
 function BridgeLootSettings:new(x, y, width, height)
@@ -899,6 +1127,13 @@ end
 
 
 
+
+BridgeWindow.STORE_TICKS = {
+    { key = "storeMatch", label = "StoreMatch", tip = "StoreMatchTip" },
+    { key = "storeKeepTools", label = "StoreKeepTools", tip = "StoreKeepToolsTip" },
+    { key = "storeKeepMeds", label = "StoreKeepMeds", tip = "StoreKeepMedsTip" },
+    { key = "storeKeepLight", label = "StoreKeepLight", tip = "StoreKeepLightTip" },
+}
 
 BridgeWindow.STATSMENU_ENABLE = 1
 
@@ -968,6 +1203,7 @@ end
 
 
 local GLOW_TICKS = 180
+local SKILL_TICKS = 15
 local function skillGlow(perk)
     if BridgeSkills == nil or BridgeSkills.lastLevelUp == nil then return 0 end
     local lu = BridgeSkills.lastLevelUp
@@ -977,8 +1213,9 @@ local function skillGlow(perk)
     return 1 - (age / GLOW_TICKS)
 end
 
-function BridgeWindow.skillsHeight()
-    local h = PAD
+function BridgeWindow.skillsHeight(width)
+    local _, hintH = BridgeWindow.hintLines(width, "SkillsHint", name())
+    local h = PAD + hintH
     for _, group in ipairs(BridgeWindow.SKILLS) do
         h = h + FONT_M + 2 + PAD + #group.rows * skillRowH() + PAD
     end
@@ -1002,14 +1239,56 @@ function BridgeWindowSkills:createChildren()
     ISPanel.createChildren(self)
     self.unit = skillUnit()
     self.rowH = skillRowH()
+    self.hintLines, self.hintH = BridgeWindow.hintLines(self.width, "SkillsHint", name())
+    self.labels = {}
     self.labelW = 0
     for _, group in ipairs(BridgeWindow.SKILLS) do
         for _, row in ipairs(group.rows) do
-            self.labelW = math.max(self.labelW, textW(UIFont.Small, BridgeWindow.skillLabel(row.perk)))
+            local label = BridgeWindow.skillLabel(row.perk)
+            self.labels[row.perk] = label
+            self.labelW = math.max(self.labelW, textW(UIFont.Small, label))
         end
     end
     self.barX = PAD + self.labelW + PAD
     self.barW = 10 * self.unit + 9 * SKILL_GAP
+    self.skillSrc = nil
+    self.skillAt = 0
+    self.skillLevels = {}
+    self.skillProg = {}
+    self.hitRows = nil
+    self.hitRowH = nil
+    self.hitHintH = nil
+end
+
+function BridgeWindowSkills:refreshValues()
+    local store = Bridge ~= nil and Bridge.store or nil
+    local now = Bridge ~= nil and (Bridge.time or 0) or 0
+    if store == self.skillSrc and now < self.skillAt then return end
+    for _, group in ipairs(BridgeWindow.SKILLS) do
+        for _, row in ipairs(group.rows) do
+            self.skillLevels[row.perk] = skillLevel(row.perk)
+            self.skillProg[row.perk] = skillProgress(row.perk)
+        end
+    end
+    self.skillSrc = store
+    self.skillAt = now + SKILL_TICKS
+end
+
+function BridgeWindowSkills:refreshHitRows()
+    if self.hitRows ~= nil and self.hitRowH == self.rowH and self.hitHintH == self.hintH then return end
+    local rows = {}
+    local ry = PAD + (self.hintH or 0)
+    for _, group in ipairs(BridgeWindow.SKILLS) do
+        ry = ry + FONT_M + 2 + PAD
+        for _, row in ipairs(group.rows) do
+            rows[#rows + 1] = { row = row, y = ry, h = self.rowH }
+            ry = ry + self.rowH
+        end
+        ry = ry + PAD
+    end
+    self.hitRows = rows
+    self.hitRowH = self.rowH
+    self.hitHintH = self.hintH
 end
 
 function BridgeWindowSkills:drawBar(x, y, level, xp)
@@ -1032,8 +1311,14 @@ end
 function BridgeWindowSkills:render()
     self.unit = skillUnit()
     self.rowH = skillRowH()
+    self:refreshValues()
+    self:refreshHitRows()
     local x, y = PAD, PAD
-    self.hitRows = {}
+    for _, line in ipairs(self.hintLines or {}) do
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        y = y + getTextManager():getFontHeight(UIFont.Small) + 2
+    end
+    y = PAD + (self.hintH or 0)
     for _, group in ipairs(BridgeWindow.SKILLS) do
         self:drawText(gameText(group.category, group.category), x, y, 1, 1, 1, 1, UIFont.Medium)
         y = y + FONT_M + 2
@@ -1045,9 +1330,9 @@ function BridgeWindowSkills:render()
                 self:drawRect(x - 2, y, self.width - PAD * 2 + 4, self.rowH, glow * 0.45, 1, 0.89, 0.38)
             end
             local ty = y + (self.rowH - FONT_S) / 2
-            self:drawText(BridgeWindow.skillLabel(row.perk), x, ty, 1, 1, 1, 1, UIFont.Small)
-            self:drawBar(self.barX, y + (self.rowH - self.unit) / 2, skillLevel(row.perk), skillProgress(row.perk))
-            self.hitRows[#self.hitRows + 1] = { row = row, y = y, h = self.rowH }
+            self:drawText(self.labels[row.perk] or BridgeWindow.skillLabel(row.perk), x, ty, 1, 1, 1, 1, UIFont.Small)
+            self:drawBar(self.barX, y + (self.rowH - self.unit) / 2,
+                self.skillLevels[row.perk] or 0, self.skillProg[row.perk] or 0)
             y = y + self.rowH
         end
         y = y + PAD
@@ -1160,7 +1445,7 @@ function BridgeWindowMain:createChildren()
         self.panel:addView(tr("WindowHome"), self.home)
     end
     self.loot = page("loot", function(x, y, w, h) return BridgeLootSettings:new(x, y, w, h) end)
-    self.panel:addView(tr("WindowLoot"), self.loot)
+    self.panel:addView(tr("WindowLootStorage"), self.loot)
     self.order = page("order", function(x, y, w, h) return BridgeOrder:new(x, y, w, h) end)
     self.panel:addView(tr("WindowOrder"), self.order)
     self.settings = page("settings", function(x, y, w, h) return BridgeWindowSettings:new(x, y, w, h) end)
@@ -1196,7 +1481,18 @@ function BridgeWindowMain:fitHeight()
     local view = self.panel.activeView.view
     local kind = self:kindOf(view)
     if view == nil or kind == nil then return end
-    local content = BridgeWindow.contentHeight(kind, self:getWidth())
+    local value = ""
+    if kind == "loot" then
+        value = tostring(BridgeWindow.lootMode or "loot")
+    elseif kind == "info" then
+        value = tostring(BridgeWindow.relRows())
+    end
+    local brand = kind .. "|" .. tostring(self:getWidth()) .. "|" .. name() .. "|" .. tostring(FONT_S) .. "|" .. value
+    if brand ~= self.contentBrand then
+        self.contentBrand = brand
+        self.contentH = BridgeWindow.contentHeight(kind, self:getWidth())
+    end
+    local content = self.contentH
     if type(content) ~= "number" or content <= 0 then return end
     content = math.ceil(content)
     local th = self:titleBarHeight()
@@ -1275,19 +1571,20 @@ function BridgeWindow.settingsFrame(width)
     }
 end
 
-function BridgeWindow.settingsHeight()
+function BridgeWindow.settingsHeight(width)
     refreshFonts()
     local frameH = BOX + FONT_S + ROW + BTN_H + BOX
     local aimH = BTN_H + PAD
-    return PAD + #BridgeWindow.TICKS * (BTN_H + PAD) + PAD + aimH + frameH + PAD + BTN_H + PAD
+    local _, hintH = BridgeWindow.hintLines(width, "SettingsHint", name())
+    return PAD + hintH + #BridgeWindow.TICKS * (BTN_H + PAD) + PAD + aimH + frameH + PAD + BTN_H + PAD
 end
 
 function BridgeWindow.contentHeight(kind, width)
     refreshFonts()
     local h = nil
     if kind == "info" then h = BridgeWindow.infoHeight()
-    elseif kind == "settings" then h = BridgeWindow.settingsHeight()
-    elseif kind == "skills" then h = BridgeWindow.skillsHeight()
+    elseif kind == "settings" then h = BridgeWindow.settingsHeight(width)
+    elseif kind == "skills" then h = BridgeWindow.skillsHeight(width)
     elseif kind == "home" and BridgeHomeTab ~= nil then h = BridgeHomeTab.heightFor(width)
     elseif kind == "order" and BridgeOrder ~= nil and BridgeOrder.heightFor ~= nil then h = BridgeOrder.heightFor(width)
     elseif kind == "loot" and BridgeLootSettings ~= nil then h = BridgeLootSettings.heightFor(width)
@@ -1331,11 +1628,22 @@ function BridgeWindow.neededSize()
         w = math.max(w, BridgeWindow.skillsWidth())
     end
     if BridgeLootSettings ~= nil then
-        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowLoot")))
+        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowLootStorage")))
+        w = math.max(w, PAD * 4 + textW(UIFont.Small, tr("WindowLoot")) + textW(UIFont.Small, tr("WindowStorage")))
+        for _, entry in ipairs(BridgeWindow.LOOT_TICKS) do
+            w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr(entry.label)) + PAD)
+        end
+        for _, entry in ipairs(BridgeWindow.STORE_TICKS) do
+            w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr(entry.label)) + PAD)
+        end
     end
     if BridgeHomeTab ~= nil then
         w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowHome")))
         w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr("OptHomeResources")) + PAD)
+        w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr("OptHomeAllFloors")) + PAD)
+        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("MarkAllHome")))
+        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("ClearMarks")))
+        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("MarkedCount")))
     end
     return math.max(BridgeWindow.WIDTH, math.ceil(w))
 end
@@ -1369,3 +1677,5 @@ function BridgeWindow.toggle(x, y)
 end
 
 log("loaded")
+
+

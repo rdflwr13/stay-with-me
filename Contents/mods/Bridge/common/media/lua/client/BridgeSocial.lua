@@ -182,6 +182,31 @@ local function say(pool)
 end
 
 
+function BridgeSocial.sayExact(pool, cooldown, slot)
+    if pool == nil then return false end
+    slot = slot or pool
+    local ready = false
+    pcall(function() ready = BridgeMoments.ready(slot, true) == true end)
+    if not ready then return false end
+    if Bridge.time - (Bridge.lastSpokeAt or -99999) < BridgeMoments.MIN_GAP then return false end
+    local text = nil
+    pcall(function() text = BridgeSocial.line(pool) end)
+    if text == nil then return false end
+    BridgeMoments.cool[slot] = Bridge.time + (tonumber(cooldown) or 600)
+    BridgeMoments.lastLine = Bridge.time
+    local quiet = false
+    pcall(function() quiet = Bridge.quiet() end)
+    if quiet then
+        pcall(function() Bridge.bridgeEvent(pool, text) end)
+        BridgeMoments.info = pool .. " quiet"
+    else
+        Bridge.speakText(text)
+        BridgeMoments.info = pool
+    end
+    return true
+end
+
+
 local function gesture(anim, raw, force)
     if anim == nil or not Bridge.drivable() then return end
     local body = Bridge.body
@@ -309,12 +334,8 @@ function BridgeSocial.deed(kind)
         local heal = mult(2, relMult())
         r.f = clamp(r.f + heal, -100, 100)
         popRel(heal, 0)
-    elseif kind == "hit" then
-        local v = BridgeData.sandboxNumber("RelationshipLossOnHit", 8, 0, 50)
-        local dr = math.floor(v * 5 / 8 + 0.5)
-        r.f = clamp(r.f - v, -100, 100)
-        r.r = clamp(r.r - dr, 0, 100)
-        popRel(-v, -dr)
+    elseif kind == "meet" then
+        gain(r, 4, 0)
     end
     BridgeSocial.save(true)
 end
@@ -1580,9 +1601,24 @@ end
 
 local function zombiesNear(dist)
     local near = false
+    local red = BridgeData.owner()
+    local body = Bridge.body
+    local frame = nil
+    pcall(function() if BridgeScan ~= nil then frame = BridgeScan.frame(body, red) end end)
+    if frame ~= nil then
+        local entries = frame.entries or {}
+        for i = 1, #entries do
+            local e = entries[i]
+            if e.alive and not e.comp and not e.harm and e.seenP then
+                if (e.dp < dist and math.abs(e.zp) < 1) or (e.dc < dist and math.abs(e.zc) < 1) then
+                    near = true
+                    break
+                end
+            end
+        end
+        return near
+    end
     pcall(function()
-        local red = BridgeData.owner()
-        local body = Bridge.body
         local list = nil
         if BridgeZScan ~= nil and red ~= nil then
             local x1, y1 = red:getX(), red:getY()
@@ -1616,7 +1652,9 @@ end
 local function recentFight()
     local last = -9999
     pcall(function() last = BridgeWeapon.lastFight end)
-
+    local combat = -9999
+    pcall(function() combat = BridgeCallout.lastCombatAt end)
+    if combat > last then last = combat end
     return (Bridge.time - last) < AFTER_FIGHT
 end
 
@@ -1632,12 +1670,8 @@ function BridgeSocial.relaxed(r)
     pcall(function()
         local red = BridgeData.owner()
         local sq = red ~= nil and red:getCurrentSquare() or nil
-        local h = BridgeData.homeOf(Bridge.store)
-        if sq ~= nil and type(h) == "table" then
-            local x, y, z = sq:getX(), sq:getY(), sq:getZ()
-            if z == h.z and x >= h.x and x <= (h.x + h.w) and y >= h.y and y <= (h.y + h.h) then
-                home = true
-            end
+        if sq ~= nil and BridgeHome ~= nil and type(BridgeHome.contains) == "function" then
+            home = BridgeHome.contains(sq:getX(), sq:getY(), sq:getZ()) == true
         end
         if not home and sq ~= nil then fallback = sq:isInARoom() == true end
         if not home and not fallback then
@@ -1671,6 +1705,7 @@ end
 
 
 function BridgeSocial.onCombatKill(z)
+    if BridgeMeet ~= nil and type(BridgeMeet.quietCombat) == "function" and BridgeMeet.quietCombat() then return end
     local body = Bridge.body
     if z == nil or body == nil or z == body then return end
     if not engaged() then return end
@@ -1918,6 +1953,24 @@ local function unseenNearby(red)
     n = tonumber(n) or 0
     return n >= 1 and n <= 3
 end
+BridgeSocial.unseenNearby = unseenNearby
+
+
+local function lastFightPool()
+    local rec = Bridge.store
+    local lf = rec ~= nil and rec.lastFight or nil
+    if type(lf) ~= "table" then return nil end
+    local at = tonumber(lf.a)
+    if at == nil then return nil end
+    local age = nil
+    pcall(function() age = getGameTime():getWorldAgeHours() end)
+    if age == nil then return nil end
+    local since = age - at
+    if since < BridgeCallout.LASTFIGHT_MIN_HOURS or since > BridgeCallout.LASTFIGHT_MAX_HOURS then return nil end
+    if recentFight() then return nil end
+    if ZombRand(3) ~= 0 then return nil end
+    return "RemarkLastFight"
+end
 
 
 local function remarkPool(r, red, inCar)
@@ -1929,6 +1982,8 @@ local function remarkPool(r, red, inCar)
     if hurt and not recent then return "RemarkHurt" end
     if recentFight() then return "RemarkAfterFight" end
     if not inCar and unseenNearby(red) then return "RemarkTense" end
+    local remembered = lastFightPool()
+    if remembered ~= nil then return remembered end
     local hour = 12
     pcall(function() hour = getGameTime():getHour() end)
     if (hour >= 22 or hour < 5) and ZombRand(3) == 0 then return "RemarkNight" end
@@ -2063,6 +2118,40 @@ local function menuTip(option, text)
 end
 
 
+function BridgeSocial.talkOptions(r, calm, busy)
+    local list = {}
+    for _, a in ipairs(BridgeSocial.ACTIONS) do
+        if a.gate(r) then
+            list[#list + 1] = {
+                id = a.id,
+                label = "Talk_" .. a.id,
+                romantic = a.romantic == true,
+                blocked = BridgeSocial.talkBlock(a.id, r, calm, busy),
+            }
+        end
+    end
+    if r.f >= 20 then
+        list[#list + 1] = {
+            id = "Ask",
+            label = "Talk_Ask",
+            ask = true,
+            blocked = busy and "Busy" or nil,
+        }
+    end
+    return list
+end
+
+
+function BridgeSocial.menuTalkOptions()
+    local r = rel()
+    if r == nil then return nil end
+    rollDay(r)
+    local busy = zombiesNear(BUSY_DIST)
+    local calm = BridgeSocial.relaxed(r)
+    return BridgeSocial.talkOptions(r, calm, busy)
+end
+
+
 function BridgeSocial.fillMenu(context, tr)
     local r = rel()
     if r == nil then return end
@@ -2073,30 +2162,25 @@ function BridgeSocial.fillMenu(context, tr)
     local busy = zombiesNear(BUSY_DIST)
     local calm = BridgeSocial.relaxed(r)
     local romantic = nil
-    for _, a in ipairs(BridgeSocial.ACTIONS) do
-        if a.gate(r) then
-            local target = sub
-            if a.romantic then
-                if romantic == nil then
-                    local ro = sub:addOption(tr("Romance"))
-                    romantic = ISContextMenu:getNew(sub)
-                    sub:addSubMenu(ro, romantic)
-                end
-                target = romantic
+    for _, entry in ipairs(BridgeSocial.talkOptions(r, calm, busy)) do
+        local target = sub
+        if entry.romantic then
+            if romantic == nil then
+                local ro = sub:addOption(tr("Romance"))
+                romantic = ISContextMenu:getNew(sub)
+                sub:addSubMenu(ro, romantic)
             end
-            local opt = target:addOption(tr("Talk_" .. a.id), a.id, BridgeSocial.talk)
-            local reason = BridgeSocial.talkBlock(a.id, r, calm, busy)
-            if reason ~= nil then
-                opt.notAvailable = true
-                menuTip(opt, tr("TalkCant" .. reason))
-            end
+            target = romantic
         end
-    end
-    if r.f >= 20 then
-        local ask = sub:addOption(tr("Talk_Ask"), nil, BridgeSocial.ask)
-        if busy then
-            ask.notAvailable = true
-            menuTip(ask, tr("TalkCantBusy"))
+        local opt
+        if entry.ask then
+            opt = target:addOption(tr(entry.label), nil, BridgeSocial.ask)
+        else
+            opt = target:addOption(tr(entry.label), entry.id, BridgeSocial.talk)
+        end
+        if entry.blocked ~= nil then
+            opt.notAvailable = true
+            menuTip(opt, tr("TalkCant" .. entry.blocked))
         end
     end
 end

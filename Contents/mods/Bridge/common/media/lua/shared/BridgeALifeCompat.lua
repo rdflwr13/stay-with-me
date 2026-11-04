@@ -379,6 +379,12 @@ function M.install()
     if type(alife) == "table" then
         local horde = alife.HordeRelations
         hookFirst(horde, "steersHere", "alife.horde.steers", false)
+        hook(horde, "onZombieUpdate", "alife.horde.update", function(original)
+            return function(zombie, ...)
+                if isBody(zombie) then return end
+                return original(zombie, ...)
+            end
+        end)
         hook(horde, "preyRows", "alife.horde.prey", function(original)
             return function(...)
                 local rows = original(...)

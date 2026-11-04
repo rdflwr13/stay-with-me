@@ -34,6 +34,18 @@ function BridgeZS.find(pred, maxN, opts)
     return s.find(pred, maxN, opts)
 end
 
+function BridgeZS.canSee(z, a, b)
+    local s = scan()
+    if s == nil or type(s.canSee) ~= "function" then return false end
+    return s.canSee(z, a, b) == true
+end
+
+function BridgeZS.countSeen(cx, cy, cz, r, a, b, opts)
+    local s = scan()
+    if s == nil or type(s.countSeen) ~= "function" then return 0 end
+    return s.countSeen(cx, cy, cz, r, a, b, opts) or 0
+end
+
 function BridgeZS.list(opts)
     local s = scan()
     if s == nil then return nil end
