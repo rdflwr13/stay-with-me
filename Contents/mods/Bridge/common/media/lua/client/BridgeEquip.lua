@@ -928,7 +928,7 @@ BridgeEquip.acceptClothing = acceptClothing
 
 local function acceptWeapon(b, player, item)
     log("weapon: enter item=" .. tostring(item ~= nil and item:getType() or "nil"))
-    if b == nil or item == nil or BridgeWeapon == nil then log("weapon: reject nil arg or missing module") return false end
+    if b == nil or item == nil then log("weapon: reject nil arg") return false end
     if not BridgeWeapon.isMelee(item) then log("weapon: reject not melee") return false end
     if not canHandOver(b, player, item) then log("weapon: reject canHandOver") return false end
     if weaponItem(b) == item then log("weapon: reject already assigned") return false end

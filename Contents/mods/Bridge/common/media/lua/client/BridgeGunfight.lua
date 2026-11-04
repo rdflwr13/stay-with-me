@@ -4633,9 +4633,30 @@ BridgeGunfight.startFenceApproach = startFenceApproach
 
 
 local function standoffStop()
-    if BridgeGunfight.standoffMoving then
-        if BridgeGunfight.standoffSatisfied ~= true then BridgeGunfight.plantRequired = true end
+    local wasMoving = BridgeGunfight.standoffMoving
+    if wasMoving then
+        local wasSatisfied = BridgeGunfight.standoffSatisfied == true
+        local wasPlant = BridgeGunfight.plantRequired == true
+        local ss = BridgeGunfight.stationarySince
+        local mv = BridgeMove ~= nil and BridgeMove.moving == true
+        local st = BridgeMove ~= nil and BridgeMove.steering == true
+        local pa = BridgeMove ~= nil and BridgeMove.pathing == true
+        local owner = BridgeFight ~= nil and BridgeFight.stepOwner or nil
+        local d = -1
+        pcall(function()
+            if BridgeGunfight.body ~= nil and BridgeGunfight.target ~= nil then
+                d = dist(BridgeGunfight.body, BridgeGunfight.target)
+            end
+        end)
+        if not wasSatisfied then BridgeGunfight.plantRequired = true end
         BridgeGunfight.moving = false
+        if BridgeMove ~= nil and BridgeMove.pendingClimb == nil and BridgeMove.cross == nil then
+            BridgeMove.moving = false
+            BridgeMove.steering = false
+        end
+        vlog(string.format("standoff stop d=%.1f satisfied=%s plant=%s ss=%s mv=%s steer=%s path=%s owner=%s",
+            d, tostring(wasSatisfied), tostring(wasPlant), tostring(ss),
+            tostring(mv), tostring(st), tostring(pa), tostring(owner)))
     end
     BridgeGunfight.standoffSatisfied = nil
     BridgeGunfight.standoffMoving = false
@@ -5315,7 +5336,10 @@ BridgeGunfight.lastShotTarget = nil
         local dy = byNow - BridgeGunfight.lastY
         moved = math.sqrt(dx * dx + dy * dy)
     end
-    local locomoting = BridgeMove ~= nil and (BridgeMove.moving == true
+    local moveFresh = BridgeMove ~= nil and BridgeMove.follow ~= nil
+        and (BridgeMove.follow.frame == (Bridge.tick or 0)
+            or BridgeMove.follow.frame == (Bridge.tick or 0) - 1)
+    local locomoting = moveFresh and (BridgeMove.moving == true
         or BridgeMove.steering == true or BridgeMove.pathing == true)
     if locomoting or moved > BridgeGunRules.MOVE_EPS then
         BridgeGunfight.stationarySince = nowTick
@@ -5583,8 +5607,10 @@ BridgeGunfight.lastShotTarget = nil
     end
 
     local readyAt = BridgeGunfight.aimUntil or 0
+    local plantHold = false
     if BridgeGunfight.plantRequired and BridgeGunfight.state ~= "backstep" then
         local plantAt = (BridgeGunfight.stationarySince or 0) + BridgeGunRules.PLANT_TICKS
+        plantHold = Bridge.time < plantAt
         if Bridge.time < plantAt then
             local leashMode = BridgeData.COMBAT[BridgeData.combatOf(Bridge.store)] or BridgeData.COMBAT.bodyguard
             local leash = tonumber(leashMode.leash) or 999
@@ -5600,10 +5626,19 @@ BridgeGunfight.lastShotTarget = nil
         if plantAt > readyAt then readyAt = plantAt end
     end
     if Bridge.time < readyAt then
+        if plantHold and BridgeGunfight.plantHoldLogged ~= true then
+            BridgeGunfight.plantHoldLogged = true
+            vlog(string.format("plant hold d=%.1f in=%d ss=%s mv=%s steer=%s path=%s",
+                d, math.max(0, readyAt - Bridge.time), tostring(BridgeGunfight.stationarySince),
+                tostring(BridgeMove ~= nil and BridgeMove.moving),
+                tostring(BridgeMove ~= nil and BridgeMove.steering),
+                tostring(BridgeMove ~= nil and BridgeMove.pathing)))
+        end
         BridgeGunfight.info = string.format("%s aiming d=%.1f in %d", tostring(item:getType()), d,
             math.max(0, readyAt - Bridge.time))
         return true
     end
+    BridgeGunfight.plantHoldLogged = false
     if Bridge.time < (BridgeGunfight.nextShotAt or 0) then
         BridgeGunfight.info = string.format("%s ready d=%.1f in %d", tostring(item:getType()), d,
             math.max(0, (BridgeGunfight.nextShotAt or 0) - Bridge.time))

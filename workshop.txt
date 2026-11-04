@@ -2,7 +2,7 @@ version=1
 id=3800989007
 title=Stay With Me
 description=[img]https://i.imgur.com/ygV11m7.png[/img]
-description=[url=https://steamcommunity.com/sharedfiles/filedetails/changelog/3800989007][img]https://i.imgur.com/LGZ0Bwx.png[/img][/url]
+description=[url=https://steamcommunity.com/sharedfiles/filedetails/changelog/3800989007][img]https://i.imgur.com/J1VmU2r.png[/img][/url]
 description= 
 description=[b]She walks with you, fights beside you, patches up your wounds and waits for you at home.[/b]
 description=A companion for Project Zomboid Build 42. Choose her or him. In singleplayer they're yours, on a server every player gets their own.
