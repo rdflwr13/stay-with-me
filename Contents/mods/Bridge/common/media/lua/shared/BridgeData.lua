@@ -39,6 +39,13 @@ function BridgeData.sandboxNumber(key, default, min, max)
     return v
 end
 
+function BridgeData.sandboxFlag(key, default)
+    local t = BridgeData.sandbox()
+    local v = (t ~= nil) and t[key] or nil
+    if v == nil then return default == true end
+    return v == true or v == "true"
+end
+
 
 
 
@@ -304,6 +311,9 @@ function BridgeData.npcfwPeaceful(z)
 end
 
 function BridgeData.harmless(z)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(z) then
+        return true
+    end
     return BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.girlfriendPeaceful(z)
         or BridgeData.foreignPeaceful(z) or BridgeData.npcfwPeaceful(z)
 end

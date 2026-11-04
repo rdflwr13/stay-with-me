@@ -1440,6 +1440,9 @@ end
 
 
 function Bridge.isCompanion(z)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(z) then
+        return false
+    end
     local yes = false
     pcall(function()
         if z:getVariableBoolean(BODY_VAR) then yes = true return end
@@ -3463,7 +3466,10 @@ function Bridge.corpseSweep()
                 for i = (list and list:size() or 0) - 1, 0, -1 do
                     local c = list:get(i)
                     local hers = false
+                    local puppet = BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.isCorpse) == "function"
+                        and BridgeSeatPuppet.isCorpse(c)
                     pcall(function()
+                        if puppet then return end
                         local skin = nil
                         pcall(function() skin = c:getHumanVisual():getSkinTexture() end)
 
@@ -3498,6 +3504,7 @@ end
 
 
 function Bridge.onZombieDead(zombie)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(zombie) then return end
     local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY_VAR) end)
     if not ok or not isBody or reusedBody(zombie) then return end
 
@@ -5041,6 +5048,7 @@ function Bridge.watchGuest(z, who, remote)
 end
 
 function Bridge.onZombieUpdate(zombie)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(zombie) then return end
     local ok, isBody = pcall(zombieBodyVar, zombie)
     if not ok then return end
 
@@ -7575,6 +7583,10 @@ local function carTick()
     if BridgeCar == nil then return end
     local ok, err = pcall(BridgeCar.tick)
     if not ok and Bridge.every(600) then warn("car tick failed: " .. tostring(err)) end
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.tick) == "function" then
+        local okP, errP = pcall(BridgeSeatPuppet.tick)
+        if not okP and Bridge.every(600) then warn("seat puppet tick failed: " .. tostring(errP)) end
+    end
 end
 
 local function driveTick()
@@ -8034,7 +8046,8 @@ function Bridge.claimBlockers(square, playerObj)
         local list = getCell():getZombieList()
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and inside(z) then
+            if z ~= nil and inside(z) and not (BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function"
+                    and BridgeSeatPuppet.is(z)) then
                 local own = z == Bridge.body
                 if not own and Bridge.store ~= nil and Bridge.store.bodyId ~= nil then
                     pcall(function() own = z:getPersistentOutfitID() == Bridge.store.bodyId end)

@@ -959,6 +959,9 @@ end
 
 
 function BridgeCar.stop(why)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.hide) == "function" then
+        pcall(BridgeSeatPuppet.hide, "stop")
+    end
     if BridgeCar.state == "idle" then return end
     if Bridge.alive() and (BridgeCar.state == "going" or BridgeCar.state == "standing" or BridgeCar.state == "exiting") then
         pcall(function() BridgeMove.stopPath(Bridge.body) end)
@@ -985,6 +988,9 @@ local function setInside(car, why)
     BridgeCar.reserve(true)
     BridgeCar.info = "inside: " .. tostring(why)
     log(sformat("inside seat=%s%s: %s", tostring(BridgeCar.seat), BridgeCar.lap and " (lap)" or "", tostring(why)))
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.show) == "function" then
+        pcall(BridgeSeatPuppet.show, car)
+    end
 end
 
 
@@ -1033,6 +1039,9 @@ end
 
 
 local function leave(body, why)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.hide) == "function" then
+        pcall(BridgeSeatPuppet.hide, "left")
+    end
     movesReset()
     pcall(function() BridgeMove.stopPath(body) end)
     standUp(body)
@@ -1369,6 +1378,9 @@ local function exitSeat(car, red)
 end
 
 local function beginExit(red, car, why)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.hide) == "function" then
+        pcall(BridgeSeatPuppet.hide, "exit")
+    end
     local seat, lap, his = exitSeat(car, red)
     local x, y, z = BridgeCar.doorPoint(car, seat)
     local fx, fy = BridgeCar.forward(car)

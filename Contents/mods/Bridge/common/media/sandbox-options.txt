@@ -91,3 +91,10 @@ option StayWithMe.ForceSpawnNearPlayer
     page = StayWithMe,
     translation = StayWithMe_ForceSpawnNearPlayer,
 }
+
+option StayWithMe.CarSeatPuppet
+{
+    type = boolean, default = true,
+    page = StayWithMe,
+    translation = StayWithMe_CarSeatPuppet,
+}

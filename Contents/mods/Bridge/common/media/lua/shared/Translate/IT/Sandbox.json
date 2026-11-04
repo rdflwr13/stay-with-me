@@ -164,5 +164,7 @@
     "Sandbox_StayWithMe_CompanionWheelKey_Values_option138": "Power",
     "Sandbox_StayWithMe_CompanionWheelKey_Values_option139": "Sleep",
     "Sandbox_StayWithMe_ForceSpawnNearPlayer": "Spawn forzato vicino al giocatore (debug)",
-    "Sandbox_StayWithMe_ForceSpawnNearPlayer_tooltip": "Opzione di debug. Quando abilitato, il compagno viene rigenerato accanto al giocatore se manca e costretto alla modalità Segui. Utilizzare solo per i test."
+    "Sandbox_StayWithMe_ForceSpawnNearPlayer_tooltip": "Opzione di debug. Quando abilitato, il compagno viene rigenerato accanto al giocatore se manca e costretto alla modalità Segui. Utilizzare solo per i test.",
+    "Sandbox_StayWithMe_CarSeatPuppet": "Show companion in the car seat (singleplayer)",
+    "Sandbox_StayWithMe_CarSeatPuppet_tooltip": "Singleplayer only. While she rides inside a vehicle, a temporary look-alike sits in a passenger seat so the car does not look empty. It is cosmetic: the real companion is still the one who gets out. Default on."
 }

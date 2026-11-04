@@ -4437,5 +4437,15 @@
     "IGUI_NotAlone_Soc_EvWakeNightCar_Near_3": "Noche. Todavía estamos a salvo. Mantente cerca.",
     "IGUI_NotAlone_Soc_EvWakeNightCar_Close_1": "Noche, amor. Estás despierto. Me quedé cerca.",
     "IGUI_NotAlone_Soc_EvWakeNightCar_Close_2": "Ahí estás. Noche. El auto está en silencio.",
-    "IGUI_NotAlone_Soc_EvWakeNightCar_Close_3": "Estás despierto. Noche. No te dejé."
+    "IGUI_NotAlone_Soc_EvWakeNightCar_Close_3": "Estás despierto. Noche. No te dejé.",
+    "IGUI_NotAlone_SeatPuppetTitle": "Companion's seat",
+    "IGUI_NotAlone_SeatPuppetUp": "Down / up",
+    "IGUI_NotAlone_SeatPuppetRight": "Left / right",
+    "IGUI_NotAlone_SeatPuppetForward": "Back / forward",
+    "IGUI_NotAlone_SeatPuppetHint": "Left and right as seen facing the front of the car",
+    "IGUI_NotAlone_SeatPuppetReset": "Reset",
+    "IGUI_NotAlone_SeatPuppetClose": "Close",
+    "IGUI_NotAlone_SeatPuppetAdjust": "Adjust companion's seat...",
+    "IGUI_NotAlone_SeatPuppetSaved": "Saved for this vehicle and seat",
+    "IGUI_NotAlone_SeatPuppetNotInCar": "She isn't in a seat right now"
 }
