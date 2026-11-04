@@ -3450,7 +3450,7 @@ end
 
 local function forceMeleeFallback(body)
     local announce = BridgeGunfight.meleeFallback ~= true
-    if BridgeFight ~= nil then
+    if announce and BridgeFight ~= nil then
         BridgeFight.target = nil
         BridgeFight.state = "idle"
     end
