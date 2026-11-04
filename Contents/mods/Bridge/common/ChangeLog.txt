@@ -195,3 +195,66 @@ Known Issues:
 - Not all gun mods may work or there might still be some incompatibility issues. She may not recognize the ammunition, magazines, etc. Post on the workshop page which mods have incompatibility issues.
 
 [ ------ ]
+
+[ Stay With Me v0.6 ]
+First Contact
+
+New Additions:
+
+Pre-Ingame Menu & How You Meet Them:
+- You can now customize your companion before loading into the game.
+- You can now choose how you meet them: spawn together with you, close by, or in a random town.
+- You can customize the distance they spawn from you or even pick a random town.
+- Current starting scenarios: hold-up (inside a house), vehicle (spawns near a car on the road), and scavenger (find her out in the open). Note: more scenarios are planned for the future.
+
+Radial Menu:
+- Added a quick access radial menu. Hold Mouse 4 (the key can be changed in the Sandbox settings) to open it.
+- Console users use the left stick.
+
+Home Deposit System:
+- Rin can now deposit loot into containers with right click > Deposit Loot, via the work menu, or through a new home system.
+- Mark a grid as home, then right click a container and mark it as storage, then tell her to store loot with right click > Work > Loot > Deposit Loot at Home, or by choosing it from the radial menu.
+- When told to deposit all loot, Rin will smartly deposit into containers that already hold similar items.
+- You can customize the storage settings in the Loot & Storage menu inside her home menu.
+
+Changes:
+- Updated melee combat footwork: she can now backpedal while swinging weapons, prefers to fight on the flanks, and will flee when surrounded.
+- Updated gun combat footwork: she now backpedals and keeps her distance from zombies, can shove when they get close, will run if surrounded, and will flee to reload her magazines when the melee switch is off until she has reloaded, then resume combat.
+- Rebalanced gunplay: reduced her visible aiming cone, added a longer target acquisition timer, and added a brief timer between targets to stop her from snapping.
+- Melee and gun target acquisition now prioritizes Sprinters > Fast Shamblers > Shamblers > Crawlers.
+- Rin can now move backwards and will step out of your way more cleanly when you bump into her.
+- Sheet Rope/Ladders: Rin now teleports to follow you when you move up and down ladders or sheet ropes.
+- Home System: now works on multiple floors (you have to enable it with a check mark).
+- Rin now says goodnight and good morning when you sleep and gives you a stat reduction depending on relationship state.
+- Rin can now eject her own magazines on command; there is a 15 second cooldown before she resumes ammo and magazine care. (Shotgun/revolver ammo ejection will come next).
+- Guns of Marz: all rifles now hit a minimum of 2 targets instead of 1.
+- Added 20 new combat callouts.
+- Rin now makes callouts when the helicopter is out.
+- Added missing /RU/IT/ES/DE translations and Portuguese (new).
+- Updated the Sleep System to be more compatible with other sleep mods (might still not work there's 10+ sleep mods).
+
+Bug Fixes:
+- Fixed Rin forgetting her primary gun on SP when spawning.
+- Fixed Rin not snapping to you when you are on floors above or below her.
+- Guns in holsters now unequip when removed.
+- Fixed a LUA error from the gift tooltip probing non-item tooltips.
+- Fixed a LUA error with Improved Flashlights.
+- Horde detection now requires visible targets only.
+
+Optimizations:
+- Overhauled the ammo system to cache inventory information and reduce inventory scans.
+- Overhauled the melee and gun systems to share target data and reduce zombie scans.
+- Unified the light detection system and added caching to reduce repeated light calls.
+- Item transfer stack sizes are now weight dependent like vanilla (lighter items use more stacks, heavier items use fewer) instead of a fixed 20.
+- Optimized inventory saving for large inventories to improve performance.
+- Fixed excessive paperdoll refreshing on the Info menu tab.
+
+Compatibility:
+- Guns of Tien, B42 Real Firearms, Gunsmith 1993: added full support for ammunition, magazines, and guns.
+- NPC Vision: added compatibility.
+- Spiked Barrels: Rin is now immune to the traps.
+- Auto All: Rin is no longer recognized as a zombie.
+- Girlfriend Mod: Rin no longer beats them up out of jealousy.
+- Buttstroke / Gun Stock Attack: added soft support to replace gun shove.
+
+[ ------ ]
