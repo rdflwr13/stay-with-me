@@ -1439,6 +1439,14 @@ end
 
 
 
+local function herOutfit(z)
+    if BridgeBanditsCompat ~= nil then return BridgeBanditsCompat.isHerOutfit(z) end
+    local name = nil
+    pcall(function() name = z:getOutfitName() end)
+    return name == "Naked"
+end
+
+
 function Bridge.isCompanion(z)
     local yes = false
     pcall(function()
@@ -1446,7 +1454,7 @@ function Bridge.isCompanion(z)
         if not Bridge.mp then return end
         local pid = z:getPersistentOutfitID()
         if Bridge.bodyIndex[pid] ~= nil or (Bridge.store ~= nil and Bridge.store.bodyId == pid) then yes = true return end
-        if BridgeRemnant ~= nil and BridgeRemnant.hasMark(pid) and z:isFemale() == BridgeData.isFemale(Bridge.store) and z:getOutfitName() == "Naked" then yes = true end
+        if BridgeRemnant ~= nil and BridgeRemnant.hasMark(pid) and z:isFemale() == BridgeData.isFemale(Bridge.store) and herOutfit(z) then yes = true end
     end)
     return yes
 end
@@ -1780,7 +1788,7 @@ function Bridge.spawnZombie(px, py, pz)
 
         local chance = BridgeData.isFemale(Bridge.store) and 100 or 0
         Bridge.creating = true
-        local okAdd, list = pcall(addZombiesInOutfit, x, y, z, 1, "Naked", chance, false, false, false, false, false, false, 1)
+        local okAdd, list = pcall(addZombiesInOutfit, x, y, z, 1, (BridgeBanditsCompat ~= nil and BridgeBanditsCompat.outfit() or "Naked"), chance, false, false, false, false, false, false, 1)
         Bridge.creating = false
         if not okAdd then failed = "addZombiesInOutfit failed: " .. tostring(list) return end
         if list == nil or list:size() == 0 then failed = "addZombiesInOutfit returned nothing" return end
@@ -3475,7 +3483,7 @@ function Bridge.corpseSweep()
                         if female == nil then female = BridgeData.isFemale(Bridge.store) end
                         if mySkin == nil then mySkin = BridgeData.skinOf(Bridge.store) end
                         hers = c:isZombie() and c:isFemale() == female and (tostring(skin or "") == mySkin or marked)
-                            and tostring(c:getOutfitName()) == "Naked"
+                            and herOutfit(c)
                     end)
                     if hers then
                         pcall(function() sq:removeCorpse(c, false) end)
@@ -4947,7 +4955,7 @@ end
 function Bridge.strayCheck(z, pid, oid)
     local sign = false
     if BridgeRemnant ~= nil and BridgeRemnant.hasMark(pid) then
-        pcall(function() sign = z:isFemale() == BridgeData.isFemale(Bridge.store) and z:getOutfitName() == "Naked" and not z:isDead() end)
+        pcall(function() sign = z:isFemale() == BridgeData.isFemale(Bridge.store) and herOutfit(z) and not z:isDead() end)
     end
     if not sign then
         Bridge.unstray(z)
