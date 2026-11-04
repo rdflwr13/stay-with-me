@@ -818,6 +818,20 @@ function BridgeAppearance.openColorPicker(button, mode, loc, initial)
         picker:setCapture(false)
     end)
     if not ok then warn("color picker failed: " .. tostring(err)) end
+    if picker ~= nil then
+        local screen = BridgeAppearance.instance
+        local joypad = screen and screen.joyfocus or nil
+        if joypad == nil then
+            pcall(function() joypad = JoypadState.getMainMenuJoypad() end)
+        end
+        if joypad == nil then
+            pcall(function() joypad = CoopCharacterCreation.getJoypad() end)
+        end
+        if joypad ~= nil then
+            joypad.focus = picker
+            pcall(function() updateJoypadFocus(joypad) end)
+        end
+    end
     BridgeAppearance.picker = picker
     return picker
 end
@@ -839,7 +853,12 @@ function BridgeAppearance.onCustomColor(target, color, mouseUp)
     BridgeAppearance.pickerLoc = nil
     local picker = BridgeAppearance.picker
     BridgeAppearance.picker = nil
+    local joypad = picker and picker.joyfocus or nil
     if picker ~= nil then pcall(function() picker:removeSelf() end) end
+    if joypad ~= nil and BridgeAppearance.instance ~= nil then
+        joypad.focus = BridgeAppearance.instance
+        pcall(function() updateJoypadFocus(joypad) end)
+    end
 end
 
 

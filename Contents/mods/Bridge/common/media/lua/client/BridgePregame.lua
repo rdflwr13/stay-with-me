@@ -201,13 +201,23 @@ local function worldTag()
     return world, map, mode
 end
 
-local function showCreation()
+local function showCreation(preserveOutfit)
     local ms = MainScreen.instance
     if ms == nil or ms.charCreationMain == nil then return end
     local joypad = nil
     pcall(function() joypad = JoypadState.getMainMenuJoypad() end)
     if joypad == nil then
         pcall(function() joypad = CoopCharacterCreation.getJoypad() end)
+    end
+    if preserveOutfit then
+        local view = ms.charCreationMain
+        if view.javaObject == nil then view:instantiate() end
+        ISPanelJoypad.setVisible(view, true, joypad)
+        pcall(view.disableBtn, view)
+        pcall(view.checkAllClothingOptions, view)
+        pcall(view.onResolutionChange, view, view.width, view.height, view.width, view.height)
+        pcall(view.arrangeClothingUI, view)
+        return
     end
     pcall(ms.charCreationMain.setVisible, ms.charCreationMain, true, joypad)
 end
@@ -1737,6 +1747,17 @@ function BridgePregameScreen:layout()
 
     self:layoutLeft()
     self:layoutRight()
+    self:refreshJoypadRows()
+end
+
+function BridgePregameScreen:refreshJoypadRows()
+    local joypad = self.joyfocus
+    local focused = self:getJoypadFocus()
+    self:autoGenerateJoypadButtonsLists()
+    if joypad ~= nil then
+        if focused ~= nil and self:setJoypadFocus(focused, joypad) then return end
+        self:setJoypadFocusTopLeft(joypad)
+    end
 end
 
 function BridgePregameScreen:prerender()
@@ -2561,6 +2582,9 @@ function BridgePregameScreen:onGainJoypadFocus(joypadData)
     ISPanelJoypad.onGainJoypadFocus(self, joypadData)
     if self.startBtn ~= nil then self:setISButtonForA(self.startBtn) end
     if self.backBtn ~= nil then self:setISButtonForB(self.backBtn) end
+    if self:getJoypadFocus() == nil then
+        self:setJoypadFocusTopLeft(joypadData)
+    end
 end
 
 function BridgePregameScreen:onLoseJoypadFocus(joypadData)
@@ -2655,6 +2679,9 @@ function BridgePregame.show()
     screen:syncUI()
     local joypad = nil
     pcall(function() joypad = JoypadState.getMainMenuJoypad() end)
+    if joypad == nil then
+        pcall(function() joypad = CoopCharacterCreation.getJoypad() end)
+    end
     screen:setVisible(true, joypad)
     pcall(function() screen:bringToTop() end)
     if joypad ~= nil then
@@ -2670,7 +2697,7 @@ function BridgePregame.back()
         BridgeAppearance.snapshotCandidate(screen.draft)
     end
     BridgePregame.hideScreen()
-    showCreation()
+    showCreation(true)
 end
 
 function BridgePregame.start()
@@ -2686,7 +2713,6 @@ function BridgePregame.start()
         return
     end
     BridgePregame.destroyScreen()
-    showCreation()
     BridgePregame.finishPending()
 end
 
@@ -2695,7 +2721,7 @@ function BridgePregame.restoreAfterFailure()
     if BridgePregame.draft ~= nil then
         BridgePregame.show()
     else
-        showCreation()
+        showCreation(true)
     end
 end
 
@@ -2750,7 +2776,7 @@ function BridgePregame.intercept(owner, button, x, y)
     end
     if not shown then
         BridgePregame.pending = nil
-        showCreation()
+        showCreation(true)
         return true
     end
     hideCreation()
