@@ -166,7 +166,7 @@ function BridgeGear.slotsFor(b, item)
         local worn = b:getWornItems()
         for i = 0, worn:size() - 1 do
             local w = worn:getItemByIndex(i)
-            if w ~= nil then
+            if w ~= nil and not (BridgeTransmog ~= nil and BridgeTransmog.isDerivedItem(w) == true) then
                 local provided = nil
                 pcall(function() provided = w:getAttachmentsProvided() end)
                 if provided ~= nil then

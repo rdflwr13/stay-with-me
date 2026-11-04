@@ -209,6 +209,7 @@ end
 
 function BridgeDeposit.storable(item, body, homeOk)
     if item == nil or body == nil then return false end
+    if BridgeTransmog ~= nil and BridgeTransmog.isDerivedItem(item) then return false end
     local rec = store()
     local worn, equippedClothing, hands = false, false, false
     pcall(function()

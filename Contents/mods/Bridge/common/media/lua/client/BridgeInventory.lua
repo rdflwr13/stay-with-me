@@ -464,6 +464,7 @@ function BridgeInventory.applyWorn(b)
     end)
     BridgeInventory.shownIds = shown
     if BridgeGear ~= nil then pcall(BridgeGear.sync, b) end
+    if BridgeTransmog ~= nil then pcall(BridgeTransmog.sync, b) end
 end
 
 BridgeInventory.shownIds = {}
@@ -3990,10 +3991,11 @@ function BridgeInventory.bodyArrived(b)
     BridgeInventory.goneContainers = keep
 end
 
-function BridgeInventory.snapshot(b)
+function BridgeInventory.snapshot(b, withItems)
     BridgeInventory.herContainers = containersOf(b)
     BridgeInventory.herContainersOf = b
     local out = {}
+    local refs = withItems and {} or nil
     pcall(function()
         local primary, secondary = b:getPrimaryHandItem(), b:getSecondaryHandItem()
         local function walk(container, parent)
@@ -4003,8 +4005,11 @@ function BridgeInventory.snapshot(b)
                 if item ~= nil then
                     local rec = BridgeItems.record(item, false)
                     local skip = false
+                    if BridgeTransmog ~= nil then
+                        pcall(function() skip = BridgeTransmog.filterRecord(item, rec) == false end)
+                    end
                     pcall(function()
-                        skip = hasTag(item, "Face") or hasTag(item, "BodyDetail") or hasTag(item, "Muscle") or isMuscleItem(item) or isMakeupItem(item)
+                        skip = skip or hasTag(item, "Face") or hasTag(item, "BodyDetail") or hasTag(item, "Muscle") or isMuscleItem(item) or isMakeupItem(item)
                     end)
                     if not skip then
                         if parent == nil then
@@ -4027,6 +4032,7 @@ function BridgeInventory.snapshot(b)
                             end
                         end
                         out[#out + 1] = rec
+                        if refs ~= nil then refs[#out + 1] = item end
                         local index = #out
                         local isBag = false
                         pcall(function() isBag = item:IsInventoryContainer() end)
@@ -4037,7 +4043,7 @@ function BridgeInventory.snapshot(b)
         end
         walk(b:getInventory(), nil)
     end)
-    return out
+    return out, refs
 end
 
 function BridgeInventory.encode(list) return BridgeItems.encode(list) end
@@ -4127,6 +4133,7 @@ function BridgeInventory.restore(b, list)
     end
     BridgeInventory.restoring = nil
     pcall(function() if BridgeGunfight ~= nil then BridgeGunfight.recover(b) end end)
+    if BridgeTransmog ~= nil then pcall(BridgeTransmog.rebuild, b, true) end
     return worn, hands, bag
 end
 
@@ -4144,7 +4151,16 @@ function BridgeInventory.dressVisual(b, encoded, rec)
         for _, rec in ipairs(list) do
             if rec.p == nil then
                 if rec.w then
-                    visuals:add(BridgeItems.visual(rec))
+                    local shown = rec
+                    if BridgeTransmog ~= nil then
+                        local visual = BridgeTransmog.visualRecord(rec)
+                        if visual == false then
+                            shown = nil
+                        elseif type(visual) == "table" then
+                            shown = visual
+                        end
+                    end
+                    if shown ~= nil then visuals:add(BridgeItems.visual(shown)) end
                 elseif rec.h == 1 or rec.h == 3 then
                     primary = rec
                 elseif rec.h == 2 then
@@ -5762,7 +5778,9 @@ function BridgeInventory.wrapLootControls()
         ISGarmentUI.update = function(self, ...)
             local hers = false
             pcall(function()
-                hers = self.clothing ~= nil and BridgeInventory.shown == true and BridgeInventory.inBody(self.clothing:getContainer())
+                local equipped = BridgeEquip ~= nil and BridgeEquip.instance ~= nil
+                hers = self.clothing ~= nil and (BridgeInventory.shown == true or equipped)
+                    and BridgeInventory.inBody(self.clothing:getContainer())
             end)
             if hers and ISCollapsableWindow ~= nil and ISCollapsableWindow.update ~= nil then
                 return ISCollapsableWindow.update(self, ...)

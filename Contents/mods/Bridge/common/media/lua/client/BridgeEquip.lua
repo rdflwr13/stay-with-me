@@ -386,7 +386,8 @@ local function wornItems(b, pre)
             if worn ~= nil then
                 local it = nil
                 pcall(function() it = worn:getItem() end)
-                if it ~= nil and not isAppearance(it) then
+                local derived = it ~= nil and BridgeTransmog ~= nil and BridgeTransmog.isDerivedItem(it) == true
+                if it ~= nil and not derived and not isAppearance(it) then
                     local locs = {}
                     pcall(function() local v = worn:getLocation() if v ~= nil then locs[#locs + 1] = v end end)
                     for _, v in ipairs(itemLocs(it)) do locs[#locs + 1] = v end
@@ -517,7 +518,7 @@ local function gearCells(b)
         local worn = b:getWornItems()
         for i = 0, worn:size() - 1 do
             local w = worn:getItemByIndex(i)
-            if w ~= nil then
+            if w ~= nil and not (BridgeTransmog ~= nil and BridgeTransmog.isDerivedItem(w) == true) then
                 local provided = nil
                 pcall(function() provided = w:getAttachmentsProvided() end)
                 if provided ~= nil then
@@ -1164,6 +1165,19 @@ local function addOffMenu(context, item)
         menuAction(context, tr("InvUnwear", herName()), item,
             function(t) if BridgeInventory ~= nil then BridgeInventory.unwear(b, t) end refreshOutfit() end)
     end
+    local covered = 0
+    pcall(function()
+        if item:getCategory() == "Clothing" then covered = item:getCoveredParts():size() end
+    end)
+    if covered > 0 and ISInventoryPaneContextMenu ~= nil
+        and type(ISInventoryPaneContextMenu.onInspectClothing) == "function" then
+        local player = playerOf(0)
+        if player ~= nil then
+            context:addOption(gameText("IGUI_invpanel_Inspect", "Inspect"), player,
+                ISInventoryPaneContextMenu.onInspectClothing, item)
+        end
+    end
+    pcall(function() if BridgeTransmog ~= nil then BridgeTransmog.addMenu(context, item) end end)
 end
 BridgeEquip.addOffMenu = addOffMenu
 
@@ -1738,7 +1752,19 @@ function BridgeEquipWindow:makeDesc(st)
         for _, w in ipairs(wornItems(b)) do
             pcall(function()
                 local loc = itemLoc(w.item)
-                if loc ~= nil then desc:setWornItem(loc, w.item) end
+                if loc == nil then return end
+                local rec = BridgeItems.record(w.item, false)
+                local shown = BridgeTransmog ~= nil and BridgeTransmog.visualRecord(rec) or nil
+                if shown == false then return end
+                local item = w.item
+                if type(shown) == "table" then
+                    local target = instanceItem(shown.t)
+                    if target ~= nil then
+                        BridgeItems.apply(target, shown)
+                        item = target
+                    end
+                end
+                desc:setWornItem(loc, item)
             end)
         end
     end

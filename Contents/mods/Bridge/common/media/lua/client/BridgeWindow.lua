@@ -194,18 +194,29 @@ function BridgeWindow.makeDesc(st, furSpecies, starterOutfit)
     local overrideFur = furSpecies ~= nil
     for _, rec in ipairs(BridgeWindow.wornRecords(st ~= nil and st.items or "")) do
         pcall(function()
-            local item = instanceItem(rec.t)
-            if item == nil then return end
+            local base = instanceItem(rec.t)
+            if base == nil then return end
             if overrideFur then
                 local t = nil
-                pcall(function() t = item:getType() end)
+                pcall(function() t = base:getType() end)
                 if type(t) == "string" and string.sub(t, 1, 6) == "Furry_" then return end
             end
-            BridgeItems.apply(item, rec)
             local loc = nil
-            if item:IsClothing() then loc = item:getBodyLocation() end
-            if loc == nil then loc = item:canBeEquipped() end
-            if loc ~= nil then desc:setWornItem(loc, item) end
+            if base:IsClothing() then loc = base:getBodyLocation() end
+            if loc == nil then loc = base:canBeEquipped() end
+            local shown = BridgeTransmog ~= nil and BridgeTransmog.visualRecord(rec) or nil
+            if shown == false or loc == nil then return end
+            local item = base
+            local applied = rec
+            if type(shown) == "table" then
+                local target = instanceItem(shown.t)
+                if target ~= nil then
+                    item = target
+                    applied = shown
+                end
+            end
+            BridgeItems.apply(item, applied)
+            desc:setWornItem(loc, item)
         end)
     end
     local clothing = nil
