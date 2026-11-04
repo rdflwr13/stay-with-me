@@ -213,7 +213,7 @@ BridgeLooks.unescape = unesc
 BridgeLooks.encodeLook = encode
 
 function BridgeLooks.parse(line)
-    if type(line) ~= "string" or line == "" or #line > 8000 then return nil end
+    if type(line) ~= "string" or line == "" or #line > 20000 then return nil end
     if string.sub(line, -1) == "\r" then line = string.sub(line, 1, -2) end
     local nameEsc, flag, payload = string.match(line, "^([^\t]*)\t([01])\t(.*)$")
     if nameEsc == nil then return nil end
@@ -482,7 +482,7 @@ function BridgeLooks.save(name, c, extras)
                 local text = tostring(value)
                 local tooLong = (key == "voice" and #text > 200)
                     or (key == "species" and #text > 64)
-                    or (key == "clothing" and #text > 1800)
+                    or (key == "clothing" and #text > 6000)
                 if not tooLong and (text ~= "" or key == "clothing") then
                     snap.has[key] = true
                     snap.raw[key] = text

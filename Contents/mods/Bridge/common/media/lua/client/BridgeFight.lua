@@ -2861,6 +2861,20 @@ local function playerInArc(body, red, item)
 end
 
 
+local HOLD_MELEE = 1.0
+local HOLD_LEASH = 3.0
+
+local function engagedHold(body, red, mode)
+    local t = BridgeFight.target
+    if t == nil then return false end
+    local leash = tonumber(mode and mode.leash) or 0
+    if leash <= 0 then return false end
+    if dist(body, red) > leash + HOLD_LEASH then return false end
+    local reach = 1.0
+    pcall(function() reach = weapon(body):getMaxRange() end)
+    return dist(body, t) <= reach + HOLD_MELEE
+end
+
 function BridgeFight.update(body)
     if not BridgeFight.enabled then rest(false) return false end
     local red = BridgeData.owner()
@@ -2976,7 +2990,8 @@ function BridgeFight.update(body)
 
 
     if not BridgeFight.guardOnly and not BridgeFight.flee
-            and dist(body, red) > mode.leash and BridgeFight.state ~= "swing" then
+            and dist(body, red) > mode.leash and BridgeFight.state ~= "swing"
+            and not engagedHold(body, red, mode) then
         if BridgeFight.target ~= nil then
             BridgeFight.info = "gave up: player far"
             pcall(function() BridgeCallout.breakOff() end)
@@ -3066,7 +3081,7 @@ function BridgeFight.update(body)
         end
 
         if BridgeFight.hit and not BridgeFight.guardOnly and not BridgeFight.flee
-                and dist(body, red) > mode.leash then
+                and dist(body, red) > mode.leash and not engagedHold(body, red, mode) then
             BridgeFight.target = nil
             BridgeFight.state = "idle"
             BridgeFight.info = "gave up mid-swing: player far"

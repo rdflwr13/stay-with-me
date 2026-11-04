@@ -2227,7 +2227,7 @@ BridgeServer.Commands.gunShot = function(player, args)
     if not alive then return reject("target dead") end
     if math.abs(target:getZ() - body:getZ()) >= 0.8 then return reject("target on another floor") end
 
-    local desc = gunDescFor(who, rec.gunType, gun) or BridgeGunRules.describe(gun)
+    local desc = BridgeGunRules.ggsShotDesc(gunDescFor(who, rec.gunType, gun) or BridgeGunRules.describe(gun), held or gun)
     local mode = BridgeData.COMBAT[BridgeData.combatOf(rec)] or BridgeData.COMBAT.bodyguard
     local pct = tonumber(mode.gunRangePct) or 0
     if pct <= 0 then return reject("guns off for this mode") end
@@ -2251,7 +2251,10 @@ BridgeServer.Commands.gunShot = function(player, args)
 
     rounds = rounds - 1
     rec.gunRounds = rounds
-    if held ~= nil then BridgeGunRules.setRounds(held, rounds, true) end
+    if held ~= nil then
+        BridgeGunRules.setRounds(held, rounds, true)
+        BridgeGunRules.ggsConsumeRound(held)
+    end
 
     local chance = BridgeGunRules.hitChance(desc, d, false, aimLevel)
     local shotgun = (tonumber(desc.projectileCount) or 1) > 1
@@ -2442,6 +2445,9 @@ BridgeServer.Commands.gunLoadOne = function(player, args)
                 if maxAmmo > 0 and rounds > maxAmmo then rounds = maxAmmo end
                 BridgeGunRules.setRounds(magazine, rounds, false)
                 local itemType = type(args) == "table" and args.itemType or nil
+                if type(itemType) == "string" then
+                    BridgeGunRules.ggsInsertLoadedRound(magazine, itemType)
+                end
                 if itemType ~= nil then
                     pcall(function()
                         local scriptItem = instanceItem(itemType)
@@ -2480,6 +2486,9 @@ BridgeServer.Commands.gunLoadOne = function(player, args)
     if held ~= nil then
         BridgeGunRules.setRounds(held, rec.gunRounds, true)
         local itemType = type(args) == "table" and args.itemType or nil
+        if type(itemType) == "string" then
+            BridgeGunRules.ggsInsertLoadedRound(held, itemType)
+        end
         if itemType ~= nil then
             pcall(function()
                 local scriptItem = instanceItem(itemType)
@@ -2582,12 +2591,13 @@ BridgeServer.Commands.gunReload = function(player, args)
         if type(magType) == "string" and magType ~= "" then desc.magazineType = magType end
         local rounds = BridgeGunRules.roundsOf(item)
         local ammoList = BridgeGunRules.ammoListOf(item)
-        local magazine = BridgeGunRules.stashMagazine(body, desc, rounds, nil, ammoList)
+        local magazine = BridgeGunRules.stashMagazine(body, desc, rounds, nil, ammoList, item)
         if magazine == nil then
             clearReload(rec, who)
             return answer(false, "no magazine")
         end
         BridgeGunRules.setRounds(item, 0, false)
+        BridgeGunRules.ggsSyncCount(item)
         local assigned = gunItemFor(body, rec)
         local isAssigned = assigned ~= nil and assigned:getID() == item:getID()
         if isAssigned then rec.gunRounds = 0 end
@@ -2798,14 +2808,16 @@ BridgeServer.Commands.gunReload = function(player, args)
                 rounds = BridgeGunRules.insertMagazine(body, held, magazine, desc)
             else
                 rounds = BridgeGunRules.roundsOf(magazine)
+                BridgeGunRules.ggsCopyQueue(magazine, held)
                 BridgeGunRules.removeItem(magazine)
                 local hadClip = false
                 pcall(function() hadClip = held:isContainsClip() == true end)
                 BridgeGunRules.setRounds(held, rounds, true)
+                BridgeGunRules.ggsSyncCount(held)
                 if magCap > 0 then pcall(function() held:setMaxAmmo(magCap) end) end
                 if magType ~= nil then pcall(function() held:setMagazineType(magType) end) end
                 if hadClip or (rec.gunReloadSavedRounds or 0) > 0 then
-                    BridgeGunRules.stashMagazine(body, desc, rec.gunReloadSavedRounds or 0)
+                    BridgeGunRules.stashMagazine(body, desc, rec.gunReloadSavedRounds or 0, nil, nil, held)
                 end
             end
         else

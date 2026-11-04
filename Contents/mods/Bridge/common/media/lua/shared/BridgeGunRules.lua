@@ -568,6 +568,258 @@ BridgeGunRules.moduleOf = moduleOf
 BridgeGunRules.resolveItemType = resolveItemType
 
 
+local GGS = {}
+
+local function ggsProfiles()
+    local profiles = rawget(_G, "GGS_AmmoProfiles")
+    if type(profiles) ~= "table" then return nil end
+    return profiles
+end
+
+local function ggsQueue()
+    local queue = rawget(_G, "GGS_AmmoQueue")
+    if type(queue) ~= "table" then return nil end
+    return queue
+end
+
+local function ggsReady()
+    local profiles = ggsProfiles()
+    local queue = ggsQueue()
+    return profiles ~= nil and queue ~= nil
+        and type(profiles.get) == "function"
+        and type(profiles.getByAmmoFullType) == "function"
+        and type(profiles.getRoundsForCaliber) == "function"
+        and type(queue.isSupportedAmmoContainer) == "function"
+        and type(queue.isSupportedWeapon) == "function"
+        and type(queue.getQueue) == "function"
+        and type(queue.insertLoadedRound) == "function"
+        and type(queue.popNextRound) == "function"
+        and type(queue.copyQueue) == "function"
+        and type(queue.syncQueueWithAmmoCount) == "function"
+        and type(queue.copyMagazineQueueFromWeapon) == "function"
+        and type(queue.getEffectiveStats) == "function"
+end
+
+function BridgeGunRules.ggsActive()
+    if GGS.active == true then return true end
+    local on = ggsReady()
+    if on then
+        GGS.active = true
+        if not GGS.logged then
+            GGS.logged = true
+            print("[BridgeGGS] GaelGunStore found: dynamic ammo queues enabled")
+        end
+    end
+    return on
+end
+
+local function ggsProfileOf(desc)
+    if type(desc) ~= "table" or type(desc.ammoTypeKey) ~= "string" then return nil end
+    local profiles = ggsProfiles()
+    if profiles == nil then return nil end
+    local profile = nil
+    pcall(function() profile = profiles.getByAmmoFullType(desc.ammoTypeKey) end)
+    return profile
+end
+
+local function ggsAmmoTypesFor(desc)
+    local out = {}
+    if not BridgeGunRules.ggsActive() then return out end
+    local profile = ggsProfileOf(desc)
+    if type(profile) ~= "table" or type(profile.caliber) ~= "string" then return out end
+    local profiles = ggsProfiles()
+    local seen = {}
+    local function add(t)
+        if type(t) ~= "string" or t == "" or seen[t] then return end
+        seen[t] = true
+        out[#out + 1] = t
+    end
+    add(desc.ammoTypeKey)
+    local list = nil
+    pcall(function() list = profiles.getRoundsForCaliber(profile.caliber) end)
+    if type(list) == "table" then
+        for _, roundId in ipairs(list) do
+            local round = nil
+            pcall(function() round = profiles.get(roundId) end)
+            if type(round) == "table" then add(round.ammoFullType) end
+        end
+    end
+    return out
+end
+
+local function ggsMagazineTypesFor(desc, item)
+    local out = {}
+    if not BridgeGunRules.ggsActive() then return out end
+    if type(desc) ~= "table" or desc.magazineType == nil then return out end
+    local map = rawget(_G, "AWCWF_WeaponMagazineType")
+    if type(map) ~= "table" then return out end
+    local gun = item
+    if gun == nil and type(desc.fullType) == "string" then
+        pcall(function() gun = instanceItem(desc.fullType) end)
+    end
+    if gun == nil then return out end
+    local gunType = nil
+    pcall(function() gunType = gun:getType() end)
+    if type(gunType) ~= "string" then return out end
+    local list = map[gunType]
+    if type(list) ~= "table" then return out end
+    local mapping = rawget(_G, "GGS_MagMapping")
+    for _, t in ipairs(list) do
+        if type(t) == "string" and t ~= "" then
+            local full = nil
+            if mapping ~= nil and type(mapping.toFullType) == "function" then
+                pcall(function() full = mapping.toFullType(t) end)
+            end
+            if type(full) ~= "string" then
+                if string.find(t, ".", 1, true) ~= nil then full = t else full = "Base." .. t end
+            end
+            out[#out + 1] = full
+        end
+    end
+    return out
+end
+
+local function ggsEnrichDesc(desc, item)
+    if type(desc) ~= "table" then return end
+    if not BridgeGunRules.ggsActive() then return end
+    if desc.magazineType == nil then return end
+    local types = ggsMagazineTypesFor(desc, item)
+    if #types == 0 then return end
+    desc.magazineTypes = desc.magazineTypes or {}
+    desc.magazineSet = desc.magazineSet or {}
+    for _, t in ipairs(types) do
+        if type(t) == "string" and t ~= "" and not desc.magazineSet[t] then
+            desc.magazineSet[t] = true
+            desc.magazineTypes[#desc.magazineTypes + 1] = t
+        end
+    end
+end
+
+local function ggsLoadedRoundType(item)
+    if item == nil or not BridgeGunRules.ggsActive() then return nil end
+    local queue = ggsQueue()
+    if queue == nil then return nil end
+    local supported = false
+    pcall(function() supported = queue.isSupportedAmmoContainer(item) == true end)
+    if not supported then return nil end
+    local list = nil
+    pcall(function() list = queue.getQueue(item) end)
+    if type(list) ~= "table" or #list == 0 then return nil end
+    local profiles = ggsProfiles()
+    local round = nil
+    pcall(function() round = profiles.get(list[1]) end)
+    if type(round) ~= "table" then return nil end
+    return round.ammoFullType
+end
+
+local function ggsInsertLoadedRound(item, fullType)
+    if item == nil or type(fullType) ~= "string" then return false end
+    if not BridgeGunRules.ggsActive() then return false end
+    local profiles = ggsProfiles()
+    local queue = ggsQueue()
+    if profiles == nil or queue == nil then return false end
+    local roundId = nil
+    pcall(function() roundId = profiles.ammoToRound[fullType] end)
+    if roundId == nil then return false end
+    local ok = false
+    pcall(function() ok = queue.insertLoadedRound(item, roundId, 1) == true end)
+    return ok
+end
+
+local function ggsConsumeRound(item)
+    if item == nil or not BridgeGunRules.ggsActive() then return false end
+    local queue = ggsQueue()
+    if queue == nil then return false end
+    local ok = false
+    pcall(function() ok = queue.popNextRound(item) ~= nil end)
+    return ok
+end
+
+local function ggsCopyQueue(source, target)
+    if source == nil or target == nil then return false end
+    if not BridgeGunRules.ggsActive() then return false end
+    local queue = ggsQueue()
+    if queue == nil then return false end
+    local ok = false
+    pcall(function() ok = queue.copyQueue(source, target) == true end)
+    return ok
+end
+
+local function ggsCopyWeaponQueue(weapon, magazine)
+    if weapon == nil or magazine == nil then return false end
+    if not BridgeGunRules.ggsActive() then return false end
+    local queue = ggsQueue()
+    if queue == nil then return false end
+    local ok = false
+    pcall(function() ok = queue.copyMagazineQueueFromWeapon(weapon, magazine) == true end)
+    return ok
+end
+
+local function ggsSyncCount(item)
+    if item == nil or not BridgeGunRules.ggsActive() then return false end
+    local queue = ggsQueue()
+    if queue == nil then return false end
+    local ok = false
+    pcall(function()
+        queue.syncQueueWithAmmoCount(item)
+        ok = true
+    end)
+    return ok
+end
+
+local function ggsClearQueue(item)
+    if item == nil or not BridgeGunRules.ggsActive() then return false end
+    local queue = ggsQueue()
+    if queue == nil then return false end
+    local list = nil
+    pcall(function() list = queue.getQueue(item) end)
+    if type(list) ~= "table" then return false end
+    for i = #list, 1, -1 do list[i] = nil end
+    return true
+end
+
+local function ggsShotDesc(desc, item)
+    if type(desc) ~= "table" or item == nil then return desc end
+    if not BridgeGunRules.ggsActive() then return desc end
+    local queue = ggsQueue()
+    if queue == nil then return desc end
+    local supported = false
+    pcall(function() supported = queue.isSupportedWeapon(item) == true end)
+    if not supported then return desc end
+    local list = nil
+    pcall(function() list = queue.getQueue(item) end)
+    if type(list) ~= "table" or #list == 0 then return desc end
+    local stats, profile = nil, nil
+    pcall(function() stats, profile = queue.getEffectiveStats(item, list[1]) end)
+    if type(stats) ~= "table" then return desc end
+    local copy = {}
+    for k, v in pairs(desc) do copy[k] = v end
+    local fields = {
+        "minDamage", "maxDamage", "maxRange", "maxHitCount", "piercingBullets",
+        "projectileCount", "projectileSpread", "stopPower", "knockdownMod",
+        "doorDamage", "soundRadius",
+    }
+    for _, key in ipairs(fields) do
+        local value = stats[key]
+        if value ~= nil then copy[key] = value end
+    end
+    local range = tonumber(copy.maxRange) or tonumber(copy.range) or 0
+    if range > BridgeGunRules.MAX_RANGE then range = BridgeGunRules.MAX_RANGE end
+    if range < 1 then range = 1 end
+    copy.range = range
+    if type(profile) == "table" and type(profile.ammoFullType) == "string" then
+        copy.ammoTypeKey = profile.ammoFullType
+    end
+    return copy
+end
+
+BridgeGunRules.ggsShotDesc = ggsShotDesc
+BridgeGunRules.ggsConsumeRound = ggsConsumeRound
+BridgeGunRules.ggsInsertLoadedRound = ggsInsertLoadedRound
+BridgeGunRules.ggsSyncCount = ggsSyncCount
+BridgeGunRules.ggsCopyQueue = ggsCopyQueue
+
+
 local function specFeeds(spec, ammoTypeKey)
     if type(spec) ~= "table" or type(spec.out) ~= "table" or ammoTypeKey == nil then return false end
     for _, t in ipairs(spec.out) do
@@ -820,6 +1072,7 @@ function BridgeGunRules.describe(item)
     out.clipFamily = (out.reloadFamily == "revolver") and "revolver" or "rifle"
     pcall(function() out.rounds = BridgeGunRules.roundsOf(item) end)
     applyMarzRifleMultiHit(out)
+    ggsEnrichDesc(out, item)
     return out
 end
 
@@ -836,6 +1089,7 @@ function BridgeGunRules.ammoTypesFor(desc, owner)
     if type(desc) ~= "table" then return out end
     local ownerKey = tostring(owner)
     local sig = (gunworksAmmo() ~= nil and "1" or "0") .. (gunsmith() ~= nil and "1" or "0")
+        .. (BridgeGunRules.ggsActive() and "1" or "0")
     local memo = desc._ammoTypesCache
     if type(memo) == "table" and memo.owner == ownerKey and memo.sig == sig then return memo.types end
     local function add(t)
@@ -890,6 +1144,7 @@ function BridgeGunRules.ammoTypesFor(desc, owner)
         end
     end
     add(desc.ammoTypeKey)
+    for _, t in ipairs(ggsAmmoTypesFor(desc)) do add(t) end
     desc._ammoTypesCache = { owner = ownerKey, sig = sig, types = out }
     return out
 end
@@ -1923,6 +2178,8 @@ end
 
 function BridgeGunRules.loadedRoundType(item)
     if item == nil then return nil end
+    local ggsType = ggsLoadedRoundType(item)
+    if type(ggsType) == "string" then return ggsType end
     local roundType = nil
     pcall(function()
         local md = item:getModData()
@@ -2117,6 +2374,9 @@ function BridgeGunRules.refreshMagazineProfile(desc)
         desc.magazineTypes[#desc.magazineTypes + 1] = t
     end
     addMag(desc.magazineType)
+    local ggsItem = nil
+    pcall(function() ggsItem = instanceItem(desc.fullType) end)
+    ggsEnrichDesc(desc, ggsItem)
     local speedMod = gunworksSpeedLoader()
     if speedMod ~= nil and type(desc.fullType) == "string" then
         local gunItem = nil
@@ -2369,7 +2629,7 @@ function BridgeGunRules.unloadMagazine(body, desc)
 end
 
 
-function BridgeGunRules.stashMagazine(body, desc, rounds, prefer, ammoList)
+function BridgeGunRules.stashMagazine(body, desc, rounds, prefer, ammoList, weapon)
     local n = math.max(0, math.floor(tonumber(rounds) or 0))
     if n <= 0 then return BridgeGunRules.makeEmptyMagazine(body, desc, prefer, ammoList) end
     if type(desc) ~= "table" or desc.magazineType == nil then return nil end
@@ -2378,12 +2638,13 @@ function BridgeGunRules.stashMagazine(body, desc, rounds, prefer, ammoList)
     if magazine == nil then return nil end
     BridgeGunRules.setRounds(magazine, n, false)
     applyMagazineAmmo(magazine, ammoList)
+    ggsCopyWeaponQueue(weapon, magazine)
     if not BridgeGunRules.placeItem(body, magazine, prefer) then return nil end
     return magazine
 end
 
 
-function BridgeGunRules.ejectMagazine(body, desc, rounds, prefer, ammoList)
+function BridgeGunRules.ejectMagazine(body, desc, rounds, prefer, ammoList, weapon)
     if body == nil or type(desc) ~= "table" or desc.magazineType == nil then return nil end
     local n = math.max(0, math.floor(tonumber(rounds) or 0))
     local magazine = nil
@@ -2391,6 +2652,7 @@ function BridgeGunRules.ejectMagazine(body, desc, rounds, prefer, ammoList)
     if magazine == nil then return nil end
     BridgeGunRules.setRounds(magazine, n, false)
     applyMagazineAmmo(magazine, ammoList)
+    ggsCopyWeaponQueue(weapon, magazine)
     if not BridgeGunRules.placeItem(body, magazine, prefer) then return nil end
     return magazine
 end
@@ -2430,10 +2692,13 @@ function BridgeGunRules.insertMagazine(body, weapon, magazine, desc)
         if #list > rounds then
             for i = #list, rounds + 1, -1 do list[i] = nil end
         end
+        ggsCopyQueue(magazine, weapon)
         BridgeGunRules.setGunAmmoState(weapon, rounds, list, list[#list])
+        ggsSyncCount(weapon)
         pcall(function() weapon:setContainsClip(true) end)
         BridgeGunRules.setRounds(magazine, 0, false)
         BridgeGunRules.setAmmoList(magazine, nil)
+        ggsClearQueue(magazine)
         return rounds
     end
     local magList = BridgeGunRules.ammoListOf(magazine)
@@ -2454,10 +2719,12 @@ function BridgeGunRules.insertMagazine(body, weapon, magazine, desc)
             end
         end)
     end
+    ggsCopyQueue(magazine, weapon)
     BridgeGunRules.removeItem(magazine)
     local nextType = magType
     if type(gunList) == "table" and #gunList > 0 then nextType = gunList[#gunList] end
     BridgeGunRules.setGunAmmoState(weapon, rounds, gunList, nextType)
+    ggsSyncCount(weapon)
     return rounds
 end
 

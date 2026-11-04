@@ -145,7 +145,10 @@ local function markedForeign(z)
             if data[keys[i]] == true then yes = true return end
         end
     end)
-    return yes
+    if yes then return true end
+    if BridgeKnoxComp ~= nil and type(BridgeKnoxComp.peaceful) == "function"
+        and BridgeKnoxComp.peaceful(z) then return true end
+    return false
 end
 
 

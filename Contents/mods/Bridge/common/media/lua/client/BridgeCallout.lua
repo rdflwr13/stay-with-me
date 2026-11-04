@@ -1931,6 +1931,11 @@ local function checkWeaponLow(red)
         BridgeCallout.weaponLowSaid = false
         return
     end
+    if not instanceof(item, "HandWeapon") then
+        BridgeCallout.weaponLowItem = nil
+        BridgeCallout.weaponLowSaid = false
+        return
+    end
     local ranged = false
     pcall(function() ranged = item:isRanged() == true end)
     if ranged then

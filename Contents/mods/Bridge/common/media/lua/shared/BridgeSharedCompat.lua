@@ -849,3 +849,190 @@ function BridgeBandits.selftest()
 end
 end
 
+do
+BridgeLOSCompat = BridgeLOSCompat or {}
+
+local MOD_ID = "LastOnesStanding1993"
+local REFRESH_MS = 250
+local RECHECK_MS = 2000
+
+local activeCache = false
+local installed = false
+local known = {}
+local nextRefresh = 0
+local nextCheck = 0
+local loggedInstall = false
+local loggedNative = false
+
+function BridgeLOSCompat.active()
+    if activeCache then return true end
+    local on = false
+    pcall(function()
+        local mods = getActivatedMods()
+        on = mods ~= nil and (mods:contains(MOD_ID) or mods:contains("\\" .. MOD_ID))
+    end)
+    if on then activeCache = true end
+    return on
+end
+
+local function nativeSupport(los)
+    if type(los) ~= "table" then return false end
+    if los.nativeBridgeSupport == true then return true end
+    return type(los.isBridgeCompanion) == "function"
+end
+
+local function refreshKnown()
+    local nextSet = {}
+    local bridge = rawget(_G, "Bridge")
+    if type(bridge) == "table" and bridge.body ~= nil then
+        nextSet[bridge.body] = true
+    end
+    local server = rawget(_G, "BridgeServer")
+    if type(server) == "table" and type(server.bodies) == "table" then
+        for _, body in pairs(server.bodies) do
+            if body ~= nil then nextSet[body] = true end
+        end
+    end
+    known = nextSet
+end
+
+local function isHer(z)
+    if z == nil then return false end
+    local bridge = rawget(_G, "Bridge")
+    if type(bridge) == "table" and bridge.body == z then return true end
+    return known[z] == true
+end
+
+local function makeWrapper(original)
+    return function(z)
+        if isHer(z) then return true end
+        return original(z)
+    end
+end
+
+function BridgeLOSCompat.installInto(los)
+    if type(los) ~= "table" or type(los.dragOnly) ~= "function" then
+        return false
+    end
+
+    if nativeSupport(los) then
+        if los.dragOnly == BridgeLOSCompat.dragOnly and BridgeLOSCompat.original ~= nil then
+            los.dragOnly = BridgeLOSCompat.original
+            BridgeLOSCompat.dragOnly = nil
+            BridgeLOSCompat.original = nil
+            installed = false
+        end
+        if not loggedNative then
+            loggedNative = true
+            print("[BridgeLOS] Last Ones Standing has native Stay With Me support; shim is inactive")
+        end
+        return true
+    end
+
+    if los.dragOnly == BridgeLOSCompat.dragOnly then
+        installed = true
+        return true
+    end
+
+    BridgeLOSCompat.original = los.dragOnly
+    BridgeLOSCompat.dragOnly = makeWrapper(los.dragOnly)
+    los.dragOnly = BridgeLOSCompat.dragOnly
+    installed = true
+
+    if not loggedInstall then
+        loggedInstall = true
+        print("[BridgeLOS] Last Ones Standing found: her body is skipped by LOS zombie scans")
+    end
+    return true
+end
+
+function BridgeLOSCompat.install()
+    if not BridgeLOSCompat.active() then return false end
+    return BridgeLOSCompat.installInto(rawget(_G, "LastOnesStanding"))
+end
+
+local function check(now)
+    refreshKnown()
+    if not BridgeLOSCompat.active() then return end
+    local los = rawget(_G, "LastOnesStanding")
+    if type(los) ~= "table" then return end
+    if nativeSupport(los) then
+        BridgeLOSCompat.installInto(los)
+        return
+    end
+    if los.dragOnly ~= BridgeLOSCompat.dragOnly then
+        local had = installed
+        BridgeLOSCompat.installInto(los)
+        if had and los.dragOnly == BridgeLOSCompat.dragOnly then
+            print("[BridgeLOS] re-installed after LOS.dragOnly was replaced")
+        end
+    end
+end
+
+function BridgeLOSCompat.status()
+    local los = rawget(_G, "LastOnesStanding")
+    local count = 0
+    for _ in pairs(known) do count = count + 1 end
+    return string.format("LOS compat: active=%s native=%s installed=%s known=%d",
+        tostring(BridgeLOSCompat.active()), tostring(nativeSupport(los)),
+        tostring(installed), count)
+end
+
+function BridgeLOSCompat.selftest()
+    local checks, fails = 0, {}
+    local function check(name, cond)
+        checks = checks + 1
+        if not cond then fails[#fails + 1] = name end
+    end
+
+    local savedLOS = rawget(_G, "LastOnesStanding")
+    local savedBridge = rawget(_G, "Bridge")
+    local savedWrapper, savedOriginal, savedInstalled =
+        BridgeLOSCompat.dragOnly, BridgeLOSCompat.original, installed
+    local savedInstallLog, savedNativeLog = loggedInstall, loggedNative
+
+    local her, other, third = {}, {}, {}
+    local stub = { dragOnly = function(z) return z == other end }
+    BridgeLOSCompat.dragOnly, BridgeLOSCompat.original, installed = nil, nil, false
+    rawset(_G, "Bridge", { body = her })
+
+    check("installInto accepts a stub", BridgeLOSCompat.installInto(stub) == true)
+    check("her body is skipped", stub.dragOnly(her) == true)
+    check("other body keeps original result", stub.dragOnly(other) == true)
+    check("unrelated body is not skipped", stub.dragOnly(third) == false)
+    check("nil is not skipped", stub.dragOnly(nil) == false)
+    check("idempotent install", BridgeLOSCompat.installInto(stub) == true)
+    check("wrapper identity preserved", stub.dragOnly == BridgeLOSCompat.dragOnly)
+
+    local native = { dragOnly = function() return false end,
+                     isBridgeCompanion = function() return true end }
+    check("native support detected", BridgeLOSCompat.installInto(native) == true)
+    check("native predicate not wrapped", native.dragOnly ~= BridgeLOSCompat.dragOnly)
+
+    rawset(_G, "LastOnesStanding", savedLOS)
+    rawset(_G, "Bridge", savedBridge)
+    BridgeLOSCompat.dragOnly, BridgeLOSCompat.original, installed =
+        savedWrapper, savedOriginal, savedInstalled
+    loggedInstall, loggedNative = savedInstallLog, savedNativeLog
+
+    if #fails == 0 then return string.format("loscompat selftest PASS (%d checks)", checks) end
+    return string.format("loscompat selftest FAIL (%d of %d): %s", checks, #fails, table.concat(fails, "; "))
+end
+
+Events.OnGameStart.Add(function()
+    pcall(BridgeLOSCompat.install)
+end)
+
+Events.OnTick.Add(function()
+    local now = getTimestampMs()
+    if now >= nextRefresh then
+        nextRefresh = now + REFRESH_MS
+        refreshKnown()
+    end
+    if now >= nextCheck then
+        nextCheck = now + RECHECK_MS
+        pcall(check, now)
+    end
+end)
+end
+
