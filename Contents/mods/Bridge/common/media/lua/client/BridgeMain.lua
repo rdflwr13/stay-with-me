@@ -3862,7 +3862,7 @@ local function updateZombieBody(body)
             end)
         end
     end
-    applyOnce("useless", function() body:setUseless(true) end)
+    pcall(function() body:setUseless(true) end)
 
 
 
@@ -3873,6 +3873,7 @@ local function updateZombieBody(body)
 
     pcall(fixBodyOutfit, body)
     body:setTarget(nil)
+    pcall(function() body:setVariable("NoLungeTarget", true) end)
 
 
 
