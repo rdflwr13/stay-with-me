@@ -59,6 +59,7 @@ Bridge.result = "loaded"
 Bridge.skipped = false
 Bridge.zombieTicks = 0
 Bridge.idleSince = 0
+Bridge.armedIdleSince = 0
 Bridge.checked = setmetatable({}, { __mode = "k" })
 Bridge.stash = nil
 Bridge.stashAt = 0
@@ -75,6 +76,7 @@ Bridge.engineAcc = 0
 Bridge.engineWalk = 0
 Bridge.holdPos = nil
 Bridge.nextIdleAnim = 0
+Bridge.nextArmedIdleAnim = 0
 Bridge.scareStopped = 0
 Bridge.hiddenSince = nil
 Bridge.speakGraceUntil = 0
@@ -3784,7 +3786,9 @@ for _, n in ipairs({ "BandageHead", "BandageLeftArm", "BandageLeftLeg", "Bandage
     "EmoteShrug", "EmoteThankYou", "EmoteUndecided", "EmoteWaveHi", "EmoteYes", "PainHead", "PullAtCollar",
     "ShiftWeight", "TreatHigh", "TreatLow", "TreatMid", "WeaponAttachBack", "WeaponAttachBeltLeft",
     "WeaponAttachBeltRight", "WeaponDetachBack", "WeaponDetachBeltLeft", "WeaponDetachBeltRight", "WipeBrow",
-    "WipeHead", "WindowOpen" }) do LOOK_ONCE[n] = true end
+    "WipeHead", "WindowOpen", "IdleExt01_1H", "IdleExt02_1H", "IdleExt03_1H", "IdleExt01_2H", "IdleExt02_2H",
+    "IdleExt03_2H", "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun", "IdleExt01_Rifle",
+    "IdleExt02_Rifle", "IdleExt03_Rifle" }) do LOOK_ONCE[n] = true end
 function Bridge.isLookOnce(name) return type(name) == "string" and LOOK_ONCE[name] == true end
 
 
@@ -3862,6 +3866,68 @@ end
 local function snapshotBody(body)
     return BridgeInventory.snapshot(body)
 end
+
+local ARMED_STILL = 1500
+local ARMED_CALM = 1800
+local ARMED_COOLDOWN = 3600
+local ARMED_COOLDOWN_RAND = 3600
+
+local ARMED_IDLE = {
+    ["1h"] = { "IdleExt01_1H", "IdleExt02_1H", "IdleExt03_1H" },
+    ["2h"] = { "IdleExt01_2H", "IdleExt02_2H", "IdleExt03_2H" },
+    handgun = { "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun" },
+    rifle = { "IdleExt01_Rifle", "IdleExt02_Rifle", "IdleExt03_Rifle" },
+}
+
+local function armedIdleBlocked(body, red)
+    if Bridge.pose ~= nil then return true end
+    if BridgeMove.pathing or BridgeMove.moving or BridgeMove.steering or BridgeMove.redMoving then return true end
+    if BridgeTask ~= nil and BridgeTask.active == true then return true end
+    if BridgeHeal ~= nil and (BridgeHeal.active == true or BridgeHeal.current ~= nil) then return true end
+    if BridgeWash ~= nil and BridgeWash.state ~= "idle" then return true end
+    if BridgeInventory ~= nil and BridgeInventory.gestures ~= nil and BridgeInventory.gestures[1] ~= nil then return true end
+    if BridgeCar ~= nil and BridgeCar.state ~= "idle" then return true end
+    if BridgeFastForward ~= nil and BridgeFastForward.active() then return true end
+    if BridgeWeapon.move ~= nil or BridgeWeapon.busy() then return true end
+    if BridgeFight ~= nil and (BridgeFight.state ~= "idle" or BridgeFight.target ~= nil) then return true end
+    if BridgeGunfight ~= nil then
+        if BridgeGunfight.state ~= "idle" or BridgeGunfight.reloadStage ~= nil
+            or BridgeGunfight.magCareStage ~= nil or BridgeGunfight.ammoItem ~= nil
+            or BridgeGunfight.pendingShot ~= nil or Bridge.time < (BridgeGunfight.fireUntil or 0) then
+            return true
+        end
+    end
+    if red ~= nil then
+        local aiming, attacking, car = false, false, nil
+        pcall(function() aiming = red:isAiming() == true end)
+        pcall(function() attacking = red:isAttacking() == true end)
+        pcall(function() car = red:getVehicle() end)
+        if aiming or attacking or car ~= nil then return true end
+    end
+    local car = nil
+    pcall(function() car = body:getVehicle() end)
+    if car ~= nil then return true end
+    return false
+end
+
+local function armedIdleReady(body, kind)
+    local red = BridgeData.owner()
+    local now = Bridge.time
+    local lastCombat = math.max(BridgeWeapon.lastFight or -1e9,
+        BridgeFight ~= nil and BridgeFight.playerFightUntil or 0)
+    if now - lastCombat < ARMED_CALM then
+        Bridge.armedIdleSince = now
+        return false
+    end
+    if armedIdleBlocked(body, red) then
+        Bridge.armedIdleSince = now
+        return false
+    end
+    if now - (Bridge.armedIdleSince or now) < ARMED_STILL then return false end
+    if now < (Bridge.nextArmedIdleAnim or 0) then return false end
+    return true
+end
+Bridge.armedIdleReady = armedIdleReady
 
 local function updateZombieBody(body)
     if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
@@ -4581,19 +4647,44 @@ local function updateZombieBody(body)
 
 
 
-    if BridgeMove.pathing or BridgeMove.moving or BridgeMove.steering or BridgeMove.redMoving then
+    local moving = BridgeMove.pathing or BridgeMove.moving or BridgeMove.steering or BridgeMove.redMoving
+    if moving then
         Bridge.idleSince = Bridge.time
-    elseif Bridge.pose == nil and (asn == "idle" or bump == "Stand") and (Bridge.time - Bridge.idleSince) > 600
-        and Bridge.time >= Bridge.nextIdleAnim
+        Bridge.armedIdleSince = Bridge.time
+    end
 
-        and not (BridgeFastForward ~= nil and BridgeFastForward.active()) then
-        local out = false
-        pcall(function() out = BridgeWeapon.isOut(body) end)
-        if not out then
-            local anims = { "ShiftWeight", "ChewNails", "WipeBrow", "PullAtCollar", "WipeHead" }
-            pcall(function() body:setBumpType(anims[1 + ZombRand(#anims)]) end)
+    local kind = "none"
+    pcall(function() kind = BridgeWeapon.idleKind(body) end)
+    local idleReady = Bridge.pose == nil and (asn == "idle" or bump == "Stand")
+        and not (BridgeFastForward ~= nil and BridgeFastForward.active())
+
+    if not moving and idleReady then
+        if (Bridge.time - Bridge.idleSince) > 600 and Bridge.time >= Bridge.nextIdleAnim then
+            if kind == "none" then
+                local out = false
+                pcall(function() out = BridgeWeapon.isOut(body) end)
+                if not out then
+                    local anims = { "ShiftWeight", "ChewNails", "WipeBrow", "PullAtCollar", "WipeHead" }
+                    local pick = anims[1 + ZombRand(#anims)]
+                    pcall(function() body:setBumpType(pick) end)
+                    log(string.format("idle start %s kind=none t=%d", pick, Bridge.tick))
+                end
+            end
+            Bridge.nextIdleAnim = Bridge.time + 900 + ZombRand(900)
         end
-        Bridge.nextIdleAnim = Bridge.time + 900 + ZombRand(900)
+        if kind == "none" then
+            Bridge.armedIdleSince = Bridge.time
+        elseif armedIdleReady(body, kind) then
+            local pool = ARMED_IDLE[kind]
+            if pool ~= nil then
+                local pick = pool[1 + ZombRand(#pool)]
+                pcall(function() body:setBumpType(pick) end)
+                log(string.format("idle start %s kind=%s t=%d", pick, tostring(kind), Bridge.tick))
+                Bridge.nextArmedIdleAnim = Bridge.time + ARMED_COOLDOWN + ZombRand(ARMED_COOLDOWN_RAND)
+            end
+        end
+    elseif not moving then
+        Bridge.armedIdleSince = Bridge.time
     end
 
     if Bridge.mode ~= "follow" and Bridge.target == nil then
@@ -5299,7 +5390,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     friendselftest = true, knoxselftest = true, theodoreselftest = true, light = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true, meet = true,
-    perf = true, gunstate = true }
+    perf = true, gunstate = true, loscombatselftest = true }
 
 
 
@@ -6018,6 +6109,11 @@ function Bridge.run(line)
     if cmd == "banditselftest" then
         if BridgeBandits == nil then return "bandits not loaded" end
         return BridgeBandits.selftest()
+    end
+
+    if cmd == "loscombatselftest" then
+        if BridgeLOSCombat == nil then return "BridgeLOSCombat not loaded" end
+        return BridgeLOSCombat.selftest()
     end
 
     if cmd == "ffselftest" then

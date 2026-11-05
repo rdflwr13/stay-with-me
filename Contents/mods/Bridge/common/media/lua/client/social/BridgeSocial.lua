@@ -926,6 +926,14 @@ local function itemIsTypeFlag(item, name)
     return yes
 end
 
+local function isGiftBag(item)
+    if item == nil then return false end
+    local bag = false
+    pcall(function() bag = item:IsInventoryContainer() == true end)
+    if bag then return true end
+    return itemIsTypeFlag(item, "CONTAINER")
+end
+
 
 BridgeSocial.GIFT = {
     ReceiveTreat   = { f = 2, r = 0 },
@@ -1034,6 +1042,7 @@ local TOY_EXACT = { Dice = true, Cube = true, Dart = true, Baseball = true, Foot
 
 function BridgeSocial.giftPool(item, pool)
     if item == nil then return nil end
+    if isGiftBag(item) then return nil end
     if isMale() and BridgeSocial.maleReceive(item) ~= nil then return nil end
     if pool ~= nil and GIFT_MALE_OWNED[pool] then return nil end
     if pool ~= nil and GIFT_FEMALE_ONLY[pool] and isMale() then return nil end
@@ -1051,6 +1060,7 @@ end
 
 function BridgeSocial.gift(item, pool)
     if item == nil or pool == nil or BridgeSocial.GIFT[pool] == nil then return nil end
+    if isGiftBag(item) then return nil end
     local r = rel()
     if r == nil then return nil end
     local given = false
@@ -1498,6 +1508,7 @@ end
 
 
 function BridgeSocial.maleGift(item, pool)
+    if isGiftBag(item) then return nil end
     local g = nil
     for _, e in ipairs(BridgeSocial.MALE_RECEIVE) do if e.pool == pool then g = e end end
     if pool == "ReceiveBooze" then g = BridgeSocial.MALE_BOOZE end
@@ -1581,6 +1592,7 @@ function BridgeSocial.dressed(item)
     if isMale() then
         kind = BridgeSocial.MALE_DRESS[pool] or (isJewel(item) and BridgeSocial.MALE_DRESS.DressJewel) or BridgeSocial.DRESS.cloth
     end
+    if isGiftBag(item) then kind = { f = 0, r = 0 } end
     local m = relMult()
     local df = math.max(0, math.min(kind.f, DRESS_CAP_F - (r.dressF or 0)))
     local dr = 0

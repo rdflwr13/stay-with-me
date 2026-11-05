@@ -528,6 +528,30 @@ function BridgeWeapon.isOut(body)
 end
 
 
+function BridgeWeapon.idleKind(body)
+    local kind = "none"
+    pcall(function()
+        local item = body:getPrimaryHandItem()
+        if not isHandWeapon(item) then return end
+        local two, ranged = false, false
+        pcall(function()
+            two = item:isTwoHandWeapon() == true or item:isRequiresEquippedBothHands() == true
+            ranged = item:isRanged() == true
+        end)
+        if two and ranged then
+            kind = "rifle"
+        elseif two then
+            kind = "2h"
+        elseif ranged then
+            kind = "handgun"
+        else
+            kind = "1h"
+        end
+    end)
+    return kind
+end
+
+
 
 
 function BridgeWeapon.assign(body, item)

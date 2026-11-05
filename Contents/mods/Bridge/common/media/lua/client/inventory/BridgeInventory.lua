@@ -697,7 +697,11 @@ local LOOT_MIN, LOOT_MAX = 36, 3600
 
 local LOOT_NEXT = 12
 local GESTURE_IDLE_BUMPS = { [""] = true, ["nil"] = true, Stand = true, ShiftWeight = true, ChewNails = true,
-                             WipeBrow = true, PullAtCollar = true, WipeHead = true }
+                             WipeBrow = true, PullAtCollar = true, WipeHead = true,
+                             IdleExt01_1H = true, IdleExt02_1H = true, IdleExt03_1H = true,
+                             IdleExt01_2H = true, IdleExt02_2H = true, IdleExt03_2H = true,
+                             IdleExt01_Handgun = true, IdleExt02_Handgun = true, IdleExt03_Handgun = true,
+                             IdleExt01_Rifle = true, IdleExt02_Rifle = true, IdleExt03_Rifle = true }
 local GESTURE_SIT_BUMPS = { SitChair = true, SitChairDown = true, SitChairUp = true }
 local GESTURE_WAIT_MAX = 5400
 local GESTURE_SETTLE = 20
