@@ -91,8 +91,50 @@ local RADIAL_ONLY = {
 BridgeRadial.DEFAULT_ORDER = DEFAULT_ORDER
 BridgeRadial.off = false
 BridgeRadial.joypad = false
+BridgeRadial.controllerHintShown = false
 
 local state = {}
+
+BridgeRadial.debug = false
+
+local function dbg(text)
+    if BridgeRadial.debug then
+        print("[BridgeRadial][dbg] " .. tostring(text))
+    end
+end
+
+function BridgeRadial.selectedSliceIndex(menu, joypadData)
+    if menu == nil then return 1 end
+    local count = #menu.slices
+    if menu.javaObject ~= nil and joypadData ~= nil and joypadData.id ~= nil then
+        local index = -1
+        pcall(function() index = menu.javaObject:getSliceIndexFromJoypad(joypadData.id) end)
+        if type(index) == "number" and index >= 0 and index < count then return index + 1 end
+    end
+    local i = BridgeRadial.dpadIndex or 1
+    if count > 0 then
+        if i > count then i = count end
+        if i < 1 then i = 1 end
+        return i
+    end
+    return 1
+end
+
+function BridgeRadial.cycleSelection(direction)
+    local menu = BridgeRadial.activeMenu
+    if menu == nil then return end
+    local count = #menu.slices
+    if count == 0 then return end
+    local i = BridgeRadial.dpadIndex or 1
+    if direction == "left" or direction == "up" then
+        i = i - 1
+    else
+        i = i + 1
+    end
+    if i < 1 then i = count end
+    if i > count then i = 1 end
+    BridgeRadial.dpadIndex = i
+end
 
 local function log(text)
     if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeRadial] " .. tostring(text)) end
@@ -517,6 +559,63 @@ local function removeAvatar()
     if panel ~= nil then pcall(function() panel:removeFromUIManager() end) end
 end
 
+local function sandboxWheel()
+    local t = nil
+    pcall(function() t = (SandboxVars ~= nil) and SandboxVars.StayWithMe or nil end)
+    return t
+end
+
+local CONTROLLER_SELECT_BUTTONS = {
+    { id = "bumpers", joypads = { "LBumper", "RBumper" }, labelKey = "IGUI_StayWithMe_SelectButtonEither", fallback = "L1 / R1" },
+    { id = "lb",      joypads = { "LBumper" },            labelKey = "IGUI_StayWithMe_SelectButtonL1",     fallback = "L1" },
+    { id = "rb",      joypads = { "RBumper" },            labelKey = "IGUI_StayWithMe_SelectButtonR1",     fallback = "R1" },
+    { id = "a",       joypads = { "AButton" },            labelKey = "IGUI_StayWithMe_SelectButtonA",      fallback = "A" },
+    { id = "x",       joypads = { "XButton" },            labelKey = "IGUI_StayWithMe_SelectButtonX",      fallback = "X" },
+    { id = "y",       joypads = { "YButton" },            labelKey = "IGUI_StayWithMe_SelectButtonY",      fallback = "Y" },
+}
+
+local function configuredSelectButton()
+    local t = sandboxWheel()
+    local index = 1
+    if t ~= nil and t.CompanionWheelSelectButton ~= nil then
+        index = tonumber(t.CompanionWheelSelectButton) or 1
+    end
+    if index < 1 or index > #CONTROLLER_SELECT_BUTTONS then index = 1 end
+    return CONTROLLER_SELECT_BUTTONS[index], index
+end
+
+local function selectButtonLabel(def)
+    if def == nil then return "L1 / R1" end
+    local text = nil
+    if type(getTextOrNull) == "function" then
+        local got = getTextOrNull(def.labelKey)
+        if type(got) == "string" and got ~= "" and got ~= def.labelKey then text = got end
+    end
+    return text or def.fallback
+end
+
+local function selectButtonDown(def, id)
+    if def == nil or def.joypads == nil or Joypad == nil then return false end
+    for _, name in ipairs(def.joypads) do
+        local button = Joypad[name]
+        if button ~= nil then
+            local held = false
+            pcall(function() held = button:isDown(id) == true end)
+            if held then return true end
+        end
+    end
+    return false
+end
+
+local function isSelectButton(button)
+    local def = configuredSelectButton()
+    if def == nil or def.joypads == nil or Joypad == nil then return false end
+    for _, name in ipairs(def.joypads) do
+        if Joypad[name] ~= nil and button == Joypad[name] then return true end
+    end
+    return false
+end
+
 local TIP_MAX_WIDTH = 340
 local TIP_PAD = 6
 
@@ -548,43 +647,89 @@ local function wrapTip(text)
     return lines
 end
 
+local function radialHelpText(key, fallback)
+    if type(getTextOrNull) == "function" then
+        local got = getTextOrNull(key)
+        if type(got) == "string" and got ~= "" and got ~= key then return got end
+    end
+    return fallback
+end
+
+local function drawControllerHelp(panel, menu)
+    local select = selectButtonLabel(configuredSelectButton())
+    local lines = {}
+    local index = BridgeRadial.selectedSliceIndex(menu, menu.joyfocus)
+    if menu.slices ~= nil and menu.slices[index] ~= nil then
+        local selected = tostring(menu.slices[index].text)
+        lines[#lines + 1] = radialHelpText("IGUI_StayWithMe_RadialHelpSelected", "Selected") .. ": " .. selected
+    end
+    lines[#lines + 1] = radialHelpText("IGUI_StayWithMe_RadialHelpSelect", "Select") .. ": " .. select
+    lines[#lines + 1] = radialHelpText("IGUI_StayWithMe_RadialHelpChoose", "Choose: Right Stick / D-Pad")
+    lines[#lines + 1] = radialHelpText("IGUI_StayWithMe_RadialHelpClose", "Close: B")
+    local font = UIFont.Small
+    local lineH = getTextManager():getFontFromEnum(font):getLineHeight()
+    local widest = 0
+    for _, line in ipairs(lines) do
+        widest = math.max(widest, measureTip(line))
+    end
+    local pad = 6
+    local w = widest + pad * 2
+    local h = #lines * lineH + pad * 2
+    local x = getPlayerScreenLeft(0) + 18
+    local y = getPlayerScreenTop(0) + getPlayerScreenHeight(0) - h - 18
+    panel:drawRect(x, y, w, h, 0.82, 0.06, 0.06, 0.06)
+    panel:drawRectBorder(x, y, w, h, 0.9, 0.45, 0.45, 0.45)
+    for i, line in ipairs(lines) do
+        panel:drawText(line, x + pad, y + pad + (i - 1) * lineH, 1, 1, 1, 1, font)
+    end
+end
+
 function BridgeRadialTip:render()
     local menu = BridgeRadial.activeMenu
     if menu == nil or menu.javaObject == nil or not menu:isReallyVisible() then return end
     local tips = menu.bridgeTips
-    if tips == nil then return end
-    local index = -1
-    if menu.joyfocus ~= nil and menu.joyfocus.id ~= nil then
-        index = menu.javaObject:getSliceIndexFromJoypad(menu.joyfocus.id)
-    else
-        index = menu.javaObject:getSliceIndexFromMouse(menu:getMouseX(), menu:getMouseY())
-    end
-    if type(index) ~= "number" or index < 0 then return end
-    local text = tips[index + 1]
-    if type(text) ~= "string" or text == "" then return end
-    if self.tipText ~= text then
-        self.tipText = text
-        self.tipLines = wrapTip(text)
-        local widest = 0
-        for _, line in ipairs(self.tipLines) do
-            widest = math.max(widest, measureTip(line))
+    if tips ~= nil then
+        local sliceIndex = nil
+        if BridgeRadial.joypad then
+            sliceIndex = BridgeRadial.selectedSliceIndex(menu, menu.joyfocus)
+        else
+            local index = -1
+            if menu.joyfocus ~= nil and menu.joyfocus.id ~= nil then
+                index = menu.javaObject:getSliceIndexFromJoypad(menu.joyfocus.id)
+            else
+                index = menu.javaObject:getSliceIndexFromMouse(menu:getMouseX(), menu:getMouseY())
+            end
+            if type(index) == "number" and index >= 0 then sliceIndex = index + 1 end
         end
-        self.tipWidth = math.min(TIP_MAX_WIDTH, widest) + TIP_PAD * 2
+        local text = nil
+        if sliceIndex ~= nil then text = tips[sliceIndex] end
+        if type(text) == "string" and text ~= "" then
+            if self.tipText ~= text then
+                self.tipText = text
+                self.tipLines = wrapTip(text)
+                local widest = 0
+                for _, line in ipairs(self.tipLines) do
+                    widest = math.max(widest, measureTip(line))
+                end
+                self.tipWidth = math.min(TIP_MAX_WIDTH, widest) + TIP_PAD * 2
+            end
+            local lineH = getTextManager():getFontFromEnum(UIFont.Small):getLineHeight()
+            local height = #self.tipLines * lineH + TIP_PAD * 2
+            local screenW = getCore():getScreenWidth()
+            local screenH = getCore():getScreenHeight()
+            local x = menu:getX() + menu:getWidth() / 2 - self.tipWidth / 2
+            local y = menu:getY() + menu:getHeight() + 8
+            if y + height > screenH - 8 then y = menu:getY() - height - 8 end
+            x = math.max(8, math.min(x, screenW - self.tipWidth - 8))
+            y = math.max(8, math.min(y, screenH - height - 8))
+            self:drawRect(x, y, self.tipWidth, height, 0.92, 0.08, 0.08, 0.08)
+            self:drawRectBorder(x, y, self.tipWidth, height, 0.9, 0.45, 0.45, 0.45)
+            for i, line in ipairs(self.tipLines) do
+                self:drawText(line, x + TIP_PAD, y + TIP_PAD + (i - 1) * lineH, 1, 1, 1, 1, UIFont.Small)
+            end
+        end
     end
-    local lineH = getTextManager():getFontFromEnum(UIFont.Small):getLineHeight()
-    local height = #self.tipLines * lineH + TIP_PAD * 2
-    local screenW = getCore():getScreenWidth()
-    local screenH = getCore():getScreenHeight()
-    local x = menu:getX() + menu:getWidth() / 2 - self.tipWidth / 2
-    local y = menu:getY() + menu:getHeight() + 8
-    if y + height > screenH - 8 then y = menu:getY() - height - 8 end
-    x = math.max(8, math.min(x, screenW - self.tipWidth - 8))
-    y = math.max(8, math.min(y, screenH - height - 8))
-    self:drawRect(x, y, self.tipWidth, height, 0.92, 0.08, 0.08, 0.08)
-    self:drawRectBorder(x, y, self.tipWidth, height, 0.9, 0.45, 0.45, 0.45)
-    for i, line in ipairs(self.tipLines) do
-        self:drawText(line, x + TIP_PAD, y + TIP_PAD + (i - 1) * lineH, 1, 1, 1, 1, UIFont.Small)
-    end
+    if BridgeRadial.joypad then drawControllerHelp(self, menu) end
 end
 
 local function removeTip()
@@ -594,7 +739,12 @@ local function removeTip()
 end
 
 local function removeOverlays()
+    if BridgeRadial.activeMenu ~= nil and ISRadialMenu ~= nil then
+        BridgeRadial.activeMenu.onJoypadDown = ISRadialMenu.onJoypadDown
+    end
     BridgeRadial.activeMenu = nil
+    BridgeRadial.dpadIndex = nil
+    BridgeRadial.selectHeld = nil
     removeAvatar()
     removeTip()
 end
@@ -664,13 +814,94 @@ local function showAvatar(playerNum)
     BridgeRadial.avatarPlayer = playerNum
 end
 
+local function sandboxControllerEnabled()
+    local t = sandboxWheel()
+    if t == nil or t.CompanionWheelController == nil then return true end
+    return t.CompanionWheelController == true
+end
+
+local CONTROLLER_BUTTONS = {
+    { id = "dpadLeft",  joypad = "DPadLeft",   dpad = "left",  labelKey = "IGUI_StayWithMe_ControllerButtonDPadLeft",  fallback = "D-Pad Left" },
+    { id = "dpadRight", joypad = "DPadRight",  dpad = "right", labelKey = "IGUI_StayWithMe_ControllerButtonDPadRight", fallback = "D-Pad Right" },
+    { id = "dpadUp",    joypad = "DPadUp",     dpad = "up",    labelKey = "IGUI_StayWithMe_ControllerButtonDPadUp",    fallback = "D-Pad Up" },
+    { id = "dpadDown",  joypad = "DPadDown",   dpad = "down",  labelKey = "IGUI_StayWithMe_ControllerButtonDPadDown",  fallback = "D-Pad Down" },
+    { id = "lstick",    joypad = "LStickButton",                labelKey = "IGUI_StayWithMe_ControllerButtonL3",        fallback = "L3" },
+    { id = "rstick",    joypad = "RStickButton",                labelKey = "IGUI_StayWithMe_ControllerButtonR3",        fallback = "R3" },
+}
+
+local function configuredControllerButton()
+    local t = sandboxWheel()
+    local index = 1
+    if t ~= nil and t.CompanionWheelControllerButton ~= nil then
+        index = tonumber(t.CompanionWheelControllerButton) or 1
+    end
+    if index < 1 or index > #CONTROLLER_BUTTONS then index = 1 end
+    return CONTROLLER_BUTTONS[index], index
+end
+
+local function controllerJoypadButton(def)
+    if def == nil or def.joypad == nil or Joypad == nil then return nil end
+    return Joypad[def.joypad]
+end
+
+local function controllerDebugConfig(tag)
+    local t = sandboxWheel()
+    local def, index = configuredControllerButton()
+    local raw = nil
+    if t ~= nil then raw = t.CompanionWheelControllerButton end
+    dbg(tostring(tag)
+        .. " enabled=" .. tostring(sandboxControllerEnabled())
+        .. " rawButton=" .. tostring(raw)
+        .. " index=" .. tostring(index)
+        .. " id=" .. tostring(def and def.id)
+        .. " joypad=" .. tostring(def and def.joypad))
+end
+
+local function controllerButtonDown(def, id)
+    local button = controllerJoypadButton(def)
+    if button == nil then return false end
+    local held = false
+    pcall(function() held = button:isDown(id) == true end)
+    return held
+end
+
+local function controllerButtonLabel(def)
+    if def == nil then return "D-Pad Left" end
+    local text = nil
+    if type(getTextOrNull) == "function" then
+        local got = getTextOrNull(def.labelKey)
+        if type(got) == "string" and got ~= "" and got ~= def.labelKey then text = got end
+    end
+    return text or def.fallback
+end
+
 local function present(menu, playerNum)
     menu:center()
     menu:addToUIManager()
     BridgeRadial.activeMenu = menu
     if BridgeRadial.joypad and JoypadState ~= nil and JoypadState.players ~= nil and JoypadState.players[playerNum + 1] then
-        menu:setHideWhenButtonReleased(Joypad.LStickButton)
+        local trigger = configuredControllerButton()
+        local select = configuredSelectButton()
+        local selectHeld = false
+        pcall(function()
+            local joypad = getJoypadData(playerNum)
+            if joypad ~= nil then selectHeld = selectButtonDown(select, joypad.id) == true end
+        end)
+        BridgeRadial.dpadIndex = 1
+        BridgeRadial.selectHeld = selectHeld == true and true or nil
+        menu.hideWhenButtonReleased = nil
+        menu.onJoypadDown = function(radial, button, joypadData)
+            if isSelectButton(button) then return end
+            return ISRadialMenu.onJoypadDown(radial, button, joypadData)
+        end
+        dbg("present player=" .. tostring(playerNum)
+            .. " trigger=" .. tostring(trigger and trigger.id)
+            .. " select=" .. tostring(select and select.id)
+            .. " latch=" .. tostring(selectHeld == true))
         setJoypadFocus(playerNum, menu)
+    else
+        menu.hideWhenButtonReleased = nil
+        menu.onJoypadDown = ISRadialMenu.onJoypadDown
     end
     showAvatar(playerNum)
     pcall(function() menu:bringToTop() end)
@@ -679,13 +910,14 @@ end
 
 local function fillTop(playerNum)
     local menu = getPlayerRadialMenu(playerNum)
-    if menu == nil then return end
+    if menu == nil then return false end
     menu:clear()
     menu.bridgeTips = {}
     local list = BridgeRadial.topEntries(playerNum)
-    if #list == 0 then return end
+    if #list == 0 then return false end
     addSlices(menu, list)
     present(menu, playerNum)
+    return true
 end
 
 function BridgeRadial.openTop(playerNum)
@@ -734,31 +966,47 @@ function BridgeRadial.open(playerNum)
     guarded(startWheel, playerNum)
 end
 
-function BridgeRadial.appendController(joypadData)
-    if BridgeRadial.off or joypadData == nil then return end
-    local playerNum = joypadData.player
-    local playerObj = getSpecificPlayer(playerNum)
-    if playerObj == nil or playerObj:getVehicle() ~= nil then return end
-    if Bridge == nil or Bridge.store == nil then return end
-    if not sandboxControllerEnabled() then return end
-    if not BridgeMenu.isPresent() or not BridgeMenu.inTalkRange() then return end
-    local menu = getPlayerRadialMenu(playerNum)
-    if menu == nil or not menu:isReallyVisible() then return end
-    BridgeRadial.joypad = true
-    state.mouseOpened = false
-    menu.bridgeTips = {}
-    addSlices(menu, BridgeRadial.topEntries(playerNum), true)
-    BridgeRadial.activeMenu = menu
-    showAvatar(playerNum)
-    pcall(function() menu:bringToTop() end)
-    showTipPanel()
-    log("controller wheel appended")
+function BridgeRadial.openController(playerNum)
+    if BridgeRadial.off then return false end
+    local opened = false
+    local ok, err = pcall(function()
+        if not canOpen(playerNum) then return end
+        local menu = getPlayerRadialMenu(playerNum)
+        if menu == nil or menu:isReallyVisible() then return end
+        BridgeRadial.joypad = true
+        opened = fillTop(playerNum) == true
+    end)
+    if not ok then
+        BridgeRadial.joypad = false
+        fail(err)
+        return false
+    end
+    if not opened then BridgeRadial.joypad = false end
+    return opened
 end
 
-local function sandboxWheel()
-    local t = nil
-    pcall(function() t = (SandboxVars ~= nil) and SandboxVars.StayWithMe or nil end)
-    return t
+local function controllerWheelAvailable(playerNum)
+    if BridgeRadial.off or not sandboxControllerEnabled() then return false end
+    return canOpen(playerNum)
+end
+
+local function controllerWheelReady(playerNum)
+    if not controllerWheelAvailable(playerNum) then return false end
+    local list = nil
+    local ok = pcall(function() list = BridgeRadial.topEntries(playerNum) end)
+    return ok and list ~= nil and #list > 0
+end
+
+local function openControllerWheel(playerNum)
+    if not controllerWheelAvailable(playerNum) then return false end
+    local opened = false
+    local ok, err = pcall(function() opened = BridgeRadial.openController(playerNum) end)
+    if not ok then
+        fail(err)
+        return false
+    end
+    if opened then return true end
+    return BridgeRadial.activeMenu ~= nil and BridgeRadial.activeMenu:isReallyVisible()
 end
 
 local SANDBOX_KEY_CODES = {
@@ -913,12 +1161,6 @@ local function sandboxWheelKeyCode()
     return code
 end
 
-local function sandboxControllerEnabled()
-    local t = sandboxWheel()
-    if t == nil or t.CompanionWheelController == nil then return true end
-    return t.CompanionWheelController == true
-end
-
 local function isWheelKey(key)
     local ok = false
     pcall(function() ok = getCore():isKey(KEY_NAME, key) == true end)
@@ -962,9 +1204,108 @@ local function mouseTick()
     removeOverlays()
 end
 
+local function controllerHintTick()
+    if BridgeRadial.controllerHintShown then return end
+    if BridgeRadial.off or not sandboxControllerEnabled() then return end
+    local player = getSpecificPlayer(0)
+    if player == nil then return end
+    local bind = -1
+    pcall(function() bind = player:getJoypadBind() end)
+    if bind == -1 then return end
+    if player:getVehicle() ~= nil then return end
+    if not controllerWheelReady(0) then return end
+    local mouseRecent = false
+    pcall(function() mouseRecent = wasMouseActiveMoreRecentlyThanJoypad() == true end)
+    if mouseRecent then return end
+    local label = controllerButtonLabel(configuredControllerButton())
+    local suffix = "companion wheel"
+    if type(getTextOrNull) == "function" then
+        local got = getTextOrNull("IGUI_StayWithMe_ControllerWheelHint")
+        if type(got) == "string" and got ~= "" and got ~= "IGUI_StayWithMe_ControllerWheelHint" then suffix = got end
+    end
+    local text = label .. ": " .. suffix
+    local ok = false
+    pcall(function()
+        player:setHaloNote(text, 220, 220, 220, 350)
+        ok = true
+    end)
+    if ok then BridgeRadial.controllerHintShown = true end
+end
+
+local function controllerWheelTick()
+    if BridgeRadial.off then return end
+    local joypad = nil
+    pcall(function() joypad = getJoypadData(0) end)
+    if joypad == nil then return end
+    local def = configuredControllerButton()
+    local held = controllerButtonDown(def, joypad.id)
+    if held ~= state.wheelButtonHeld then
+        state.wheelButtonHeld = held
+        dbg("controller " .. (held and "DOWN" or "UP")
+            .. " id=" .. tostring(def and def.id)
+            .. " joypadId=" .. tostring(joypad.id)
+            .. " focus=" .. tostring(joypad.focus))
+        if held then controllerDebugConfig("press") end
+    end
+    local focus = joypad.focus
+    if focus ~= nil and (MainScreen == nil or focus ~= MainScreen.instance) then return end
+    if held then
+        if state.wheelButtonDownMS == nil then state.wheelButtonDownMS = getTimestampMs() end
+    elseif state.wheelButtonDownMS ~= nil then
+        state.wheelButtonDownMS = nil
+        state.wheelButtonOpened = nil
+        state.wheelButtonLogged = nil
+    end
+    local down = state.wheelButtonDownMS
+    if down == nil or state.wheelButtonOpened == true then return end
+    if getTimestampMs() - down < 250 then return end
+    if state.wheelButtonLogged ~= true then
+        state.wheelButtonLogged = true
+        dbg("hold reached enabled=" .. tostring(sandboxControllerEnabled())
+            .. " present=" .. tostring(BridgeMenu ~= nil and BridgeMenu.isPresent())
+            .. " talk=" .. tostring(BridgeMenu ~= nil and BridgeMenu.inTalkRange())
+            .. " available=" .. tostring(controllerWheelAvailable(0))
+            .. " ready=" .. tostring(controllerWheelReady(0))
+            .. " store=" .. tostring(Bridge ~= nil and Bridge.store ~= nil))
+    end
+    if openControllerWheel(0) then
+        state.wheelButtonOpened = true
+        dbg("controller wheel opened")
+        log("controller wheel opened")
+    end
+end
+
+local function controllerSelectTick()
+    if BridgeRadial.off or not BridgeRadial.joypad then return end
+    local menu = BridgeRadial.activeMenu
+    if menu == nil or not menu:isReallyVisible() then
+        BridgeRadial.selectHeld = nil
+        return
+    end
+    local joypad = nil
+    pcall(function() joypad = getJoypadData(0) end)
+    if joypad == nil then return end
+    local def = configuredSelectButton()
+    local held = selectButtonDown(def, joypad.id)
+    if held and not BridgeRadial.selectHeld then
+        BridgeRadial.selectHeld = true
+        local index = BridgeRadial.selectedSliceIndex(menu, joypad)
+        local command = menu:getSliceCommand(index)
+        menu:undisplay()
+        if command and command[1] then
+            command[1](command[2], command[3], command[4], command[5], command[6], command[7])
+        end
+        dbg("select button=" .. tostring(def and def.id) .. " index=" .. tostring(index))
+    elseif not held then
+        BridgeRadial.selectHeld = nil
+    end
+end
+
 local TICK_MS = 250
 
 local function wheelTick()
+    controllerWheelTick()
+    controllerSelectTick()
     local now = getTimestampMs()
     if state.lastWheelTick ~= nil and now - state.lastWheelTick < TICK_MS then return end
     state.lastWheelTick = now
@@ -980,6 +1321,7 @@ local function wheelTick()
         if menu == nil or not menu:isReallyVisible() then removeAvatar() end
     end
     mouseTick()
+    controllerHintTick()
 end
 
 function BridgeRadial.onKeyPressed(key)
@@ -1082,6 +1424,12 @@ local function hookEvents()
             state.sandboxApplied = BridgeRadial.applySandboxKey() == true
             BridgeRadial.joypad = false
             BridgeRadial.off = false
+            BridgeRadial.controllerHintShown = false
+            state.wheelButtonDownMS = nil
+            state.wheelButtonOpened = nil
+            state.wheelButtonHeld = nil
+            state.wheelButtonLogged = nil
+            controllerDebugConfig("gamestart")
         end)
     end
     if Events.OnKeyStartPressed ~= nil then Events.OnKeyStartPressed.Add(BridgeRadial.onKeyPressed) end
@@ -1093,20 +1441,92 @@ end
 BridgeRadial.installKeybind()
 hookEvents()
 
-if BridgeRadial.controllerWrapped ~= true and ISJoystickButtonRadialMenu ~= nil
-        and type(ISJoystickButtonRadialMenu.displayLeft) == "function" then
-    BridgeRadial.controllerWrapped = true
-    local vanilla = ISJoystickButtonRadialMenu.displayLeft
-    ISJoystickButtonRadialMenu.displayLeft = function(joypadData, ...)
-        vanilla(joypadData, ...)
-        if BridgeRadial.off then return end
-        local ok, err = pcall(BridgeRadial.appendController, joypadData)
-        if not ok then
-            BridgeRadial.off = true
-            print("[BridgeRadial] wheel disabled for this session: " .. tostring(err))
-        end
+local function wrapDPadWheel(name, direction)
+    if ISDPadWheels == nil or type(ISDPadWheels[name]) ~= "function" then
+        dbg("wrap skipped " .. tostring(name)
+            .. " isDPadWheels=" .. tostring(ISDPadWheels ~= nil)
+            .. " fn=" .. tostring(ISDPadWheels ~= nil and type(ISDPadWheels[name])))
+        return
     end
-    log("controller radial wrapped")
+    if BridgeRadial.dpadWrapped == nil then BridgeRadial.dpadWrapped = {} end
+    if BridgeRadial.dpadWrapped[name] then return end
+    BridgeRadial.dpadWrapped[name] = true
+    local vanilla = ISDPadWheels[name]
+    ISDPadWheels[name] = function(joypadData)
+        if BridgeRadial.joypad and BridgeRadial.activeMenu ~= nil
+                and BridgeRadial.activeMenu:isReallyVisible() then
+            BridgeRadial.cycleSelection(direction)
+            return
+        end
+        local def, index = configuredControllerButton()
+        dbg("dpad " .. tostring(direction)
+            .. " called player=" .. tostring(joypadData and joypadData.player)
+            .. " index=" .. tostring(index)
+            .. " id=" .. tostring(def and def.id))
+        if joypadData ~= nil then
+            if def ~= nil and def.dpad == direction then
+                local playerNum = joypadData.player or 0
+                local available = controllerWheelAvailable(playerNum)
+                local opened = available and openControllerWheel(playerNum)
+                dbg("dpad " .. tostring(direction)
+                    .. " matched available=" .. tostring(available)
+                    .. " opened=" .. tostring(opened))
+                if opened then return end
+            end
+        end
+        return vanilla(joypadData)
+    end
+    dbg("wrapped " .. tostring(name))
+end
+
+dbg("load isDPadWheels=" .. tostring(ISDPadWheels ~= nil)
+    .. " isJoystickRadial=" .. tostring(ISJoystickButtonRadialMenu ~= nil))
+
+wrapDPadWheel("onDisplayLeft", "left")
+wrapDPadWheel("onDisplayRight", "right")
+wrapDPadWheel("onDisplayUp", "up")
+wrapDPadWheel("onDisplayDown", "down")
+
+if BridgeRadial.lstickWrapped ~= true and ISJoystickButtonRadialMenu ~= nil
+        and type(ISJoystickButtonRadialMenu.onRepeatLeftStickButton) == "function" then
+    BridgeRadial.lstickWrapped = true
+    local vanillaRepeat = ISJoystickButtonRadialMenu.onRepeatLeftStickButton
+    ISJoystickButtonRadialMenu.onRepeatLeftStickButton = function(joypadData)
+        local def, index = configuredControllerButton()
+        if state.lastL3Log == nil or getTimestampMs() - state.lastL3Log >= 1000 then
+            state.lastL3Log = getTimestampMs()
+            dbg("l3 repeat player=" .. tostring(joypadData and joypadData.player)
+                .. " index=" .. tostring(index)
+                .. " id=" .. tostring(def and def.id))
+        end
+        if joypadData ~= nil then
+            if def ~= nil and def.id == "lstick" then
+                local playerNum = joypadData.player or 0
+                local ready = controllerWheelReady(playerNum)
+                dbg("l3 suppress=" .. tostring(ready))
+                if ready then return end
+            end
+        end
+        return vanillaRepeat(joypadData)
+    end
+end
+
+if BridgeRadial.firearmRadialWrapped ~= true and ISFirearmRadialMenu ~= nil
+        and type(ISFirearmRadialMenu.onRepeatRBumper) == "function" then
+    BridgeRadial.firearmRadialWrapped = true
+    local vanillaRBFirearm = ISFirearmRadialMenu.onRepeatRBumper
+    ISFirearmRadialMenu.onRepeatRBumper = function(...)
+        if BridgeRadial.joypad and BridgeRadial.activeMenu ~= nil
+                and BridgeRadial.activeMenu:isReallyVisible() then
+            local def = configuredSelectButton()
+            if def ~= nil and def.joypads ~= nil then
+                for _, name in ipairs(def.joypads) do
+                    if name == "RBumper" then return end
+                end
+            end
+        end
+        return vanillaRBFirearm(...)
+    end
 end
 
 if BridgeRadial.undisplayWrapped ~= true and ISRadialMenu ~= nil

@@ -85,6 +85,22 @@ option StayWithMe.CompanionWheelController
     translation = StayWithMe_CompanionWheelController,
 }
 
+option StayWithMe.CompanionWheelControllerButton
+{
+    type = enum, numValues = 6, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_CompanionWheelControllerButton,
+    valueTranslation = StayWithMe_CompanionWheelControllerButton_Values,
+}
+
+option StayWithMe.CompanionWheelSelectButton
+{
+    type = enum, numValues = 6, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_CompanionWheelSelectButton,
+    valueTranslation = StayWithMe_CompanionWheelSelectButton_Values,
+}
+
 option StayWithMe.ForceSpawnNearPlayer
 {
     type = boolean, default = false,

@@ -1048,6 +1048,36 @@ function BridgePregameClothPanel:new(x, y, width, height)
     return o
 end
 
+BridgePregameLeftPanel = ISPanelJoypad:derive("BridgePregameLeftPanel")
+
+function BridgePregameLeftPanel:new(x, y, width, height)
+    local o = ISPanelJoypad:new(x, y, width, height)
+    setmetatable(o, self)
+    self.__index = self
+    o.background = false
+    o.border = false
+    o.autoAddJoypadButton = false
+    return o
+end
+
+function BridgePregameLeftPanel:render()
+    ISPanelJoypad.render(self)
+    if self.joypadFocused then
+        self:drawRectBorder(0, 0, self.width, self.height, 0.5, 0.4, 0.7, 1.0)
+        self:drawRectBorder(1, 1, self.width - 2, self.height - 2, 0.5, 0.4, 0.7, 1.0)
+    end
+end
+
+function BridgePregameLeftPanel:onJoypadNavigateEnd(joypadData)
+    ISUIElement.onJoypadNavigateEnd(self, joypadData)
+    self:setJoypadFocusTopLeft(joypadData)
+end
+
+function BridgePregameLeftPanel:onLoseJoypadFocus(joypadData)
+    self:clearJoypadFocus(joypadData)
+    ISUIElement.onLoseJoypadFocus(self, joypadData)
+end
+
 function BridgePregameScreen:ensureClothRow(loc)
     self.clothRows = self.clothRows or {}
     local row = self.clothRows[loc]
@@ -1101,6 +1131,11 @@ function BridgePregameScreen:createChildren()
     self.avatar:instantiate()
     self:addChild(self.avatar)
     self.preview = self.avatar.avatarPanel
+
+    self.leftPanel = BridgePregameLeftPanel:new(0, 0, 10, 10)
+    self.leftPanel:initialise()
+    self.leftPanel.parentScreen = self
+    self:addChild(self.leftPanel)
 
     self.randomBtn = ISButton:new(0, 0, 10, BTN_H, self.randomText, self, BridgePregameScreen.onRandom)
     self.randomBtn:initialise()
@@ -1671,9 +1706,16 @@ function BridgePregameScreen:layoutLeft()
         self.faceCombo, self.detailCombo, self.detailBtn, self.detailClearBtn,
     }
     for _, control in ipairs(controls) do
-        if control ~= nil then control:setVisible(false) end
+        if control ~= nil then
+            control:setVisible(false)
+            control.bridgeLaidOut = false
+        end
     end
-    for _, cat in ipairs(self.makeupOrder) do self.makeupCombos[cat]:setVisible(false) end
+    if self.voiceDemoBtn ~= nil then self.voiceDemoBtn.bridgeLaidOut = false end
+    for _, cat in ipairs(self.makeupOrder) do
+        self.makeupCombos[cat]:setVisible(false)
+        self.makeupCombos[cat].bridgeLaidOut = false
+    end
 
     local function heading(text)
         self.leftRender[#self.leftRender + 1] = { kind = "heading", text = text, x = x, y = y }
@@ -1685,6 +1727,7 @@ function BridgePregameScreen:layoutLeft()
     local function row(label, control, width)
         if control == nil then return end
         control:setVisible(true)
+        control.bridgeLaidOut = true
         control:setX(x + labelW)
         control:setY(y)
         control:setWidth(width or controlW)
@@ -1724,11 +1767,13 @@ function BridgePregameScreen:layoutLeft()
         row(tr("PregameDetail", "Detail"), self.detailCombo)
         local bw = math.floor((controlW - 4) / 2)
         self.detailBtn:setVisible(true)
+        self.detailBtn.bridgeLaidOut = true
         self.detailBtn:setX(x + labelW)
         self.detailBtn:setY(y)
         self.detailBtn:setWidth(bw)
         self.detailBtn:setHeight(BTN_H)
         self.detailClearBtn:setVisible(true)
+        self.detailClearBtn.bridgeLaidOut = true
         self.detailClearBtn:setX(x + labelW + bw + 4)
         self.detailClearBtn:setY(y)
         self.detailClearBtn:setWidth(bw)
@@ -1748,7 +1793,67 @@ function BridgePregameScreen:layoutLeft()
             row(label, self.makeupCombos[cat])
         end
     end
+    local left = {
+        self.nameEntry, self.genderCombo, self.skinColorBtn, self.muscleCombo, self.speciesCombo,
+        self.voiceCombo, self.voiceDemoBtn, self.hairCombo, self.hairColorBtn, self.beardCombo,
+        self.beardColorBtn, self.faceCombo, self.detailCombo, self.detailBtn, self.detailClearBtn,
+    }
+    for _, cat in ipairs(self.makeupOrder) do left[#left + 1] = self.makeupCombos[cat] end
+    for _, control in ipairs(left) do self:markJoypadAdd(control) end
+    self.detailBtn.autoAddJoypadButton = self.detailsVisible == true
+    self.detailClearBtn.autoAddJoypadButton = self.detailsVisible == true
+    self.leftControls = left
     self.leftBottom = y
+    local panel = self.leftPanel
+    if panel ~= nil then
+        panel:setX(self.leftX)
+        panel:setY(self.contentTop)
+        panel:setWidth(self.leftW)
+        panel:setHeight(math.max(1, y - self.contentTop))
+        local rows = {}
+        local flat = {}
+        for _, control in ipairs(left) do
+            if control ~= nil and control.bridgeLaidOut == true then
+                rows[#rows + 1] = { control }
+                flat[#flat + 1] = control
+            end
+        end
+        local keepY = panel.joypadIndexY or 1
+        local keepX = panel.joypadIndex or 1
+        panel.joypadButtonsY = rows
+        panel.allJoypadButtons = flat
+        if keepY > #rows then keepY = #rows end
+        if keepY < 1 then keepY = 1 end
+        panel.joypadIndexY = keepY
+        local keepRow = rows[keepY] or {}
+        if keepX > #keepRow then keepX = #keepRow end
+        if keepX < 1 then keepX = 1 end
+        panel.joypadIndex = keepX
+        panel.joypadButtons = keepRow
+    end
+end
+
+function BridgePregameScreen:markJoypadAdd(control)
+    if control == nil then return end
+    local visible = control.bridgeLaidOut
+    if visible == nil then visible = control:isVisible() == true end
+    control.autoAddJoypadButton = visible == true
+end
+
+function BridgePregameScreen:visibleLeftControls()
+    local out = {}
+    for _, control in ipairs(self.leftControls or {}) do
+        if control ~= nil and control:isVisible() then out[#out + 1] = control end
+    end
+    return out
+end
+
+function BridgePregameScreen:visibleRightControls()
+    local out = {}
+    for _, control in ipairs(self.rightControls or {}) do
+        if control ~= nil and control:isVisible() then out[#out + 1] = control end
+    end
+    return out
 end
 
 function BridgePregameScreen:layoutRight()
@@ -1818,9 +1923,10 @@ function BridgePregameScreen:layoutRight()
     if labelW > 140 then labelW = 140 end
     local scrollW = (panelW > w) and 0 or 18
     local colorW = BTN_H
-    local comboW = math.min(300, w - labelW - colorW - 4 - 70 - 8 - scrollW)
+    local labelGap = 10
+    local comboW = math.min(300, w - labelW - labelGap - colorW - 4 - 70 - 8 - scrollW)
     if comboW < 90 then comboW = 90 end
-    local texW = w - labelW - comboW - colorW - 8 - scrollW
+    local texW = w - labelW - labelGap - comboW - colorW - 8 - scrollW
     if texW < 60 then texW = 60 end
     local ry = FONT_S + 6 + 5
     for _, loc in ipairs(self.clothOrder) do
@@ -1832,20 +1938,20 @@ function BridgePregameScreen:layoutRight()
                 row.label:setY(ry)
                 row.label:setVisible(true)
             end
-            row.combo:setX(labelW)
+            row.combo:setX(labelW + labelGap)
             row.combo:setY(ry)
             row.combo:setWidth(comboW)
             row.combo:setHeight(BTN_H)
             row.combo.openUpwards = ry > panelH * 0.55
-            row.color:setX(labelW + comboW + 4)
+            row.color:setX(labelW + labelGap + comboW + 4)
             row.color:setY(ry)
             row.color:setWidth(colorW)
             row.color:setHeight(BTN_H)
-            row.tex:setX(labelW + comboW + 4 + colorW + 4)
+            row.tex:setX(labelW + labelGap + comboW + 4 + colorW + 4)
             row.tex:setY(ry)
             row.tex:setWidth(texW)
             row.tex:setHeight(BTN_H)
-            ry = ry + BTN_H + 3
+            ry = ry + BTN_H + 7
         else
             row.combo:setVisible(false)
             row.color:setVisible(false)
@@ -1955,6 +2061,22 @@ function BridgePregameScreen:layoutRight()
         self.meetHintCombo:setVisible(false)
     end
     self.meetBottom = my
+    local right = {}
+    for _, tick in ipairs(self.behaviorTicks or {}) do right[#right + 1] = tick end
+    right[#right + 1] = self.aimCombo
+    right[#right + 1] = self.meetModeCombo
+    right[#right + 1] = self.meetDaysEntry
+    right[#right + 1] = self.meetWhereCombo
+    right[#right + 1] = self.meetDistanceCombo
+    right[#right + 1] = self.meetHintCombo
+    for _, control in ipairs(right) do self:markJoypadAdd(control) end
+    self.rightControls = right
+    for _, loc in ipairs(self.clothOrder or {}) do
+        local row = self:ensureClothRow(loc)
+        self:markJoypadAdd(row.combo)
+        self:markJoypadAdd(row.color)
+        self:markJoypadAdd(row.tex)
+    end
 end
 
 function BridgePregameScreen:layout()
@@ -2051,13 +2173,12 @@ function BridgePregameScreen:layout()
 end
 
 function BridgePregameScreen:refreshJoypadRows()
-    local joypad = self.joyfocus
-    local focused = self:getJoypadFocus()
     self:autoGenerateJoypadButtonsLists()
-    if joypad ~= nil then
-        if focused ~= nil and self:setJoypadFocus(focused, joypad) then return end
-        self:setJoypadFocusTopLeft(joypad)
-    end
+    local joypad = self.joyfocus
+    if joypad == nil then return end
+    local focused = self:getJoypadFocus()
+    if focused ~= nil and self:setJoypadFocus(focused, joypad) then return end
+    self:setJoypadFocusTopLeft(joypad)
 end
 
 function BridgePregameScreen:prerender()
@@ -2115,6 +2236,12 @@ function BridgePregameScreen:render()
     if self.meetHintLabelY ~= nil then
         self:drawText(self.meetHintText or "Hint", self.rightX, self.meetHintLabelY, 0.82, 0.82, 0.82, 1, UIFont.Small)
     end
+    if self.joyfocus ~= nil then
+        local hint = vanillaText("IGUI_StayWithMe_PregameNavHint", "RB: sections")
+        local hintW = textW(UIFont.Small, hint)
+        self:drawText(hint, math.floor(self.rightX + self.rightW - hintW), self.subY, 0.7, 0.7, 0.7, 1, UIFont.Small)
+    end
+    self:renderJoypadNavigateOverlay(0)
 end
 
 function BridgePregameScreen:update()
@@ -2126,6 +2253,16 @@ function BridgePregameScreen:update()
         self:layout()
     end
     if self.lookCombo ~= nil then self:refreshLookButtons() end
+    local joypad = self.joyfocus
+    if joypad ~= nil and joypad.isDoingNavigation then
+        local avatar = self.avatar
+        if avatar ~= nil then
+            local nav = avatar.joypadNavigate
+            if nav == nil or nav.left ~= self.navLeftControl then
+                self:onJoypadNavigateStart_Descendant(nil, joypad)
+            end
+        end
+    end
 end
 
 function BridgePregameScreen:captureName()
@@ -2875,6 +3012,111 @@ function BridgePregameScreen:onStart()
     BridgePregame.start()
 end
 
+function BridgePregameScreen:onJoypadNavigateStart(joypadData)
+    self:onJoypadNavigateStart_Descendant(nil, joypadData)
+end
+
+function BridgePregameScreen:onJoypadNavigateLeft(joypadData)
+    if self.navLeftControl ~= nil then
+        joypadData.currentNavigateUI = self.navLeftControl
+    end
+end
+
+function BridgePregameScreen:onJoypadNavigateRight(joypadData)
+    if self.avatar ~= nil then
+        joypadData.currentNavigateUI = self.avatar
+    end
+end
+
+function BridgePregameScreen:onJoypadNavigateStart_Descendant(descendant, joypadData)
+    if joypadData == nil then return end
+    local left = self:visibleLeftControls()
+    local right = self:visibleRightControls()
+    local avatar = self.avatar
+    local cloth = self.clothPanel
+    local panel = self.leftPanel
+    local anchor = panel
+    if anchor == nil then anchor = left[#left] end
+    self.navLeftControl = anchor
+    print("[BridgePregame] nav start left=" .. tostring(#left) .. " right=" .. tostring(#right)
+        .. " anchor=" .. tostring(anchor ~= nil) .. " avatar=" .. tostring(avatar ~= nil))
+    local screen = self
+    if avatar ~= nil then
+        avatar.onJoypadNavigateLeft = function(ui, joypadData)
+            print("[BridgePregame] avatar nav left target=" .. tostring(screen.navLeftControl ~= nil))
+            if screen.navLeftControl ~= nil then
+                joypadData.currentNavigateUI = screen.navLeftControl
+            end
+        end
+        avatar.onJoypadNavigateRight = function(ui, joypadData)
+            if screen.clothPanel ~= nil then
+                joypadData.currentNavigateUI = screen.clothPanel
+            end
+        end
+        avatar.onJoypadDirLeft = function(ui, joypadData)
+            if joypadData ~= nil and joypadData.isDoingNavigation then
+                if screen.navLeftControl ~= nil then
+                    joypadData.currentNavigateUI = screen.navLeftControl
+                end
+                return
+            end
+            return CharacterCreationAvatar.onJoypadDirLeft(ui, joypadData)
+        end
+        avatar.onJoypadDirRight = function(ui, joypadData)
+            if joypadData ~= nil and joypadData.isDoingNavigation then
+                if screen.clothPanel ~= nil then
+                    joypadData.currentNavigateUI = screen.clothPanel
+                end
+                return
+            end
+            return CharacterCreationAvatar.onJoypadDirRight(ui, joypadData)
+        end
+    end
+    for _, control in ipairs(left) do
+        control.joypadNavigate = {
+            right = avatar,
+            parent = self,
+        }
+    end
+    if panel ~= nil then
+        panel.joypadNavigate = {
+            right = avatar,
+            parent = self,
+        }
+        panel.joypadIndexY = 1
+        panel.joypadIndex = 1
+        panel.joypadButtons = panel.joypadButtonsY[1] or {}
+    end
+    if avatar ~= nil then
+        avatar.joypadNavigate = {
+            left = anchor,
+            right = cloth,
+            parent = self,
+        }
+    end
+    if cloth ~= nil then
+        cloth.joypadNavigate = {
+            left = avatar,
+            up = anchor,
+            down = right[1],
+            parent = self,
+        }
+    end
+    for i, control in ipairs(right) do
+        control.joypadNavigate = {
+            left = avatar,
+            up = (i == 1 and cloth or right[i - 1]),
+            down = right[i + 1],
+            parent = self,
+        }
+    end
+    self.joypadNavigate = {
+        left = anchor,
+        right = avatar,
+        parent = self,
+    }
+end
+
 function BridgePregameScreen:onGainJoypadFocus(joypadData)
     ISPanelJoypad.onGainJoypadFocus(self, joypadData)
     if self.startBtn ~= nil then self:setISButtonForA(self.startBtn) end
@@ -2905,6 +3147,10 @@ function BridgePregameScreen:new(x, y, width, height)
     o.anchorTop = true
     o.anchorBottom = true
     o.moveWithMouse = false
+    o.joypadIndex = 1
+    o.joypadIndexY = 1
+    o.joypadButtons = {}
+    o.joypadButtonsY = {}
     return o
 end
 

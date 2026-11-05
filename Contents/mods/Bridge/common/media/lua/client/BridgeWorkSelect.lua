@@ -1,11 +1,11 @@
-require "ISUI/ISPanel"
+require "ISUI/ISPanelJoypad"
 require "ISUI/ISWorldObjectContextMenu"
 
 BridgeWorkSelect = BridgeWorkSelect or {}
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeWorkSelect] " .. tostring(text)) end end
 
-local UI = ISPanel:derive("BridgeWorkSelectUI")
+local UI = ISPanelJoypad:derive("BridgeWorkSelectUI")
 BridgeWorkSelect.UI = UI
 
 BridgeWorkSelect.active = nil
@@ -97,6 +97,7 @@ end
 function UI:close()
     if self.closed then return end
     self.closed = true
+    self:releaseControllerFocus()
     self:setVisible(false)
     self:removeFromUIManager()
     if BridgeWorkSelect.active == self then BridgeWorkSelect.active = nil end
@@ -141,34 +142,15 @@ function UI:startMove(sq)
     log("corpse job " .. tostring(res) .. " targets=" .. tostring(#targets))
 end
 
-function UI:onMouseDownOutside(x, y)
-    if self.awaitDest then
-        local sq = self:pickSquare()
-        if sq == nil then return true end
-        if not BridgeWorkSelect.isDestinationValid(sq) then
-            if Bridge ~= nil then Bridge.speak("JobBadSpot") end
-            return true
-        end
-        self:startMove(sq)
-        return true
-    end
-    local sq, wx, wy = self:pickSquare()
-    if sq == nil or not sq:getFloor() then return true end
+function UI:anchorAt(wx, wy)
+    local sq = getCell():getGridSquare(wx, wy, self.level)
+    if sq == nil or not sq:getFloor() then return end
     self.startX, self.startY = wx, wy
     self.endX, self.endY = wx, wy
     self.dragging = true
-    return true
 end
 
-function UI:onMouseMoveOutside(dx, dy)
-    local sq, wx, wy = self:pickSquare()
-    if self.dragging and sq ~= nil then
-        self.endX, self.endY = wx, wy
-    end
-    return true
-end
-
-function UI:onMouseUpOutside(x, y)
+function UI:confirmSelection()
     if self.awaitDest then return true end
     if not self.dragging then return true end
     self.dragging = false
@@ -209,14 +191,62 @@ function UI:onMouseUpOutside(x, y)
     return true
 end
 
-function UI:onRightMouseDownOutside(x, y)
+function UI:cancelSelection()
     self:close()
+end
+
+function UI:releaseControllerFocus()
+    if self.playerNum ~= nil and getJoypadFocus(self.playerNum) == self then
+        setPrevFocusForPlayer(self.playerNum)
+    end
+    self.joypadFocus = nil
+    self.controller = false
+end
+
+function UI:onMouseDownOutside(x, y)
+    if self.controller then self:releaseControllerFocus() end
+    if self.awaitDest then
+        local sq = self:pickSquare()
+        if sq == nil then return true end
+        if not BridgeWorkSelect.isDestinationValid(sq) then
+            if Bridge ~= nil then Bridge.speak("JobBadSpot") end
+            return true
+        end
+        self:startMove(sq)
+        return true
+    end
+    local sq, wx, wy = self:pickSquare()
+    if sq == nil then return true end
+    self:anchorAt(wx, wy)
+    return true
+end
+
+function UI:onMouseMoveOutside(dx, dy)
+    local sq, wx, wy = self:pickSquare()
+    if self.dragging and sq ~= nil then
+        self.endX, self.endY = wx, wy
+    end
+    return true
+end
+
+function UI:onMouseUpOutside(x, y)
+    return self:confirmSelection()
+end
+
+function UI:onRightMouseDownOutside(x, y)
+    self:cancelSelection()
     return true
 end
 
 function UI:prerender()
     if self.closed then return end
-    local sq, wx, wy = self:pickSquare()
+    local sq, wx, wy = nil, nil, nil
+    if self.joypadFocus ~= nil then
+        wx, wy = self.joypadWorldX, self.joypadWorldY
+        sq = getCell():getGridSquare(wx, wy, self.level)
+    else
+        sq, wx, wy = self:pickSquare()
+    end
     if self.awaitDest then
         local ok = BridgeWorkSelect.isDestinationValid(sq)
         if ok then
@@ -247,7 +277,7 @@ function UI:prerender()
 end
 
 function UI:new(playerObj, kind)
-    local o = ISPanel.new(self, -1000, -1000, 1, 1)
+    local o = ISPanelJoypad.new(self, -1000, -1000, 1, 1)
     o.playerObj = playerObj
     o.kind = kind or "chopTree"
     o.playerNum = playerObj:getPlayerNum()
@@ -258,7 +288,109 @@ function UI:new(playerObj, kind)
     o.border = false
     o.awaitDest = false
     o.pendingTargets = nil
+    o.joypadWorldX = playerObj:getCurrentSquare():getX()
+    o.joypadWorldY = playerObj:getCurrentSquare():getY()
+    o.joypadFocus = nil
+    o.controller = false
+    o.holdA = false
     return o
+end
+
+function UI:joypadSquareAt(x, y)
+    return getCell():getGridSquare(x, y, self.level)
+end
+
+function UI:joypadStep(dx, dy)
+    local fromX = self.joypadWorldX
+    local fromY = self.joypadWorldY
+    if self.startX ~= nil and self.endX ~= nil and self.endY ~= nil then
+        fromX = self.endX
+        fromY = self.endY
+    end
+    local x = fromX + dx
+    local y = fromY + dy
+    local sq = self:joypadSquareAt(x, y)
+    if sq == nil then return end
+    if self.awaitDest then
+        if not BridgeWorkSelect.isDestinationValid(sq) then return end
+        self.joypadWorldX, self.joypadWorldY = x, y
+        return
+    end
+    if not sq:getFloor() then return end
+    if self.startX == nil then
+        self.joypadWorldX, self.joypadWorldY = x, y
+    else
+        self.endX, self.endY = x, y
+    end
+end
+
+function UI:padPress()
+    if self.awaitDest then
+        local sq = self:joypadSquareAt(self.joypadWorldX, self.joypadWorldY)
+        if not BridgeWorkSelect.isDestinationValid(sq) then
+            if Bridge ~= nil then Bridge.speak("JobBadSpot") end
+            return
+        end
+        self:startMove(sq)
+        return
+    end
+    if self.startX == nil then
+        self:anchorAt(self.joypadWorldX, self.joypadWorldY)
+        self.holdA = self.dragging == true
+    else
+        self.holdA = false
+        self:confirmSelection()
+    end
+end
+
+function UI:padRelease()
+    if not self.holdA then return end
+    self.holdA = false
+    if self.startX ~= nil and (self.endX ~= self.startX or self.endY ~= self.startY) then
+        self:confirmSelection()
+    end
+end
+
+function UI:onGainJoypadFocus(joypadData)
+    ISPanelJoypad.onGainJoypadFocus(self, joypadData)
+    self.joypadFocus = joypadData
+end
+
+function UI:onLoseJoypadFocus(joypadData)
+    if self.joypadFocus ~= nil then self.joypadFocus = nil end
+    ISPanelJoypad.onLoseJoypadFocus(self, joypadData)
+end
+
+function UI:onJoypadDirUp(joypadData)
+    self:joypadStep(0, -1)
+end
+
+function UI:onJoypadDirDown(joypadData)
+    self:joypadStep(0, 1)
+end
+
+function UI:onJoypadDirLeft(joypadData)
+    self:joypadStep(-1, 0)
+end
+
+function UI:onJoypadDirRight(joypadData)
+    self:joypadStep(1, 0)
+end
+
+function UI:onJoypadDown(button, joypadData)
+    if button == Joypad.AButton then
+        self:padPress()
+        return
+    end
+    if button == Joypad.BButton then
+        self:cancelSelection()
+    end
+end
+
+function UI:onJoypadButtonReleased(button, joypadData)
+    if button == Joypad.AButton then
+        self:padRelease()
+    end
 end
 
 function BridgeWorkSelect.treesIn(b)
@@ -714,6 +846,15 @@ function BridgeWorkSelect.begin(playerObj, kind)
     acquireLock()
     ui:initialise()
     ui:addToUIManager()
+    local joypad = getJoypadData(ui.playerNum)
+    local mouseRecent = true
+    pcall(function() mouseRecent = wasMouseActiveMoreRecentlyThanJoypad() == true end)
+    if joypad ~= nil and not mouseRecent then
+        ui.controller = true
+        setJoypadFocus(ui.playerNum, ui)
+        ui.joypadFocus = joypad
+        updateJoypadFocus(joypad)
+    end
     log("selection begun")
     return ui
 end

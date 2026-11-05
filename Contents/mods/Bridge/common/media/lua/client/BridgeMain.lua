@@ -7099,7 +7099,9 @@ function Bridge.sweepStaleBodies(reason)
     end)
     local n = 0
     pcall(function()
-        local list = getCell():getZombieList()
+        local cell = getCell()
+        if cell == nil then return end
+        local list = cell:getZombieList()
         if list == nil then return end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
@@ -7162,7 +7164,12 @@ function Bridge.restartPass()
         if e.s == true then
             local loaded = false
             if e.x ~= nil and e.y ~= nil then
-                pcall(function() loaded = getCell():getGridSquare(math.floor(e.x), math.floor(e.y), math.floor(e.z or 0)) ~= nil end)
+                pcall(function()
+                    local cell = getCell()
+                    if cell ~= nil then
+                        loaded = cell:getGridSquare(math.floor(e.x), math.floor(e.y), math.floor(e.z or 0)) ~= nil
+                    end
+                end)
             end
             if loaded then active[#active + 1] = e end
         end
@@ -7170,7 +7177,9 @@ function Bridge.restartPass()
     local best, bestD = {}, {}
     if #active > 0 then
         pcall(function()
-            local list = getCell():getZombieList()
+            local cell = getCell()
+            if cell == nil then return end
+            local list = cell:getZombieList()
             if list == nil then return end
             for i = 0, list:size() - 1 do
                 local z = list:get(i)
