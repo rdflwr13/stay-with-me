@@ -184,6 +184,9 @@ local VOICE_EVERY = 10
 local FOLLOW_DIST = 2.5
 local BODY_VAR = "NotAloneBody"
 Bridge.BODY_VAR = BODY_VAR
+local ITEMS_DIRTY_DEBOUNCE = 20
+local STALE_SWEEP_FALLBACK = 3600
+local MARKED_SCAN_EVERY = 15
 
 Bridge.bodyVarCache = Bridge.bodyVarCache or setmetatable({}, { __mode = "k" })
 Bridge.outfitCache = Bridge.outfitCache or setmetatable({}, { __mode = "k" })
@@ -209,6 +212,7 @@ end
 
 function Bridge.itemsChanged()
     Bridge.itemsDirty = true
+    Bridge.itemsDirtyAt = Bridge.time
     if BridgeBackup ~= nil then
         BridgeBackup.counter = (tonumber(BridgeBackup.counter) or 0) + 1
     end
@@ -1964,6 +1968,7 @@ function Bridge.despawn(skipSave)
             log("own body object removed on client")
         end
         Bridge.body = nil
+        Bridge.staleSweepWanted = true
         Bridge.kind = nil
         Bridge.hiddenSince = nil
         Bridge.holdPos = nil
@@ -2023,6 +2028,7 @@ function Bridge.despawn(skipSave)
     end)
     if Bridge.store ~= nil then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end
     Bridge.body = nil
+    Bridge.staleSweepWanted = true
     Bridge.kind = nil
     Bridge.hiddenSince = nil
     Bridge.holdPos = nil
@@ -2120,6 +2126,7 @@ function Bridge.bodyGone()
     pcall(function() Bridge.unhumanize(gone, true) end)
     if Bridge.store ~= nil then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end
     Bridge.body = nil
+    Bridge.staleSweepWanted = true
     Bridge.kind = nil
     Bridge.hiddenSince = nil
     Bridge.holdPos = nil
@@ -4022,7 +4029,9 @@ local function updateZombieBody(body)
 
 
 
-    if Bridge.zombieTicks % 30 == 15 or Bridge.itemsDirty == true then
+    local itemsDirtyDue = Bridge.itemsDirty == true
+        and (Bridge.time - (Bridge.itemsDirtyAt or 0)) >= ITEMS_DIRTY_DEBOUNCE
+    if Bridge.zombieTicks % 30 == 15 or itemsDirtyDue then
         local ok, now = pcall(function() return BridgeInventory.wornList(body) end)
 
 
@@ -4063,8 +4072,9 @@ local function updateZombieBody(body)
             transferSnap = true
         end
         local okSnap, list = nil, nil
-        if snapshotDue or transferSnap or Bridge.itemsDirty == true then
+        if snapshotDue or transferSnap or itemsDirtyDue then
             Bridge.itemsDirty = nil
+            Bridge.itemsDirtyAt = nil
             okSnap, list = pcall(snapshotBody, body)
         end
         local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
@@ -5198,9 +5208,7 @@ function Bridge.onZombieUpdate(zombie)
         return
     end
     if not isBody then
-
-
-
+        if Bridge.body ~= nil and (Bridge.tick % MARKED_SCAN_EVERY) ~= 0 then return end
         local okPid, pid = pcall(zombieOutfitId, zombie)
         if not okPid then pid = nil end
         if Bridge.checked[zombie] == pid then return end
@@ -8224,8 +8232,9 @@ function Bridge.onTick()
                 Bridge.store.lastBodyZ = Bridge.body:getZ()
             end)
         end
-        if Bridge.time >= (Bridge.staleSweepAt or 0) then
-            Bridge.staleSweepAt = Bridge.time + 60
+        if Bridge.staleSweepWanted == true or Bridge.time >= (Bridge.staleSweepAt or 0) then
+            Bridge.staleSweepWanted = nil
+            Bridge.staleSweepAt = Bridge.time + STALE_SWEEP_FALLBACK
             pcall(Bridge.sweepStaleBodies, "tick")
         end
         if Bridge.time >= (Bridge.staleRestartAt or 0) then

@@ -81,6 +81,10 @@ BridgeCallout.attackPrev = false
 
 BridgeCallout.drawnPrev = false
 BridgeCallout.scanAt = -99999
+BridgeCallout.dueAt = -99999
+BridgeCallout.hordeAt = -99999
+BridgeCallout.hordeRaw = 0
+BridgeCallout.hordeSeen = 0
 BridgeCallout.recordOn = false
 BridgeCallout.fightTime = 0
 BridgeCallout.fightPeak = 0
@@ -176,6 +180,7 @@ BridgeCallout.SAY = {
 
 BridgeCallout.REPEAT_GAP = 8
 BridgeCallout.HORDE_CD = 60
+BridgeCallout.HORDE_SCAN_EVERY = 60
 
 BridgeCallout.MILESTONES = { [1] = true, [5] = true, [10] = true, [25] = true, [50] = true,
     [100] = true, [250] = true, [500] = true, [1000] = true }
@@ -1997,14 +2002,17 @@ function BridgeCallout.update(body)
     if scanDue and type(BridgeCallout.homeTrack) == "function" then
         pcall(function() BridgeCallout.homeTrack(body, BridgeData.owner()) end)
     end
+    if BridgeCallout.ENABLED == 0 then return end
+    if Bridge.time < (BridgeCallout.dueAt or 0) then return end
     if carQuiet() then
+        BridgeCallout.dueAt = Bridge.time + BridgeCallout.SCAN_QUIET
         dropCarLines()
         BridgeCallout.info = "car"
         return
     end
-    if BridgeCallout.ENABLED == 0 then return end
     local red = BridgeData.owner()
     local interval = scanInterval(body, red)
+    BridgeCallout.dueAt = Bridge.time + interval
     if Bridge.time - (BridgeCallout.scanAt or 0) < interval then return end
     BridgeCallout.scanAt = Bridge.time
     if not Bridge.alive() then
@@ -2080,22 +2088,27 @@ function BridgeCallout.update(body)
     if BridgeHorde ~= nil then
         local SAY = BridgeCallout.SAY
         if SAY.EvHorde32 ~= 0 or SAY.EvHorde16 ~= 0 or SAY.EvHorde8 ~= 0 or SAY.EvHorde4 ~= 0 then
-            local hx, hy, hz = nil, nil, nil
-            pcall(function() hx, hy, hz = red:getX(), red:getY(), red:getZ() end)
-            if hx ~= nil then
-                local raw = BridgeHorde.count(hx, hy, hz, BridgeHorde.RADIUS)
-                local n = 0
-                if raw >= BridgeHorde.TIERS[1] then
-                    n = BridgeHorde.countSeen(hx, hy, hz, BridgeHorde.RADIUS, body, red, raw)
-                    vlog(string.format("horde: raw=%d seen=%d at %.1f,%.1f", raw, n, hx, hy))
-                end
-                local tiers = BridgeHorde.TIERS
-                for i = #tiers, 1, -1 do
-                    local t = tiers[i]
-                    if n >= t and SAY["EvHorde" .. t] ~= 0 then
-                        if say("EvHorde" .. t) then return end
-                        break
+            local raw, n = BridgeCallout.hordeRaw, BridgeCallout.hordeSeen
+            if Bridge.time - (BridgeCallout.hordeAt or -99999) >= BridgeCallout.HORDE_SCAN_EVERY then
+                local hx, hy, hz = nil, nil, nil
+                pcall(function() hx, hy, hz = red:getX(), red:getY(), red:getZ() end)
+                if hx ~= nil then
+                    raw = BridgeHorde.count(hx, hy, hz, BridgeHorde.RADIUS)
+                    n = 0
+                    if raw >= BridgeHorde.TIERS[1] then
+                        n = BridgeHorde.countSeen(hx, hy, hz, BridgeHorde.RADIUS, body, red, raw)
+                        vlog(string.format("horde: raw=%d seen=%d at %.1f,%.1f", raw, n, hx, hy))
                     end
+                    BridgeCallout.hordeAt = Bridge.time
+                    BridgeCallout.hordeRaw, BridgeCallout.hordeSeen = raw, n
+                end
+            end
+            local tiers = BridgeHorde.TIERS
+            for i = #tiers, 1, -1 do
+                local t = tiers[i]
+                if n >= t and SAY["EvHorde" .. t] ~= 0 then
+                    if say("EvHorde" .. t) then return end
+                    break
                 end
             end
         end

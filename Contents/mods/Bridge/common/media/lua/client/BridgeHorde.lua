@@ -48,14 +48,8 @@ function BridgeHorde.count(cx, cy, cz, radius)
     local n = 0
     pcall(function()
         if BridgeZScan ~= nil and type(BridgeZScan.count) == "function" then
-            if BridgeZScan.enabled == false then
-                n = BridgeZScan.count(cx, cy, czz, r, "canonical", { tag = "horde.count", zTol = 1 })
-                return
-            end
-            if BridgeZScan.refresh() ~= nil then
-                n = BridgeZScan.count(cx, cy, czz, r, "canonical", { tag = "horde.count", zTol = 1 })
-                return
-            end
+            n = BridgeZScan.count(cx, cy, czz, r, "canonical", { tag = "horde.count", zTol = 1 })
+            return
         end
         local list = nil
         if BridgeZS ~= nil then list = BridgeZS.near(cx, cy, r + 0.01, { tag = "horde.count" }) end
