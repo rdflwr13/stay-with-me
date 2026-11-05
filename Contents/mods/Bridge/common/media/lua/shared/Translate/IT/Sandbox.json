@@ -181,5 +181,11 @@
     "Sandbox_StayWithMe_ForceSpawnNearPlayer": "Forza la comparsa vicino al giocatore (debug)",
     "Sandbox_StayWithMe_ForceSpawnNearPlayer_tooltip": "Opzione di debug. Se abilitata, il compagno viene fatto ricomparire accanto al giocatore qualora fosse assente e viene forzato in modalità Segui. Utilizzare soltanto per i test.",
     "Sandbox_StayWithMe_CarSeatPuppet": "Show companion in the car seat (singleplayer)",
-    "Sandbox_StayWithMe_CarSeatPuppet_tooltip": "Singleplayer only. While she rides inside a vehicle, a temporary look-alike sits in a passenger seat so the car does not look empty. It is cosmetic: the real companion is still the one who gets out. Default off."
+    "Sandbox_StayWithMe_CarSeatPuppet_tooltip": "Singleplayer only. While she rides inside a vehicle, a temporary look-alike sits in a passenger seat so the car does not look empty. It is cosmetic: the real companion is still the one who gets out. Default off.",
+    "Sandbox_StayWithMe_MeetMarkerRange": "Portata del segnalatore di incontro",
+    "Sandbox_StayWithMe_MeetMarkerRange_tooltip": "Solo giocatore singolo. Distanza massima alla quale viene mostrato il segnalatore di incontro del compagno. Il segnalatore mostra direzione e distanza. Non cambia il punto in cui appare il compagno. Predefinito: 500 m.",
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option1": "250 m",
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option2": "500 m",
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option3": "750 m",
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option4": "1000 m"
 }

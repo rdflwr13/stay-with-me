@@ -20,6 +20,7 @@ BridgeData.DEFAULT_NAME = "Rin"
 BridgeData.DEFAULT_MALE_NAME = "Ren"
 BridgeData.NAME_MAX = 20
 BridgeData.MODES = { follow = true, wait = true, rest = true }
+BridgeData.MARKER_RANGES = { 250, 500, 750, 1000 }
 
 
 BridgeData.SANDBOX_PAGE = "StayWithMe"
@@ -37,6 +38,18 @@ function BridgeData.sandboxNumber(key, default, min, max)
     if min ~= nil and v < min then v = min end
     if max ~= nil and v > max then v = max end
     return v
+end
+
+function BridgeData.markerRangeFor(index)
+    if type(index) ~= "number" then return 500 end
+    local v = BridgeData.MARKER_RANGES[index]
+    if type(v) ~= "number" then return 500 end
+    return v
+end
+
+function BridgeData.markerRange()
+    local index = BridgeData.sandboxNumber("MeetMarkerRange", 2, 1, #BridgeData.MARKER_RANGES)
+    return BridgeData.markerRangeFor(index)
 end
 
 function BridgeData.sandboxFlag(key, default)
@@ -1943,6 +1956,12 @@ function BridgeData.selftest()
         check("own body girlfriend", BridgeData.girlfriendPeaceful(ownBody), false)
         check("nil girlfriend", BridgeData.girlfriendPeaceful(nil), false)
         check("bare stub girlfriend", BridgeData.girlfriendPeaceful({}), false)
+        check("marker range 1", BridgeData.markerRangeFor(1), 250)
+        check("marker range 2", BridgeData.markerRangeFor(2), 500)
+        check("marker range 3", BridgeData.markerRangeFor(3), 750)
+        check("marker range 4", BridgeData.markerRangeFor(4), 1000)
+        check("marker range nil", BridgeData.markerRangeFor(nil), 500)
+        check("marker range out of range", BridgeData.markerRangeFor(9), 500)
     end)
     if not okAll then fails[#fails + 1] = "selftest error: " .. tostring(errAll) end
     if #fails == 0 then return string.format("dataselftest PASS (%d checks)", checks) end

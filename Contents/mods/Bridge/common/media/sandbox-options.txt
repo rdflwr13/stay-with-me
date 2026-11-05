@@ -114,3 +114,11 @@ option StayWithMe.CarSeatPuppet
     page = StayWithMe,
     translation = StayWithMe_CarSeatPuppet,
 }
+
+option StayWithMe.MeetMarkerRange
+{
+    type = enum, numValues = 4, default = 2,
+    page = StayWithMe,
+    translation = StayWithMe_MeetMarkerRange,
+    valueTranslation = StayWithMe_MeetMarkerRange_Values,
+}

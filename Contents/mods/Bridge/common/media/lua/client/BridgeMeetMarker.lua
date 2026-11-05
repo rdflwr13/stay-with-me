@@ -8,7 +8,6 @@ local WIDTH = 120
 local HEIGHT = 100
 local ICON = 32
 local TOP = 16
-local MAX_RANGE = 500
 local REFRESH_MS = 100
 local DOT_RADIUS = 22
 
@@ -132,13 +131,15 @@ function BridgeMeetMarkerUI:update()
     if self.lastUpdate ~= nil and now - self.lastUpdate < REFRESH_MS then return end
     self.lastUpdate = now
     if Bridge == nil or BridgeMeet == nil or BridgeData == nil then self:setVisible(false) return end
+    local maxRange = 500
+    if type(BridgeData.markerRange) == "function" then maxRange = BridgeData.markerRange() end
     if BridgeMeet.unjoined() ~= true then self:setVisible(false) return end
     local x, y, z = BridgeMeet.markerTarget()
     if x == nil then self:setVisible(false) return end
     local red = BridgeData.owner()
     if red == nil then self:setVisible(false) return end
     local d = math.sqrt((red:getX() - x) ^ 2 + (red:getY() - y) ^ 2)
-    if d > MAX_RANGE then self:setVisible(false) return end
+    if d > maxRange then self:setVisible(false) return end
     self.dist = d
     local ppx, ppy = screenPos(red:getX(), red:getY(), red:getZ())
     local tpx, tpy = screenPos(x, y, z)

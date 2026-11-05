@@ -1396,6 +1396,7 @@ function BridgeTask.dropTarget(reason)
     BridgeTask.checkX, BridgeTask.checkY = nil, nil
     BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
     BridgeTask.openingSince = nil
+    BridgeTask.routeReset()
     if (BridgeTask.doneCount or 0) == 0 and (BridgeTask.failCount or 0) >= BridgeTask.ABORT_AFTER_FAILS
             and #BridgeTask.queue > 0 then
         BridgeTask.info = "area unreachable, stopping"
@@ -1496,6 +1497,172 @@ function BridgeTask.adjacentClear(body, sq)
     return ok
 end
 
+function BridgeTask.routeReset()
+    BridgeTask.routeKey = nil
+    BridgeTask.routeGoalX = nil
+    BridgeTask.routeGoalY = nil
+    BridgeTask.routeGoalZ = nil
+    BridgeTask.routePrevX = nil
+    BridgeTask.routePrevY = nil
+    BridgeTask.routeAwaySince = nil
+    BridgeTask.routeAwayTicks = nil
+    BridgeTask.routeAwayLoggedFor = nil
+    BridgeTask.routeAwayAt = nil
+    BridgeTask.routeObsKey = nil
+    BridgeTask.routeClimbKey = nil
+    BridgeTask.routeOpeningKey = nil
+    BridgeTask.routeBldKey = nil
+    BridgeTask.lastUnreachable = nil
+end
+
+local function buildingIdAt(x, y, z)
+    if BridgeDoors == nil or BridgeDoors.buildingId == nil then return "-" end
+    local id = "-"
+    pcall(function()
+        local cell = getCell()
+        if cell == nil then return end
+        local sq = cell:getGridSquare(x, y, z)
+        if sq == nil then return end
+        local v = BridgeDoors.buildingId(sq)
+        if v ~= nil then id = tostring(v) end
+    end)
+    return id
+end
+
+local function routeGoal(body, target)
+    local goal = BridgeMove ~= nil and BridgeMove.goal or nil
+    if goal == nil then return end
+    local gx = math.floor((goal.x or 0) * 100 + 0.5) / 100
+    local gy = math.floor((goal.y or 0) * 100 + 0.5) / 100
+    local gz = goal.z
+    local key = string.format("%.2f,%.2f,%s,%d,%d", gx, gy, tostring(gz), target.x, target.y)
+    if key == BridgeTask.routeKey then return end
+    BridgeTask.routeKey = key
+    BridgeTask.routeGoalX = gx
+    BridgeTask.routeGoalY = gy
+    BridgeTask.routeGoalZ = gz
+    BridgeTask.routeAwayLoggedFor = nil
+    local dGoal = math.sqrt((body:getX() - gx) ^ 2 + (body:getY() - gy) ^ 2)
+    local src = "path"
+    if BridgeMove.openingWay ~= nil then src = "opening"
+    elseif BridgeMove.gapWay ~= nil then src = "gap" end
+    local spot = BridgeTask.spot
+    local spotText = spot ~= nil and string.format("%d,%d", spot.x, spot.y) or "-,-"
+    log(string.format("route goal x=%.2f y=%.2f z=%s dGoal=%.2f src=%s target=%d,%d spot=%s",
+        gx, gy, tostring(gz), dGoal, src, target.x, target.y, spotText))
+end
+
+local function routeObstacle()
+    local obs = BridgeMove ~= nil and BridgeMove.obstacle or nil
+    local climb = BridgeMove ~= nil and BridgeMove.pendingClimb or nil
+    local win = BridgeMove ~= nil and BridgeMove.window or nil
+    local opening = BridgeMove ~= nil and BridgeMove.openingWay or nil
+    local climbKind = climb ~= nil and tostring(climb.kind) or "-"
+    local winText = win ~= nil and string.format("%d,%d", win.x, win.y) or "-"
+    local openText = opening ~= nil and tostring(opening.key) or "-"
+    local key = tostring(obs) .. "|" .. climbKind .. "|" .. winText .. "|" .. openText
+    if key == BridgeTask.routeObsKey then return end
+    BridgeTask.routeObsKey = key
+    BridgeTask.routeClimbKey = climbKind
+    BridgeTask.routeOpeningKey = openText
+    local pathing = BridgeMove ~= nil and BridgeMove.pathing and "1" or "0"
+    local result = BridgeMove ~= nil and tostring(BridgeMove.pathResult) or "-"
+    log(string.format("route obstacle obs=%s climb=%s window=%s opening=%s pathing=%s result=%s",
+        tostring(obs or "-"), climbKind, winText, openText, pathing, result))
+end
+
+local function routeAway(body, target, dSpot)
+    local goal = BridgeMove ~= nil and BridgeMove.goal or nil
+    local bx, by = body:getX(), body:getY()
+    local prevX, prevY = BridgeTask.routePrevX, BridgeTask.routePrevY
+    BridgeTask.routePrevX, BridgeTask.routePrevY = bx, by
+    if goal == nil then
+        BridgeTask.routeAwaySince = nil
+        BridgeTask.routeAwayTicks = nil
+        return
+    end
+    if prevX == nil or prevY == nil then return end
+    local dx, dy = bx - prevX, by - prevY
+    local step = math.sqrt(dx * dx + dy * dy)
+    if step < 0.02 then
+        BridgeTask.routeAwaySince = nil
+        BridgeTask.routeAwayTicks = nil
+        return
+    end
+    local gdx, gdy = (goal.x or bx) - bx, (goal.y or by) - by
+    local glen = math.sqrt(gdx * gdx + gdy * gdy)
+    if glen <= 0.05 then
+        BridgeTask.routeAwaySince = nil
+        BridgeTask.routeAwayTicks = nil
+        return
+    end
+    gdx, gdy = gdx / glen, gdy / glen
+    local align = (dx * gdx + dy * gdy) / step
+    if align >= -0.25 then
+        BridgeTask.routeAwaySince = nil
+        BridgeTask.routeAwayTicks = nil
+        return
+    end
+    if BridgeTask.routeAwaySince == nil then BridgeTask.routeAwaySince = Bridge.time end
+    BridgeTask.routeAwayTicks = (BridgeTask.routeAwayTicks or 0) + 1
+    local dGoal = glen
+    local key = BridgeTask.routeKey
+    local loggedFor = BridgeTask.routeAwayLoggedFor
+    if Bridge.time - BridgeTask.routeAwaySince >= 60 and loggedFor ~= key then
+        BridgeTask.routeAwayLoggedFor = key
+        BridgeTask.routeAwayAt = Bridge.time
+        log(string.format("route away goal=%.2f,%.2f dGoal=%.2f align=%.2f for=%d ticks step=%.3f body=%.2f,%.2f target=%d,%d dSpot=%.2f path=%s obs=%s",
+            goal.x or 0, goal.y or 0, dGoal, align, BridgeTask.routeAwayTicks, step, bx, by,
+            target.x, target.y, dSpot, tostring(BridgeMove.pathResult), tostring(BridgeMove.obstacle)))
+    elseif loggedFor == key and Bridge.time - (BridgeTask.routeAwayAt or Bridge.time) >= 120 then
+        BridgeTask.routeAwayAt = Bridge.time
+        log(string.format("route away still goal=%.2f,%.2f dGoal=%.2f align=%.2f for=%d ticks step=%.3f body=%.2f,%.2f",
+            goal.x or 0, goal.y or 0, dGoal, align, BridgeTask.routeAwayTicks, step, bx, by))
+    end
+end
+
+local function routeAbort(branch, why, body, target)
+    local spot = BridgeTask.spot
+    local bx, by = body:getX(), body:getY()
+    local dSpot = 0
+    local dGoal = -1
+    local goal = BridgeMove ~= nil and BridgeMove.goal or nil
+    if spot ~= nil then
+        dSpot = math.sqrt((bx - (spot.x + 0.5)) ^ 2 + (by - (spot.y + 0.5)) ^ 2)
+    elseif target ~= nil then
+        dSpot = math.sqrt((bx - (target.x + 0.5)) ^ 2 + (by - (target.y + 0.5)) ^ 2)
+    end
+    if goal ~= nil then
+        dGoal = math.sqrt((bx - (goal.x or bx)) ^ 2 + (by - (goal.y or by)) ^ 2)
+    end
+    local pathing = BridgeMove ~= nil and BridgeMove.pathing and "1" or "0"
+    local result = BridgeMove ~= nil and tostring(BridgeMove.pathResult) or "-"
+    local climb = BridgeMove ~= nil and BridgeMove.pendingClimb or nil
+    local climbText = climb ~= nil and tostring(climb.kind) or "-"
+    local opening = BridgeMove ~= nil and BridgeMove.openingWay or nil
+    local openText = opening ~= nil and tostring(opening.key) or "-"
+    local obs = BridgeMove ~= nil and tostring(BridgeMove.obstacle) or "-"
+    local snap = {
+        branch = branch,
+        why = why,
+        progressAge = Bridge.time - (BridgeTask.progressAt or Bridge.time),
+        sinceAge = Bridge.time - (BridgeTask.since or Bridge.time),
+        bestD = BridgeTask.bestD,
+        dSpot = dSpot,
+        dGoal = dGoal,
+        pathing = pathing,
+        pathResult = result,
+        obstacle = obs,
+        pendingClimb = climbText,
+        openingWay = openText,
+        spot = spot,
+    }
+    BridgeTask.lastUnreachable = snap
+    log(string.format("route abort branch=%s why=%s progressAge=%.1f sinceAge=%.1f bestD=%s dSpot=%.2f dGoal=%.2f pathing=%s result=%s obs=%s climb=%s opening=%s",
+        tostring(branch), tostring(why), snap.progressAge, snap.sinceAge, tostring(snap.bestD),
+        dSpot, dGoal, pathing, result, obs, climbText, openText))
+end
+
 function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
     local bodyZ = math.floor(body:getZ())
     local targetSq = nil
@@ -1513,6 +1680,7 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
         local why = BridgeMove.openingBlocked
         BridgeMove.openingBlocked = nil
         BridgeTask.info = "openings exhausted"
+        routeAbort("openingBlocked", why, body, target)
         return "unreachable", why
     end
 
@@ -1520,12 +1688,15 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
         giveUp = BridgeTask.OPENING_GIVE_UP, target = target })
     if openStatus == "stale" then
         BridgeTask.info = "opening unreachable"
+        routeAbort("openingStale", openReason, body, target)
         return "unreachable", openReason
     end
 
     if sameFloor and not BridgeTask.reachOk(body, targetSq) then
         BridgeTask.info = "no accessible opening"
-        return "unreachable", BridgeNav.blockedReason(target)
+        local why = BridgeNav.blockedReason(target)
+        routeAbort("reach", why, body, target)
+        return "unreachable", why
     end
 
     if not sameFloor then
@@ -1541,9 +1712,15 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
             log(string.format("no spot for target %d,%d,%d (body z=%s) bx=%.1f by=%.1f",
                 target.x, target.y, target.z, tostring(bodyZ), body:getX(), body:getY()))
             log("  neighbours: " .. spotDump(target))
+            routeAbort("noSpot", nil, body, target)
             return "unreachable", nil
         end
-        log(string.format("spot %d,%d,%d for target %d,%d,%d", BridgeTask.spot.x, BridgeTask.spot.y, BridgeTask.spot.z, target.x, target.y, target.z))
+        log(string.format("spot %d,%d,%d for target %d,%d,%d bodyBld=%s tgtBld=%s spotBld=%s bx=%.2f by=%.2f bodyZ=%d",
+            BridgeTask.spot.x, BridgeTask.spot.y, BridgeTask.spot.z, target.x, target.y, target.z,
+            buildingIdAt(math.floor(body:getX()), math.floor(body:getY()), bodyZ),
+            buildingIdAt(target.x, target.y, target.z),
+            buildingIdAt(BridgeTask.spot.x, BridgeTask.spot.y, BridgeTask.spot.z),
+            body:getX(), body:getY(), bodyZ))
     end
 
     local sx, sy = BridgeTask.spot.x + 0.5, BridgeTask.spot.y + 0.5
@@ -1591,7 +1768,9 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
     local pathStatus = BridgeNav.notePathFail(BridgeTask, { limit = BridgeTask.PATH_FAIL_LIMIT })
     if pathStatus == "failed" then
         BridgeTask.info = "no path to target"
-        return "unreachable", BridgeNav.blockedReason(target)
+        local why = BridgeNav.blockedReason(target)
+        routeAbort("pathFail", why, body, target)
+        return "unreachable", why
     end
 
 
@@ -1604,7 +1783,9 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
         return "walking", nil
     elseif progress == "timeout" then
         BridgeTask.info = "no progress to target"
-        return "unreachable", BridgeNav.blockedReason(target)
+        local why = BridgeNav.blockedReason(target)
+        routeAbort("progress", why, body, target)
+        return "unreachable", why
     end
 
     local stall = BridgeNav.stall(body, BridgeTask, {
@@ -1646,17 +1827,30 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
 
     Bridge.target = { x = wx, y = wy, z = target.z }
     pcall(function() BridgeMove.update(body) end)
+    routeObstacle()
 
     pcall(function() BridgeMove.rememberDoorNear(body) end)
     pcall(function() BridgeMove.closeBehind(body) end)
     BridgeTask.info = string.format("walking d=%.1f spot=%.1f %s", d, dSpot, tostring(BridgeMove.pathResult))
+    routeGoal(body, target)
+    if not onTarget then routeAway(body, target, dSpot) end
     if Bridge.tick ~= BridgeTask.walkLogAt and Bridge.tick % 60 == 0 then
         BridgeTask.walkLogAt = Bridge.tick
         pcall(function()
-            log(string.format("walk tgt=%d,%d spot=%d,%d aim=%.2f,%.2f d=%.2f dSpot=%.2f clear=%s path=%s stall=%d",
+            local goal = BridgeMove ~= nil and BridgeMove.goal or nil
+            local gx, gy, gdGoal = -1, -1, -1
+            if goal ~= nil then
+                gx, gy = goal.x or 0, goal.y or 0
+                gdGoal = math.sqrt((body:getX() - gx) ^ 2 + (body:getY() - gy) ^ 2)
+            end
+            local bldBody = buildingIdAt(math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()))
+            local bldTarget = buildingIdAt(target.x, target.y, target.z)
+            local age = Bridge.time - (BridgeTask.progressAt or Bridge.time)
+            log(string.format("walk tgt=%d,%d spot=%d,%d aim=%.2f,%.2f d=%.2f dSpot=%.2f clear=%s path=%s stall=%d goal=%.2f,%.2f dGoal=%.2f bld=%s/%s bestD=%s age=%.1f",
                 target.x, target.y, BridgeTask.spot.x, BridgeTask.spot.y, wx, wy, d, dSpot,
                 tostring(BridgeTask.adjacentClear(body, targetSq)), tostring(BridgeMove.pathResult),
-                BridgeTask.still or 0))
+                BridgeTask.still or 0, gx, gy, gdGoal, bldBody, bldTarget,
+                tostring(BridgeTask.bestD), age))
         end)
     end
     return "walking", nil
@@ -2106,6 +2300,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     BridgeTask.layHintSaid = false
     BridgeTask.layCloseAt = nil
     BridgeTask.layFromX, BridgeTask.layFromY, BridgeTask.laySlideAt = nil, nil, nil
+    BridgeTask.routeReset()
     BridgeTask.info = "start " .. tostring(kind)
     Bridge.follow = false
     Bridge.target = nil
@@ -4743,6 +4938,7 @@ function BridgeTask.kinds.lootArea.update(body)
         BridgeTask.phase = "walk"
         BridgeTask.since = Bridge.time
         BridgeTask.spot = nil
+        BridgeTask.routeReset()
         BridgeTask.still = 0
         BridgeTask.checkX = nil
         BridgeTask.animHold = 0
@@ -4767,8 +4963,12 @@ function BridgeTask.kinds.lootArea.update(body)
         pcall(function()
             local d = math.sqrt((body:getX() - (target.x + 0.5)) ^ 2 + (body:getY() - (target.y + 0.5)) ^ 2)
             local clear = BridgeTask.adjacentClear(body, getCell():getGridSquare(target.x, target.y, target.z))
-            log(string.format("loot drop %d,%d,%d why=%s d=%.2f clear=%s bx=%.1f by=%.1f",
-                target.x, target.y, target.z, tostring(why), d, tostring(clear), body:getX(), body:getY()))
+            local snap = BridgeTask.lastUnreachable
+            local branch = snap ~= nil and tostring(snap.branch) or "-"
+            local dGoal = snap ~= nil and snap.dGoal or -1
+            local dSpot = snap ~= nil and snap.dSpot or d
+            log(string.format("loot drop %d,%d,%d why=%s branch=%s d=%.2f dGoal=%.2f dSpot=%.2f clear=%s bx=%.1f by=%.1f",
+                target.x, target.y, target.z, tostring(why), branch, d, dGoal, dSpot, tostring(clear), body:getX(), body:getY()))
         end)
         return BridgeTask.dropTarget(why)
     end

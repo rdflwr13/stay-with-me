@@ -179,5 +179,11 @@
     "Sandbox_StayWithMe_CompanionWheelKey_Values_option136": "Function",
     "Sandbox_StayWithMe_CompanionWheelKey_Values_option137": "Clear",
     "Sandbox_StayWithMe_CompanionWheelKey_Values_option138": "Power",
-    "Sandbox_StayWithMe_CompanionWheelKey_Values_option139": "Sleep"
+    "Sandbox_StayWithMe_CompanionWheelKey_Values_option139": "Sleep",
+    "Sandbox_StayWithMe_MeetMarkerRange": "Portée du marqueur de rendez-vous",
+    "Sandbox_StayWithMe_MeetMarkerRange_tooltip": "Uniquement en solo. Distance maximale à laquelle le marqueur de rendez-vous du compagnon est affiché. Le marqueur indique la direction et la distance. Cela ne change pas l'endroit où le compagnon apparaît. Par défaut : 500 m.",
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option1": "250 m",
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option2": "500 m",
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option3": "750 m",
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option4": "1000 m"
 }
