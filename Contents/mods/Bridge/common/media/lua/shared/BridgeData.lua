@@ -1630,6 +1630,58 @@ function BridgeData.ownerOf(md, pid)
 end
 
 
+BridgeData.PREV_MAX = 4
+BridgeData.PREV_TTL = 72
+
+
+function BridgeData.prevNow()
+    local h = 0
+    pcall(function() h = getGameTime():getWorldAgeHours() end)
+    h = tonumber(h)
+    if h == nil or h ~= h then h = 0 end
+    return h
+end
+
+
+function BridgeData.notePrevBody(rec, pid, x, y, z, restart)
+    if rec == nil or type(pid) ~= "number" or pid == 0 then return nil end
+    x = tonumber(x) or tonumber(rec.lastBodyX) or tonumber(rec.x)
+    y = tonumber(y) or tonumber(rec.lastBodyY) or tonumber(rec.y)
+    z = tonumber(z) or tonumber(rec.lastBodyZ) or tonumber(rec.z) or 0
+    if x == nil or y == nil then return nil end
+    if type(rec.prevBodies) ~= "table" then rec.prevBodies = {} end
+    local e = { pid = pid, x = x, y = y, z = z, h = BridgeData.prevNow() }
+    if restart == true then e.s = true end
+    table.insert(rec.prevBodies, e)
+    while #rec.prevBodies > BridgeData.PREV_MAX do table.remove(rec.prevBodies, 1) end
+    return e
+end
+
+
+function BridgeData.prevIndex(recs, now)
+    local prev, spots = {}, {}
+    if type(recs) ~= "table" then return prev, spots end
+    now = tonumber(now) or BridgeData.prevNow()
+    for who, rec in pairs(recs) do
+        if type(rec) == "table" and type(rec.prevBodies) == "table" then
+            local keep = {}
+            for _, e in ipairs(rec.prevBodies) do
+                if type(e) == "table" and type(e.pid) == "number" and type(e.h) == "number"
+                        and (e.h <= 0 or now - e.h <= BridgeData.PREV_TTL) then
+                    keep[#keep + 1] = e
+                    local list = prev[e.pid]
+                    if list == nil then list = {} prev[e.pid] = list end
+                    list[#list + 1] = { rec = rec, who = who, e = e }
+                    spots[#spots + 1] = { rec = rec, who = who, e = e }
+                end
+            end
+            rec.prevBodies = keep
+        end
+    end
+    return prev, spots
+end
+
+
 
 
 

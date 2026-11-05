@@ -397,6 +397,10 @@ end
 local function removeBody(who, rec)
     local body = currentBody(who, rec)
     if body ~= nil then
+        pcall(function()
+            BridgeData.notePrevBody(rec, body:getPersistentOutfitID(),
+                body:getX(), body:getY(), body:getZ(), false)
+        end)
         releaseBody(body)
         pcall(function() body:removeFromSquare() end)
         pcall(function() body:removeFromWorld() end)
@@ -1911,27 +1915,113 @@ end
 
 
 
-function BridgeServer.removeStray(id, by, x1, y1, x2, y2)
-    if id == nil or not BridgeServer.hasMark(id) or issuedMap()[id] == nil then return false end
-    for _, rec in pairs(world().players) do
-        if rec.bodyId == id then return false end
+local function staleNearSpot(spots, z, radius)
+    if spots == nil or z == nil then return false end
+    local x, y, zz = nil, nil, nil
+    pcall(function() x, y, zz = z:getX(), z:getY(), z:getZ() end)
+    if x == nil or y == nil then return false end
+    for _, s in ipairs(spots) do
+        local e = s.e
+        if e.x ~= nil and e.y ~= nil and math.abs(zz - (e.z or 0)) < 1.0 then
+            local dx, dy = x - e.x, y - e.y
+            if math.sqrt(dx * dx + dy * dy) <= radius then return true end
+        end
     end
-    local z = findBody(id, nil)
-    if z == nil or BridgeData.foreign(z) then return false end
-    if x1 ~= nil then
-        local x, y = nil, nil
-        pcall(function() x, y = z:getX(), z:getY() end)
-        if x == nil or x < x1 or x >= x2 or y < y1 or y >= y2 then return false end
-    end
+    return false
+end
+
+local function staleRemoveBody(z, batch)
+    if z == nil then return nil end
+    local pid, oid, x, y, zz = nil, nil, nil, nil, nil
+    pcall(function()
+        pid = z:getPersistentOutfitID()
+        oid = z:getOnlineID()
+        x, y, zz = z:getX(), z:getY(), z:getZ()
+    end)
     releaseBody(z)
     pcall(function() z:removeFromSquare() end)
     pcall(function() z:removeFromWorld() end)
     BridgeServer.touched[z] = nil
-    log("stray body id=" .. tostring(id) .. " removed, reported by " .. tostring(by))
+    if pid ~= nil then
+        local out = { id = pid, oid = oid, x = x, y = y, z = zz }
+        if batch ~= nil then batch[#batch + 1] = out
+        else sendServerCommand("Bridge", "stale", out) end
+    end
+    return pid
+end
+
+local function staleLastRecord(md, pid)
+    for who, rec in pairs(md.players) do
+        if rec.bodyId == nil and rec.lastBodyId == pid then return who, rec end
+    end
+    return nil, nil
+end
+
+function BridgeServer.removeStray(id, by, x1, y1, x2, y2, oid, x, y, z)
+    if id == nil and oid == nil and x == nil then return false end
+    local md = world()
+    if id ~= nil then
+        for _, rec in pairs(md.players) do
+            if rec.bodyId == id then return false end
+        end
+    end
+    local prev, spots = BridgeData.prevIndex(md.players, BridgeData.prevNow())
+    local byId = id ~= nil and BridgeServer.hasMark(id) and issuedMap()[id] ~= nil
+    local byNote = id ~= nil and prev[id] ~= nil
+    local target = nil
+    if id ~= nil then target = findBody(id, oid) end
+    if target == nil and oid ~= nil then
+        pcall(function()
+            local list = getCell():getZombieList()
+            if list == nil then return end
+            for i = 0, list:size() - 1 do
+                local b = list:get(i)
+                local bid = nil
+                pcall(function() bid = b:getOnlineID() end)
+                if bid ~= nil and bid == oid and not b:isDead() then target = b break end
+            end
+        end)
+    end
+    if target == nil and x ~= nil and y ~= nil then
+        local best, bestD = nil, nil
+        pcall(function()
+            local list = getCell():getZombieList()
+            if list == nil then return end
+            for i = 0, list:size() - 1 do
+                local b = list:get(i)
+                local bx, by, bz = b:getX(), b:getY(), b:getZ()
+                if math.abs(bz - (z or 0)) < 1.0 then
+                    local dx, dy = bx - x, by - y
+                    local d = math.sqrt(dx * dx + dy * dy)
+                    if d <= 2 and (bestD == nil or d < bestD) then best, bestD = b, d end
+                end
+            end
+        end)
+        target = best
+    end
+    if target == nil then return false end
+    local accepted = byId or byNote or staleNearSpot(spots, target, 2)
+    if not accepted then
+        local comp = false
+        pcall(function() comp = BridgeServer.isCompanionBody(target) == true end)
+        accepted = comp
+    end
+    if not accepted and (oid ~= nil or x ~= nil) then accepted = true end
+    if not accepted then return false end
+    if BridgeData.foreign(target) then return false end
+    if x1 ~= nil then
+        local tx, ty = nil, nil
+        pcall(function() tx, ty = target:getX(), target:getY() end)
+        if tx == nil or tx < x1 or tx >= x2 or ty < y1 or ty >= y2 then return false end
+    end
+    local pid = staleRemoveBody(target)
+    log("stray body id=" .. tostring(pid or id) .. " removed, reported by " .. tostring(by))
     return true
 end
 BridgeServer.Commands.stray = function(player, args)
-    BridgeServer.removeStray(args and tonumber(args.id), player:getUsername())
+    args = args or {}
+    BridgeServer.removeStray(tonumber(args.id), player:getUsername(), nil, nil, nil, nil,
+        tonumber(args.oid), tonumber(args.x), tonumber(args.y), tonumber(args.z))
 end
 
 
@@ -4577,6 +4667,179 @@ local function guestTick()
 end
 BridgeServer.guestTick = guestTick
 
+function BridgeServer.sweepStaleBodies(reason)
+    local md = world()
+    local prev, spots = BridgeData.prevIndex(md.players, BridgeData.prevNow())
+    local removed, reclaimed = 0, 0
+    local batch = {}
+    local changed = false
+    local list = nil
+    pcall(function() list = getCell():getZombieList() end)
+    if list == nil then return 0 end
+    for i = 0, list:size() - 1 do
+        local z = list:get(i)
+        if z ~= nil then
+            local pid = nil
+            pcall(function() pid = z:getPersistentOutfitID() end)
+            if pid ~= nil then
+                local marked = BridgeServer.hasMark(pid) == true
+                local candidate = marked or (prev[pid] ~= nil and staleNearSpot(spots, z, 10))
+                if not candidate then
+                    local mdFlag = false
+                    local varBody = false
+                    pcall(function()
+                        local m = z:getModData()
+                        mdFlag = m ~= nil and m.notAloneBody == true
+                    end)
+                    if not mdFlag then
+                        pcall(function() varBody = z:getVariableBoolean("NotAloneBody") == true end)
+                    end
+                    local varSurvivor = false
+                    if not mdFlag and not varBody then
+                        pcall(function() varSurvivor = z:getVariableBoolean("SurvivorNPC") == true end)
+                    end
+                    candidate = mdFlag or varBody or varSurvivor
+                end
+                if candidate then
+                    local dead, foreign, dragged, reanim = false, false, false, false
+                    pcall(function() dead = z:isDead() == true end)
+                    pcall(function() foreign = BridgeData.foreign(z) == true end)
+                    pcall(function() dragged = BridgeData.dragged(z) == true end)
+                    pcall(function() reanim = z:isReanimatedPlayer() == true end)
+                    if not dead and not foreign and not dragged and not reanim then
+                        local who, rec = BridgeData.ownerOf(md, pid)
+                        if rec == nil then
+                            local lwho, lrec = staleLastRecord(md, pid)
+                            if lrec ~= nil then
+                                lrec.bodyId = pid
+                                lrec.onlineId = nil
+                                pcall(function() lrec.onlineId = z:getOnlineID() end)
+                                companionFlags(z)
+                                applyCarry(z, lrec)
+                                BridgeServer.touched[z] = pid
+                                BridgeServer.bodies[lwho] = z
+                                issue(pid, lwho)
+                                changed = true
+                                reclaimed = reclaimed + 1
+                            else
+                                staleRemoveBody(z, batch)
+                                removed = removed + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if #batch > 0 then sendServerCommand("Bridge", "stale", { items = batch }) end
+    if changed then transmit() end
+    if removed > 0 or reclaimed > 0 then
+        log(string.format("stale sweep %s: removed=%d reclaimed=%d", tostring(reason), removed, reclaimed))
+    end
+    return removed + reclaimed
+end
+
+function BridgeServer.restartPass()
+    local md = world()
+    local prev, spots = BridgeData.prevIndex(md.players, BridgeData.prevNow())
+    local seenBefore = BridgeServer.restartSeen or {}
+    local seenNow = {}
+    local now = nowMs()
+    local active = {}
+    for _, s in ipairs(spots) do
+        local e = s.e
+        if e.s == true then
+            local loaded = false
+            if e.x ~= nil and e.y ~= nil then
+                pcall(function() loaded = getCell():getGridSquare(math.floor(e.x), math.floor(e.y), math.floor(e.z or 0)) ~= nil end)
+            end
+            if loaded then active[#active + 1] = s end
+        end
+    end
+    local best, bestD = {}, {}
+    if #active > 0 then
+        pcall(function()
+            local list = getCell():getZombieList()
+            if list == nil then return end
+            for i = 0, list:size() - 1 do
+                local z = list:get(i)
+                if z ~= nil then
+                    local zx, zy, zz = nil, nil, nil
+                    pcall(function() zx, zy, zz = z:getX(), z:getY(), z:getZ() end)
+                    if zx ~= nil then
+                        for k, s in ipairs(active) do
+                            local e = s.e
+                            if math.abs(zz - (e.z or 0)) < 1.0 then
+                                local dx, dy = zx - e.x, zy - e.y
+                                local d = math.sqrt(dx * dx + dy * dy)
+                                if d <= 1.5 and (bestD[k] == nil or d < bestD[k]) then
+                                    best[k], bestD[k] = z, d
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    local done = 0
+    local batch = {}
+    local changed = false
+    local used = {}
+    for k, s in ipairs(active) do
+        local rec, e = s.rec, s.e
+        local found = best[k]
+        if found ~= nil and used[found] then found = nil end
+        if found ~= nil then
+            local pid, dead, foreign, dragged, reanim = nil, false, false, false, false
+            pcall(function() pid = found:getPersistentOutfitID() end)
+            pcall(function() dead = found:isDead() == true end)
+            pcall(function() foreign = BridgeData.foreign(found) == true end)
+            pcall(function() dragged = BridgeData.dragged(found) == true end)
+            pcall(function() reanim = found:isReanimatedPlayer() == true end)
+            if pid ~= nil and not dead and not foreign and not dragged and not reanim then
+                local who, own = BridgeData.ownerOf(md, pid)
+                if own ~= nil then
+                    e.s = nil
+                elseif rec.bodyId == nil and rec.lastBodyId == pid then
+                    rec.bodyId = pid
+                    rec.onlineId = nil
+                    pcall(function() rec.onlineId = found:getOnlineID() end)
+                    companionFlags(found)
+                    applyCarry(found, rec)
+                    BridgeServer.touched[found] = pid
+                    BridgeServer.bodies[s.who] = found
+                    issue(pid, s.who)
+                    changed = true
+                    done = done + 1
+                    used[found] = true
+                    e.s = nil
+                    log("restart pass: reclaimed body id=" .. tostring(pid) .. " for " .. tostring(s.who))
+                else
+                    local did = staleRemoveBody(found, batch)
+                    if did ~= nil then done = done + 1 end
+                    used[found] = true
+                    e.s = nil
+                    log("restart pass: removed body id=" .. tostring(did))
+                end
+            end
+        end
+        if e.s == true then
+            local seen = seenBefore[e] or now
+            if now - seen >= 5000 then
+                e.s = nil
+                log("restart note id=" .. tostring(e.pid) .. " expired without a body")
+            else
+                seenNow[e] = seen
+            end
+        end
+    end
+    if #batch > 0 then sendServerCommand("Bridge", "stale", { items = batch }) end
+    if changed then transmit() end
+    BridgeServer.restartSeen = seenNow
+    return done
+end
+
 local function onTick()
 
     pcall(animalFlagOff)
@@ -4667,6 +4930,13 @@ local function onTick()
         local ok, err = pcall(tickPanic, who, p, bodies)
         if not ok and BridgeServer.tick % 600 == 0 then warn("panic " .. tostring(who) .. " failed: " .. tostring(err)) end
     end
+
+    if BridgeServer.tick % 60 == 30 then
+        pcall(BridgeServer.sweepStaleBodies, "tick")
+    end
+    if BridgeServer.tick % 30 == 15 then
+        pcall(BridgeServer.restartPass)
+    end
 end
 
 local function onInit()
@@ -4684,6 +4954,10 @@ local function onInit()
 
     for who, rec in pairs(md.players) do
         n = n + 1
+        if rec.bodyId ~= nil then
+            BridgeData.notePrevBody(rec, rec.bodyId, rec.lastX, rec.lastY, rec.lastZ, true)
+            rec.lastBodyId = rec.bodyId
+        end
         rec.bodyId = nil
         rec.onlineId = nil
         rec.oldBodyId = nil
@@ -4693,6 +4967,7 @@ local function onInit()
 
         rec.oldIds = nil
     end
+    transmit()
     local ids = 0
     pcall(function() ids = #issuedStore().ids end)
     log("store ready, players=" .. tostring(n) .. ", issued body ids=" .. tostring(ids))
