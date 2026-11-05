@@ -77,6 +77,28 @@ local function trim(text)
     return text
 end
 
+local function indexLabel(title)
+    local text = tostring(title or "")
+    text = string.gsub(text, "^%s*Stay With Me%s+", "")
+    return trim(text)
+end
+
+local function indexRowH(count, availH)
+    if count == nil or count < 1 then return 24 end
+    local h = math.floor(availH / count)
+    if h > 24 then h = 24 end
+    if h < 16 then h = 16 end
+    return h
+end
+
+local function indexRule()
+    local w = textW(UIFont.Small, "_")
+    local n = 84
+    if w > 0 then n = math.floor(400 / w) end
+    if n < 1 then n = 1 end
+    return string.rep("_", n)
+end
+
 local function splitLines(text)
     local out = {}
     text = tostring(text or "")
@@ -165,7 +187,7 @@ function BridgeNews.pageTags(sec)
     end
 
     add("<RGB:1,0.84,0.47>", "<SIZE:large>", esc(sec.title), "<LINE>")
-    add("<LINE>")
+    add("<RGB:0.851,0.780,0.620>", "<SIZE:small>", indexRule(), "<LINE>")
     add("<RGB:0.90,0.88,0.84>", "<SIZE:small>")
 
     local lines = splitLines(sec.body)
@@ -277,21 +299,17 @@ BridgeNewsWindow = ISPanel:derive("BridgeNewsWindow")
 function BridgeNewsWindow:createChildren()
     ISPanel.createChildren(self)
     local PAD = BridgeNews.PAD
-    local POSTER = BridgeNews.POSTER
     local HEADER_H = BridgeNews.HEADER_H
     local FOOTER_H = BridgeNews.FOOTER_H
     local BTN_H = btnH()
 
     self.poster = BridgeNews.posterTexture()
 
-    local colX = PAD + POSTER + PAD
-    local bodyX = colX + 1 + PAD
-    local bodyY = HEADER_H + PAD
-    local bodyW = self.width - bodyX - PAD
-    local bodyH = self.height - HEADER_H - FOOTER_H - PAD * 2
-    if bodyW < 80 then bodyW = 80 end
-    if bodyH < 60 then bodyH = 60 end
-    self.colX = colX
+    self.divX = 124
+    local bodyX = 133
+    local bodyY = 48
+    local bodyW = 455
+    local bodyH = 338
 
     self.body = ISRichTextPanel:new(bodyX, bodyY, bodyW, bodyH)
     self.body:initialise()
@@ -300,7 +318,7 @@ function BridgeNewsWindow:createChildren()
     self.body.background = false
     self.body.backgroundColor = { r = 0, g = 0, b = 0, a = 0 }
     self.body.borderColor = { r = 0, g = 0, b = 0, a = 0 }
-    self.body:setMargins(4, 4, 4, 4)
+    self.body:setMargins(4, 4, 24, 4)
     self:addChild(self.body)
     self.body:addScrollBars()
 
@@ -313,38 +331,48 @@ function BridgeNewsWindow:createChildren()
     self.closeBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.closeBtn)
 
-    local gap = PAD / 2
-    local nextX = self.closeBtn:getX() - gap - BTN_H
-    local prevX = nextX - gap - BTN_H
-    self.nextBtn = ISButton:new(nextX, btnY, BTN_H, BTN_H, "", self, BridgeNewsWindow.onNext)
-    self.nextBtn:initialise()
-    self.nextBtn:instantiate()
-    self.nextBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
-    self.nextBtn.tooltip = tr("NewsNext")
-    pcall(function() self.nextBtn:setImage(getTexture("media/ui/arrow_right.png")) end)
-    self:addChild(self.nextBtn)
-
-    self.prevBtn = ISButton:new(prevX, btnY, BTN_H, BTN_H, "", self, BridgeNewsWindow.onPrev)
-    self.prevBtn:initialise()
-    self.prevBtn:instantiate()
-    self.prevBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
-    self.prevBtn.tooltip = tr("NewsPrev")
-    pcall(function() self.prevBtn:setImage(getTexture("media/ui/arrow_left.png")) end)
-    self:addChild(self.prevBtn)
+    local pages = self.pages or {}
+    local availH = self.height - HEADER_H - FOOTER_H - PAD * 2
+    local rowH = indexRowH(#pages, availH)
+    self.indexRows = {}
+    for i = 1, #pages do
+        local row = ISButton:new(PAD, HEADER_H + PAD + (i - 1) * rowH, 112, rowH,
+            indexLabel(pages[i].title), self, BridgeNewsWindow.onIndex)
+        row:initialise()
+        row:instantiate()
+        row.pageIndex = i
+        row:setFont(UIFont.Small)
+        row.titleLeft = true
+        row.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+        self:addChild(row)
+        self.indexRows[i] = row
+    end
 
     self:refresh()
 end
 
 function BridgeNewsWindow:refresh()
-    local total = #(self.pages or {})
     local sec = (self.pages ~= nil) and self.pages[self.page] or nil
     if sec ~= nil and self.body ~= nil then
         self.body.text = BridgeNews.pageTags(sec)
         self.body:paginate()
         pcall(function() self.body:setYScroll(0) end)
     end
-    if self.prevBtn ~= nil then self.prevBtn:setEnable(self.page > 1) end
-    if self.nextBtn ~= nil then self.nextBtn:setEnable(self.page < total) end
+    if self.indexRows ~= nil then
+        for i = 1, #self.indexRows do
+            local row = self.indexRows[i]
+            if i == self.page then
+                row.background = true
+                row.backgroundColor = { r = 1.0, g = 0.839, b = 0.471, a = 0.14 }
+                row.borderColor = { r = 1.0, g = 0.839, b = 0.471, a = 0.55 }
+                row.textColor = { r = 1.0, g = 0.839, b = 0.471, a = 1 }
+            else
+                row.background = false
+                row.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+                row.textColor = { r = 0.90, g = 0.878, b = 0.839, a = 1 }
+            end
+        end
+    end
 end
 
 function BridgeNewsWindow:setPage(n)
@@ -356,8 +384,7 @@ function BridgeNewsWindow:setPage(n)
     self:refresh()
 end
 
-function BridgeNewsWindow:onPrev() self:setPage(self.page - 1) end
-function BridgeNewsWindow:onNext() self:setPage(self.page + 1) end
+function BridgeNewsWindow:onIndex(row) self:setPage(row.pageIndex) end
 function BridgeNewsWindow:onClose() self:close() end
 
 function BridgeNewsWindow:isKeyConsumed(key)
@@ -373,7 +400,6 @@ end
 function BridgeNewsWindow:prerender()
     ISPanel.prerender(self)
     local PAD = BridgeNews.PAD
-    local POSTER = BridgeNews.POSTER
     local HEADER_H = BridgeNews.HEADER_H
     local FOOTER_H = BridgeNews.FOOTER_H
     local fontS = getTextManager():getFontHeight(UIFont.Small)
@@ -381,31 +407,22 @@ function BridgeNewsWindow:prerender()
 
     self:drawRect(0, 0, self.width, HEADER_H, 1, C_HEADER.r, C_HEADER.g, C_HEADER.b)
     self:drawRect(0, HEADER_H - 1, self.width, 1, 1, C_BORDER.r, C_BORDER.g, C_BORDER.b)
-    local title = fitText(UIFont.Medium, tr("NewsTitle"), self.width - PAD * 2)
+    local title = fitText(UIFont.Medium, tr("NewsTitle"), self.width - PAD * 2 - 32)
     self:drawText(title, PAD, (HEADER_H - fontM) / 2, C_TITLE.r, C_TITLE.g, C_TITLE.b, 1, UIFont.Medium)
 
-    local px, py = PAD, HEADER_H + PAD
-    self:drawRect(px - 3, py - 3, POSTER + 6, POSTER + 6, 1, C_FRAME.r, C_FRAME.g, C_FRAME.b)
     if self.poster ~= nil then
-        self:drawTextureScaledAspect(self.poster, px, py, POSTER, POSTER, 1, 1, 1, 1)
-    else
-        self:drawRect(px, py, POSTER, POSTER, 1, 0.10, 0.08, 0.06)
+        self:drawTextureScaledAspect(self.poster, self.width - PAD - 24, (HEADER_H - 24) / 2, 24, 24, 1, 1, 1, 1)
     end
-    self:drawRect(px - 2, py - 9, 30, 11, 0.5, 0.92, 0.92, 0.86)
-    self:drawRect(px + POSTER - 28, py - 9, 30, 11, 0.5, 0.92, 0.92, 0.86)
 
-    self:drawRect(self.colX, HEADER_H + PAD, 1, self.height - HEADER_H - FOOTER_H - PAD * 2,
+    self:drawRect(self.divX, HEADER_H + PAD, 1, self.height - HEADER_H - FOOTER_H - PAD * 2,
         0.4, C_FRAME.r, C_FRAME.g, C_FRAME.b)
 
-    local vY = py + POSTER + PAD
-    self:drawText(tr("NewsVersion", BridgeNews.version()), PAD, vY,
+    self:drawText(tr("NewsVersion", BridgeNews.version()), PAD,
+        self.height - FOOTER_H - PAD - fontS,
         C_BODY.r, C_BODY.g, C_BODY.b, 1, UIFont.Small)
-    local total = #(self.pages or {})
-    self:drawText(tr("NewsPage", tostring(self.page), tostring(total)), PAD, vY + fontS + 2,
-        C_TITLE.r, C_TITLE.g, C_TITLE.b, 1, UIFont.Small)
 
     self:drawRect(0, self.height - FOOTER_H, self.width, 1, 0.4, C_BORDER.r, C_BORDER.g, C_BORDER.b)
-    local note = fitText(UIFont.Small, tr("NewsFooter"), self.width - PAD * 2 - 190)
+    local note = fitText(UIFont.Small, tr("NewsFooter"), self.width - PAD * 2 - 80)
     self:drawText(note, PAD, self.height - FOOTER_H + (FOOTER_H - fontS) / 2,
         C_BODY.r, C_BODY.g, C_BODY.b, 0.85, UIFont.Small)
 end

@@ -1304,8 +1304,26 @@ do
     BridgeEFZCompat = BridgeEFZCompat or {}
     local installed = false
     local reported = false
+    local efzOn = nil
+
+    local function efzActive()
+        if efzOn ~= nil then return efzOn end
+        if getActivatedMods == nil then return false end
+        local ok, on = pcall(function()
+            local mods = getActivatedMods()
+            if mods == nil then return nil end
+            return mods:contains("EscapeFromZomboidFirearms")
+                or mods:contains("\\EscapeFromZomboidFirearms")
+                or mods:contains("EscapeFromZomboidFirearmsServer")
+                or mods:contains("\\EscapeFromZomboidFirearmsServer")
+        end)
+        if not ok or on == nil then return false end
+        efzOn = on == true
+        return efzOn
+    end
 
     local function patch(body)
+        if not efzActive() then return false end
         if installed or body == nil then return installed end
         local zombie = false
         pcall(function() zombie = instanceof(body, "IsoZombie") == true end)
@@ -1379,6 +1397,7 @@ do
     end
 
     local function gripUpdate()
+        if not efzActive() then gripOff() return end
         local zb = rawget(_G, "TWZB")
         local body = Bridge ~= nil and Bridge.body or nil
         if body == nil or Bridge == nil or Bridge.kind ~= "zombie" or zb == nil or type(zb.gripIK) ~= "function" then

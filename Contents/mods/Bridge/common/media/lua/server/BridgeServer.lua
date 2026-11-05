@@ -431,12 +431,26 @@ BridgeServer.Commands = {}
 
 
 
+local function companionOutfit()
+    local on = false
+    pcall(function()
+        local mods = getActivatedMods()
+        on = mods ~= nil and (mods:contains("Bandits2") or mods:contains("\\Bandits2")
+            or mods:contains("Bandits") or mods:contains("\\Bandits"))
+    end)
+    if not on then
+        pcall(function() on = type(GetBanditClusterData) == "function" end)
+    end
+    return on and "Bedroom" or "Naked"
+end
+
 local function createBody(x, y, z, female)
     local body, failed = nil, nil
     local chance = (female == false) and 0 or 100
+    local outfit = companionOutfit()
     for attempt = 1, 8 do
         BridgeServer.creating = true
-        local okSpawn, list = pcall(addZombiesInOutfit, x, y, z, 1, "Naked", chance, false, false, false, false, false, false, 1)
+        local okSpawn, list = pcall(addZombiesInOutfit, x, y, z, 1, outfit, chance, false, false, false, false, false, false, 1)
         BridgeServer.creating = false
         if not okSpawn then return nil, "addZombiesInOutfit failed: " .. tostring(list) end
         if list == nil or list:size() == 0 then return nil, "addZombiesInOutfit returned nothing" end
