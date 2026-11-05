@@ -1496,7 +1496,8 @@ function BridgeGunRules.breakGlassOnLine(cell, x1, y1, z1, x2, y2, z2)
     local broken = 0
     local seen = {}
     local function smash(w)
-        if w == nil or seen[w] then return end
+        if w == nil or not instanceof(w, "IsoWindow") then return end
+        if seen[w] then return end
         seen[w] = true
         local skip = false
         pcall(function()

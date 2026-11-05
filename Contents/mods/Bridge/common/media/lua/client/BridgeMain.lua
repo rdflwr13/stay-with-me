@@ -59,6 +59,7 @@ Bridge.result = "loaded"
 Bridge.skipped = false
 Bridge.zombieTicks = 0
 Bridge.idleSince = 0
+Bridge.armedIdleSince = 0
 Bridge.checked = setmetatable({}, { __mode = "k" })
 Bridge.stash = nil
 Bridge.stashAt = 0
@@ -75,6 +76,7 @@ Bridge.engineAcc = 0
 Bridge.engineWalk = 0
 Bridge.holdPos = nil
 Bridge.nextIdleAnim = 0
+Bridge.nextArmedIdleAnim = 0
 Bridge.scareStopped = 0
 Bridge.hiddenSince = nil
 Bridge.speakGraceUntil = 0
@@ -184,6 +186,9 @@ local VOICE_EVERY = 10
 local FOLLOW_DIST = 2.5
 local BODY_VAR = "NotAloneBody"
 Bridge.BODY_VAR = BODY_VAR
+local ITEMS_DIRTY_DEBOUNCE = 20
+local STALE_SWEEP_FALLBACK = 3600
+local MARKED_SCAN_EVERY = 15
 
 Bridge.bodyVarCache = Bridge.bodyVarCache or setmetatable({}, { __mode = "k" })
 Bridge.outfitCache = Bridge.outfitCache or setmetatable({}, { __mode = "k" })
@@ -209,6 +214,7 @@ end
 
 function Bridge.itemsChanged()
     Bridge.itemsDirty = true
+    Bridge.itemsDirtyAt = Bridge.time
     if BridgeBackup ~= nil then
         BridgeBackup.counter = (tonumber(BridgeBackup.counter) or 0) + 1
     end
@@ -874,6 +880,17 @@ function Bridge.initStore()
         Bridge.world = md
         if not Bridge.mp then Bridge.gotData = true end
         Bridge.refreshStore()
+        if not Bridge.mp and not Bridge.staleLoaded and Bridge.store ~= nil then
+            Bridge.staleLoaded = true
+            local st = Bridge.store
+            if st.bodyId ~= nil then
+                BridgeData.notePrevBody(st, st.bodyId, st.lastBodyX, st.lastBodyY, st.lastBodyZ, true)
+                st.lastBodyId = st.bodyId
+                st.bodyId, st.onlineId = nil, nil
+            end
+            Bridge.sweepStaleBodies("load")
+            Bridge.restartPass()
+        end
         log("store ready, mp=" .. tostring(Bridge.mp))
     else
         warn("store failed: " .. tostring(md))
@@ -1451,6 +1468,9 @@ end
 
 
 function Bridge.isCompanion(z)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(z) then
+        return false
+    end
     local yes = false
     pcall(function()
         if z:getVariableBoolean(BODY_VAR) then yes = true return end
@@ -1855,6 +1875,13 @@ function Bridge.spawnZombie(px, py, pz)
         return "spawn zombie failed: " .. tostring(failed or err)
     end
 
+    if Bridge.store ~= nil then
+        pcall(function()
+            Bridge.store.bodyId = Bridge.body:getPersistentOutfitID()
+            Bridge.store.onlineId = nil
+        end)
+    end
+
     local okDress, dressRes = pcall(function() return dress(Bridge.body) end)
     if not okDress then dressRes = "dress failed: " .. tostring(dressRes) end
     if okDress and type(Bridge.store) == "table" then
@@ -1943,6 +1970,7 @@ function Bridge.despawn(skipSave)
             log("own body object removed on client")
         end
         Bridge.body = nil
+        Bridge.staleSweepWanted = true
         Bridge.kind = nil
         Bridge.hiddenSince = nil
         Bridge.holdPos = nil
@@ -1989,11 +2017,20 @@ function Bridge.despawn(skipSave)
         end
         pcall(function() if dying:getVehicle() ~= nil then BridgeMove.exitCar(dying) end end)
 
+        if Bridge.store ~= nil and Bridge.kind == "zombie" then
+            pcall(function()
+                BridgeData.notePrevBody(Bridge.store, dying:getPersistentOutfitID(),
+                    dying:getX(), dying:getY(), dying:getZ(), false)
+            end)
+        end
+
         Bridge.unhumanize(dying)
         dying:removeFromSquare()
         dying:removeFromWorld()
     end)
+    if Bridge.store ~= nil then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end
     Bridge.body = nil
+    Bridge.staleSweepWanted = true
     Bridge.kind = nil
     Bridge.hiddenSince = nil
     Bridge.holdPos = nil
@@ -2089,7 +2126,9 @@ function Bridge.bodyGone()
     pcall(function() Bridge.restoreRed() end)
 
     pcall(function() Bridge.unhumanize(gone, true) end)
+    if Bridge.store ~= nil then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end
     Bridge.body = nil
+    Bridge.staleSweepWanted = true
     Bridge.kind = nil
     Bridge.hiddenSince = nil
     Bridge.holdPos = nil
@@ -3474,7 +3513,10 @@ function Bridge.corpseSweep()
                 for i = (list and list:size() or 0) - 1, 0, -1 do
                     local c = list:get(i)
                     local hers = false
+                    local puppet = BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.isCorpse) == "function"
+                        and BridgeSeatPuppet.isCorpse(c)
                     pcall(function()
+                        if puppet then return end
                         local skin = nil
                         pcall(function() skin = c:getHumanVisual():getSkinTexture() end)
 
@@ -3509,6 +3551,7 @@ end
 
 
 function Bridge.onZombieDead(zombie)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(zombie) then return end
     local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY_VAR) end)
     if not ok or not isBody or reusedBody(zombie) then return end
 
@@ -3579,6 +3622,7 @@ function Bridge.onZombieDead(zombie)
     Bridge.restoreRed()
     pcall(function() BridgeHeal.stop("body died") end)
     pcall(function() BridgeWash.stop("body died") end)
+    if Bridge.store ~= nil and not Bridge.mp then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end
     Bridge.body = nil
     Bridge.kind = nil
     Bridge.hiddenSince = nil
@@ -3642,6 +3686,7 @@ function Bridge.failSafeRespawn(why)
     if body ~= nil and BridgeBandits ~= nil then
         pcall(function() BridgeBandits.forgetCorpse(body:getX(), body:getY(), body:getZ()) end)
     end
+    if Bridge.store ~= nil and not Bridge.mp then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end
     Bridge.body = nil
     Bridge.kind = nil
     Bridge.hiddenSince = nil
@@ -3741,7 +3786,9 @@ for _, n in ipairs({ "BandageHead", "BandageLeftArm", "BandageLeftLeg", "Bandage
     "EmoteShrug", "EmoteThankYou", "EmoteUndecided", "EmoteWaveHi", "EmoteYes", "PainHead", "PullAtCollar",
     "ShiftWeight", "TreatHigh", "TreatLow", "TreatMid", "WeaponAttachBack", "WeaponAttachBeltLeft",
     "WeaponAttachBeltRight", "WeaponDetachBack", "WeaponDetachBeltLeft", "WeaponDetachBeltRight", "WipeBrow",
-    "WipeHead", "WindowOpen" }) do LOOK_ONCE[n] = true end
+    "WipeHead", "WindowOpen", "IdleExt01_1H", "IdleExt02_1H", "IdleExt03_1H", "IdleExt01_2H", "IdleExt02_2H",
+    "IdleExt03_2H", "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun", "IdleExt01_Rifle",
+    "IdleExt02_Rifle", "IdleExt03_Rifle" }) do LOOK_ONCE[n] = true end
 function Bridge.isLookOnce(name) return type(name) == "string" and LOOK_ONCE[name] == true end
 
 
@@ -3819,6 +3866,68 @@ end
 local function snapshotBody(body)
     return BridgeInventory.snapshot(body)
 end
+
+local ARMED_STILL = 1500
+local ARMED_CALM = 1800
+local ARMED_COOLDOWN = 3600
+local ARMED_COOLDOWN_RAND = 3600
+
+local ARMED_IDLE = {
+    ["1h"] = { "IdleExt01_1H", "IdleExt02_1H", "IdleExt03_1H" },
+    ["2h"] = { "IdleExt01_2H", "IdleExt02_2H", "IdleExt03_2H" },
+    handgun = { "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun" },
+    rifle = { "IdleExt01_Rifle", "IdleExt02_Rifle", "IdleExt03_Rifle" },
+}
+
+local function armedIdleBlocked(body, red)
+    if Bridge.pose ~= nil then return true end
+    if BridgeMove.pathing or BridgeMove.moving or BridgeMove.steering or BridgeMove.redMoving then return true end
+    if BridgeTask ~= nil and BridgeTask.active == true then return true end
+    if BridgeHeal ~= nil and (BridgeHeal.active == true or BridgeHeal.current ~= nil) then return true end
+    if BridgeWash ~= nil and BridgeWash.state ~= "idle" then return true end
+    if BridgeInventory ~= nil and BridgeInventory.gestures ~= nil and BridgeInventory.gestures[1] ~= nil then return true end
+    if BridgeCar ~= nil and BridgeCar.state ~= "idle" then return true end
+    if BridgeFastForward ~= nil and BridgeFastForward.active() then return true end
+    if BridgeWeapon.move ~= nil or BridgeWeapon.busy() then return true end
+    if BridgeFight ~= nil and (BridgeFight.state ~= "idle" or BridgeFight.target ~= nil) then return true end
+    if BridgeGunfight ~= nil then
+        if BridgeGunfight.state ~= "idle" or BridgeGunfight.reloadStage ~= nil
+            or BridgeGunfight.magCareStage ~= nil or BridgeGunfight.ammoItem ~= nil
+            or BridgeGunfight.pendingShot ~= nil or Bridge.time < (BridgeGunfight.fireUntil or 0) then
+            return true
+        end
+    end
+    if red ~= nil then
+        local aiming, attacking, car = false, false, nil
+        pcall(function() aiming = red:isAiming() == true end)
+        pcall(function() attacking = red:isAttacking() == true end)
+        pcall(function() car = red:getVehicle() end)
+        if aiming or attacking or car ~= nil then return true end
+    end
+    local car = nil
+    pcall(function() car = body:getVehicle() end)
+    if car ~= nil then return true end
+    return false
+end
+
+local function armedIdleReady(body, kind)
+    local red = BridgeData.owner()
+    local now = Bridge.time
+    local lastCombat = math.max(BridgeWeapon.lastFight or -1e9,
+        BridgeFight ~= nil and BridgeFight.playerFightUntil or 0)
+    if now - lastCombat < ARMED_CALM then
+        Bridge.armedIdleSince = now
+        return false
+    end
+    if armedIdleBlocked(body, red) then
+        Bridge.armedIdleSince = now
+        return false
+    end
+    if now - (Bridge.armedIdleSince or now) < ARMED_STILL then return false end
+    if now < (Bridge.nextArmedIdleAnim or 0) then return false end
+    return true
+end
+Bridge.armedIdleReady = armedIdleReady
 
 local function updateZombieBody(body)
     if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
@@ -3986,7 +4095,9 @@ local function updateZombieBody(body)
 
 
 
-    if Bridge.zombieTicks % 30 == 15 or Bridge.itemsDirty == true then
+    local itemsDirtyDue = Bridge.itemsDirty == true
+        and (Bridge.time - (Bridge.itemsDirtyAt or 0)) >= ITEMS_DIRTY_DEBOUNCE
+    if Bridge.zombieTicks % 30 == 15 or itemsDirtyDue then
         local ok, now = pcall(function() return BridgeInventory.wornList(body) end)
 
 
@@ -4027,8 +4138,9 @@ local function updateZombieBody(body)
             transferSnap = true
         end
         local okSnap, list = nil, nil
-        if snapshotDue or transferSnap or Bridge.itemsDirty == true then
+        if snapshotDue or transferSnap or itemsDirtyDue then
             Bridge.itemsDirty = nil
+            Bridge.itemsDirtyAt = nil
             okSnap, list = pcall(snapshotBody, body)
         end
         local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
@@ -4535,19 +4647,44 @@ local function updateZombieBody(body)
 
 
 
-    if BridgeMove.pathing or BridgeMove.moving or BridgeMove.steering or BridgeMove.redMoving then
+    local moving = BridgeMove.pathing or BridgeMove.moving or BridgeMove.steering or BridgeMove.redMoving
+    if moving then
         Bridge.idleSince = Bridge.time
-    elseif Bridge.pose == nil and (asn == "idle" or bump == "Stand") and (Bridge.time - Bridge.idleSince) > 600
-        and Bridge.time >= Bridge.nextIdleAnim
+        Bridge.armedIdleSince = Bridge.time
+    end
 
-        and not (BridgeFastForward ~= nil and BridgeFastForward.active()) then
-        local out = false
-        pcall(function() out = BridgeWeapon.isOut(body) end)
-        if not out then
-            local anims = { "ShiftWeight", "ChewNails", "WipeBrow", "PullAtCollar", "WipeHead" }
-            pcall(function() body:setBumpType(anims[1 + ZombRand(#anims)]) end)
+    local kind = "none"
+    pcall(function() kind = BridgeWeapon.idleKind(body) end)
+    local idleReady = Bridge.pose == nil and (asn == "idle" or bump == "Stand")
+        and not (BridgeFastForward ~= nil and BridgeFastForward.active())
+
+    if not moving and idleReady then
+        if (Bridge.time - Bridge.idleSince) > 600 and Bridge.time >= Bridge.nextIdleAnim then
+            if kind == "none" then
+                local out = false
+                pcall(function() out = BridgeWeapon.isOut(body) end)
+                if not out then
+                    local anims = { "ShiftWeight", "ChewNails", "WipeBrow", "PullAtCollar", "WipeHead" }
+                    local pick = anims[1 + ZombRand(#anims)]
+                    pcall(function() body:setBumpType(pick) end)
+                    log(string.format("idle start %s kind=none t=%d", pick, Bridge.tick))
+                end
+            end
+            Bridge.nextIdleAnim = Bridge.time + 900 + ZombRand(900)
         end
-        Bridge.nextIdleAnim = Bridge.time + 900 + ZombRand(900)
+        if kind == "none" then
+            Bridge.armedIdleSince = Bridge.time
+        elseif armedIdleReady(body, kind) then
+            local pool = ARMED_IDLE[kind]
+            if pool ~= nil then
+                local pick = pool[1 + ZombRand(#pool)]
+                pcall(function() body:setBumpType(pick) end)
+                log(string.format("idle start %s kind=%s t=%d", pick, tostring(kind), Bridge.tick))
+                Bridge.nextArmedIdleAnim = Bridge.time + ARMED_COOLDOWN + ZombRand(ARMED_COOLDOWN_RAND)
+            end
+        end
+    elseif not moving then
+        Bridge.armedIdleSince = Bridge.time
     end
 
     if Bridge.mode ~= "follow" and Bridge.target == nil then
@@ -4976,6 +5113,10 @@ function Bridge.strayCheck(z, pid, oid)
         log("stale companion body id=" .. tostring(pid) .. " arrived late, removed")
         return true
     end
+    pcall(function() z:setUseless(true) end)
+    pcall(function() z:setNoTeeth(true) end)
+    pcall(function() z:setTarget(nil) end)
+    pcall(function() z:clearAggroList() end)
     Bridge.hideBody(z, true)
     local s = Bridge.strays[z]
     if s == nil or s.pid ~= pid then
@@ -5053,6 +5194,7 @@ function Bridge.watchGuest(z, who, remote)
 end
 
 function Bridge.onZombieUpdate(zombie)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(zombie) then return end
     local ok, isBody = pcall(zombieBodyVar, zombie)
     if not ok then return end
 
@@ -5066,7 +5208,11 @@ function Bridge.onZombieUpdate(zombie)
     if reusedBody(zombie) then
 
         release(zombie)
-        if Bridge.body == zombie then Bridge.body = nil Bridge.kind = nil end
+        if Bridge.body == zombie then
+            Bridge.body = nil
+            Bridge.kind = nil
+            if Bridge.store ~= nil and not Bridge.mp then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end
+        end
         Bridge.seen[zombie] = nil
         Bridge.looks[zombie] = nil
         Bridge.guestWatch[zombie] = nil
@@ -5153,9 +5299,7 @@ function Bridge.onZombieUpdate(zombie)
         return
     end
     if not isBody then
-
-
-
+        if Bridge.body ~= nil and (Bridge.tick % MARKED_SCAN_EVERY) ~= 0 then return end
         local okPid, pid = pcall(zombieOutfitId, zombie)
         if not okPid then pid = nil end
         if Bridge.checked[zombie] == pid then return end
@@ -5246,7 +5390,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     friendselftest = true, knoxselftest = true, theodoreselftest = true, light = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true, meet = true,
-    perf = true, gunstate = true }
+    perf = true, gunstate = true, loscombatselftest = true }
 
 
 
@@ -5967,6 +6111,11 @@ function Bridge.run(line)
         return BridgeBandits.selftest()
     end
 
+    if cmd == "loscombatselftest" then
+        if BridgeLOSCombat == nil then return "BridgeLOSCombat not loaded" end
+        return BridgeLOSCombat.selftest()
+    end
+
     if cmd == "ffselftest" then
         if BridgeFastForward == nil then return "fastforward not loaded" end
         return BridgeFastForward.selftest()
@@ -6581,6 +6730,18 @@ function Bridge.diagLines()
 
         pcall(function() add("car", BridgeCar.describe() .. (Bridge.store and Bridge.store.left and " left=1" or "")) end)
 
+        if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.diagLine) == "function" then
+            pcall(function() add("seat_puppet", BridgeSeatPuppet.diagLine()) end)
+        end
+        if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.offsetLines) == "function" then
+            pcall(function()
+                local list = BridgeSeatPuppet.offsetLines()
+                if type(list) == "table" then
+                    for _, l in ipairs(list) do lines[#lines + 1] = tostring(l) end
+                end
+            end)
+        end
+
         add("outfit_guard", string.format("redressed=%d dressed_worn=%s", Bridge.engineRedress or 0, tostring(Bridge.dressedWorn)))
 
         local red = BridgeData.owner()
@@ -7003,20 +7164,221 @@ local LOST_RETRY = { 180, 300, 600 }
 
 
 
-function Bridge.dropStale(id)
-    local n = 0
-    if id == nil then return 0 end
+local function staleNear(spots, z, radius)
+    if spots == nil or z == nil then return false end
+    local x, y, zz = nil, nil, nil
+    pcall(function() x, y, zz = z:getX(), z:getY(), z:getZ() end)
+    if x == nil or y == nil then return false end
+    for _, s in ipairs(spots) do
+        local e = s.e
+        if e.x ~= nil and e.y ~= nil and math.abs(zz - (e.z or 0)) < 1.0 then
+            local dx, dy = x - e.x, y - e.y
+            if math.sqrt(dx * dx + dy * dy) <= radius then return true end
+        end
+    end
+    return false
+end
+
+local function staleRemove(z)
+    if z == nil then return false end
+    pcall(function() Bridge.unhumanize(z, true) end)
+    pcall(function() z:removeFromSquare() end)
+    pcall(function() z:removeFromWorld() end)
+    return true
+end
+
+function Bridge.sweepStaleBodies(reason)
+    if Bridge.mp then return 0 end
+    local prev, spots = {}, {}
     pcall(function()
-        local list = getCell():getZombieList()
-        local found = {}
+        prev, spots = BridgeData.prevIndex(Bridge.world and Bridge.world.players, BridgeData.prevNow())
+    end)
+    local n = 0
+    pcall(function()
+        local cell = getCell()
+        if cell == nil then return end
+        local list = cell:getZombieList()
+        if list == nil then return end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and z ~= Bridge.body and z:getPersistentOutfitID() == id then found[#found + 1] = z end
+            if z ~= nil and z ~= Bridge.body then
+                local pid = zombieOutfitId(z)
+                if pid ~= nil then
+                    local marked = BridgeRemnant ~= nil and BridgeRemnant.hasMark(pid) == true
+                    local candidate = marked or (prev[pid] ~= nil and staleNear(spots, z, 10))
+                    if not candidate then
+                        local mdFlag = false
+                        local varBody = zombieBodyVar(z) == true
+                        if not varBody then
+                            pcall(function()
+                                local md = z:getModData()
+                                mdFlag = md ~= nil and md.notAloneBody == true
+                            end)
+                        end
+                        local varSurvivor = false
+                        if not mdFlag and not varBody then
+                            pcall(function() varSurvivor = z:getVariableBoolean("SurvivorNPC") == true end)
+                        end
+                        candidate = mdFlag or varBody or varSurvivor
+                    end
+                    if candidate then
+                        local bx, by, bz = 0, 0, 0
+                        pcall(function() bx, by, bz = z:getX(), z:getY(), z:getZ() end)
+                        local dead, foreign, dragged, reanim = false, false, false, false
+                        pcall(function() dead = z:isDead() == true end)
+                        pcall(function() foreign = BridgeData.foreign(z) == true end)
+                        pcall(function() dragged = BridgeData.dragged(z) == true end)
+                        pcall(function() reanim = z:isReanimatedPlayer() == true end)
+                        if not dead and not foreign and not dragged and not reanim then
+                            if staleRemove(z) then
+                                n = n + 1
+                                if n == 1 then
+                                    log(string.format("stale sweep %s: first body id=%s at %.1f %.1f %.0f",
+                                        tostring(reason), tostring(pid), bx, by, bz))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
         end
-        for _, z in ipairs(found) do
-            pcall(function() Bridge.unhumanize(z, true) end)
-            pcall(function() z:removeFromSquare() end)
-            pcall(function() z:removeFromWorld() end)
+    end)
+    return n
+end
+
+function Bridge.restartPass()
+    if Bridge.mp then return 0 end
+    local prev, spots = {}, {}
+    pcall(function()
+        prev, spots = BridgeData.prevIndex(Bridge.world and Bridge.world.players, BridgeData.prevNow())
+    end)
+    local seenBefore = Bridge.restartSeen or {}
+    local seenNow = {}
+    local active = {}
+    for _, s in ipairs(spots) do
+        local e = s.e
+        if e.s == true then
+            local loaded = false
+            if e.x ~= nil and e.y ~= nil then
+                pcall(function()
+                    local cell = getCell()
+                    if cell ~= nil then
+                        loaded = cell:getGridSquare(math.floor(e.x), math.floor(e.y), math.floor(e.z or 0)) ~= nil
+                    end
+                end)
+            end
+            if loaded then active[#active + 1] = e end
+        end
+    end
+    local best, bestD = {}, {}
+    if #active > 0 then
+        pcall(function()
+            local cell = getCell()
+            if cell == nil then return end
+            local list = cell:getZombieList()
+            if list == nil then return end
+            for i = 0, list:size() - 1 do
+                local z = list:get(i)
+                if z ~= nil and z ~= Bridge.body then
+                    local zx, zy, zz = nil, nil, nil
+                    pcall(function() zx, zy, zz = z:getX(), z:getY(), z:getZ() end)
+                    if zx ~= nil then
+                        for k, e in ipairs(active) do
+                            if math.abs(zz - (e.z or 0)) < 1.0 then
+                                local dx, dy = zx - e.x, zy - e.y
+                                local d = math.sqrt(dx * dx + dy * dy)
+                                if d <= 1.5 and (bestD[k] == nil or d < bestD[k]) then
+                                    best[k], bestD[k] = z, d
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    local n = 0
+    local used = {}
+    for k, e in ipairs(active) do
+        local found = best[k]
+        if found ~= nil and used[found] then found = nil end
+        if found ~= nil then
+            local dead, foreign, dragged, reanim = false, false, false, false
+            pcall(function() dead = found:isDead() == true end)
+            pcall(function() foreign = BridgeData.foreign(found) == true end)
+            pcall(function() dragged = BridgeData.dragged(found) == true end)
+            pcall(function() reanim = found:isReanimatedPlayer() == true end)
+            if not dead and not foreign and not dragged and not reanim then
+                local bx, by, bz = 0, 0, 0
+                pcall(function() bx, by, bz = found:getX(), found:getY(), found:getZ() end)
+                if staleRemove(found) then
+                    n = n + 1
+                    used[found] = true
+                    e.s = nil
+                    log(string.format("restart pass: removed body id=%s at %.1f %.1f %.0f",
+                        tostring(e.pid), bx, by, bz))
+                end
+            end
+        end
+        if e.s == true then
+            local seen = seenBefore[e] or Bridge.time
+            if Bridge.time - seen >= 300 then
+                e.s = nil
+                log("restart note id=" .. tostring(e.pid) .. " expired without a body")
+            else
+                seenNow[e] = seen
+            end
+        end
+    end
+    Bridge.restartSeen = seenNow
+    return n
+end
+
+function Bridge.dropStale(id, oid, x, y, z)
+    local n = 0
+    if id == nil and oid == nil and x == nil then return 0 end
+    pcall(function()
+        local list = getCell():getZombieList()
+        if list == nil then return end
+        local byId, byOid = {}, {}
+        local best, bestD = nil, nil
+        for i = 0, list:size() - 1 do
+            local b = list:get(i)
+            if b ~= nil and b ~= Bridge.body then
+                local bid = nil
+                pcall(function() bid = b:getPersistentOutfitID() end)
+                if id ~= nil and bid == id then
+                    byId[#byId + 1] = b
+                else
+                    local oidMatch = false
+                    if oid ~= nil then
+                        local boid = nil
+                        pcall(function() boid = b:getOnlineID() end)
+                        oidMatch = boid ~= nil and boid == oid
+                        if oidMatch then byOid[#byOid + 1] = b end
+                    end
+                    if not oidMatch and x ~= nil and y ~= nil and z ~= nil then
+                        local bx, by, bz = b:getX(), b:getY(), b:getZ()
+                        if math.abs(bz - z) < 1.0 then
+                            local dx, dy = bx - x, by - y
+                            local d = math.sqrt(dx * dx + dy * dy)
+                            if d <= 2 and (bestD == nil or d < bestD) then best, bestD = b, d end
+                        end
+                    end
+                end
+            end
+        end
+        local found = byId
+        if #found == 0 then found = byOid end
+        if #found == 0 and best ~= nil then found = { best } end
+        for _, b in ipairs(found) do
+            pcall(function() b:setUseless(true) end)
+            pcall(function() b:setNoTeeth(true) end)
+            pcall(function() b:setTarget(nil) end)
+            pcall(function() b:clearAggroList() end)
+            pcall(function() Bridge.unhumanize(b, true) end)
+            pcall(function() b:removeFromSquare() end)
+            pcall(function() b:removeFromWorld() end)
             n = n + 1
         end
     end)
@@ -7602,6 +7964,10 @@ local function carTick()
     if BridgeCar == nil then return end
     local ok, err = pcall(BridgeCar.tick)
     if not ok and Bridge.every(600) then warn("car tick failed: " .. tostring(err)) end
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.tick) == "function" then
+        local okP, errP = pcall(BridgeSeatPuppet.tick)
+        if not okP and Bridge.every(600) then warn("seat puppet tick failed: " .. tostring(errP)) end
+    end
 end
 
 local function driveTick()
@@ -7961,6 +8327,27 @@ function Bridge.onTick()
         if Bridge.every(WRITE_EVERY) then Bridge.writeState() end
     end
 
+    if not Bridge.mp then
+        if Bridge.alive() and Bridge.kind == "zombie" and Bridge.store ~= nil
+                and Bridge.time >= (Bridge.lastBodyAt or 0) then
+            Bridge.lastBodyAt = Bridge.time + 60
+            pcall(function()
+                Bridge.store.lastBodyX = Bridge.body:getX()
+                Bridge.store.lastBodyY = Bridge.body:getY()
+                Bridge.store.lastBodyZ = Bridge.body:getZ()
+            end)
+        end
+        if Bridge.staleSweepWanted == true or Bridge.time >= (Bridge.staleSweepAt or 0) then
+            Bridge.staleSweepWanted = nil
+            Bridge.staleSweepAt = Bridge.time + STALE_SWEEP_FALLBACK
+            pcall(Bridge.sweepStaleBodies, "tick")
+        end
+        if Bridge.time >= (Bridge.staleRestartAt or 0) then
+            Bridge.staleRestartAt = Bridge.time + 30
+            pcall(Bridge.restartPass)
+        end
+    end
+
     if Bridge.kind == "player" and Bridge.alive() then
         updatePlayerBody()
     end
@@ -7989,7 +8376,15 @@ function Bridge.onSave()
                      follow = Bridge.follow, pose = Bridge.pose, fight = BridgeFight.enabled,
                      guardOnly = BridgeFight.guardOnly, target = Bridge.target, gender = BridgeData.genderOf(Bridge.store) }
     Bridge.stashAt = Bridge.time
+    if Bridge.store ~= nil then
+        pcall(function()
+            Bridge.store.lastBodyX = Bridge.body:getX()
+            Bridge.store.lastBodyY = Bridge.body:getY()
+            Bridge.store.lastBodyZ = Bridge.body:getZ()
+        end)
+    end
     Bridge.despawn()
+    if Bridge.store ~= nil then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end
     Bridge.result = "body hidden for save"
     log("body hidden for save")
 end
@@ -8061,7 +8456,8 @@ function Bridge.claimBlockers(square, playerObj)
         local list = getCell():getZombieList()
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and inside(z) then
+            if z ~= nil and inside(z) and not (BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function"
+                    and BridgeSeatPuppet.is(z)) then
                 local own = z == Bridge.body
                 if not own and Bridge.store ~= nil and Bridge.store.bodyId ~= nil then
                     pcall(function() own = z:getPersistentOutfitID() == Bridge.store.bodyId end)
@@ -8210,10 +8606,25 @@ function Bridge.onServerCommand(module, command, args)
         if args.existed then Bridge.askedNext = nil end
     elseif command == "stale" then
 
-        if args.id ~= nil then
-            Bridge.staleIds = Bridge.staleIds or {}
-            Bridge.staleIds[args.id] = Bridge.time
-            local n = Bridge.dropStale(args.id)
+        if type(args.items) == "table" then
+            local n = 0
+            for _, it in ipairs(args.items) do
+                if type(it) == "table" then
+                    if it.id ~= nil then
+                        Bridge.staleIds = Bridge.staleIds or {}
+                        Bridge.staleIds[it.id] = Bridge.time
+                    end
+                    n = n + Bridge.dropStale(it.id, it.oid, it.x, it.y, it.z)
+                end
+            end
+            Bridge.result = "server dropped bodies, removed here: " .. tostring(n)
+            log(Bridge.result)
+        elseif args.id ~= nil or args.oid ~= nil or args.x ~= nil then
+            if args.id ~= nil then
+                Bridge.staleIds = Bridge.staleIds or {}
+                Bridge.staleIds[args.id] = Bridge.time
+            end
+            local n = Bridge.dropStale(args.id, args.oid, args.x, args.y, args.z)
             Bridge.result = "server dropped body id=" .. tostring(args.id) .. ", removed here: " .. tostring(n)
             log(Bridge.result)
         end
@@ -8894,6 +9305,7 @@ Bridge.checked = setmetatable({}, { __mode = "k" })
         pcall(function() Bridge.body:setVariable(BODY_VAR, false) end)
         Bridge.body = nil
         Bridge.kind = nil
+        if Bridge.store ~= nil and not Bridge.mp then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end
         log("dropped stale body reference")
     end
     Bridge.stash = nil

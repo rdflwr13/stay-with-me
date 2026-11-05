@@ -6,7 +6,7 @@
 -->
 <animNode>
 	<m_Name>NA_LayAwake</m_Name>
-	<m_AnimName>Bob_Awake</m_AnimName>
+	<m_AnimName>NA_RinBedAwakeLift</m_AnimName>
 	<m_DeferredBoneName></m_DeferredBoneName>
 	<m_Looped>true</m_Looped>
 	<m_SpeedScale>0.80</m_SpeedScale>

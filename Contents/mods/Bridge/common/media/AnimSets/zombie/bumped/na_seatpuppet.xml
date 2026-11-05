@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animNode>
+	<m_Name>NA_SeatPuppet</m_Name>
+	<m_AnimName>Bob_IdlePassenger</m_AnimName>
+	<m_ConditionPriority>30</m_ConditionPriority>
+	<m_Looped>true</m_Looped>
+	<m_BlendTime>0.20</m_BlendTime>
+	<m_Conditions>
+		<m_Name>SWMSeatPuppet</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_BoolValue>true</m_BoolValue>
+	</m_Conditions>
+</animNode>

@@ -272,7 +272,9 @@ function BridgeItems.record(item, deep)
         if item.hasModData ~= nil and item:hasModData() == true then
             local md = plainCopy(item:getModData(), 1)
 
-
+            if md ~= nil and not deep and BridgeItems.prepareModData ~= nil then
+                pcall(BridgeItems.prepareModData, item, md)
+            end
 
             if md ~= nil and not deep then
                 md.Tooltip = nil
@@ -774,9 +776,16 @@ function BridgeItems.lookKey(list)
     local out = {}
     for _, rec in ipairs(list) do
         if rec.p == nil and (rec.w or (rec.h or 0) > 0 or rec.as) then
+            local tmog = type(rec.md) == "table" and rec.md.Transmog or nil
+            local tmogTo = type(tmog) == "table" and tostring(tmog.transmogTo or "") or ""
+            local tmogTexture = type(tmog) == "table" and tostring(tmog.texture or "") or ""
+            local tmogColor = ""
+            if type(tmog) == "table" and type(tmog.color) == "table" then
+                tmogColor = string.format("%.2f%.2f%.2f", tmog.color.r or 0, tmog.color.g or 0, tmog.color.b or 0)
+            end
             out[#out + 1] = table.concat({ rec.t, rec.w and "1" or "0", tostring(rec.h or 0), rec.as and "a" or "", tostring(rec.tc or ""),
                 tostring(rec.bt or ""), tostring(rec.hue or ""), tostring(rec.dec or ""), tostring(rec.ho or ""), tostring(rec.pa or ""),
-                rec.r and string.format("%.2f%.2f%.2f", rec.r, rec.g, rec.b) or "" }, ":")
+                rec.r and string.format("%.2f%.2f%.2f", rec.r, rec.g, rec.b) or "", tmogTo, tmogTexture, tmogColor }, ":")
         end
     end
     return table.concat(out, "|")
