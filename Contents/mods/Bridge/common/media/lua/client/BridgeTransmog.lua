@@ -422,20 +422,99 @@ function BridgeTransmog.send(op, item, data)
     return true
 end
 
+function BridgeTransmog.applyLocal(item, op, data)
+    if item == nil then return false, "unavailable" end
+
+    local seed = nil
+    pcall(function()
+        local md = TransmogDE.getItemTransmogModData(item)
+        if type(md) == "table" then
+            seed = BridgeTransmogLogic.deepCopy(md)
+            seed.childId = nil
+        end
+    end)
+
+    local rec = nil
+    pcall(function() rec = BridgeItems.record(item, false) end)
+    if rec == nil then return false, "unavailable" end
+
+    local temp = BridgeTransmogLogic.makeTempItem(rec, seed)
+    if temp == nil then return false, "unavailable" end
+
+    local ok, why = BridgeTransmogLogic.applyToItem(temp, op, data)
+    if not ok then return false, why or "unavailable" end
+
+    local applied = nil
+    pcall(function() applied = temp:getModData().Transmog end)
+    if type(applied) ~= "table" then return false, "unavailable" end
+
+    pcall(function()
+        item:getModData().Transmog = BridgeTransmogLogic.deepCopy(applied)
+    end)
+    return true
+end
+
+function BridgeTransmog.persistOutfit(item)
+    if not Bridge.mp or Bridge.body == nil then return false end
+    if BridgeInventory ~= nil and BridgeInventory.restoring == true then return false end
+
+    local list, items = nil, nil
+    if not pcall(function() list, items = BridgeInventory.snapshot(Bridge.body, true) end) then return false end
+    if type(list) ~= "table" or type(items) ~= "table" then return false end
+
+    local found = false
+    for i = 1, #list do
+        if items[i] == item then found = true break end
+    end
+    if not found then
+        log("transmog applied locally but item is not in her body snapshot; not persisted")
+        return false
+    end
+
+    local encoded = nil
+    if not pcall(function() encoded = BridgeInventory.encode(list) end) then return false end
+    if type(encoded) ~= "string" or encoded == "" then return false end
+    if BridgeItems.truncated == true then
+        log("transmog not persisted: outfit snapshot truncated")
+        return false
+    end
+
+    if type(Bridge.saveOutfit) == "function" then
+        if not Bridge.saveOutfit(encoded, true) then return false end
+    end
+
+    sendClientCommand(BridgeData.owner(), "Bridge", "outfit", {
+        items = BridgeItems.store(encoded),
+        iseq = Bridge.iseq,
+    })
+    return true
+end
+
 function BridgeTransmog.request(op, item, data)
     if not BridgeTransmog.available() then return false end
     if item == nil or not OPERATIONS[op] then return false end
     if not BridgeTransmog.isCompanionItem(item) then return false end
-    if Bridge.mp then return BridgeTransmog.send(op, item, data) end
 
-    local ok, why = BridgeTransmogLogic.applyToItem(item, op, data)
-    if not ok then
-        BridgeTransmog.badMessage(why)
-        return false
+    if Bridge.mp then
+        local ok, why = BridgeTransmog.applyLocal(item, op, data)
+        if not ok then
+            BridgeTransmog.badMessage(why)
+            return false
+        end
+    else
+        local ok, why = BridgeTransmogLogic.applyToItem(item, op, data)
+        if not ok then
+            BridgeTransmog.badMessage(why)
+            return false
+        end
     end
+
     BridgeTransmog.rebuild(Bridge.body, true)
     BridgeTransmog.refresh(Bridge.body, item)
-    if Bridge ~= nil and type(Bridge.saveOutfit) == "function" then
+
+    if Bridge.mp then
+        BridgeTransmog.persistOutfit(item)
+    elseif Bridge ~= nil and type(Bridge.saveOutfit) == "function" then
         pcall(Bridge.saveOutfit, nil, true)
     end
     return true
@@ -647,6 +726,7 @@ BridgeTransmog.wrapRequests = wrapRequests
 function BridgeTransmog.onServerCommand(module, command, args)
     if module ~= "Bridge" then return end
     if command ~= "transmogApplied" and command ~= "transmogFailed" then return end
+    if Bridge ~= nil and Bridge.mp then return end
     args = args or {}
 
     if command == "transmogFailed" then
