@@ -894,6 +894,16 @@ function Bridge.initStore()
         Bridge.world = md
         if not Bridge.mp then Bridge.gotData = true end
         Bridge.refreshStore()
+        if not Bridge.mp and Bridge.gotData and Bridge.store ~= nil then
+            if BridgePregame ~= nil and type(BridgePregame.onStoreReady) == "function" then
+                local okPre, errPre = pcall(BridgePregame.onStoreReady, Bridge.store)
+                if not okPre then warn("pregame store ready failed: " .. tostring(errPre)) end
+            end
+        end
+        if Bridge.startGenderStore ~= Bridge.store then
+            Bridge.startGenderStore = Bridge.store
+            Bridge.startGenderDone = false
+        end
         if not Bridge.mp and not Bridge.staleLoaded and Bridge.store ~= nil then
             Bridge.staleLoaded = true
             local st = Bridge.store
@@ -1800,6 +1810,10 @@ function Bridge.spawnZombie(px, py, pz)
     if Bridge.redDead(red) then return "owner dead" end
     if Bridge.alive() then return "already alive" end
     pcall(Bridge.pickStartGender)
+    if BridgePregame ~= nil and type(BridgePregame.shouldWait) == "function"
+        and BridgePregame.shouldWait(Bridge.store) then
+        return "waiting for pregame appearance"
+    end
 
     local x = math.floor(px or red:getX())
     local y = math.floor(py or red:getY())
@@ -3321,11 +3335,19 @@ end
 
 function Bridge.pickStartGender()
     local st = Bridge.store
+    local status = nil
     if not Bridge.mp and st ~= nil and BridgePregame ~= nil
         and type(BridgePregame.consumeInto) == "function" then
-        pcall(BridgePregame.consumeInto, st)
+        local okPre, res = pcall(BridgePregame.consumeInto, st)
+        if okPre then status = res end
     end
-    if st == nil or not Bridge.gotData or not BridgeData.neverSpawned(st) then return false end
+    if st == nil or not Bridge.gotData then return false end
+    if (status == "wait" or status == "retry" or status == "invalid")
+        and BridgePregame ~= nil and type(BridgePregame.shouldWait) == "function"
+        and BridgePregame.shouldWait(st) then
+        return false
+    end
+    if not BridgeData.neverSpawned(st) then return false end
     local owner = BridgeData.owner()
     if owner == nil then return false end
     local fem = nil
@@ -8347,7 +8369,9 @@ function Bridge.onTick()
 
     if Bridge.startGenderDone ~= true and Bridge.store ~= nil and Bridge.gotData then
         pcall(Bridge.pickStartGender)
-        if not BridgeData.neverSpawned(Bridge.store) then Bridge.startGenderDone = true end
+        local waiting = BridgePregame ~= nil and type(BridgePregame.shouldWait) == "function"
+            and BridgePregame.shouldWait(Bridge.store)
+        if not BridgeData.neverSpawned(Bridge.store) and not waiting then Bridge.startGenderDone = true end
     end
     if Bridge.genderPending ~= nil then
         if not Bridge.alive() then
