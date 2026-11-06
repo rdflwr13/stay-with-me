@@ -1939,8 +1939,13 @@ function BridgeMove.sitFlagTick(body)
         pcall(function() asn = tostring(body:getActionStateName()) end)
         pcall(function() bump = tostring(body:getBumpType()) end)
         local anim = bump
-        if anim ~= "LayAwake" and anim ~= "LayAsleep" then anim = BridgeTask.layAnim end
-        if (anim == "LayAwake" or anim == "LayAsleep") and (asn ~= "bumped" or bump ~= anim) then
+        if anim ~= "LayAwake" and anim ~= "LayAsleep"
+            and anim ~= "FloorLayAwake" and anim ~= "FloorLayAsleep" then
+            anim = BridgeTask.layAnim
+        end
+        if (anim == "LayAwake" or anim == "LayAsleep"
+            or anim == "FloorLayAwake" or anim == "FloorLayAsleep")
+            and (asn ~= "bumped" or bump ~= anim) then
             pcall(function() body:setVariable("BumpAnimFinished", false) end)
             pcall(function() body:setBumpType("") end)
             pcall(function() body:setBumpType(anim) end)
@@ -5508,6 +5513,30 @@ local function crossEnd(body, why)
     log("cross " .. tostring(c and c.kind) .. " ended: " .. tostring(why))
 end
 BridgeMove.crossEnd = crossEnd
+
+function BridgeMove.noteCrossLoop(body, from, to, tag)
+    if from == nil or to == nil then return false end
+
+    local a, b = from:getX() .. "," .. from:getY(), to:getX() .. "," .. to:getY()
+    if a > b then a, b = b, a end
+    local ckey = "fight:" .. a .. "|" .. b
+
+    BridgeMove.crossLoops = BridgeMove.crossLoops or {}
+    local rec = BridgeMove.crossLoops[ckey]
+    if rec == nil or Bridge.time - rec.first > 400 then
+        rec = { first = Bridge.time, n = 0, last = -9999 }
+        BridgeMove.crossLoops[ckey] = rec
+    end
+    if Bridge.time - (rec.last or -9999) < 60 then return false end
+    rec.last = Bridge.time
+    rec.n = rec.n + 1
+    if rec.n >= 2 then
+        BridgeMove.noCrossUntil = Bridge.time + 120
+        log(string.format("edge looped (%s), blacklisted: %s", tostring(tag or "?"), ckey))
+        return true
+    end
+    return false
+end
 
 
 

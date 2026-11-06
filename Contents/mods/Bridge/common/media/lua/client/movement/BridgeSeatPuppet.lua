@@ -13,6 +13,7 @@ S.SWEEP_CACHE_TICKS = 60
 S.ENABLED_CACHE_TICKS = 30
 
 S.p = nil
+S.voiceTicks = 0
 S.car = nil
 S.seat = nil
 S.snap = nil
@@ -300,6 +301,21 @@ local function stripped(encoded)
     return nil
 end
 
+local function keepInert(p)
+    if p == nil then return end
+    pcall(function() p:setReanimatedForGrappleOnly(true) end)
+    if BridgeVoice ~= nil and type(BridgeVoice.applyPrefix) == "function" then
+        pcall(BridgeVoice.applyPrefix, p)
+    end
+    S.voiceTicks = (S.voiceTicks or 0) + 1
+    if S.voiceTicks >= 10 then
+        S.voiceTicks = 0
+        if BridgeVoice ~= nil and type(BridgeVoice.suppress) == "function" then
+            pcall(BridgeVoice.suppress, p)
+        end
+    end
+end
+
 local function place(car, seat)
     local p = S.p
     if p == nil then return end
@@ -391,9 +407,12 @@ local function create(car, seat)
     pcall(function() p:setPrimaryHandItem(nil) end)
     pcall(function() p:setSecondaryHandItem(nil) end)
     pcall(function() p:resetModelNextFrame() end)
+    pcall(function() p:getEmitter():stopAll() end)
     if BridgeVoice ~= nil and type(BridgeVoice.ensure) == "function" then
         pcall(BridgeVoice.ensure, p)
     end
+    S.voiceTicks = 0
+    keepInert(p)
     local id = pidOf(p)
     local st = store(true)
     if st ~= nil and id ~= nil then st.ids[id] = true end
@@ -444,6 +463,7 @@ function S.show(car)
     S.retryAt = nil
     S.losses = 0
     S.offForEntry = false
+    S.voiceTicks = 0
     S.playerSeat, S.playerPrevSeat, S.swap = nil, nil, false
     capture()
     log("show")
@@ -455,6 +475,7 @@ function S.hide(why)
     if p ~= nil then id = pidOf(p) end
     S.p, S.car, S.seat = nil, nil, nil
     S.retryAt = nil
+    S.voiceTicks = 0
     S.playerSeat, S.playerPrevSeat, S.swap = nil, nil, false
     if p == nil then return end
     S.isCache[p] = nil
@@ -463,6 +484,25 @@ function S.hide(why)
         local st = store(false)
         if st ~= nil and type(st.ids) == "table" then st.ids[id] = nil end
     end
+    pcall(function() p:setReanimatedForGrappleOnly(false) end)
+    if BridgeVoice ~= nil and type(BridgeVoice.restore) == "function" then
+        pcall(BridgeVoice.restore, p)
+    end
+    pcall(function() p:setUseless(false) end)
+    pcall(function() p:setInvulnerable(false) end)
+    pcall(function() p:setShootable(true) end)
+    pcall(function() p:setCollidable(true) end)
+    pcall(function() p:setbClimbing(false) end)
+    pcall(function() p:setDressInRandomOutfit(true) end)
+    pcall(function()
+        local md = p:getModData()
+        if type(md) == "table" then
+            md.swmSeatPuppet = nil
+            md.ST_Ignore = nil
+            md.RandomZedsExcluded = nil
+            md.bScroungerorIncomprehensiveRolled = nil
+        end
+    end)
     pcall(function() p:setVariable(S.VAR, false) end)
     pcall(function() p:removeFromSquare() end)
     pcall(function() p:removeFromWorld() end)
@@ -514,6 +554,7 @@ function S.tick()
     end
     S.seat = seat
     place(car, seat)
+    keepInert(S.p)
 end
 
 function S.diagLine()
@@ -537,11 +578,13 @@ function S.diagLine()
     if S.p ~= nil then
         local state = "-"
         local voice = "-"
+        local inert = false
         pcall(function() state = tostring(S.p:getActionStateName()) end)
+        pcall(function() inert = S.p:isReanimatedForGrappleOnly() == true end)
         if BridgeVoice ~= nil and type(BridgeVoice.info) == "function" then
             pcall(function() voice = BridgeVoice.info(S.p) end)
         end
-        text = text .. " state=" .. state .. " voice=" .. voice
+        text = text .. " inert=" .. tostring(inert) .. " state=" .. state .. " voice=" .. voice
     end
     local px, py, pz = nil, nil, nil
     if S.p ~= nil then
@@ -639,6 +682,7 @@ end)
 Events.OnZombieUpdate.Add(function(z)
     if z == nil then return end
     if S.is(z) then
+        keepInert(z)
         pcall(function() z:setVehicle4TestCollision(nil) end)
         return
     end

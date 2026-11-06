@@ -884,6 +884,14 @@ function BridgeFight.mode()
     return m
 end
 
+local function logModeTransition(name, mode)
+    if BridgeFight.loggedMode == name then return end
+    BridgeFight.loggedMode = name
+    log(string.format("combat mode: %s engageSelf=%.1f engageRed=%.1f targetMax=%.1f approach=%.1f leash=%.1f",
+        tostring(name), mode.engageSelf or -1, mode.engageRed or -1, mode.targetMax or -1,
+        mode.approach or -1, mode.leash or -1))
+end
+
 
 BridgeFight.SPEED_SCORE = {
     sprinter = -2.2,
@@ -999,6 +1007,7 @@ local function pickTarget(body, red, mode)
         end
     end
     if list == nil then list = getCell():getZombieList() end
+    local nearest, nearestD, nearestReason, nearestScore = nil, math.huge, nil, nil
     for i = 0, list:size() - 1 do
         local z = list:get(i)
         local nearEnough = false
@@ -1049,6 +1058,18 @@ local function pickTarget(body, red, mode)
 
 
             local isRemote = z ~= nil and remoteZombie(z)
+            local reason = nil
+            if z == nil then reason = "dead"
+            elseif banned then reason = "banned"
+            elseif busy then reason = "busy"
+            elseif isBody(z) then reason = "harmless"
+            elseif not (z:isAlive() and z:getHealth() > 0) then reason = "dead"
+            elseif BridgeFight.ownerRisen(z, red) then reason = "dead"
+            elseif math.abs(z:getZ() - anchor:getZ()) >= 0.8 then reason = "remote"
+            elseif BridgeData.harmless(z) then reason = "harmless"
+            elseif not visible(z, anchor) then reason = "invisible"
+            end
+            local candScore = nil
             if z ~= nil and not banned and not busy and not isBody(z) and z:isAlive() and z:getHealth() > 0
                 and not BridgeFight.ownerRisen(z, red)
                 and math.abs(z:getZ() - anchor:getZ()) < 0.8 and not BridgeData.harmless(z) and visible(z, anchor) then
@@ -1061,10 +1082,22 @@ local function pickTarget(body, red, mode)
                     if BridgeAim ~= nil and BridgeAim.zone.on and BridgeAim.inCone(z:getX(), z:getY(), z:getZ()) then
                         score = score + (BridgeAim.TARGET_PENALTY or 30)
                     end
+                    candScore = score
                     if score < bestD and (NO_CLIMB_ON == 0 or BridgeFight.reachable(body, z)) then
                         best, bestD = z, score
+                    elseif NO_CLIMB_ON ~= 0 and not BridgeFight.reachable(body, z) then
+                        reason = "unreachable"
                     end
+                else
+                    reason = reason or "remote"
                 end
+            end
+            local cd = z ~= nil and dist(z, body) or math.huge
+            if cd < nearestD then
+                nearestD = cd
+                nearest = z
+                nearestReason = reason or "selected"
+                nearestScore = candScore
             end
         end
     end
@@ -1115,6 +1148,14 @@ local function pickTarget(body, red, mode)
                 end
             end
         end)
+    end
+    if Bridge.verbose and best ~= nil and nearest ~= nil then
+        local pickedD = dist(best, body)
+        if pickedD > nearestD + 2.0 then
+            vlog(string.format("pick skip: nearest d=%.2f state=%s reason=%s score=%.1f; picked d=%.2f state=%s score=%.1f",
+                nearestD, tostring(nearest:getActionStateName()), tostring(nearestReason or "?"),
+                nearestScore or -1, pickedD, tostring(best:getActionStateName()), bestD))
+        end
     end
     return best
 end
@@ -2853,6 +2894,7 @@ local function tryVault(body, t)
         pcall(function() safe = BridgeMove.vaultSafe(body, cur, ahead) == true end)
         if not safe then return end
         pcall(function() body:faceLocationF(t:getX(), t:getY()) end)
+        if BridgeMove.noteCrossLoop ~= nil and BridgeMove.noteCrossLoop(body, cur, ahead, "fight") then return end
         pcall(function() BridgeMove.askClimb(body, "fence", nil) end)
     end)
 end
@@ -2913,6 +2955,8 @@ function BridgeFight.update(body)
     end
 
     local mode = BridgeFight.mode()
+    local modeName = BridgeFight.guardOnly and "bodyguard" or BridgeData.combatOf(Bridge.store)
+    logModeTransition(modeName, mode)
     local S = nil
     if FLEE.ON and not mode.passive then
         S = footScan(body, red)
@@ -3161,6 +3205,7 @@ function BridgeFight.update(body)
             return false
         end
         BridgeFight.info = "target picked"
+        BridgeFight.approachEnterAt = Bridge.time
         picked = true
 
 
@@ -3240,14 +3285,23 @@ function BridgeFight.update(body)
             BridgeFight.approachStart = Bridge.time
             BridgeFight.approachX, BridgeFight.approachY = body:getX(), body:getY()
             BridgeFight.approachStuck = 0
+            log(string.format("approach start: t=%.0f d=%.2f range=%.2f mode=%s approach=%.1f leash=%.1f targetState=%s hp=%.2f walled=%s redMoving=%s path=%s",
+                Bridge.time, d, range or -1, tostring(modeName), mode.approach or -1, mode.leash or -1,
+                tostring(t:getActionStateName()), t:getHealth(), tostring(walled),
+                tostring(BridgeMove.redMoving), tostring(BridgeMove.pathResult)))
         elseif (Bridge.time - BridgeFight.approachStart) > APPROACH_MAX then
 
 
             BridgeFight.blacklist[t] = { untilT = Bridge.time + BLACKLIST_TICKS, x = t:getX(), y = t:getY(),
                                          st = tostring(t:getActionStateName()) }
             BridgeFight.info = "approach timeout, blacklisted"
-            log(string.format("approach timeout: d=%.2f st=%s bump=%s path=%s", d,
-                tostring(t:getActionStateName()), tostring(body:getBumpType()), BridgeMove.pathResult))
+            log(string.format("approach timeout: d=%.2f st=%s bump=%s path=%s elapsed=%.1f range=%.2f mode=%s walled=%s stuck=%d moved=%.2f hp=%.2f blacklistUntil=%.0f",
+                d, tostring(t:getActionStateName()), tostring(body:getBumpType()), tostring(BridgeMove.pathResult),
+                Bridge.time - (BridgeFight.approachStart or Bridge.time), range or -1, tostring(modeName),
+                tostring(walled), BridgeFight.approachStuck or 0,
+                math.sqrt((body:getX() - (BridgeFight.approachX or body:getX())) ^ 2
+                    + (body:getY() - (BridgeFight.approachY or body:getY())) ^ 2),
+                t:getHealth(), Bridge.time + BLACKLIST_TICKS))
             BridgeFight.target = nil
             BridgeFight.state = "idle"
             escapeReset()
@@ -3261,13 +3315,19 @@ function BridgeFight.update(body)
         else
             BridgeFight.approachStuck = 0
             BridgeFight.approachX, BridgeFight.approachY = body:getX(), body:getY()
+            BridgeFight.approachStart = Bridge.time
         end
         if (BridgeFight.approachStuck or 0) >= STUCK_TICKS then
             BridgeFight.blacklist[t] = { untilT = Bridge.time + BLACKLIST_TICKS, x = t:getX(), y = t:getY(),
                                          st = tostring(t:getActionStateName()) }
             BridgeFight.info = "stuck approaching, blacklisted"
-            log(string.format("approach stuck: d=%.2f st=%s bump=%s path=%s", d,
-                tostring(t:getActionStateName()), tostring(body:getBumpType()), BridgeMove.pathResult))
+            log(string.format("approach stuck: d=%.2f st=%s bump=%s path=%s elapsed=%.1f range=%.2f mode=%s walled=%s stuck=%d moved=%.2f hp=%.2f blacklistUntil=%.0f",
+                d, tostring(t:getActionStateName()), tostring(body:getBumpType()), tostring(BridgeMove.pathResult),
+                Bridge.time - (BridgeFight.approachStart or Bridge.time), range or -1, tostring(modeName),
+                tostring(walled), BridgeFight.approachStuck or 0,
+                math.sqrt((body:getX() - (BridgeFight.approachX or body:getX())) ^ 2
+                    + (body:getY() - (BridgeFight.approachY or body:getY())) ^ 2),
+                t:getHealth(), Bridge.time + BLACKLIST_TICKS))
             BridgeFight.target = nil
             BridgeFight.state = "idle"
             escapeReset()
@@ -3289,6 +3349,15 @@ function BridgeFight.update(body)
         return true
     end
 
+    local crossing = false
+    pcall(function()
+        local st = t:getActionStateName()
+        crossing = st == "climbfence" or st == "climbwindow"
+    end)
+    if crossing then
+        BridgeFight.info = "target crossing edge"
+        return true
+    end
 
     BridgeMove.stopPath(body)
 
@@ -3374,10 +3443,10 @@ function BridgeFight.update(body)
     BridgeFight.swingDriftApplied = 0
     BridgeFight.info = "swing " .. anim .. " " .. tostring(BridgeFight.swingLen) .. "f"
 
-    vlog(string.format("swing start %s kind=%s back=%s escapeOn=%s gap=%.2f len=%d since=%.2fs range=%.2f dt=%.3f",
+    vlog(string.format("swing start %s kind=%s back=%s escapeOn=%s gap=%.2f len=%d since=%.2fs range=%.2f dt=%.3f approach=%.1f",
         tostring(anim), tostring(BridgeFight.kind), tostring(BridgeFight.swingBack), tostring(BridgeFight.escapeOn), dist(body, t),
         BridgeFight.swingLen, BridgeFight.lastSwingAt and (Bridge.time - BridgeFight.lastSwingAt) / 60 or -1,
-        range or -1, Bridge.dt or 1))
+        range or -1, Bridge.dt or 1, Bridge.time - (BridgeFight.approachEnterAt or Bridge.time)))
     BridgeFight.lastSwingAt = Bridge.time
     return true
 end

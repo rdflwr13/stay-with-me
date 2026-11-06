@@ -5510,7 +5510,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
-    friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, theodoreselftest = true, light = true, sight = true,
+    friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true, meet = true,
     perf = true, gunstate = true, loscombatselftest = true }
 
@@ -6272,6 +6272,13 @@ function Bridge.run(line)
             return "BridgeTheodoreCompat not loaded"
         end
         return BridgeTheodoreCompat.selftest()
+    end
+
+    if cmd == "thecompat" then
+        if BridgeTHECompat == nil or type(BridgeTHECompat.selftest) ~= "function" then
+            return "BridgeTHECompat not loaded"
+        end
+        return BridgeTHECompat.selftest()
     end
 
     if cmd == "sleepfix" then

@@ -5135,6 +5135,8 @@ BridgeTask.LAY_ANIM_MAX = 240
 BridgeTask.LAY_SETTLE = 0.30
 BridgeTask.LAY_AWAKE = "LayAwake"
 BridgeTask.LAY_ASLEEP = "LayAsleep"
+BridgeTask.FLOOR_LAY_AWAKE = "FloorLayAwake"
+BridgeTask.FLOOR_LAY_ASLEEP = "FloorLayAsleep"
 
 local function sitDist(ax, ay, bx, by)
     local dx, dy = ax - bx, ay - by
@@ -5403,6 +5405,19 @@ local BED_RULES = {
     E = { axis = "x", footPos = 1, toHead = "W", step = { 1, 0 } },
 }
 
+local function isFloorBedSprite(name)
+    if name == nil then return false end
+    if name == "carpentry_02_76" or name == "carpentry_02_77"
+        or name == "carpentry_02_78" or name == "carpentry_02_79" then
+        return true
+    end
+    if string.sub(name, 1, 11) == "camping_02_" then return true end
+    if name == "recreational_sports_01_34" or name == "recreational_sports_01_35" then
+        return true
+    end
+    return false
+end
+
 local function bedDirOf(name)
     if name == "N" then return IsoDirections.N end
     if name == "S" then return IsoDirections.S end
@@ -5460,8 +5475,13 @@ local function bedInfo(obj)
     end
     local hx, hy, hz = sq:getX(), sq:getY(), sq:getZ()
     local sx, sy = rule.step[1], rule.step[2]
+    local hname = nil
+    pcall(function()
+        local hs = head:getSprite()
+        if hs ~= nil then hname = hs:getName() end
+    end)
     return { obj = head, key = hx .. "," .. hy .. "," .. hz, x = hx, y = hy, z = hz,
-        facing = facing, lieX = hx + 0.5, lieY = hy + 0.5,
+        facing = facing, lieX = hx + 0.5, lieY = hy + 0.5, floor = isFloorBedSprite(hname),
         faceX = hx + 0.5 + sx * 5, faceY = hy + 0.5 + sy * 5, stepX = sx, stepY = sy }
 end
 
@@ -5544,7 +5564,7 @@ function BridgeTask.bedPlan(body, obj)
                 local rdist = sitDist(rx, ry, spot.x + 0.5, spot.y + 0.5)
                 local left = (info.stepX + info.stepY) < 0
                 local cand = { obj = info.obj, key = info.key, z = info.z, facing = info.facing,
-                    dir = info.facing, side = "Front",
+                    dir = info.facing, side = "Front", floor = info.floor == true,
                     lieX = info.lieX, lieY = info.lieY, faceX = info.faceX, faceY = info.faceY,
                     seatX = info.lieX, seatY = info.lieY,
                     standX = spot.x + 0.5, standY = spot.y + 0.5,
@@ -5570,11 +5590,16 @@ function BridgeTask.bedPlan(body, obj)
         pcall(function() sq = bed:getSquare() end)
         if sq ~= nil then
             local z = sq:getZ()
+            local floor = false
+            pcall(function()
+                local sp = bed:getSprite()
+                if sp ~= nil then floor = isFloorBedSprite(sp:getName()) end
+            end)
             local spot = freeAdjacent(body, { x = sq:getX(), y = sq:getY(), z = z })
             if spot ~= nil then
                 local cx, cy = sq:getX() + 0.5, sq:getY() + 0.5
                 best = { obj = bed, key = sq:getX() .. "," .. sq:getY() .. "," .. z, z = z,
-                    facing = "S", dir = "S", side = "Front",
+                    facing = "S", dir = "S", side = "Front", floor = floor,
                     lieX = cx, lieY = cy, faceX = cx, faceY = cy + 5, seatX = cx, seatY = cy,
                     standX = spot.x + 0.5, standY = spot.y + 0.5,
                     sx = spot.x, sy = spot.y, walkX = spot.x + 0.5, walkY = spot.y + 0.5,
@@ -5930,6 +5955,13 @@ local function lieAt(body, plan)
     pcall(function() body:faceLocationF(plan.faceX, plan.faceY) end)
 end
 
+local function layAnimFor(plan, sleep)
+    if plan ~= nil and plan.floor == true then
+        return sleep and BridgeTask.FLOOR_LAY_ASLEEP or BridgeTask.FLOOR_LAY_AWAKE
+    end
+    return sleep and BridgeTask.LAY_ASLEEP or BridgeTask.LAY_AWAKE
+end
+
 local function bedApplyDown(body, plan)
     pcall(function() BridgeMove.stopPath(body) end)
     if BridgeMove ~= nil then BridgeMove.moving = false end
@@ -5947,7 +5979,10 @@ local function bedClear(body, plan)
         pcall(function() body:setCollidable(true) end)
         pcall(function()
             local b = tostring(body:getBumpType())
-            if b == BridgeTask.LAY_AWAKE or b == BridgeTask.LAY_ASLEEP then body:setBumpType("") end
+            if b == BridgeTask.LAY_AWAKE or b == BridgeTask.LAY_ASLEEP
+                or b == BridgeTask.FLOOR_LAY_AWAKE or b == BridgeTask.FLOOR_LAY_ASLEEP then
+                body:setBumpType("")
+            end
         end)
         if plan ~= nil and plan.sx ~= nil and plan.sy ~= nil then
             pcall(function()
@@ -5967,6 +6002,7 @@ function BridgeTask.isLying(body)
     local bump = ""
     pcall(function() bump = tostring(body:getBumpType()) end)
     return bump == BridgeTask.LAY_AWAKE or bump == BridgeTask.LAY_ASLEEP
+        or bump == BridgeTask.FLOOR_LAY_AWAKE or bump == BridgeTask.FLOOR_LAY_ASLEEP
 end
 
 function BridgeTask.layStandUp()
@@ -5980,7 +6016,7 @@ end
 function BridgeTask.layToggleSleep()
     if not (BridgeTask.active and BridgeTask.kind == "lay") then return false end
     BridgeTask.laySleep = not BridgeTask.laySleep
-    BridgeTask.layAnim = BridgeTask.laySleep and BridgeTask.LAY_ASLEEP or BridgeTask.LAY_AWAKE
+    BridgeTask.layAnim = layAnimFor(BridgeTask.layPlan, BridgeTask.laySleep)
     if BridgeTask.laySleep then Bridge.speak("Sleep") else Bridge.speak("Wake") end
     return true
 end
@@ -6034,7 +6070,7 @@ function BridgeTask.kinds.lay.update(body)
         BridgeTask.layPlan = plan
         BridgeTask.layUp = nil
         BridgeTask.laySleep = false
-        BridgeTask.layAnim = BridgeTask.LAY_AWAKE
+        BridgeTask.layAnim = layAnimFor(plan, false)
         BridgeTask.layAnimSeen = false
         BridgeTask.layHintSaid = false
         BridgeTask.layCloseAt = nil
@@ -6102,7 +6138,7 @@ function BridgeTask.kinds.lay.update(body)
         lieAt(body, plan)
         bedJoin(body, plan)
         pcall(function() body:setVariable("BumpAnimFinished", false) end)
-        pcall(function() body:setBumpType(BridgeTask.laySleep and BridgeTask.LAY_ASLEEP or BridgeTask.LAY_AWAKE) end)
+        pcall(function() body:setBumpType(layAnimFor(plan, BridgeTask.laySleep)) end)
         Bridge.pose = nil
         pcall(function() BridgeMove.sendSit(BridgeTask.laySleep and "bedasleep" or "bedawake") end)
         if not BridgeTask.layHintSaid then
@@ -6121,7 +6157,7 @@ function BridgeTask.kinds.lay.update(body)
     end
 
     if phase == "lie" then
-        local anim = BridgeTask.laySleep and BridgeTask.LAY_ASLEEP or BridgeTask.LAY_AWAKE
+        local anim = layAnimFor(plan, BridgeTask.laySleep)
         BridgeTask.layAnim = anim
         bedJoin(body, plan)
         pcall(function() if tostring(body:getBumpType()) ~= anim then body:setBumpType(anim) end end)

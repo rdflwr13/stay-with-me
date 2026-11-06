@@ -1444,11 +1444,7 @@ local function containerIcon(option, cont)
     if tex == nil then
         local part = nil
         pcall(function() part = cont:getVehiclePart() end)
-        if part ~= nil then
-            local name = nil
-            pcall(function() name = part:getTextureName() end)
-            if name ~= nil and name ~= "" then pcall(function() tex = getTexture(name) end) end
-        end
+        if part ~= nil then lootIcon(option) end
     end
     if tex ~= nil then option.iconTexture = tex end
 end
