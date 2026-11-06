@@ -6297,6 +6297,10 @@ function Bridge.run(line)
     end
 
     if cmd == "thecompat" then
+        if BridgeTHECompat ~= nil and parts[3] == "status"
+                and type(BridgeTHECompat.status) == "function" then
+            return BridgeTHECompat.status()
+        end
         if BridgeTHECompat == nil or type(BridgeTHECompat.selftest) ~= "function" then
             return "BridgeTHECompat not loaded"
         end

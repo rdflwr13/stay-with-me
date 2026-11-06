@@ -1,10 +1,48 @@
 BridgeTHECompat = BridgeTHECompat or {}
 local M = BridgeTHECompat
 
-local function log(text)
-    if BridgeLog ~= nil and type(BridgeLog.on) == "function" and BridgeLog.on() then
-        print("[BridgeTHECompat] " .. tostring(text))
+local MOD_ID = "TrueHelicopterEvents"
+local RETRY_EVERY = 60
+local ticks = 0
+
+M.MOD_ID = MOD_ID
+M.RETRY_EVERY = RETRY_EVERY
+
+local function warn(text)
+    if M.testing then return end
+    print("[BridgeTHECompat] " .. tostring(text))
+end
+
+local function hasMod(mods)
+    if mods == nil then return false end
+    local function match(id)
+        id = tostring(id)
+        return id == MOD_ID or id == "\\" .. MOD_ID
     end
+    if type(mods) == "table" then
+        for _, id in ipairs(mods) do
+            if match(id) then return true end
+        end
+        return false
+    end
+    local ok, yes = pcall(function() return mods:contains(MOD_ID) end)
+    if ok and yes then return true end
+    ok, yes = pcall(function() return mods:contains("\\" .. MOD_ID) end)
+    if ok and yes then return true end
+    local n = 0
+    pcall(function() n = mods:size() end)
+    for i = 0, n - 1 do
+        local id = nil
+        pcall(function() id = mods:get(i) end)
+        if id ~= nil and match(id) then return true end
+    end
+    return false
+end
+
+function M.active()
+    local on = false
+    pcall(function() on = hasMod(getActivatedMods()) end)
+    return on
 end
 
 local function bodyVar()
@@ -40,76 +78,122 @@ function M.isBody(z)
     return false
 end
 
-function M.filterTargets(out)
-    if type(out) ~= "table" then return end
-    for i = #out, 1, -1 do
-        local t = out[i]
-        if type(t) == "table" and M.isBody(t.obj) then
-            table.remove(out, i)
-            if not M.testing and not M.seen then
-                M.seen = true
-                log("first companion target filtered from THE gunner")
-            end
-        end
-    end
+function M.companionInCoverRange(ac)
+    local bridge = rawget(_G, "Bridge")
+    local body = type(bridge) == "table" and bridge.body or nil
+    if body == nil then return false end
+
+    local flight = ac ~= nil and ac.flight or nil
+    local div = type(flight) == "table" and flight.div or nil
+    if type(div) ~= "table" then return false end
+
+    local gx, gy = nil, nil
+    pcall(function() gx = div.gx or div.x end)
+    pcall(function() gy = div.gy or div.y end)
+    if type(gx) ~= "number" or type(gy) ~= "number" then return false end
+
+    local the = rawget(_G, "THE")
+    local radius = type(the) == "table" and tonumber(the.FIRE_COVER_R) or nil
+    if radius == nil or radius <= 0 then radius = 15 end
+
+    local bx, by = nil, nil
+    pcall(function() bx = body:getX() end)
+    pcall(function() by = body:getY() end)
+    if type(bx) ~= "number" or type(by) ~= "number" then return false end
+
+    local dx, dy = bx - gx, by - gy
+    return dx * dx + dy * dy <= radius * radius
 end
 
-local function patchRunner(runner)
-    if type(runner) ~= "function" then return false, "runner is not a function" end
-    if not (debug and debug.getupvalue and debug.setupvalue) then
-        return false, "debug upvalue API missing"
+local function notInstalled(quiet, reason)
+    if not quiet and M.lastFailure ~= reason then
+        M.lastFailure = reason
+        warn("not installed: " .. reason)
     end
-    if M.installed and M.runner == runner then return true end
-
-    local index = 1
-    while true do
-        local name, value = debug.getupvalue(runner, index)
-        if not name then break end
-        if name == "zombieTargets" and type(value) == "function" then
-            local original = value
-            local wrapper = function(ac, out)
-                original(ac, out)
-                M.filterTargets(out)
-            end
-            if not debug.setupvalue(runner, index, wrapper) then
-                return false, "debug.setupvalue failed"
-            end
-            M.original = original
-            M.wrapper = wrapper
-            M.runner = runner
-            M.upvalueIndex = index
-            M.installed = true
-            return true
-        end
-        index = index + 1
-    end
-
-    return false, "zombieTargets upvalue not found"
+    return false, reason
 end
 
-function M.uninstall()
-    if not M.installed or M.runner == nil or M.original == nil then return false, "not installed" end
-    if not (debug and debug.setupvalue) then return false, "debug upvalue API missing" end
-    local ok = debug.setupvalue(M.runner, M.upvalueIndex, M.original)
-    if not ok then return false, "debug.setupvalue failed" end
-    M.installed = false
-    M.runner = nil
-    M.upvalueIndex = nil
-    M.original = nil
-    M.wrapper = nil
+function M.install(quiet)
+    local the = rawget(_G, "THE")
+    if type(the) ~= "table" then return notInstalled(quiet, "THE not loaded") end
+    if the.MODID ~= MOD_ID then return notInstalled(quiet, "THE.MODID mismatch") end
+    if type(the.Gunner) ~= "table" or type(the.Gunner.update) ~= "function" then
+        return notInstalled(quiet, "THE.Gunner.update missing")
+    end
+    if type(the.Rules) ~= "table" then return notInstalled(quiet, "THE.Rules missing") end
+
+    if the.Gunner.update == M.wrapper then
+        M.installed = true
+        if not quiet and not M.reported then
+            M.reported = true
+            warn("installed: THE.Gunner.update guard")
+        end
+        return true
+    end
+
+    if M.wrapper ~= nil then
+        M.original, M.wrapper, M.mode = nil, nil, nil
+        M.installed = false
+        M.reported = false
+    end
+
+    local original = the.Gunner.update
+    local wrapper = function(ac, players, dtMin)
+        if not M.companionInCoverRange(ac) then
+            return original(ac, players, dtMin)
+        end
+        if not M.testing and not M.seen then
+            M.seen = true
+            warn("gunner help suppressed: companion in cover range")
+        end
+        local rules = rawget(_G, "THE")
+        rules = type(rules) == "table" and rules.Rules or nil
+        local saved = type(rules) == "table" and rules.helping or nil
+        if type(saved) == "function" then
+            rules.helping = function(a)
+                if a == ac then return false end
+                return saved(a)
+            end
+            local ok, result = pcall(original, ac, players, dtMin)
+            rules.helping = saved
+            if not ok then error(result, 0) end
+            M.mode = "helping"
+            return result
+        end
+        M.mode = "skip"
+        return nil
+    end
+
+    the.Gunner.update = wrapper
+    M.original, M.wrapper, M.mode = original, wrapper, "helping"
+    M.installed = true
+    M.lastFailure = nil
+    if not quiet and not M.reported then
+        M.reported = true
+        warn("installed: THE.Gunner.update guard")
+    end
     return true
 end
 
-function M.install()
-    local THE = rawget(_G, "THE")
-    if type(THE) ~= "table" then return false, "THE not loaded" end
-    if THE.MODID ~= "TrueHelicopterEvents" then return false, "THE.MODID mismatch" end
-    if type(THE.Gunner) ~= "table" or type(THE.Gunner.update) ~= "function" then
-        return false, "THE.Gunner.update missing"
+function M.uninstall()
+    local the = rawget(_G, "THE")
+    local gunner = type(the) == "table" and the.Gunner or nil
+    if M.wrapper ~= nil and type(gunner) == "table" and gunner.update == M.wrapper then
+        gunner.update = M.original
     end
-    local ok, why = patchRunner(THE.Gunner.update)
-    if ok then log("installed: THE.Gunner.zombieTargets filters the companion") end
-    return ok, why
+    M.original, M.wrapper, M.mode = nil, nil, nil
+    M.installed = false
+    M.reported = false
+    return true
+end
+
+function M.status()
+    local the = rawget(_G, "THE")
+    local gunner = type(the) == "table" and the.Gunner or nil
+    local live = M.wrapper ~= nil and type(gunner) == "table" and gunner.update == M.wrapper
+    return string.format("thecompat status installed=%s mode=%s live=%s seen=%s",
+        tostring(M.installed == true), tostring(M.mode or "none"),
+        tostring(live), tostring(M.seen == true))
 end
 
 function M.selftest()
@@ -119,98 +203,145 @@ function M.selftest()
         if not cond then fails[#fails + 1] = name end
     end
 
-    local savedBridge = rawget(_G, "Bridge")
-    local savedInstalled = M.installed
-    local savedRunner = M.runner
-    local savedUpvalueIndex = M.upvalueIndex
-    local savedOriginal = M.original
-    local savedWrapper = M.wrapper
-    local savedTesting = M.testing
-    local savedSeen = M.seen
+    local saved = {
+        bridge = rawget(_G, "Bridge"),
+        the = rawget(_G, "THE"),
+        installed = M.installed, original = M.original, wrapper = M.wrapper,
+        mode = M.mode, seen = M.seen, reported = M.reported,
+        lastFailure = M.lastFailure, testing = M.testing,
+    }
 
-    local function stub(md, vars)
-        local z = { md = md or {}, vars = vars or {} }
-        function z:hasModData() return true end
-        function z:getModData() return self.md end
-        function z:getVariableBoolean(name) return self.vars[name] == true end
-        return z
+    local function resetModule()
+        M.installed, M.original, M.wrapper, M.mode = nil, nil, nil, nil
+        M.seen, M.reported, M.lastFailure = nil, nil, nil
     end
 
-    local plain = stub({}, {})
-    local tagged = stub({}, { NotAloneBody = true })
-    local dataTagged = stub({ notAloneBody = true }, {})
-    local bridgeBody = stub({}, {})
-
-    rawset(_G, "Bridge", { body = bridgeBody, BODY_VAR = "NotAloneBody" })
     M.testing = true
 
-    check("isBody Bridge.body", M.isBody(bridgeBody) == true)
-    check("isBody variable", M.isBody(tagged) == true)
-    check("isBody mod data", M.isBody(dataTagged) == true)
+    local body = { x = 1000, y = 1000 }
+    function body:getX() return self.x end
+    function body:getY() return self.y end
+    rawset(_G, "Bridge", { body = body })
+
+    local calls = 0
+    local seenHelping = nil
+    local otherHelping = nil
+    local helping = function() return true end
+    local function original(ac, players, dtMin)
+        calls = calls + 1
+        seenHelping = THE.Rules.helping(ac)
+        otherHelping = THE.Rules.helping({ flight = { div = { gx = 9999, gy = 9999 } } })
+        return "ran"
+    end
+
+    rawset(_G, "THE", {
+        MODID = "TrueHelicopterEvents",
+        FIRE_COVER_R = 15,
+        Gunner = { update = original },
+        Rules = { helping = helping },
+    })
+
+    local acNear = { flight = { div = { gx = 1000, gy = 1000 } } }
+    local acFar = { flight = { div = { gx = 0, gy = 0 } } }
+
+    resetModule()
+    check("install guards gunner", M.install(false) == true and M.installed == true)
+    check("status installed live", M.status():find("installed=true", 1, true) ~= nil
+        and M.status():find("live=true", 1, true) ~= nil)
+    check("gunner update wrapped", THE.Gunner.update == M.wrapper)
+
+    calls = 0
+    local farResult = THE.Gunner.update(acFar, {}, 0.1)
+    check("far calls original", calls == 1 and farResult == "ran")
+    check("far leaves helping", THE.Rules.helping == helping)
+
+    calls = 0
+    local nearResult = THE.Gunner.update(acNear, {}, 0.1)
+    check("near calls original", calls == 1 and nearResult == "ran")
+    check("near sees helping false", seenHelping == false)
+    check("other target still helping", otherHelping == true)
+    check("helping restored after call", THE.Rules.helping == helping)
+    check("mode helping", M.mode == "helping")
+
+    local savedBody = Bridge.body
+    Bridge.body = nil
+    calls = 0
+    THE.Gunner.update(acNear, {}, 0.1)
+    check("nil body calls original", calls == 1)
+    Bridge.body = savedBody
+
+    local raised = function() error("boom") end
+    rawset(_G, "THE", {
+        MODID = "TrueHelicopterEvents",
+        FIRE_COVER_R = 15,
+        Gunner = { update = raised },
+        Rules = { helping = helping },
+    })
+    M.install(false)
+    local raisedWrapper = THE.Gunner.update
+    local okRaise, errRaise = pcall(raisedWrapper, acNear, {}, 0.1)
+    check("error propagates", okRaise == false and tostring(errRaise):find("boom", 1, true) ~= nil)
+    check("error restores helping", THE.Rules.helping == helping)
+
+    local skipOriginal = function() calls = calls + 1 end
+    rawset(_G, "THE", {
+        MODID = "TrueHelicopterEvents",
+        FIRE_COVER_R = 15,
+        Gunner = { update = skipOriginal },
+        Rules = {},
+    })
+    M.install(false)
+    calls = 0
+    THE.Gunner.update(acNear, {}, 0.1)
+    check("missing helping skips original", calls == 0 and M.mode == "skip")
+    THE.Gunner.update(acFar, {}, 0.1)
+    check("missing helping far calls original", calls == 1)
+
+    local wrapped = THE.Gunner.update
+    check("install idempotent", M.install(false) == true and THE.Gunner.update == wrapped)
+
+    local lastOriginal = function() calls = calls + 1 end
+    rawset(_G, "THE", {
+        MODID = "TrueHelicopterEvents",
+        FIRE_COVER_R = 15,
+        Gunner = { update = lastOriginal },
+        Rules = {},
+    })
+    M.install(false)
+    local okUninstall = M.uninstall()
+    check("uninstall restores original", okUninstall == true and THE.Gunner.update == lastOriginal)
+    check("uninstall clears wrapper", M.installed ~= true and M.wrapper == nil)
+
+    check("isBody Bridge.body", M.isBody(body) == true)
+    local plain = {}
+    function plain:getVariableBoolean() return false end
+    function plain:hasModData() return false end
     check("isBody plain", M.isBody(plain) == false)
 
-    local first = { obj = bridgeBody }
-    local second = { obj = plain }
-    local third = { obj = tagged }
-    local out = { first, second, third }
-    M.filterTargets(out)
-    check("filterTargets removes companion", #out == 1 and out[1] == second)
-    check("filterTargets keeps order", out[1] == second)
-
-    local function zombieTargets(ac, list)
-        list[#list + 1] = { obj = bridgeBody }
-        list[#list + 1] = { obj = plain }
-    end
-    local function fakeUpdate(ac, list)
-        zombieTargets(ac, list)
-    end
-
-    M.installed, M.runner, M.upvalueIndex, M.original, M.wrapper = nil, nil, nil, nil, nil
-
-    local okPatch = patchRunner(fakeUpdate)
-    check("patchRunner installs", okPatch == true)
-
-    local list = {}
-    fakeUpdate(nil, list)
-    check("companion filtered from runner", #list == 1 and list[1].obj == plain)
-
-    local okSecond = patchRunner(fakeUpdate)
-    local list2 = {}
-    fakeUpdate(nil, list2)
-    check("patchRunner is idempotent", okSecond == true and #list2 == 1)
-
-    local okUninstall = M.uninstall()
-    local list3 = {}
-    fakeUpdate(nil, list3)
-    check("uninstall restores original", okUninstall == true and #list3 == 2)
-
-    local function noUpvalue(ac, list4)
-        return list4
-    end
-    M.installed, M.runner, M.upvalueIndex, M.original, M.wrapper = nil, nil, nil, nil, nil
-    local okNone, whyNone = patchRunner(noUpvalue)
-    check("missing upvalue fails", okNone == false and type(whyNone) == "string")
-
-    M.installed, M.runner, M.upvalueIndex, M.original, M.wrapper, M.testing, M.seen =
-        savedInstalled, savedRunner, savedUpvalueIndex, savedOriginal, savedWrapper, savedTesting, savedSeen
-    rawset(_G, "Bridge", savedBridge)
+    M.installed, M.original, M.wrapper = saved.installed, saved.original, saved.wrapper
+    M.mode, M.seen, M.reported = saved.mode, saved.seen, saved.reported
+    M.lastFailure, M.testing = saved.lastFailure, saved.testing
+    rawset(_G, "Bridge", saved.bridge)
+    rawset(_G, "THE", saved.the)
 
     if #fails == 0 then return string.format("thecompat PASS (%d checks)", checks) end
-    return string.format("thecompat FAIL (%d of %d): %s", checks, #fails, table.concat(fails, "; "))
+    return string.format("thecompat FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
 end
 
-local function tryInstall(quiet)
-    local ok, why = M.install()
-    if not ok and not quiet and M.lastFailure ~= why then
-        M.lastFailure = why
-        log("not installed: " .. tostring(why))
-    end
-end
+M.install(true)
 
-tryInstall(true)
-
-if type(Events) == "table" and Events.OnGameStart ~= nil then
+if type(Events) == "table" and Events.OnGameStart ~= nil and Events.OnGameStart.Add ~= nil then
     Events.OnGameStart.Add(function()
-        if not M.installed then tryInstall(false) end
+        M.seen = false
+        if M.active() then M.install(false) end
+    end)
+end
+
+if type(Events) == "table" and Events.OnTick ~= nil and Events.OnTick.Add ~= nil then
+    Events.OnTick.Add(function()
+        ticks = ticks + 1
+        if ticks % RETRY_EVERY ~= 0 then return end
+        if not M.active() then return end
+        pcall(M.install, false)
     end)
 end

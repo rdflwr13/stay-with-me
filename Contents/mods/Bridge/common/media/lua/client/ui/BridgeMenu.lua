@@ -1652,7 +1652,10 @@ function BridgeMenu.onLayThis(targets)
 end
 
 function BridgeMenu.onLayGetUp()
-    if BridgeTask ~= nil and BridgeTask.layStandUp ~= nil then BridgeTask.layStandUp() end
+    if BridgeTask ~= nil and BridgeTask.layStandUp ~= nil then
+        log("lay get up requested from menu")
+        BridgeTask.layStandUp()
+    end
 end
 
 function BridgeMenu.onLaySleep()

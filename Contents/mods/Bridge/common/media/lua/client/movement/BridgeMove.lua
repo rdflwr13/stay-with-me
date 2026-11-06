@@ -2965,6 +2965,22 @@ local function followTrailStep(body)
 
 
 
+    local nav = BridgeMove.navState()
+    if nav ~= nil and nav.detour ~= nil then
+        local det = nav.detour
+        local bx0, by0 = body:getX(), body:getY()
+        local dx0, dy0 = bx0 - det.x, by0 - det.y
+        local near = math.sqrt(dx0 * dx0 + dy0 * dy0) <= 0.5
+        if kind == "player" or Bridge.time > (det.expires or 0)
+                or math.abs(body:getZ() - (det.z or body:getZ())) > 0.5 or near then
+            nav.detour = nil
+        else
+            tx, ty, tz, kind = det.x, det.y, det.z or tz, "detour"
+            along = dist2d(bx0, by0, tx, ty)
+            F.engineHold = nil
+        end
+    end
+
     if F.engineHold ~= nil then
         local H = F.engineHold
         local hx, hy = body:getX(), body:getY()
@@ -2986,6 +3002,26 @@ local function followTrailStep(body)
         end
         if Bridge.verbose then
             log(sformat("engine path released after %d ticks: %s", Bridge.time - H.tick, why))
+        end
+        if why == "no progress" then
+            local dnav = BridgeMove.navState()
+            local p = nil
+            if dnav ~= nil and BridgeNav ~= nil and BridgeNav.detour ~= nil then
+                p = BridgeNav.detour(body, red:getX(), red:getY(), body:getZ(), dnav,
+                    { step = NAV.DETOUR_STEP, ticks = NAV.DETOUR_TICKS })
+            end
+            if p ~= nil then
+                dnav.status = "detour"
+                tx, ty, tz, kind = p.x, p.y, p.z, "detour"
+                along = dist2d(body:getX(), body:getY(), tx, ty)
+                if Bridge.verbose then
+                    log(sformat("follow detour: no progress at %.2f,%.2f, going to %.1f,%.1f",
+                        body:getX(), body:getY(), tx, ty))
+                end
+            elseif Bridge.verbose then
+                log(sformat("follow detour: none available at %.2f,%.2f",
+                    body:getX(), body:getY()))
+            end
         end
         F.engineHold = nil
     end

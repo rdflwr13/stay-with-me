@@ -40,6 +40,7 @@ BridgeTask.WALK_TIMEOUT = 20 * SECOND
 
 BridgeTask.WALK_NO_PROGRESS = 5 * SECOND
 BridgeTask.PATH_FAIL_LIMIT = 2
+BridgeTask.WINDOW_TRY_LIMIT = 2
 
 
 BridgeTask.SIT_RANGE = 0.35
@@ -1289,7 +1290,7 @@ local function spotUsable(sq)
     return ok
 end
 
-local function freeAdjacent(body, target)
+local function freeAdjacent(body, target, ok)
     local orth, orthD, diag, diagD = nil, nil, nil, nil
     local targetSq = nil
     pcall(function() targetSq = getCell():getGridSquare(target.x, target.y, target.z) end)
@@ -1309,7 +1310,8 @@ local function freeAdjacent(body, target)
                         pcall(function() blocked = sq:isSomethingTo(targetSq) end)
                     end
                     if free and not blocked and not isBadSpot(x, y)
-                            and not sealedBetween(sq, targetSq) then
+                            and not sealedBetween(sq, targetSq)
+                            and (ok == nil or ok(sq, targetSq)) then
                         local d = (body:getX() - (x + 0.5)) ^ 2 + (body:getY() - (y + 0.5)) ^ 2
                         if dx == 0 or dy == 0 then
                             if orthD == nil or d < orthD then orth, orthD = { x = x, y = y, z = target.z }, d end
@@ -1663,6 +1665,62 @@ local function routeAbort(branch, why, body, target)
         dSpot, dGoal, pathing, result, obs, climbText, openText))
 end
 
+function BridgeTask.noteWindowAttempts(body)
+    if body == nil then return end
+    local list = BridgeMove ~= nil and BridgeMove.openWindows or nil
+    if list == nil or #list == 0 then return end
+    local seen = BridgeTask.windowSeen
+    if seen == nil then
+        seen = { tick = -1, keys = {} }
+        BridgeTask.windowSeen = seen
+    end
+    local tries = BridgeTask.windowTries
+    if tries == nil then
+        tries = {}
+        BridgeTask.windowTries = tries
+    end
+    local planned = BridgeMove.openingWay
+    local plannedKey = planned ~= nil and planned.key or nil
+    local bodySq = string.format("%d,%d,%d",
+        math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()))
+    local newest = seen.tick or -1
+    for _, rec in ipairs(list) do
+        local tick = rec.tick
+        if tick ~= nil and tick > newest then newest = tick end
+        if tick ~= nil and tick > (seen.tick or -1) then
+            local key = nil
+            if rec.obj ~= nil and BridgeDoors ~= nil and BridgeDoors.key ~= nil then
+                pcall(function() key = BridgeDoors.key(rec.obj) end)
+            end
+            if key == nil and rec.x ~= nil and rec.y ~= nil and rec.z ~= nil then
+                key = math.floor(rec.x) .. "," .. math.floor(rec.y) .. "," .. math.floor(rec.z)
+            end
+            if key ~= nil then
+                local tag = tostring(tick) .. "|" .. key
+                if not seen.keys[tag] then
+                    seen.keys[tag] = true
+                    if plannedKey == nil or plannedKey ~= key then
+                        local prev = tries[key]
+                        if prev ~= nil and prev.sq == bodySq then
+                            prev.n = (prev.n or 0) + 1
+                        else
+                            tries[key] = { sq = bodySq, n = 1 }
+                        end
+                        local n = tries[key].n
+                        if n >= BridgeTask.WINDOW_TRY_LIMIT and BridgeTask.windowLoopKey == nil then
+                            BridgeTask.windowLoopKey = key
+                            log(string.format("window loop %s at %s after %d opens",
+                                tostring(key), bodySq, n))
+                        end
+                    end
+                end
+            end
+        end
+    end
+    seen.tick = newest
+end
+
+
 function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
     local bodyZ = math.floor(body:getZ())
     local targetSq = nil
@@ -1674,6 +1732,12 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
         BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
         BridgeTask.openingSince = nil
         return "arrived", nil
+    end
+
+    BridgeTask.noteWindowAttempts(body)
+    if BridgeTask.windowLoopKey ~= nil then
+        BridgeTask.info = "window loop"
+        return "unreachable", "windowLoop"
     end
 
     if BridgeMove ~= nil and BridgeMove.openingBlocked ~= nil then
@@ -2030,6 +2094,7 @@ function BridgeTask.reset()
     BridgeTask.layHintSaid = false
     BridgeTask.layCloseAt = nil
     BridgeTask.layFromX, BridgeTask.layFromY, BridgeTask.laySlideAt = nil, nil, nil
+    BridgeTask.windowTries, BridgeTask.windowSeen, BridgeTask.windowLoopKey = nil, nil, nil
     BridgeTask.detour = nil
     BridgeTask.detourSide = nil
     BridgeTask.clearCorpseState()
@@ -2172,6 +2237,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     BridgeTask.progressAt = Bridge.time
     BridgeTask.pathFails = 0
     BridgeTask.pathFailTick = nil
+    BridgeTask.windowTries, BridgeTask.windowSeen, BridgeTask.windowLoopKey = nil, nil, nil
     BridgeTask.doneCount = 0
     BridgeTask.failCount = 0
     BridgeTask.spokeNoPath = false
@@ -5539,6 +5605,35 @@ function BridgeTask.layPlayerOnBed(plan)
 end
 
 
+local function bedStandOk(sq, bedSq)
+    if sq == nil or bedSq == nil then return false end
+    if sq == bedSq then return false end
+
+    local window = nil
+    pcall(function() window = sq:getWindow() end)
+    if window ~= nil then return false end
+
+    local frame = false
+    pcall(function()
+        local objs = sq:getObjects()
+        for i = 0, objs:size() - 1 do
+            local o = objs:get(i)
+            if instanceof(o, "IsoWindowFrame") or instanceof(o, "IsoWindow") then
+                frame = true
+                return
+            end
+        end
+    end)
+    if frame then return false end
+
+    if bedSq:isWindowTo(sq) or sq:isWindowTo(bedSq) then return false end
+    if bedSq:isWallTo(sq) or sq:isWallTo(bedSq) then return false end
+    if bedSq:getDoorTo(sq) ~= nil or sq:getDoorTo(bedSq) ~= nil then return false end
+
+    return true
+end
+
+
 function BridgeTask.bedPlan(body, obj)
     if body == nil or obj == nil or not sitIsRealBed(obj) then return nil end
     local red = BridgeData ~= nil and BridgeData.owner() or nil
@@ -5553,10 +5648,10 @@ function BridgeTask.bedPlan(body, obj)
         if info ~= nil and not seen[info.key] then
             seen[info.key] = true
             local spot = nil
-            pcall(function() spot = freeAdjacent(body, { x = info.x, y = info.y, z = info.z }) end)
+            pcall(function() spot = freeAdjacent(body, { x = info.x, y = info.y, z = info.z }, bedStandOk) end)
             if spot == nil then
                 pcall(function()
-                    spot = freeAdjacent(body, { x = info.x + info.stepX, y = info.y + info.stepY, z = info.z })
+                    spot = freeAdjacent(body, { x = info.x + info.stepX, y = info.y + info.stepY, z = info.z }, bedStandOk)
                 end)
             end
             if spot ~= nil then
@@ -5595,7 +5690,7 @@ function BridgeTask.bedPlan(body, obj)
                 local sp = bed:getSprite()
                 if sp ~= nil then floor = isFloorBedSprite(sp:getName()) end
             end)
-            local spot = freeAdjacent(body, { x = sq:getX(), y = sq:getY(), z = z })
+            local spot = freeAdjacent(body, { x = sq:getX(), y = sq:getY(), z = z }, bedStandOk)
             if spot ~= nil then
                 local cx, cy = sq:getX() + 0.5, sq:getY() + 0.5
                 best = { obj = bed, key = sq:getX() .. "," .. sq:getY() .. "," .. z, z = z,
@@ -5606,6 +5701,64 @@ function BridgeTask.bedPlan(body, obj)
                     entry = "LayDownLeft", pdist = 0, rdist = 0 }
                 log("lay: bedPlan fell back to the bed tile centre")
             end
+        end
+    end
+
+    if best ~= nil then
+        local bedSq = nil
+        if best.obj ~= nil then pcall(function() bedSq = best.obj:getSquare() end) end
+        if bedSq ~= nil and best.sx ~= nil and best.sy ~= nil then
+            local bx, by, bz = bedSq:getX(), bedSq:getY(), bedSq:getZ()
+            local spots = { { x = best.sx, y = best.sy, z = best.z,
+                standX = best.standX, standY = best.standY, walkX = best.walkX, walkY = best.walkY } }
+            local used = { [best.sx .. "," .. best.sy] = true }
+            local extras = {}
+            for dx = -1, 1 do
+                for dy = -1, 1 do
+                    if dx ~= 0 or dy ~= 0 then
+                        local x, y = bx + dx, by + dy
+                        local sq = nil
+                        pcall(function() sq = getCell():getGridSquare(x, y, bz) end)
+                        if sq ~= nil and not used[x .. "," .. y] then
+                            local ok = false
+                            pcall(function()
+                                ok = sq:canStand() == true
+                                    and not sq:isSomethingTo(bedSq)
+                                    and not bedSq:isWindowTo(sq)
+                                    and bedSq:getDoorTo(sq) == nil
+                                    and not bedSq:isWallTo(sq)
+                            end)
+                            if ok and not isBadSpot(x, y) and not sealedBetween(sq, bedSq) then
+                                used[x .. "," .. y] = true
+                                local reach = true
+                                if BridgeMove ~= nil and BridgeMove.walkReach ~= nil then
+                                    local r = nil
+                                    pcall(function() r = BridgeMove.walkReach(body, x, y, bz, 4000) end)
+                                    reach = r ~= false
+                                end
+                                local dd = (body:getX() - (x + 0.5)) ^ 2 + (body:getY() - (y + 0.5)) ^ 2
+                                local pd = sitDist(px, py, x + 0.5, y + 0.5)
+                                extras[#extras + 1] = { x = x, y = y, z = bz,
+                                    standX = x + 0.5, standY = y + 0.5,
+                                    walkX = x + 0.5, walkY = y + 0.5,
+                                    reach = reach, d = dd, pdist = pd }
+                            end
+                        end
+                    end
+                end
+            end
+            table.sort(extras, function(a, b)
+                if a.reach ~= b.reach then return a.reach end
+                if math.abs(a.d - b.d) > 0.0001 then return a.d < b.d end
+                if math.abs(a.pdist - b.pdist) > 0.6 then return a.pdist > b.pdist end
+                return a.d < b.d
+            end)
+            for _, e in ipairs(extras) do
+                spots[#spots + 1] = { x = e.x, y = e.y, z = e.z,
+                    standX = e.standX, standY = e.standY, walkX = e.walkX, walkY = e.walkY }
+            end
+            best.spots = spots
+            best.spotIdx = 1
         end
     end
     return best
@@ -6029,6 +6182,39 @@ function BridgeTask.layClose()
     return romance and r ~= nil and (r.r or 0) >= 40
 end
 
+function BridgeTask.tryNextLayStand(body)
+    local plan = BridgeTask.layPlan
+    if plan == nil or plan.spots == nil or #plan.spots == 0 then return false end
+    local idx = plan.spotIdx or 1
+    if idx >= #plan.spots then return false end
+    idx = idx + 1
+    local spot = plan.spots[idx]
+    if spot == nil then return false end
+    plan.spotIdx = idx
+    plan.sx, plan.sy, plan.z = spot.x, spot.y, spot.z
+    plan.standX, plan.standY = spot.standX, spot.standY
+    plan.walkX, plan.walkY = spot.walkX, spot.walkY
+    BridgeTask.spot = nil
+    BridgeTask.bestD = nil
+    BridgeTask.progressAt = Bridge.time
+    BridgeTask.pathFails = 0
+    BridgeTask.pathFailTick = nil
+    BridgeTask.still = 0
+    BridgeTask.checkX, BridgeTask.checkY = nil, nil
+    BridgeTask.detour = nil
+    BridgeTask.detourSide = nil
+    BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
+    BridgeTask.openingSince = nil
+    BridgeTask.layCloseAt = nil
+    BridgeTask.windowTries, BridgeTask.windowSeen, BridgeTask.windowLoopKey = nil, nil, nil
+    BridgeTask.lastUnreachable = nil
+    pcall(function() BridgeMove.stopPath(body) end)
+    if BridgeMove ~= nil then BridgeMove.moving = false end
+    Bridge.target = nil
+    log(string.format("lay: stand retry %d/%d at %d,%d", idx, #plan.spots, spot.x, spot.y))
+    return true
+end
+
 BridgeTask.kinds.lay = {}
 
 function BridgeTask.kinds.lay.available(body)
@@ -6085,6 +6271,8 @@ function BridgeTask.kinds.lay.update(body)
         BridgeTask.still = 0
         BridgeTask.checkX, BridgeTask.checkY = nil, nil
         BridgeTask.detour = nil
+        BridgeTask.windowTries, BridgeTask.windowSeen, BridgeTask.windowLoopKey = nil, nil, nil
+        BridgeTask.lastUnreachable = nil
         pcall(function()
             local sq = plan.obj:getSquare()
             log(string.format("lay: bed %s, lie %.2f,%.2f stand %.2f,%.2f side %s dir %s",
@@ -6107,9 +6295,22 @@ function BridgeTask.kinds.lay.update(body)
         local walk, why = BridgeTask.walkTo(body, { x = sx, y = sy, z = plan.z },
             BridgeTask.STOP_DIST, true, true)
         if walk == "unreachable" then
+            local branch = BridgeTask.lastUnreachable and BridgeTask.lastUnreachable.branch
+            if why == "windowLoop" or branch == "openingStale" or branch == "progress" then
+                if BridgeTask.tryNextLayStand(body) then return true end
+            end
+            if why == "windowLoop" then
+                BridgeTask.info = "lay: window loop, no stand"
+                BridgeTask.markUnreachable("windowLoop")
+                return BridgeTask.finish()
+            end
             BridgeTask.info = "lay: no path to bed"
             BridgeTask.markUnreachable(why)
             return BridgeTask.finish()
+        end
+        if walk == "walking" and BridgeTask.badSpots ~= nil
+                and BridgeTask.badSpots[plan.sx .. "," .. plan.sy] == true then
+            if BridgeTask.tryNextLayStand(body) then return true end
         end
         local d = sitDist(body:getX(), body:getY(), sx + 0.5, sy + 0.5)
         local arrive = walk == "arrived"
