@@ -122,3 +122,27 @@ option StayWithMe.MeetMarkerRange
     translation = StayWithMe_MeetMarkerRange,
     valueTranslation = StayWithMe_MeetMarkerRange_Values,
 }
+
+option StayWithMe.NightSight
+{
+    type = enum, numValues = 4, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_NightSight,
+    valueTranslation = StayWithMe_NightSight_Values,
+}
+
+option StayWithMe.SpeechFont
+{
+    type = enum, numValues = 3, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_SpeechFont,
+    valueTranslation = StayWithMe_SpeechFont_Values,
+}
+
+option StayWithMe.SpeechDuration
+{
+    type = enum, numValues = 3, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_SpeechDuration,
+    valueTranslation = StayWithMe_SpeechDuration_Values,
+}

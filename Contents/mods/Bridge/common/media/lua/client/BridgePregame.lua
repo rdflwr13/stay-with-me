@@ -1085,15 +1085,18 @@ function BridgePregameScreen:ensureClothRow(loc)
     local parent = self.clothPanel or self
     local combo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onClothType)
     combo:initialise()
+    combo.autoAddJoypadButton = false
     combo.loc = loc
     parent:addChild(combo)
     local color = ISButton:new(0, 0, BTN_H, BTN_H, "", self, BridgePregameScreen.onClothColor)
     color:initialise()
     color:instantiate()
+    color.autoAddJoypadButton = false
     color.loc = loc
     parent:addChild(color)
     local tex = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onClothTexture)
     tex:initialise()
+    tex.autoAddJoypadButton = false
     tex.loc = loc
     parent:addChild(tex)
     local label = ISLabel:new(0, 0, BTN_H, vanillaText("UI_ClothingType_" .. tostring(loc), tostring(loc)),
@@ -2072,10 +2075,7 @@ function BridgePregameScreen:layoutRight()
     for _, control in ipairs(right) do self:markJoypadAdd(control) end
     self.rightControls = right
     for _, loc in ipairs(self.clothOrder or {}) do
-        local row = self:ensureClothRow(loc)
-        self:markJoypadAdd(row.combo)
-        self:markJoypadAdd(row.color)
-        self:markJoypadAdd(row.tex)
+        self:ensureClothRow(loc)
     end
 end
 
@@ -2173,11 +2173,31 @@ function BridgePregameScreen:layout()
 end
 
 function BridgePregameScreen:refreshJoypadRows()
-    self:autoGenerateJoypadButtonsLists()
     local joypad = self.joyfocus
-    if joypad == nil then return end
+    if joypad == nil then
+        pcall(function() joypad = JoypadState.getMainMenuJoypad() end)
+    end
+    if joypad == nil then
+        pcall(function() joypad = CoopCharacterCreation.getJoypad() end)
+    end
+    if joypad == nil then
+        if self.joypadRowsLogged ~= true then
+            self.joypadRowsLogged = true
+            print("[BridgePregame] joypad rows 0")
+        end
+        return
+    end
+
+    self:autoGenerateJoypadButtonsLists()
+
+    if self.joypadRowsLogged ~= true then
+        self.joypadRowsLogged = true
+        print("[BridgePregame] joypad rows " .. tostring(#(self.joypadButtonsY or {})))
+    end
+
     local focused = self:getJoypadFocus()
     if focused ~= nil and self:setJoypadFocus(focused, joypad) then return end
+    if #(self.joypadButtonsY or {}) == 0 then return end
     self:setJoypadFocusTopLeft(joypad)
 end
 
@@ -3121,6 +3141,11 @@ function BridgePregameScreen:onGainJoypadFocus(joypadData)
     ISPanelJoypad.onGainJoypadFocus(self, joypadData)
     if self.startBtn ~= nil then self:setISButtonForA(self.startBtn) end
     if self.backBtn ~= nil then self:setISButtonForB(self.backBtn) end
+    if #(self.joypadButtonsY or {}) == 0 and self.joypadRowsBuilding ~= true then
+        self.joypadRowsBuilding = true
+        pcall(self.refreshJoypadRows, self)
+        self.joypadRowsBuilding = false
+    end
     if self:getJoypadFocus() == nil then
         self:setJoypadFocusTopLeft(joypadData)
     end

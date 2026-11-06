@@ -175,7 +175,10 @@ function BridgeSocial.line(pool)
     return text
 end
 
-local function say(pool)
+local function say(pool, routine)
+    if routine == true and Bridge ~= nil and type(Bridge.speechBusy) == "function" and Bridge.speechBusy() then
+        return nil
+    end
     local text = BridgeSocial.line(pool)
     if text ~= nil then Bridge.speakText(text) end
     return text
@@ -189,6 +192,7 @@ function BridgeSocial.sayExact(pool, cooldown, slot)
     pcall(function() ready = BridgeMoments.ready(slot, true) == true end)
     if not ready then return false end
     if Bridge.time - (Bridge.lastSpokeAt or -99999) < BridgeMoments.MIN_GAP then return false end
+    if Bridge ~= nil and type(Bridge.speechBusy) == "function" and Bridge.speechBusy() then return false end
     local text = nil
     pcall(function() text = BridgeSocial.line(pool) end)
     if text == nil then return false end
@@ -2032,7 +2036,7 @@ function BridgeSocial.idleRemark(red, inCar)
     if justSpoke then return false end
     BridgeSocial.nextRemark = Bridge.time + 5400 + ZombRand(9000)
     local pool = BridgeSocial.idlePool(r, red, inCar)
-    if say(pool) == nil then say("Remark" .. BridgeData.relTier(r)) end
+    if say(pool, true) == nil then say("Remark" .. BridgeData.relTier(r), true) end
     BridgeSocial.lastRemark = Bridge.time
     return true
 end
@@ -2087,7 +2091,7 @@ function BridgeSocial.update(body)
 
         if not quiet then
             local pool = BridgeSocial.idlePool(r, red, false)
-            if say(pool) == nil then say("Remark" .. BridgeData.relTier(r)) end
+            if say(pool, true) == nil then say("Remark" .. BridgeData.relTier(r), true) end
             BridgeSocial.lastRemark = Bridge.time
         end
     end

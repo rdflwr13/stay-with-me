@@ -5158,6 +5158,9 @@ local function sitIsRealBed(obj)
     local bed = false
     pcall(function() bed = props:has(IsoFlagType.bed) == true end)
     if not bed then return false end
+    local custom = nil
+    pcall(function() custom = props:get("CustomName") end)
+    if custom == "Picknic Table" or custom == "Picnic Table" then return false end
     local name = nil
     pcall(function() name = sprite:getName() end)
     if name == nil then return false end

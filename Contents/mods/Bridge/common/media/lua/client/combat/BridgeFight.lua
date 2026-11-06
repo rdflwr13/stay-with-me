@@ -948,6 +948,20 @@ local function barrierSide(z, body)
 end
 
 
+local function nightRange(base, body)
+    if BridgeSight ~= nil and type(BridgeSight.range) == "function" then
+        return BridgeSight.range(base, body)
+    end
+    return base
+end
+
+local function nightRelease(base, body)
+    if BridgeSight ~= nil and type(BridgeSight.releaseRange) == "function" then
+        return BridgeSight.releaseRange(base, body)
+    end
+    return base
+end
+
 local function pickTarget(body, red, mode)
     mode = mode or BridgeFight.mode()
     local best, bestD = nil, math.huge
@@ -961,9 +975,15 @@ local function pickTarget(body, red, mode)
         anchor = body
     end
     local rx, ry, rz = red:getX(), red:getY(), anchor:getZ()
+    local night = nightRange(1, body)
     local engageSelf = mode.engageSelf or math.huge
     local engageRed = mode.engageRed or math.huge
-    if meetDefense then engageSelf = 8.0 end
+    if meetDefense then
+        engageSelf = 8.0
+    else
+        engageSelf = engageSelf * night
+        engageRed = engageRed * night
+    end
     if engageSelf < 0 then engageSelf = 0 end
     if engageRed < 0 then engageRed = 0 end
     local selfR2 = engageSelf * engageSelf
@@ -1008,7 +1028,7 @@ local function pickTarget(body, red, mode)
 
 
                 local broke = BARRIER_STATE[b.st] and not BARRIER_STATE[st]
-                local came = (z:getX() - b.x) ^ 2 + (z:getY() - b.y) ^ 2 > 1.0 and dist(z, red) < mode.engageRed
+                local came = (z:getX() - b.x) ^ 2 + (z:getY() - b.y) ^ 2 > 1.0 and dist(z, red) < engageRed
                     and not wallBetween(body, z)
                 if b.untilT <= Bridge.time or broke or came then
                     BridgeFight.blacklist[z] = nil
@@ -1035,7 +1055,7 @@ local function pickTarget(body, red, mode)
                 local dRed = dist(z, red)
                 local dSelf = dist(z, body)
                 local remoteOk = (not isRemote) or dSelf <= reach + 0.3
-                local near = remoteOk and (dSelf < mode.engageSelf or (not BridgeFight.guardOnly and dRed < mode.engageRed))
+                local near = remoteOk and (dSelf < engageSelf or (not BridgeFight.guardOnly and dRed < engageRed))
                 if near then
                     local score = BridgeFight.threat(z, body, red, mode)
                     if BridgeAim ~= nil and BridgeAim.zone.on and BridgeAim.inCone(z:getX(), z:getY(), z:getZ()) then
@@ -1059,7 +1079,7 @@ local function pickTarget(body, red, mode)
                     and math.abs(a:getZ() - anchor:getZ()) < 0.8 and visible(a, anchor) then
                     local dSelf = dist(a, body)
                     local dRed = dist(a, red)
-                    local near = dSelf < mode.engageSelf or (not BridgeFight.guardOnly and dRed < mode.engageRed)
+                    local near = dSelf < engageSelf or (not BridgeFight.guardOnly and dRed < engageRed)
                     if near then
                         local score = BridgeFight.threat(a, body, red, mode)
                         if BridgeAim ~= nil and BridgeAim.zone.on and BridgeAim.inCone(a:getX(), a:getY(), a:getZ()) then
@@ -1082,7 +1102,7 @@ local function pickTarget(body, red, mode)
                 if math.abs(zz - rz) < 0.8 and BridgeFight.blacklist[n] == nil and visible(n, anchor) then
                     local dSelf = dist(n, body)
                     local dRed = dist(n, red)
-                    local near = dSelf < mode.engageSelf or (not BridgeFight.guardOnly and dRed < mode.engageRed)
+                    local near = dSelf < engageSelf or (not BridgeFight.guardOnly and dRed < engageRed)
                     if near then
                         local score = BridgeFight.threat(n, body, red, mode)
                         if BridgeAim ~= nil and BridgeAim.zone.on and BridgeAim.inCone(n:getX(), n:getY(), n:getZ()) then
@@ -1121,8 +1141,10 @@ local function validTarget(z, body, red, mode)
         meetDefense = true
         anchor = body
     end
-    local guardMax = BridgeData.COMBAT.bodyguard.targetMax
+    local keep = nightRelease(1, body)
+    local guardMax = BridgeData.COMBAT.bodyguard.targetMax * keep
     if meetDefense then guardMax = 8.0 end
+    local targetMax = mode.targetMax * keep
     if BridgeKnoxNpc ~= nil and BridgeKnoxNpc.isNpc(z) then
         if not BridgeKnoxNpc.hostile(z, red) then return false end
         local ok, alive = pcall(function() return z:isAlive() == true and z:isDead() ~= true end)
@@ -1133,7 +1155,7 @@ local function validTarget(z, body, red, mode)
             return dist(z, body) <= guardMax
         end
         local d = mode.rank == "self" and dist(z, body) or dist(z, red)
-        return d <= mode.targetMax
+        return d <= targetMax
     end
     if instanceof(z, "IsoAnimal") then
         if BridgeAnimals == nil or not BridgeAnimals.hostile(z) then return false end
@@ -1143,7 +1165,7 @@ local function validTarget(z, body, red, mode)
         if BridgeFight.guardOnly then
             return dist(z, body) <= guardMax
         end
-        return dist(z, body) <= mode.targetMax
+        return dist(z, body) <= targetMax
     end
     if BridgeFight.ownerRisen(z, red) then return false end
     local ok, alive = pcall(function() return z:isAlive() and z:getHealth() > 0 and not z:isOnKillDone() end)
@@ -1183,7 +1205,7 @@ local function validTarget(z, body, red, mode)
         if dist(z, body) > guardMax then return false end
     else
         local d = mode.rank == "self" and dist(z, body) or dist(z, red)
-        if d > mode.targetMax then return false end
+        if d > targetMax then return false end
     end
     if BridgeAim ~= nil and BridgeAim.zone.on and BridgeAim.inCone(z:getX(), z:getY(), z:getZ()) then
         local reach = 0

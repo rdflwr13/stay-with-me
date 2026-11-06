@@ -28,6 +28,8 @@ end
 
 
 local perkCache = {}
+local levelCache = setmetatable({}, { __mode = "k" })
+local thresholdCache = setmetatable({}, { __mode = "k" })
 local function perkOf(name)
     local p = perkCache[name]
     if p ~= nil then return p end
@@ -37,15 +39,34 @@ local function perkOf(name)
 end
 BridgeSkills.perkOf = perkOf
 
+local function thresholdsFor(p)
+    local cached = thresholdCache[p]
+    if cached ~= nil then return cached end
+    cached = {}
+    for n = 1, BridgeSkills.MAX_LEVEL do
+        local ok, total = pcall(p.getTotalXpForLevel, p, n)
+        if not ok or total == nil then
+            cached[n] = false
+            break
+        end
+        cached[n] = total
+    end
+    thresholdCache[p] = cached
+    return cached
+end
+
 local function levelForXp(p, xp)
     if p == nil then return 0 end
+    local cached = levelCache[p]
+    if cached ~= nil and cached.xp == xp then return cached.level end
     local lvl = 0
+    local totals = thresholdsFor(p)
     for n = 1, BridgeSkills.MAX_LEVEL do
-        local total = nil
-        pcall(function() total = p:getTotalXpForLevel(n) end)
-        if total == nil or xp < total then break end
+        local total = totals[n]
+        if total == nil or total == false or xp < total then break end
         lvl = n
     end
+    levelCache[p] = { xp = xp, level = lvl }
     return lvl
 end
 BridgeSkills.levelForXp = levelForXp
@@ -151,18 +172,22 @@ end
 
 
 
+local function multiplierConfig()
+    if SandboxVars == nil then return nil end
+    return SandboxVars.MultiplierConfig
+end
+
+local function multiplierValue(cfg, perk)
+    if cfg.GlobalToggle == true then return tonumber(cfg.Global) end
+    return tonumber(cfg[perk])
+end
+
 local function xpMultiplier(perk)
-    local cfg = nil
-    pcall(function() cfg = SandboxVars ~= nil and SandboxVars.MultiplierConfig or nil end)
+    local okCfg, cfg = pcall(multiplierConfig)
+    if not okCfg then cfg = nil end
     if cfg == nil then return 1 end
-    local mult = nil
-    pcall(function()
-        if cfg.GlobalToggle == true then
-            mult = tonumber(cfg.Global)
-        else
-            mult = tonumber(cfg[perk])
-        end
-    end)
+    local okMult, mult = pcall(multiplierValue, cfg, perk)
+    if not okMult then mult = nil end
     if mult == nil or mult ~= mult or mult <= 0 then return 1 end
     return mult
 end
@@ -181,7 +206,10 @@ function BridgeSkills.add(perk, amount, reason, skipMultiplier)
     if not skipMultiplier then amount = amount * xpMultiplier(perk) end
     local p = perkOf(perk)
     local cap = nil
-    if p ~= nil then pcall(function() cap = p:getTotalXpForLevel(BridgeSkills.MAX_LEVEL) end) end
+    if p ~= nil then
+        local ok, value = pcall(p.getTotalXpForLevel, p, BridgeSkills.MAX_LEVEL)
+        if ok then cap = value end
+    end
     local before = tonumber(s[perk]) or 0
     local after = before + amount
     if cap ~= nil and after > cap then after = cap end
@@ -314,6 +342,10 @@ local function drawPops()
     local pn = player:getPlayerNum()
     local tm = getTextManager()
     local now = getTimestampMs()
+    local fontH = tm:getFontHeight(UIFont.Small)
+    local rowH = fontH + 2
+    local zoom = getCore():getZoom(pn)
+    local lift = 128 * Core.getTileScale() / 2 / zoom
     local i = 1
     while i <= #pops do
         local p = pops[i]
@@ -323,12 +355,9 @@ local function drawPops()
         else
             local frac = age / POP_LIFE_MS
             local alpha = 1 - frac
-            local rowH = tm:getFontHeight(UIFont.Small) + 2
-            local zoom = getCore():getZoom(pn)
-            local lift = 128 * Core.getTileScale() / 2 / zoom
             local x = isoToScreenX(pn, z:getX(), z:getY(), z:getZ())
             local y = isoToScreenY(pn, z:getX(), z:getY(), z:getZ())
-                - lift - tm:getFontHeight(UIFont.Small) - POP_BASE - POP_RISE * frac - (i - 1) * rowH
+                - lift - fontH - POP_BASE - POP_RISE * frac - (i - 1) * rowH
             local text = p.text
             local color = p.color or POP_COLOR
             tm:DrawStringCentre(UIFont.Small, x - 1, y, text, 0, 0, 0, alpha * 0.8)
@@ -488,7 +517,16 @@ BridgeSkills.flushTick = flushTick
 
 
 
+local function ensureBridge()
+    if type(Bridge) == "table" then return true end
+    if BridgeData ~= nil and type(BridgeData.keepBridge) == "function" then
+        BridgeData.keepBridge()
+    end
+    return type(Bridge) == "table"
+end
+
 local function installWrappers()
+    if not ensureBridge() then return end
 
 
 
@@ -529,6 +567,7 @@ end
 if type(Events) == "table" and Events.OnGameStart ~= nil then
     Events.OnGameStart.Add(installWrappers)
     Events.OnGameStart.Add(function()
+        if not ensureBridge() then return end
         pcall(function()
             if Bridge.store == nil then return end
             BridgeData.skillsOf(Bridge.store)

@@ -16,8 +16,11 @@ local SPEECH_MS = 5000
 
 
 
-function BridgeName.spoke(z)
-    if z ~= nil then BridgeName.saidAt[z] = getTimestampMs() end
+function BridgeName.spoke(z, untilMs)
+    if z ~= nil then
+        if untilMs == nil then untilMs = getTimestampMs() + SPEECH_MS end
+        BridgeName.saidAt[z] = untilMs
+    end
 end
 
 local function drawOne(tm, pn, z, text)
@@ -30,7 +33,7 @@ local function drawOne(tm, pn, z, text)
 
     local said = BridgeName.saidAt[z]
     if said ~= nil then
-        if getTimestampMs() - said < SPEECH_MS then return end
+        if getTimestampMs() < said then return end
         BridgeName.saidAt[z] = nil
     end
     local core = getCore()
