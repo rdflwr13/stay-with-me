@@ -7,3 +7,4 @@ pzversion=42
 versionMin=42.21
 poster=poster.png
 icon=icon.png
+incompatible=\KnoxEventExpandedNpc\,\CAColorfulWorld\

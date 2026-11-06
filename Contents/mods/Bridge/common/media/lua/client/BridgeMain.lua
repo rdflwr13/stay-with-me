@@ -2554,8 +2554,16 @@ function Bridge.speechTag(text)
 end
 
 
-function Bridge.speechLineFor(z, text)
+function Bridge.speechLineFor(z, text, expectId)
     if z == nil then return false, "no body" end
+    if expectId ~= nil then
+        local pid = nil
+        pcall(function() pid = z:getPersistentOutfitID() end)
+        if pid ~= expectId then return false, "wrong body" end
+        local marked = false
+        pcall(function() marked = z:getVariableBoolean(Bridge.BODY_VAR) == true end)
+        if not marked then return false, "not companion" end
+    end
     local fontIndex = Bridge.speechFontIndex()
     local seconds = Bridge.speechSeconds()
     if Bridge.speechLoggedFont ~= fontIndex or Bridge.speechLoggedSeconds ~= seconds then
@@ -4196,9 +4204,13 @@ local function updateZombieBody(body)
             log("body revealed after " .. tostring(age) .. " ticks, " .. tostring(why))
             if Bridge.greetOnReveal then
                 Bridge.greetOnReveal = nil
-                Bridge.speakGraceUntil = 0
-                Bridge.speak("Hello")
-                Bridge.noteSpawned()
+                if why == "dressed" then
+                    Bridge.speakGraceUntil = 0
+                    Bridge.speak("Hello")
+                    Bridge.noteSpawned()
+                else
+                    log("greet skipped: " .. tostring(why))
+                end
             end
         end
     end
@@ -4901,6 +4913,7 @@ end
 
 local function applyLook(z, visuals, rec, who)
     z:setVariable(BODY_VAR, true)
+    if BridgeSizeMatterCompat ~= nil then pcall(BridgeSizeMatterCompat.neutralize, z, rec) end
 
     pcall(function()
         local laying = BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "lay"
@@ -8856,7 +8869,7 @@ function Bridge.onServerCommand(module, command, args)
                 local hidden = false
                 pcall(function() hidden = z:isInvisible() end)
                 if info.who == args.owner and not hidden then
-                    local ok = Bridge.speechLineFor(z, args.text)
+                    local ok = Bridge.speechLineFor(z, args.text, args.id)
                     if ok then
                         local untilMs = getTimestampMs() + Bridge.speechHoldMs()
                         if BridgeName ~= nil then BridgeName.spoke(z, untilMs) end

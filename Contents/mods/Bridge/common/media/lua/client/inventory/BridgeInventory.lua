@@ -361,6 +361,7 @@ local function diagModel(b, rec, female)
 end
 
 function BridgeInventory.skin(b, rec)
+    if BridgeSizeMatterCompat ~= nil then pcall(BridgeSizeMatterCompat.neutralize, b, rec) end
     local female = BridgeData.isFemale(rec)
     pcall(function() b:setFemaleEtc(female) end)
     pcall(function() b:setFemale(female) end)
