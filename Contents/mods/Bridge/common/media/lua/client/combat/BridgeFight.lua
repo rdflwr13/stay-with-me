@@ -902,6 +902,7 @@ BridgeFight.SPEED_SCORE = {
 
 function BridgeFight.speedClass(z)
     if z == nil then return nil end
+    if not BridgeData.isZombie(z) then return nil end
     local crawling = false
     if type(z.isCrawling) == "function" then
         pcall(function() crawling = z:isCrawling() == true end)
@@ -1167,6 +1168,7 @@ end
 
 
 local function reanimatedImpl(z, red)
+    if not BridgeData.isZombie(z) then return false end
     if type(z.isReanimatedPlayer) ~= "function" or type(z.getReanimatedPlayer) ~= "function" then return false end
     return z:isReanimatedPlayer() and z:getReanimatedPlayer() == red
 end
@@ -3472,6 +3474,8 @@ function BridgeFight.selftest()
         if not ok then fails[#fails + 1] = name end
     end
     local function near(a, b) return math.abs((tonumber(a) or 0) - (tonumber(b) or 0)) < 1e-9 end
+    local savedIsZombie = BridgeData.isZombie
+    BridgeData.isZombie = function() return true end
     local function stub(speed, crawl)
         return {
             getSpeedType = function() return speed end,
@@ -3514,6 +3518,7 @@ function BridgeFight.selftest()
     check("soft crawler at 2 still beats shambler at 5",
         (2 + BridgeFight.speedScore(crawler)) < (5 + BridgeFight.speedScore(shambler)))
 
+    BridgeData.isZombie = savedIsZombie
     if #fails == 0 then return string.format("targetselftest PASS (%d checks)", checks) end
     return string.format("targetselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
 end

@@ -522,6 +522,25 @@ local function buildGun(context, env)
 end
 
 
+local function addKeepMenu(parent, env)
+    if not BridgeData.KEEP_ON then return end
+    local keepOption = parent:addOption(tr("Keep"))
+    local keep = ISContextMenu:getNew(parent)
+    parent:addSubMenu(keepOption, keep)
+    local far = BridgeData.farOf(env.st)
+    local side = BridgeData.keepOf(env.st)
+    local closer = keep:addOption(tr("KeepCloser"), "near", BridgeMenu.onKeepDistance)
+    if not far then closer.isDisabled = true end
+    local farther = keep:addOption(tr("KeepFarther"), "far", BridgeMenu.onKeepDistance)
+    if far then farther.isDisabled = true end
+    if BridgeData.KEEP_SIDES_ON then
+        for _, entry in ipairs({ { "behind", "KeepBehind" }, { "left", "KeepLeft" }, { "right", "KeepRight" } }) do
+            local o = keep:addOption(tr(entry[2]), entry[1], BridgeMenu.onKeepSide)
+            if side == entry[1] then o.isDisabled = true end
+        end
+    end
+end
+
 local function buildFight(context, playerNum, env)
     local combatOption = context:addOption(tr("Combat"))
     local guard = false
@@ -540,6 +559,7 @@ local function buildFight(context, playerNum, env)
             if combatMode == entry[1] then o.isDisabled = true end
             tip(o, tr(entry[2] .. "Tip"))
         end
+        addKeepMenu(combat, env)
     end
 end
 
@@ -623,21 +643,24 @@ local function buildJobs(context, playerNum, env)
     end
 end
 
-local function buildKeep(context, playerNum, env)
-    if not BridgeData.KEEP_ON then return end
-    local keepOption = context:addOption(tr("Keep"))
-    local keep = ISContextMenu:getNew(context)
-    context:addSubMenu(keepOption, keep)
-    local far = BridgeData.farOf(env.st)
-    local side = BridgeData.keepOf(env.st)
-    local closer = keep:addOption(tr("KeepCloser"), "near", BridgeMenu.onKeepDistance)
-    if not far then closer.isDisabled = true end
-    local farther = keep:addOption(tr("KeepFarther"), "far", BridgeMenu.onKeepDistance)
-    if far then farther.isDisabled = true end
-    if BridgeData.KEEP_SIDES_ON then
-        for _, entry in ipairs({ { "behind", "KeepBehind" }, { "left", "KeepLeft" }, { "right", "KeepRight" } }) do
-            local o = keep:addOption(tr(entry[2]), entry[1], BridgeMenu.onKeepSide)
-            if side == entry[1] then o.isDisabled = true end
+local function buildAffection(context, playerNum, env)
+    if not env.inRange then return end
+    if BridgeAnim == nil or BridgeAnim.ORDER == nil or BridgeAnim.reason == nil then return end
+    local option = context:addOption(tr("Affection"))
+    local sub = ISContextMenu:getNew(context)
+    context:addSubMenu(option, sub)
+    local why = BridgeAnim.reason()
+    for _, id in ipairs(BridgeAnim.ORDER) do
+        local which = id
+        local v = BridgeAnim.VARIANTS[which]
+        if v ~= nil then
+            local o = sub:addOption(tr(v.label), nil, function() BridgeAnim.test(which) end)
+            if why ~= nil then
+                o.notAvailable = true
+                BridgeAnim.tip(o, why)
+            elseif BridgeTask ~= nil and BridgeTask.active then
+                o.notAvailable = true
+            end
         end
     end
 end
@@ -673,11 +696,11 @@ BridgeMenu.ORDERABLE = {
     { id = "equip", label = "WindowEquip", build = buildEquip },
     { id = "wait", label = "MenuFollow", build = buildWait },
     { id = "actions", label = "Actions", build = buildActions },
+    { id = "affection", label = "Affection", build = buildAffection },
     { id = "fight", label = "Combat", build = buildFight },
     { id = "guns", label = "GunMenu", radialOnly = true },
     { id = "torch", label = "OptTorch", build = buildTorch },
     { id = "jobs", label = "Jobs", build = buildJobs },
-    { id = "keep", label = "Keep", build = buildKeep },
     { id = "cancel", label = "CancelTask", build = buildCancel },
 }
 
@@ -2072,4 +2095,5 @@ Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobject
     if Bridge ~= nil and Bridge.claimMenuFix ~= nil then pcall(Bridge.claimMenuFix, playerNum, context, worldobjects, test) end
 end)
 log("loaded")
+
 

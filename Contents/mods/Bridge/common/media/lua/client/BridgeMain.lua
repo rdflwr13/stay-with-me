@@ -3945,7 +3945,8 @@ for _, n in ipairs({ "BandageHead", "BandageLeftArm", "BandageLeftLeg", "Bandage
     "WeaponAttachBeltRight", "WeaponDetachBack", "WeaponDetachBeltLeft", "WeaponDetachBeltRight", "WipeBrow",
     "WipeHead", "WindowOpen", "IdleExt01_1H", "IdleExt02_1H", "IdleExt03_1H", "IdleExt01_2H", "IdleExt02_2H",
     "IdleExt03_2H", "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun", "IdleExt01_Rifle",
-    "IdleExt02_Rifle", "IdleExt03_Rifle", "NAPghugHigh2" }) do LOOK_ONCE[n] = true end
+    "IdleExt02_Rifle", "IdleExt03_Rifle", "NAPghugHigh2", "NAPghugLow2", "NAPghugHigh1", "NAPghugHigh3",
+    "NAPGDance2Lead", "NAPGDance2Follow", "NAPGMassageL", "NAPGMassageF", "NAPGKissL", "NAPGDanceLead" }) do LOOK_ONCE[n] = true end
 function Bridge.isLookOnce(name) return type(name) == "string" and LOOK_ONCE[name] == true end
 
 
@@ -5638,6 +5639,26 @@ local function itemselftest()
     check("food: length", #got5 == 1)
     check("food: fp kept", got5[1] ~= nil and math.abs((got5[1].fp or 0) - 0.5) < 0.001)
     check("food: re-encode stable", BridgeItems.encode(got5) == BridgeItems.encode({ foodRec }))
+
+    local gotLa = BridgeItems.decode(BridgeItems.encode({ { t = "Base.GranolaBar", h = 4, a = 12.5, la = 321.25, fp = 0.5 } }))
+    check("food: la kept", gotLa[1] ~= nil and math.abs((gotLa[1].la or 0) - 321.25) < 0.001)
+    check("signature: la ignored",
+        BridgeItems.signature({ { t = "Base.GranolaBar", a = 12.5, la = 100 } }) ==
+        BridgeItems.signature({ { t = "Base.GranolaBar", a = 12.5, la = 200 } }))
+
+    local gotC = BridgeItems.decode(BridgeItems.encode({ { t = "Base.Axe", h = 4, c = 3 } }))
+    check("condition kept", gotC[1] ~= nil and gotC[1].c == 3)
+
+    local gotU = BridgeItems.decode(BridgeItems.encode({ { t = "Base.DuctTape", h = 4, u = 0.4 } }))
+    check("uses kept", gotU[1] ~= nil and math.abs((gotU[1].u or 0) - 0.4) < 0.001)
+
+    local probe = nil
+    pcall(function() probe = instanceItem("Base.Apple") end)
+    local laRead = false
+    pcall(function() laRead = probe ~= nil and type(probe:getLastAged()) == "number" end)
+    local laWrite = false
+    pcall(function() probe:setLastAged(0) laWrite = true end)
+    check("food: lastAged API present", laRead and laWrite)
 
     local savedCap, savedCut = BridgeItems.MAX_LENGTH, BridgeItems.truncated
     BridgeItems.MAX_LENGTH = 40

@@ -5944,20 +5944,39 @@ function BridgeMove.openDoor(body, object)
         blacklistDoor(body, object, "barricade")
         return false
     end
+    if object:IsOpen() then
+        if key ~= nil then BridgeMove.badDoors[key] = nil end
+        BridgeMove.doorFail = nil
+        return true
+    end
     local locked = false
     pcall(function() locked = object:isLocked() or object:isLockedByKey() end)
     local inRoom = false
     pcall(function() inRoom = body:getCurrentSquare():getRoom() ~= nil end)
-
-
-
+    local ra, rb = nil, nil
+    pcall(function()
+        ra = object:getSquare():getRoom()
+        rb = object:getOppositeSquare():getRoom()
+    end)
 
     local behindRed = false
     if locked and not inRoom then
         pcall(function() behindRed = redWentThrough(doorCells(object, doorKind(object))) end)
         if behindRed then log("door locked, but player just went through it: opening") end
     end
-    if (locked and not inRoom and not behindRed) or object:isObstructed() then
+    local refuse = locked and not inRoom and not behindRed
+    if refuse and ra == nil and rb == nil then
+        local actor = BridgeData.owner()
+        local wasOpen = false
+        pcall(function() wasOpen = object:IsOpen() end)
+        if actor ~= nil then
+            local tried = pcall(function() object:ToggleDoor(actor) end)
+            local nowOpen = false
+            pcall(function() nowOpen = object:IsOpen() end)
+            if tried and nowOpen ~= wasOpen then refuse = false end
+        end
+    end
+    if refuse or object:isObstructed() then
         BridgeMove.obstacle = "door locked"
         BridgeMove.doorWay = nil
         BridgeMove.noDoorUntil = Bridge.time + 1800
@@ -6346,7 +6365,13 @@ function BridgeMove.handleObstacle(body)
             if instanceof(object, "IsoDoor") or (instanceof(object, "IsoThumpable") and object:isDoor()) then
                 if body:isFacingObject(object, 0.5) then
 
-                    if not Bridge.follow and BridgeMove.doorBlocked(object) then
+                    local doorInside = false
+                    pcall(function() doorInside = body:getCurrentSquare():getRoom() ~= nil end)
+                    local doorCrossed = false
+                    if Bridge.follow and not doorInside then
+                        pcall(function() doorCrossed = redWentThrough(doorCells(object, doorKind(object))) end)
+                    end
+                    if BridgeMove.doorBlocked(object) and (not Bridge.follow or (not doorInside and not doorCrossed)) then
                         BridgeMove.obstacle = "door blacklisted"
                         return false
                     end

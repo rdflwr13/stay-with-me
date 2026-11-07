@@ -478,14 +478,25 @@ function BridgeRadial.ringEntries(ring, playerNum)
 end
 
 function BridgeRadial.order(st)
+    local out = {}
     if st ~= nil and type(st.menuOrder) == "table" and BridgeData ~= nil then
-        local out = {}
         for _, id in ipairs(BridgeData.menuOrder(st)) do
             if RADIAL_ONLY[id] then out[#out + 1] = id end
         end
-        if #out > 0 then return out end
     end
-    return DEFAULT_ORDER
+    if #out == 0 then
+        for _, id in ipairs(DEFAULT_ORDER) do out[#out + 1] = id end
+    end
+    if BridgeData ~= nil and BridgeData.KEEP_ON == true then
+        local has = false
+        for _, id in ipairs(out) do if id == "keep" then has = true break end end
+        if not has then
+            local at = #out + 1
+            for i, id in ipairs(out) do if id == "guns" then at = i + 1 break end end
+            table.insert(out, at, "keep")
+        end
+    end
+    return out
 end
 
 local function waitSlice(st)

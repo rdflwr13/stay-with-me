@@ -181,6 +181,9 @@ function BridgeItems.record(item, deep)
     try(function()
         if not item:IsFood() then return end
         rec.a = item:getAge()
+        local la = nil
+        pcall(function() la = item:getLastAged() end)
+        if type(la) == "number" and la >= 0 then rec.la = la end
         local base, cur = nil, nil
         pcall(function() base = item:getBaseHunger() end)
         pcall(function() cur = item:getHungChange() end)
@@ -421,6 +424,7 @@ function BridgeItems.apply(item, rec)
     if rec.sh ~= nil then try(function() if item.setSharpness ~= nil then item:setSharpness(rec.sh) end end) end
     if rec.u ~= nil then try(function() item:setCurrentUsesFloat(rec.u) end) end
     if rec.a ~= nil then try(function() item:setAge(rec.a) end) end
+    if rec.la ~= nil then try(function() item:setLastAged(rec.la) end) end
     if rec.ck then try(function() item:setCooked(true) end) end
     if rec.bu then try(function() item:setBurnt(true) end) end
     if rec.fp ~= nil then
@@ -543,16 +547,16 @@ end
 
 
 
-local NUM = { h = true, p = true, c = true, u = true, a = true, r = true, g = true, b = true,
+local NUM = { h = true, p = true, c = true, u = true, a = true, la = true, r = true, g = true, b = true,
               tc = true, bt = true, hue = true, k = true, am = true, fa = true, sh = true, hc = true,
               mi = true, pg = true, q = true, fp = true }
 local BOOL = { w = true, ck = true, bu = true, f = true, cl = true, ch = true, fe = true, as = true, cn = true }
 
 local TEXT = { n = true, lk = true, ga = true, gt = true, gp = true }
 local PACKED = { md = true, cp = true }
-local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "fp", "r", "g", "b", "tc", "bt", "hue", "dec", "ho", "pa", "bl", "di", "k", "f", "ck", "bu",
+local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "la", "fp", "r", "g", "b", "tc", "bt", "hue", "dec", "ho", "pa", "bl", "di", "k", "f", "ck", "bu",
                 "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp" }
-local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", fa = "%.3f", sh = "%.3f", fp = "%.4f" }
+local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", la = "%.3f", fa = "%.3f", sh = "%.3f", fp = "%.4f" }
 BridgeItems.MAX_LENGTH = 60000
 BridgeItems.BLOCK_RATIO = 0.92
 BridgeItems.CHUNK = 8000
@@ -764,7 +768,7 @@ function BridgeItems.encode(list, skip)
 end
 
 
-local VOLATILE = { a = true, u = true, fa = true, md = true, bl = true, di = true }
+local VOLATILE = { a = true, la = true, u = true, fa = true, md = true, bl = true, di = true }
 function BridgeItems.signature(list)
     return BridgeItems.encode(list, VOLATILE)
 end

@@ -394,7 +394,11 @@ end
 
 local function ammoCacheKey(gun, minRounds)
     local g = "?"
-    pcall(function() g = gun:getFullType() or gun:getType() end)
+    if type(gun) == "table" then
+        g = gun.fullType or "?"
+    else
+        pcall(function() g = gun:getFullType() or gun:getType() end)
+    end
     local h = nil
     pcall(function() h = BridgeHome ~= nil and BridgeHome.get() or nil end)
     local hk = "none"

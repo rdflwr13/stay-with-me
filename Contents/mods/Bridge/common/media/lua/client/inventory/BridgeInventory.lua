@@ -3591,12 +3591,20 @@ function BridgeInventory.splitOne(item)
     local count = 1
     pcall(function() count = tonumber(item:getCount()) or 1 end)
     if count <= 1 then return item end
+
+    local src = nil
+    pcall(function() src = item:getContainer() end)
+    if src == nil then return nil end
+
+    local rec = nil
+    pcall(function() rec = BridgeItems.record(item, false) end)
+    if rec ~= nil then rec.k = nil end
+
     local one = nil
     pcall(function()
-        local src = item:getContainer()
-        if src == nil then return end
         one = src:AddItem(item:getFullType())
         if one ~= nil then
+            if rec ~= nil then pcall(function() BridgeItems.apply(one, rec) end) end
             one:setCount(1)
             item:setCount(count - 1)
         end

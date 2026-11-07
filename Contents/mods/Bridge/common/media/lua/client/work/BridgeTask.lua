@@ -517,7 +517,14 @@ function BridgeTask.doorBlocked(door, mode)
         if ok then return nil end
         local bar = false
         pcall(function() bar = door:isBarricaded() == true or door:isObstructed() == true end)
-        return bar and "barricade" or "locked"
+        if bar then return "barricade" end
+        local ra, rb = nil, nil
+        pcall(function()
+            ra = door:getSquare():getRoom()
+            rb = door:getOppositeSquare():getRoom()
+        end)
+        if ra == nil and rb == nil then return nil end
+        return "locked"
     end
     local bar, obs = false, false
     pcall(function() bar = door:isBarricaded() == true end)
@@ -2758,7 +2765,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         BridgeTask.clearNeedCut = clearNeedPlants
         Bridge.speak(clearNeedPlants and "JobStartNeedCutTool" or "JobStart")
     elseif kind == "exercise" then
-    elseif kind == "hug" then
+    elseif kind == "anim" then
     elseif kind == "washSink" then
     elseif kind == "fillWater" then
     elseif kind == "emptyFluid" then
@@ -2972,7 +2979,7 @@ function BridgeTask.finish()
     else
         if finishKind == "sit" or finishKind == "lay" or finishKind == "exercise" or finishKind == "washSink"
                 or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor"
-                or finishKind == "shower" or finishKind == "hug" then
+                or finishKind == "shower" or finishKind == "anim" then
         elseif depositFull then
             Bridge.speak("JobLootFull")
         elseif wasLootFull then
@@ -8126,3 +8133,4 @@ end
 
 
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeTask] loaded") end
+

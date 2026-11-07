@@ -84,9 +84,15 @@ end
 
 
 
+function BridgeData.isZombie(z)
+    if z == nil then return false end
+    local ok, yes = pcall(instanceof, z, "IsoZombie")
+    return ok and yes == true
+end
+
 function BridgeData.dragged(z)
     local yes = false
-    if z ~= nil and type(z.isReanimatedForGrappleOnly) == "function" then
+    if BridgeData.isZombie(z) then
         pcall(function() yes = z:isReanimatedForGrappleOnly() == true end)
     end
     return yes
@@ -415,7 +421,9 @@ function BridgeData.keepOf(rec)
 end
 
 function BridgeData.farOf(rec)
-    return BridgeData.KEEP_ON == true and rec ~= nil and rec.far == true
+    if BridgeData.KEEP_ON ~= true then return false end
+    if rec == nil then return true end
+    return rec.far ~= false
 end
 
 
@@ -798,7 +806,7 @@ function BridgeData.lootMaxWeight(rec)
 end
 
 
-BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs", "keep", "cancel" }
+BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "affection", "fight", "guns", "torch", "jobs", "cancel" }
 BridgeData.MENU_ORDER_SET = {}
 for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do BridgeData.MENU_ORDER_SET[id] = true end
 
