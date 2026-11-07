@@ -32,6 +32,13 @@ S.offsetCache = setmetatable({}, { __mode = "k" })
 S.seatCache = setmetatable({}, { __mode = "k" })
 S.enabledCache = nil
 S.strippedCache = nil
+S.treatAnim = nil
+S.treatApplied = nil
+S.TREAT_FALLBACK = {
+    TreatHigh = "BandageHead",
+    TreatMid = "BandageUpperBody",
+    TreatLow = "BandageLowerBody",
+}
 
 local function log(text)
     if BridgeLog ~= nil and BridgeLog.on() then print("[SeatPuppet] " .. tostring(text)) end
@@ -386,6 +393,7 @@ local function create(car, seat)
     local p = list:get(0)
     if p == nil then return false end
     S.p = p
+    S.treatApplied = nil
     pcall(function() p:setVariable(S.VAR, true) end)
     pcall(function() p:getModData().swmSeatPuppet = true end)
     pcall(function() p:getModData().ST_Ignore = true end)
@@ -464,6 +472,7 @@ function S.show(car)
     S.losses = 0
     S.offForEntry = false
     S.voiceTicks = 0
+    S.treatAnim, S.treatApplied = nil, nil
     S.playerSeat, S.playerPrevSeat, S.swap = nil, nil, false
     capture()
     log("show")
@@ -476,6 +485,7 @@ function S.hide(why)
     S.p, S.car, S.seat = nil, nil, nil
     S.retryAt = nil
     S.voiceTicks = 0
+    S.treatAnim, S.treatApplied = nil, nil
     S.playerSeat, S.playerPrevSeat, S.swap = nil, nil, false
     if p == nil then return end
     S.isCache[p] = nil
@@ -509,13 +519,37 @@ function S.hide(why)
     log("hide " .. tostring(why))
 end
 
+function S.setTreatAnim(name)
+    S.treatAnim = name
+end
+
+local function applyTreatAnim()
+    local p = S.p
+    if p == nil then
+        S.treatApplied = nil
+        return
+    end
+    if S.treatAnim ~= nil then
+        local want = S.TREAT_FALLBACK[S.treatAnim] or S.treatAnim
+        pcall(function()
+            if p:getBumpType() ~= want then p:setBumpType(want) end
+        end)
+        S.treatApplied = want
+    elseif S.treatApplied ~= nil then
+        pcall(function() p:setBumpType("") end)
+        S.treatApplied = nil
+    end
+end
+
 function S.tick()
     sweepTick()
     if not S.enabled() then
+        S.treatAnim, S.treatApplied = nil, nil
         if S.p ~= nil then S.hide("off") end
         return
     end
     if BridgeCar == nil or BridgeCar.state ~= "inside" or BridgeCar.car == nil then
+        S.treatAnim, S.treatApplied = nil, nil
         if S.p ~= nil then S.hide("not inside") end
         return
     end
@@ -555,6 +589,7 @@ function S.tick()
     S.seat = seat
     place(car, seat)
     keepInert(S.p)
+    applyTreatAnim()
 end
 
 function S.diagLine()

@@ -647,6 +647,43 @@ end
 BridgeServer.Commands.care = function(player, args)
     local change = args.change
     if type(change) ~= "table" then return end
+    if type(change.we) == "table" then
+        if BridgeWoundExpCompat == nil or type(BridgeWoundExpCompat.apply) ~= "function" then return end
+        local ok, why = BridgeWoundExpCompat.apply(player, change.we)
+        if not ok then
+            log("care we " .. tostring(change.we.op) .. " failed: " .. tostring(why))
+            return
+        end
+        local index = math.floor(tonumber(change.we.part) or -1)
+        local part = nil
+        if type(BridgeCare) == "table" and type(BridgeCare.part) == "function" then
+            part = BridgeCare.part(player, index)
+        end
+        if part ~= nil and change.we.op == "debride" then
+            pcall(function() syncBodyPart(part, 0x00480000) end)
+            pcall(function() syncBodyPart(part, 0x40460108) end)
+        end
+        if change.we.waterId ~= nil then
+            local item = nil
+            pcall(function()
+                item = player:getInventory():getItemWithIDRecursiv(math.floor(tonumber(change.we.waterId) or -1))
+            end)
+            if item ~= nil then BridgeWoundExpCompat.spendWater(item) end
+        end
+        if change.we.soapId ~= nil then
+            local item = nil
+            pcall(function()
+                item = player:getInventory():getItemWithIDRecursiv(math.floor(tonumber(change.we.soapId) or -1))
+            end)
+            if item ~= nil and type(BridgeCare) == "table" and type(BridgeCare.consume) == "function" then
+                BridgeCare.consume(item, true)
+            end
+        end
+        if type(BridgeWoundExpCompat.push) == "function" then BridgeWoundExpCompat.push(player) end
+        log("care we " .. tostring(change.we.op) .. " part " .. tostring(change.we.part)
+            .. " for " .. tostring(player:getUsername()))
+        return
+    end
     local part, why = BridgeCare.apply(player, change)
     if part == nil then
         log("care " .. tostring(change.kind) .. " failed: " .. tostring(why))

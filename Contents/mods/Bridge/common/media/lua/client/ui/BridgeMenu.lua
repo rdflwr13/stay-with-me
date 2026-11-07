@@ -693,6 +693,15 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
         end
         if BridgeMenu.inCarWithRed() then
             pcall(function() BridgeSocial.fillMenu(context, tr) end)
+            if BridgeCar.isInside() then
+                local heal = context:addOption(tr("HealMe"), nil, BridgeMenu.onHeal)
+                local dead = false
+                pcall(function()
+                    local red = BridgeData.owner()
+                    dead = red ~= nil and red:isDead() == true
+                end)
+                if BridgeHeal == nil or BridgeHeal.active or dead then heal.notAvailable = true end
+            end
         end
         return
     end

@@ -8147,6 +8147,12 @@ local function carTick()
     if BridgeCar == nil then return end
     local ok, err = pcall(BridgeCar.tick)
     if not ok and Bridge.every(600) then warn("car tick failed: " .. tostring(err)) end
+    if BridgeHeal ~= nil and type(BridgeHeal.parkedTick) == "function" then
+        local red = nil
+        pcall(function() red = BridgeData.owner() end)
+        local okH, errH = pcall(BridgeHeal.parkedTick, red)
+        if not okH and Bridge.every(600) then warn("parked heal tick failed: " .. tostring(errH)) end
+    end
     if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.tick) == "function" then
         local okP, errP = pcall(BridgeSeatPuppet.tick)
         if not okP and Bridge.every(600) then warn("seat puppet tick failed: " .. tostring(errP)) end
