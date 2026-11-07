@@ -86,7 +86,9 @@ end
 
 function BridgeData.dragged(z)
     local yes = false
-    pcall(function() yes = z:isReanimatedForGrappleOnly() == true end)
+    if z ~= nil and type(z.isReanimatedForGrappleOnly) == "function" then
+        pcall(function() yes = z:isReanimatedForGrappleOnly() == true end)
+    end
     return yes
 end
 

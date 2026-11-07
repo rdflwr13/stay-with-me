@@ -903,8 +903,11 @@ BridgeFight.SPEED_SCORE = {
 function BridgeFight.speedClass(z)
     if z == nil then return nil end
     local crawling = false
-    pcall(function() crawling = z:isCrawling() == true end)
+    if type(z.isCrawling) == "function" then
+        pcall(function() crawling = z:isCrawling() == true end)
+    end
     if crawling then return "crawler" end
+    if type(z.getSpeedType) ~= "function" then return nil end
     local t = -1
     pcall(function() t = z:getSpeedType() end)
     if t == 1 then return "sprinter" end
@@ -1164,6 +1167,7 @@ end
 
 
 local function reanimatedImpl(z, red)
+    if type(z.isReanimatedPlayer) ~= "function" or type(z.getReanimatedPlayer) ~= "function" then return false end
     return z:isReanimatedPlayer() and z:getReanimatedPlayer() == red
 end
 
@@ -1438,6 +1442,7 @@ BridgeFight.oppositeCrowd = 0
 BridgeFight.gunShoveSwing = false
 
 local function footPressImpl(z)
+    if type(z.getTarget) ~= "function" then return nil end
     return z:getTarget()
 end
 

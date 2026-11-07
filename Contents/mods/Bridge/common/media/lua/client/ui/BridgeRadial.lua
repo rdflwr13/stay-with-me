@@ -296,7 +296,7 @@ end
 local JOB_KINDS = {
     lootArea = true, depositArea = true, deposit = true, cleanUp = true, clearPlants = true, chopTree = true,
     moveCorpses = true, pryDoor = true, fillWater = true, emptyFluid = true,
-    washSink = true,
+    washSink = true, openDoors = true, closeDoors = true,
 }
 
 local function doingJob()
@@ -305,7 +305,7 @@ local function doingJob()
     return false
 end
 
-local function workEntries()
+local function workEntries(playerNum)
     local out = {}
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return out end
     if jobsBusy() then
@@ -341,6 +341,20 @@ local function workEntries()
             end
         end
     end
+    if BridgeTask.DOORS_ENABLED == 1 then
+        out[#out + 1] = make(tr("Doors"), ICONS.work, function()
+            BridgeRadial.showRing("doors", playerNum)
+        end)
+    end
+    return out
+end
+
+local function doorEntries()
+    local out = {}
+    if BridgeTask == nil or BridgeTask.DOORS_ENABLED ~= 1 then return out end
+    if BridgeTask.active then return out end
+    out[#out + 1] = make(tr("JobOpenDoors"), ICONS.work, BridgeMenu.onJobOpenDoors)
+    out[#out + 1] = make(tr("JobCloseDoors"), ICONS.work, BridgeMenu.onJobCloseDoors)
     return out
 end
 
@@ -455,7 +469,8 @@ function BridgeRadial.ringEntries(ring, playerNum)
     if ring == "talk" then return talkEntries() end
     if ring == "fight" then return fightEntries() end
     if ring == "stay" then return stayEntries() end
-    if ring == "work" then return workEntries() end
+    if ring == "work" then return workEntries(playerNum) end
+    if ring == "doors" then return doorEntries() end
     if ring == "self" then return selfEntries(playerNum) end
     if ring == "gear" then return gearEntries(playerNum) end
     if ring == "guns" then return gunEntries() end

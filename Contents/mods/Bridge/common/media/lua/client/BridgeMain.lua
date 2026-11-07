@@ -1964,6 +1964,9 @@ function Bridge.spawnPlayer()
 end
 
 function Bridge.despawn(skipSave)
+    if not Bridge.mp and Bridge.alive() then
+        pcall(function() if BridgeTask ~= nil and BridgeTask.closeOpenedDoors ~= nil then BridgeTask.closeOpenedDoors() end end)
+    end
     pcall(function() BridgeWash.stop("despawn") end)
     if Bridge.alive() then pcall(function() BridgeFight.persistStamina(Bridge.store) end) end
     if not skipSave and Bridge.alive() and Bridge.kind == "zombie"
@@ -2186,6 +2189,7 @@ end
 function Bridge.autoTeleportAllowed()
     if not Bridge.follow or Bridge.mode ~= "follow" then return false end
     if BridgeTask ~= nil and BridgeTask.active == true then return false end
+    if BridgeCar ~= nil and BridgeCar.taskHold == true then return false end
     return true
 end
 
@@ -2609,7 +2613,10 @@ function Bridge.speakText(text)
     Bridge.lastSpokeWhere = "none"
     Bridge.lastSpokeShown = false
 
-    if Bridge.speechGraced() then
+    local inCar = BridgeCar ~= nil and BridgeCar.withRed(BridgeData.owner())
+        and (not Bridge.alive() or BridgeCar.holdHidden())
+
+    if Bridge.speechGraced() and not inCar then
         Bridge.lastSpokeWhere = "grace"
         log("speech held during spawn grace (" .. tostring(math.ceil((Bridge.speakGraceUntil or 0) - Bridge.time)) .. "t): " .. tostring(text))
         return text
@@ -2625,8 +2632,6 @@ function Bridge.speakText(text)
     pcall(function() log("line hex:" .. BridgeChat.toHex(tostring(text))) end)
 
 
-    local inCar = BridgeCar ~= nil and BridgeCar.withRed(BridgeData.owner())
-        and (not Bridge.alive() or BridgeCar.holdHidden())
     local shown, where = false, "blocked"
     if inCar then
         shown = Bridge.carLine(text) == true
@@ -3940,7 +3945,7 @@ for _, n in ipairs({ "BandageHead", "BandageLeftArm", "BandageLeftLeg", "Bandage
     "WeaponAttachBeltRight", "WeaponDetachBack", "WeaponDetachBeltLeft", "WeaponDetachBeltRight", "WipeBrow",
     "WipeHead", "WindowOpen", "IdleExt01_1H", "IdleExt02_1H", "IdleExt03_1H", "IdleExt01_2H", "IdleExt02_2H",
     "IdleExt03_2H", "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun", "IdleExt01_Rifle",
-    "IdleExt02_Rifle", "IdleExt03_Rifle" }) do LOOK_ONCE[n] = true end
+    "IdleExt02_Rifle", "IdleExt03_Rifle", "NAPghugHigh2" }) do LOOK_ONCE[n] = true end
 function Bridge.isLookOnce(name) return type(name) == "string" and LOOK_ONCE[name] == true end
 
 

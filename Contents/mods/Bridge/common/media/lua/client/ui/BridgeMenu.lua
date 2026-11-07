@@ -585,6 +585,14 @@ local function buildJobs(context, playerNum, env)
     local jobs = ISContextMenu:getNew(context)
     context:addSubMenu(jobsOption, jobs)
     addLootWorkMenu(jobs)
+    if BridgeTask.DOORS_ENABLED == 1 then
+        local doorsOption = jobs:addOption(tr("Doors"))
+        local doors = ISContextMenu:getNew(jobs)
+        jobs:addSubMenu(doorsOption, doors)
+        local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
+        local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
+        if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
+    end
     if BridgeTask.CLEANING_ENABLED == 1 then
         local okClean = false
         pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
@@ -1062,6 +1070,18 @@ function BridgeMenu.onJobMoveCorpses()
     BridgeWorkSelect.begin(BridgeData.owner(), "moveCorpses")
 end
 
+function BridgeMenu.onJobOpenDoors()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() and not (BridgeCar ~= nil and BridgeCar.isInside()) then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "openDoors")
+end
+
+function BridgeMenu.onJobCloseDoors()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() and not (BridgeCar ~= nil and BridgeCar.isInside()) then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "closeDoors")
+end
+
 
 function BridgeMenu.cancelEntry()
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return nil end
@@ -1108,7 +1128,6 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     if playerNum ~= nil and playerNum ~= 0 then return end
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
     if not present() then return end
-    if not emptySpaceUnder(worldobjects, playerNum) then return end
     if context:getOptionFromName(name()) ~= nil then return end
     local option = context:addOptionOnTop(name())
     local sub = ISContextMenu:getNew(context)
@@ -1121,6 +1140,14 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     local jobs = ISContextMenu:getNew(sub)
     sub:addSubMenu(jobsOption, jobs)
     addLootWorkMenu(jobs)
+    if BridgeTask.DOORS_ENABLED == 1 then
+        local doorsOption = jobs:addOption(tr("Doors"))
+        local doors = ISContextMenu:getNew(jobs)
+        jobs:addSubMenu(doorsOption, doors)
+        local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
+        local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
+        if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
+    end
     if BridgeTask.CLEANING_ENABLED == 1 then
         local okClean = false
         pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
@@ -2003,6 +2030,33 @@ function BridgeMenu.addWashTo(menu, worldobjects, playerNum)
     BridgeMenu.addRinActions(menu, sink)
 end
 
+local function onCarDoorMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+    if BridgeTask.DOORS_ENABLED ~= 1 then return end
+    if BridgeCar == nil or not BridgeCar.isInside() then return end
+    local red = BridgeData.owner()
+    if red == nil or not BridgeCar.withRed(red) then return end
+    if context:getOptionFromName(name()) ~= nil then return end
+    local option = context:addOptionOnTop(name())
+    local sub = ISContextMenu:getNew(context)
+    context:addSubMenu(option, sub)
+    if BridgeTask.active and BridgeTask.fromCar then
+        BridgeMenu.addCancelTask(sub)
+        return
+    end
+    local jobsOption = sub:addOption(tr("Jobs"))
+    local jobs = ISContextMenu:getNew(sub)
+    sub:addSubMenu(jobsOption, jobs)
+    local doorsOption = jobs:addOption(tr("Doors"))
+    local doors = ISContextMenu:getNew(jobs)
+    jobs:addSubMenu(doorsOption, doors)
+    local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
+    local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
+    if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
+end
+
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWorldMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onTreeMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onJobsMenu)
@@ -2012,6 +2066,7 @@ Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onSitMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLayMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onPryMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWashSinkMenu)
+Events.OnFillWorldObjectContextMenu.Add(onCarDoorMenu)
 
 Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
     if Bridge ~= nil and Bridge.claimMenuFix ~= nil then pcall(Bridge.claimMenuFix, playerNum, context, worldobjects, test) end

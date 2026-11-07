@@ -17,6 +17,7 @@ BridgeWorkSelect.MAX_STAINS = 80
 BridgeWorkSelect.MAX_PLANTS = 80
 BridgeWorkSelect.MAX_LOOT_ITEMS = 80
 BridgeWorkSelect.MAX_CORPSES = 40
+BridgeWorkSelect.MAX_DOORS = 80
 
 local function acquireLock()
     if BridgeWorkSelect.lockCount == 0 then
@@ -120,9 +121,26 @@ function UI:start(b)
         if Bridge ~= nil then Bridge.speak("JobTooBig") end
         return
     end
+    local doorMode = self.kind == "openDoors" and "open" or (self.kind == "closeDoors" and "close" or nil)
+    if doorMode ~= nil then
+        local pre = nil
+        pcall(function() pre = BridgeTask.doorPreflight(targets, doorMode) end)
+        if pre ~= nil and pre ~= "ok" then
+            if Bridge ~= nil then
+                if pre == "locked" then Bridge.speak("JobDoorLocked")
+                elseif pre == "barricade" then Bridge.speak("JobDoorBarricaded")
+                else Bridge.speak(def.noneSay) end
+            end
+            return
+        end
+    end
     BridgeWorkSelect.sortTargets(targets)
     local res = nil
-    if type(def.start) == "function" then
+    local doorKind = self.kind == "openDoors" or self.kind == "closeDoors"
+    if doorKind and BridgeCar ~= nil and BridgeCar.isInside()
+            and type(BridgeCar.startDoorTask) == "function" then
+        res = BridgeCar.startDoorTask(self.kind, targets)
+    elseif type(def.start) == "function" then
         res = def.start(targets)
     else
         res = BridgeTask.start(self.kind, targets)
@@ -735,6 +753,99 @@ function BridgeWorkSelect.corpsesIn(b)
     return list
 end
 
+local function doorPartObjects(door)
+    local parts = { door }
+    pcall(function()
+        if IsoDoor == nil then return end
+        if IsoDoor.getDoubleDoorIndex ~= nil and IsoDoor.getDoubleDoorIndex(door) ~= -1
+                and IsoDoor.getDoubleDoorObject ~= nil then
+            for i = 1, 4 do
+                local p = IsoDoor.getDoubleDoorObject(door, i)
+                if p ~= nil and p ~= door then parts[#parts + 1] = p end
+            end
+        end
+        if IsoDoor.getGarageDoorIndex ~= nil and IsoDoor.getGarageDoorIndex(door) ~= -1 then
+            local p = IsoDoor.getGarageDoorPrev ~= nil and IsoDoor.getGarageDoorPrev(door) or nil
+            while p ~= nil and #parts < 12 do parts[#parts + 1] = p; p = IsoDoor.getGarageDoorPrev(p) end
+            p = IsoDoor.getGarageDoorNext ~= nil and IsoDoor.getGarageDoorNext(door) or nil
+            while p ~= nil and #parts < 24 do parts[#parts + 1] = p; p = IsoDoor.getGarageDoorNext(p) end
+        end
+    end)
+    return parts
+end
+
+function BridgeWorkSelect.doorsIn(b, mode)
+    local list = {}
+    if b == nil then return list end
+    local inside = function(x, y)
+        return x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2
+    end
+    local seen = {}
+    local function add(door, sq)
+        if door == nil or seen[door] then return end
+        local parts = doorPartObjects(door)
+        local dsq, osq = nil, nil
+        pcall(function() dsq = door:getSquare() end)
+        pcall(function() osq = door:getOppositeSquare() end)
+        local inBox = false
+        if dsq ~= nil then
+            pcall(function() inBox = inside(dsq:getX(), dsq:getY()) end)
+        end
+        if not inBox and osq ~= nil then
+            pcall(function() inBox = inside(osq:getX(), osq:getY()) end)
+        end
+        if not inBox then return end
+        local open = false
+        pcall(function() open = door:IsOpen() == true end)
+        if mode == "open" and open then return end
+        if mode ~= "open" and not open then return end
+        if #list >= BridgeWorkSelect.MAX_DOORS then return end
+        local anchor = dsq or sq
+        if anchor == nil then return end
+        for i = 1, #parts do seen[parts[i]] = true end
+        local north = false
+        pcall(function() north = door:getNorth() == true end)
+        list[#list + 1] = { x = anchor:getX(), y = anchor:getY(), z = anchor:getZ(), north = north }
+    end
+    local cell = getCell()
+    for x = b.x1 - 1, b.x2 + 1 do
+        for y = b.y1 - 1, b.y2 + 1 do
+            local sq = nil
+            pcall(function() sq = cell:getGridSquare(x, y, b.z) end)
+            if sq ~= nil then
+                pcall(function()
+                    local objs = sq:getObjects()
+                    if objs ~= nil then
+                        for i = 0, objs:size() - 1 do
+                            local o = objs:get(i)
+                            if o ~= nil and BridgeDoors ~= nil and BridgeDoors.isDoor(o) then add(o, sq) end
+                        end
+                    end
+                end)
+                pcall(function()
+                    local objs = sq:getSpecialObjects()
+                    if objs ~= nil then
+                        for i = 0, objs:size() - 1 do
+                            local o = objs:get(i)
+                            if o ~= nil and BridgeDoors ~= nil and BridgeDoors.isDoor(o) then add(o, sq) end
+                        end
+                    end
+                end)
+                pcall(function()
+                    local objs = sq:getWorldObjects()
+                    if objs ~= nil then
+                        for i = 0, objs:size() - 1 do
+                            local o = objs:get(i)
+                            if o ~= nil and BridgeDoors ~= nil and BridgeDoors.isDoor(o) then add(o, sq) end
+                        end
+                    end
+                end)
+            end
+        end
+    end
+    return list
+end
+
 function BridgeWorkSelect.isDestinationValid(sq)
     if sq == nil then return false end
     local floor = nil
@@ -790,6 +901,20 @@ BridgeWorkSelect.kinds = {
         min = 1,
         noneSay = "JobNoStorage",
     },
+    openDoors = {
+        collect = function(b) return BridgeWorkSelect.doorsIn(b, "open") end,
+        max = BridgeWorkSelect.MAX_DOORS,
+        maxSide = 8,
+        min = 1,
+        noneSay = "JobNoDoorsOpen",
+    },
+    closeDoors = {
+        collect = function(b) return BridgeWorkSelect.doorsIn(b, "close") end,
+        max = BridgeWorkSelect.MAX_DOORS,
+        maxSide = 8,
+        min = 1,
+        noneSay = "JobNoDoorsClose",
+    },
 }
 
 function BridgeWorkSelect.sortTargets(targets)
@@ -840,6 +965,7 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "lootArea" and BridgeTask.LOOTING_ENABLED ~= 1 then return nil end
     if kind == "depositArea" and (BridgeTask.DEPOSIT_ENABLED ~= 1 or BridgeDeposit == nil) then return nil end
     if kind == "moveCorpses" and BridgeTask.MOVE_CORPSES_ENABLED ~= 1 then return nil end
+    if (kind == "openDoors" or kind == "closeDoors") and BridgeTask.DOORS_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)
     BridgeWorkSelect.active = ui
@@ -873,7 +999,8 @@ Events.OnTick.Add(function()
     if ui == nil then return end
     local sq = nil
     pcall(function() sq = ui.playerObj ~= nil and ui.playerObj:getCurrentSquare() or nil end)
-    if sq == nil or sq:getZ() ~= ui.level or not Bridge.alive() then
+    local inCar = BridgeCar ~= nil and BridgeCar.isInside()
+    if sq == nil or sq:getZ() ~= ui.level or (not Bridge.alive() and not inCar) then
         ui:close()
     end
 end)
