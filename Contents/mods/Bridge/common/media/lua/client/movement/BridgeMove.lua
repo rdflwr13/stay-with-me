@@ -1939,8 +1939,13 @@ function BridgeMove.sitFlagTick(body)
         pcall(function() asn = tostring(body:getActionStateName()) end)
         pcall(function() bump = tostring(body:getBumpType()) end)
         local anim = bump
-        if anim ~= "LayAwake" and anim ~= "LayAsleep" then anim = BridgeTask.layAnim end
-        if (anim == "LayAwake" or anim == "LayAsleep") and (asn ~= "bumped" or bump ~= anim) then
+        if anim ~= "LayAwake" and anim ~= "LayAsleep"
+            and anim ~= "FloorLayAwake" and anim ~= "FloorLayAsleep" then
+            anim = BridgeTask.layAnim
+        end
+        if (anim == "LayAwake" or anim == "LayAsleep"
+            or anim == "FloorLayAwake" or anim == "FloorLayAsleep")
+            and (asn ~= "bumped" or bump ~= anim) then
             pcall(function() body:setVariable("BumpAnimFinished", false) end)
             pcall(function() body:setBumpType("") end)
             pcall(function() body:setBumpType(anim) end)
@@ -2960,6 +2965,22 @@ local function followTrailStep(body)
 
 
 
+    local nav = BridgeMove.navState()
+    if nav ~= nil and nav.detour ~= nil then
+        local det = nav.detour
+        local bx0, by0 = body:getX(), body:getY()
+        local dx0, dy0 = bx0 - det.x, by0 - det.y
+        local near = math.sqrt(dx0 * dx0 + dy0 * dy0) <= 0.5
+        if kind == "player" or Bridge.time > (det.expires or 0)
+                or math.abs(body:getZ() - (det.z or body:getZ())) > 0.5 or near then
+            nav.detour = nil
+        else
+            tx, ty, tz, kind = det.x, det.y, det.z or tz, "detour"
+            along = dist2d(bx0, by0, tx, ty)
+            F.engineHold = nil
+        end
+    end
+
     if F.engineHold ~= nil then
         local H = F.engineHold
         local hx, hy = body:getX(), body:getY()
@@ -2981,6 +3002,26 @@ local function followTrailStep(body)
         end
         if Bridge.verbose then
             log(sformat("engine path released after %d ticks: %s", Bridge.time - H.tick, why))
+        end
+        if why == "no progress" then
+            local dnav = BridgeMove.navState()
+            local p = nil
+            if dnav ~= nil and BridgeNav ~= nil and BridgeNav.detour ~= nil then
+                p = BridgeNav.detour(body, red:getX(), red:getY(), body:getZ(), dnav,
+                    { step = NAV.DETOUR_STEP, ticks = NAV.DETOUR_TICKS })
+            end
+            if p ~= nil then
+                dnav.status = "detour"
+                tx, ty, tz, kind = p.x, p.y, p.z, "detour"
+                along = dist2d(body:getX(), body:getY(), tx, ty)
+                if Bridge.verbose then
+                    log(sformat("follow detour: no progress at %.2f,%.2f, going to %.1f,%.1f",
+                        body:getX(), body:getY(), tx, ty))
+                end
+            elseif Bridge.verbose then
+                log(sformat("follow detour: none available at %.2f,%.2f",
+                    body:getX(), body:getY()))
+            end
         end
         F.engineHold = nil
     end
@@ -5508,6 +5549,30 @@ local function crossEnd(body, why)
     log("cross " .. tostring(c and c.kind) .. " ended: " .. tostring(why))
 end
 BridgeMove.crossEnd = crossEnd
+
+function BridgeMove.noteCrossLoop(body, from, to, tag)
+    if from == nil or to == nil then return false end
+
+    local a, b = from:getX() .. "," .. from:getY(), to:getX() .. "," .. to:getY()
+    if a > b then a, b = b, a end
+    local ckey = "fight:" .. a .. "|" .. b
+
+    BridgeMove.crossLoops = BridgeMove.crossLoops or {}
+    local rec = BridgeMove.crossLoops[ckey]
+    if rec == nil or Bridge.time - rec.first > 400 then
+        rec = { first = Bridge.time, n = 0, last = -9999 }
+        BridgeMove.crossLoops[ckey] = rec
+    end
+    if Bridge.time - (rec.last or -9999) < 60 then return false end
+    rec.last = Bridge.time
+    rec.n = rec.n + 1
+    if rec.n >= 2 then
+        BridgeMove.noCrossUntil = Bridge.time + 120
+        log(string.format("edge looped (%s), blacklisted: %s", tostring(tag or "?"), ckey))
+        return true
+    end
+    return false
+end
 
 
 

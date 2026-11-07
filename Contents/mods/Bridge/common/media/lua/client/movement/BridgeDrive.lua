@@ -422,29 +422,31 @@ end
 
 
 
-local function sayState(red, phase)
+local function sayState(red, phase, driving)
     if BridgeDrive.ON.STATE ~= 1 then return false end
     local w = BridgeDrive.curWeather
     if w ~= nil then
         if (w.raining or w.snowing) and statOf(red, "WETNESS") > 0.6 then
             if say("EvCarColdWet") then return true end
         end
-        if w.night and statOf(red, "FATIGUE") > 0.6 then
+        if driving == true and w.night and statOf(red, "FATIGUE") > 0.6 then
             if say("EvCarTiredNight") then return true end
         end
     end
-    for _, s in ipairs(BridgeDrive.STATES) do
-        local hit = false
-        pcall(function() hit = s.test(red) end)
-        if hit then
-            return say("EvCar" .. s.key .. phase)
+    if phase ~= "Drive" or driving == true then
+        for _, s in ipairs(BridgeDrive.STATES) do
+            local hit = false
+            pcall(function() hit = s.test(red) end)
+            if hit then
+                return say("EvCar" .. s.key .. phase)
+            end
         end
-    end
-    for _, s in ipairs(BridgeDrive.QUIET_STATES or {}) do
-        local hit = false
-        pcall(function() hit = s.test(red) end)
-        if hit then
-            return say("EvCar" .. s.key .. phase)
+        for _, s in ipairs(BridgeDrive.QUIET_STATES or {}) do
+            local hit = false
+            pcall(function() hit = s.test(red) end)
+            if hit then
+                return say("EvCar" .. s.key .. phase)
+            end
         end
     end
     if moodle(red, COLD_MOODLE) >= 1 and (Bridge.time - (BridgeDrive.lastColdAt or -99999)) >= 600 then
@@ -790,7 +792,7 @@ function BridgeDrive.onExit()
     if tense then
         said = say("EvCarExitZombies")
     else
-        pcall(function() said = sayState(red, "Out") end)
+        pcall(function() said = sayState(red, "Out", false) end)
         if not said then said = say("EvCarExitClear") end
     end
     if not said then return end
@@ -843,6 +845,7 @@ function BridgeDrive.tick()
     local car = nil
     pcall(function() car = red:getVehicle() end)
     if car == nil then reset() return end
+    local driving = drivingForward(car)
 
 
 
@@ -923,7 +926,7 @@ function BridgeDrive.tick()
         and Bridge.time - BridgeDrive.greetAt >= BridgeDrive.GREET_DELAY then
         local said = false
         pcall(function() BridgeDrive.curWeather = weatherSnapshot(red) end)
-        pcall(function() said = sayState(red, "In") end)
+        pcall(function() said = sayState(red, "In", driving) end)
         if not said then pcall(function() said = sayWeatherIn(red) end) end
         if not said then
             local n = nearbyZombies(car)
@@ -950,8 +953,9 @@ function BridgeDrive.tick()
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
-        local carAhead = scanAhead(car)
-        if carAhead and say("EvCarAhead") then
+        local carAhead = false
+        if driving then carAhead = scanAhead(car) end
+        if carAhead and driving and say("EvCarAhead") then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
@@ -993,7 +997,7 @@ function BridgeDrive.tick()
 
 
     if BridgeDrive.greetDone and Bridge.every(BridgeDrive.STATE_EVERY) then
-        if sayState(red, "Drive") then
+        if sayState(red, "Drive", driving) then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
@@ -1044,7 +1048,7 @@ function BridgeDrive.tick()
         if nightNow() then
             local lightsOn, canEmit = headlightState(car)
             local unable = (lightsOn and not canEmit) or (batt ~= nil and batt <= 0.0)
-            if drivingForward(car) then
+            if driving then
                 if not lightsOn or unable then
                     if BridgeDrive.headlightSince == nil then BridgeDrive.headlightSince = Bridge.time end
                     if Bridge.time - BridgeDrive.headlightSince >= 120 and say("EvCarLight") then

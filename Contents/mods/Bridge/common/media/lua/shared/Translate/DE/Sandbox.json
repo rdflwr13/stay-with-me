@@ -188,5 +188,21 @@
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option1": "250 m",
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option2": "500 m",
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option3": "750 m",
-    "Sandbox_StayWithMe_MeetMarkerRange_Values_option4": "1000 m"
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option4": "1000 m",
+    "Sandbox_StayWithMe_NightSight": "Beeinträchtigung durch Dunkelheit",
+    "Sandbox_StayWithMe_NightSight_tooltip": "Wie stark die Dunkelheit die Entfernung verringert, in der sie Bedrohungen bemerken kann. Aus behält ihre normale Erkennungsreichweite bei. Leicht, Realistisch und Hart verringern sie stärker, je dunkler es wird. Ihre Taschenlampe hilft im Dunkeln. Standard: Aus.",
+    "Sandbox_StayWithMe_NightSight_Values_option1": "Aus",
+    "Sandbox_StayWithMe_NightSight_Values_option2": "Leicht",
+    "Sandbox_StayWithMe_NightSight_Values_option3": "Realistisch",
+    "Sandbox_StayWithMe_NightSight_Values_option4": "Hart",
+    "Sandbox_StayWithMe_SpeechFont": "Sprachtextgröße",
+    "Sandbox_StayWithMe_SpeechFont_tooltip": "Textgröße für die Sprachblasen über dem Kopf des Begleiters und die Zeilen im Auto. Normal entspricht der bisherigen Größe und dem bisherigen Aussehen. Groß und Riesig vergrößern sie. Standard: Normal.",
+    "Sandbox_StayWithMe_SpeechFont_Values_option1": "Normal (Standard)",
+    "Sandbox_StayWithMe_SpeechFont_Values_option2": "Groß",
+    "Sandbox_StayWithMe_SpeechFont_Values_option3": "Riesig",
+    "Sandbox_StayWithMe_SpeechDuration": "Sprachdauer",
+    "Sandbox_StayWithMe_SpeechDuration_tooltip": "Wie lange die Sprachblasen über dem Kopf des Begleiters und die Zeilen im Auto auf dem Bildschirm bleiben. Normal dauert 5,25 Sekunden, Lang 7 Sekunden und Sehr lang 9 Sekunden. Standard: Normal.",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option1": "Normal (5,25 s)",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option2": "Lang (7 s)",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option3": "Sehr lang (9 s)"
 }

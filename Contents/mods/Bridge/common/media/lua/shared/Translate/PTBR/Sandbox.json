@@ -188,5 +188,21 @@
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option1": "250 m",
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option2": "500 m",
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option3": "750 m",
-    "Sandbox_StayWithMe_MeetMarkerRange_Values_option4": "1000 m"
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option4": "1000 m",
+    "Sandbox_StayWithMe_NightSight": "Penalidade por escuridão",
+    "Sandbox_StayWithMe_NightSight_tooltip": "Quanto a escuridão reduz a distância em que ela consegue perceber ameaças. Desativado mantém o alcance de detecção normal. Leve, Realista e Forte reduzem mais conforme escurece. A lanterna dela ajuda no escuro. Padrão: Desativado.",
+    "Sandbox_StayWithMe_NightSight_Values_option1": "Desativado",
+    "Sandbox_StayWithMe_NightSight_Values_option2": "Leve",
+    "Sandbox_StayWithMe_NightSight_Values_option3": "Realista",
+    "Sandbox_StayWithMe_NightSight_Values_option4": "Forte",
+    "Sandbox_StayWithMe_SpeechFont": "Tamanho do texto das falas",
+    "Sandbox_StayWithMe_SpeechFont_tooltip": "Tamanho do texto das falas acima da cabeça do companheiro e das linhas dentro do carro. Normal corresponde ao tamanho e à aparência anteriores. Grande e Enorme o aumentam. Padrão: Normal.",
+    "Sandbox_StayWithMe_SpeechFont_Values_option1": "Normal (padrão)",
+    "Sandbox_StayWithMe_SpeechFont_Values_option2": "Grande",
+    "Sandbox_StayWithMe_SpeechFont_Values_option3": "Enorme",
+    "Sandbox_StayWithMe_SpeechDuration": "Duração das falas",
+    "Sandbox_StayWithMe_SpeechDuration_tooltip": "Por quanto tempo as falas acima da cabeça do companheiro e as linhas dentro do carro ficam na tela. Normal dura 5,25 segundos, Longo 7 segundos e Muito longo 9 segundos. Padrão: Normal.",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option1": "Normal (5,25 s)",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option2": "Longo (7 s)",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option3": "Muito longo (9 s)"
 }

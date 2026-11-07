@@ -15,7 +15,7 @@ require "ISUI/ISUI3DModel"
 
 BridgePregame = BridgePregame or {}
 
-BridgePregame.FILE = "stay_with_me_pregame.txt"
+BridgePregame.FILE = "bridge/stay_with_me_pregame.txt"
 BridgePregame.VERSION = 1
 BridgePregame.active = false
 BridgePregame.finishing = false
@@ -214,6 +214,8 @@ local function worldTag()
     return world, map, mode
 end
 
+BridgePregame.worldTag = worldTag
+
 local function showCreation(preserveOutfit)
     local ms = MainScreen.instance
     if ms == nil or ms.charCreationMain == nil then return end
@@ -261,12 +263,12 @@ local function lookFrom(text)
 end
 
 function BridgePregame.readDraft()
-    if type(getFileReader) ~= "function" then return nil end
+    if type(getFileReader) ~= "function" then return nil, "missing" end
     local reader = nil
     pcall(function() reader = getFileReader(BridgePregame.FILE, false) end)
     if reader == nil or type(reader.readLine) ~= "function" then
         pcall(function() if reader ~= nil then reader:close() end end)
-        return nil
+        return nil, "missing"
     end
     local fields, guard, bad, seen = {}, 0, false, false
     while guard < 40 do
@@ -291,8 +293,9 @@ function BridgePregame.readDraft()
             BridgePregame.badLogged = true
             log("draft ignored: " .. tostring(reason))
         end
-        return nil
+        return nil, reason
     end
+    if not seen then return nil, "missing" end
     if bad then return reject("malformed file") end
     if fields.VERSION ~= tostring(BridgePregame.VERSION) then return reject("unsupported version") end
     local gender = fields.GENDER
@@ -575,78 +578,211 @@ function BridgePregame.readMeetOptions()
     }
 end
 
-function BridgePregame.consumeInto(store)
+BridgePregame.sessionWorld = nil
+BridgePregame.gaveUp = false
+BridgePregame.nextTryAt = 0
+BridgePregame.pendingSince = nil
+BridgePregame.mismatchLogged = false
+BridgePregame.bindingLogged = false
+BridgePregame.removeLogged = false
+BridgePregame.giveUpLogged = false
+BridgePregame.applyErrorLogged = false
+BridgePregame.appliedThisSession = false
+BridgePregame.PENDING_WINDOW = 600
+BridgePregame.RETRY_INTERVAL = 60
+
+function BridgePregame.resetSession(world)
+    world = tostring(world or "")
+    if BridgePregame.sessionWorld == world then return end
+    BridgePregame.sessionWorld = world
+    BridgePregame.gaveUp = false
+    BridgePregame.nextTryAt = 0
+    BridgePregame.pendingSince = nil
+    BridgePregame.mismatchLogged = false
+    BridgePregame.bindingLogged = false
+    BridgePregame.removeLogged = false
+    BridgePregame.giveUpLogged = false
+    BridgePregame.applyErrorLogged = false
+    BridgePregame.appliedThisSession = false
+end
+
+function BridgePregame.shouldWait(store)
     if type(store) ~= "table" then return false end
-    if type(Bridge) ~= "table" or Bridge.mp then return false end
-    if Bridge.gotData ~= true then return false end
-    local draft = BridgePregame.readDraft()
-    if draft == nil then return false end
-    local world, map, mode = worldTag()
-    if draft.world ~= world or draft.map ~= map or draft.mode ~= mode then
-        log("draft rejected: world mismatch")
-        removeDraftFile()
-        return false
+    if store.pregameState ~= "pending" then return false end
+    if BridgePregame.gaveUp then return false end
+    local since = BridgePregame.pendingSince
+    if since == nil then return false end
+    return Bridge.time - since <= BridgePregame.PENDING_WINDOW
+end
+
+function BridgePregame.onStoreReady(store)
+    if type(Bridge) ~= "table" or Bridge.mp then return end
+    if type(store) ~= "table" then return end
+    local world = BridgePregame.worldTag()
+    BridgePregame.resetSession(world)
+    if store.pregameState == "pending" and BridgePregame.pendingSince == nil then
+        BridgePregame.pendingSince = Bridge.time
     end
-    if type(BridgeData.neverSpawned) ~= "function" or not BridgeData.neverSpawned(store) then
-        log("draft rejected: companion already spawned")
-        removeDraftFile()
-        return false
+    if store.pregameState == "applied" and BridgePregame.appliedThisSession ~= true then
+        if BridgePregame.removeLogged ~= true then
+            BridgePregame.removeLogged = true
+            removeDraftFile()
+            log("draft removed after applied save")
+        end
+        return
     end
-    if BridgeAppearance == nil or type(BridgeAppearance.defaultCandidate) ~= "function" then return false end
+    BridgePregame.consumeInto(store, true)
+end
+
+function BridgePregame.consumeInto(store, force)
+    if type(store) ~= "table" then return "wait" end
+    if type(Bridge) ~= "table" or Bridge.mp then return "mp" end
+    if Bridge.gotData ~= true then return "wait" end
+    if store.pregameState == "applied" then return "applied" end
+    if store.pregameState == "pending" and BridgePregame.gaveUp then return "wait" end
+    if store.pregameState == "pending" and BridgePregame.pendingSince ~= nil
+        and Bridge.time - BridgePregame.pendingSince > BridgePregame.PENDING_WINDOW then
+        BridgePregame.gaveUp = true
+        if BridgePregame.giveUpLogged ~= true then
+            BridgePregame.giveUpLogged = true
+            log("draft kept for next session after 10s")
+        end
+        return "wait"
+    end
+    local since = BridgePregame.pendingSince
+    if force ~= true and since ~= nil and Bridge.time - since <= BridgePregame.PENDING_WINDOW then
+        if Bridge.time < (BridgePregame.nextTryAt or 0) then return "wait" end
+        BridgePregame.nextTryAt = Bridge.time + BridgePregame.RETRY_INTERVAL
+    end
+    local draft, reason = BridgePregame.readDraft()
+    if draft == nil then
+        if reason == "missing" then
+            if store.pregameState == "pending" then BridgePregame.gaveUp = true end
+            return "none"
+        end
+        if BridgePregame.gaveUp ~= true then
+            BridgePregame.gaveUp = true
+            log("draft kept: " .. tostring(reason))
+        end
+        return "invalid"
+    end
+    if store.pregameState == nil
+        and (type(BridgeData.neverSpawned) ~= "function" or not BridgeData.neverSpawned(store)) then
+        if BridgePregame.removeLogged ~= true then
+            BridgePregame.removeLogged = true
+            log("draft rejected: companion already spawned")
+        end
+        removeDraftFile()
+        return "legacy"
+    end
+    if store.pregameState == nil then
+        store.pregameState = "pending"
+        if BridgePregame.pendingSince == nil then BridgePregame.pendingSince = Bridge.time end
+    elseif BridgePregame.pendingSince == nil then
+        BridgePregame.pendingSince = Bridge.time
+    end
+    local world, map, mode = BridgePregame.worldTag()
+    if world == "" then
+        if BridgePregame.mismatchLogged ~= true then
+            BridgePregame.mismatchLogged = true
+            log("draft import pending world=" .. tostring(draft.world) .. " current=" .. tostring(world))
+        end
+        return "retry"
+    end
+    if draft.world ~= world then
+        if BridgePregame.mismatchLogged ~= true then
+            BridgePregame.mismatchLogged = true
+            log("draft kept: world mismatch draft=" .. tostring(draft.world) .. " current=" .. tostring(world))
+        end
+        return "retry"
+    end
+    if draft.map ~= map or draft.mode ~= mode then
+        if BridgePregame.bindingLogged ~= true then
+            BridgePregame.bindingLogged = true
+            log("draft binding differs: map draft=" .. tostring(draft.map) .. " current=" .. tostring(map)
+                .. " mode draft=" .. tostring(draft.mode) .. " current=" .. tostring(mode))
+        end
+    end
+    if BridgeAppearance == nil or type(BridgeAppearance.defaultCandidate) ~= "function" then
+        if BridgePregame.gaveUp ~= true then
+            BridgePregame.gaveUp = true
+            log("draft kept: appearance unavailable")
+        end
+        return "invalid"
+    end
     local gender = draft.gender
-    local candidate = BridgeAppearance.defaultCandidate(gender)
     local look = nil
     if gender == "male" then look = draft.maleLook else look = draft.femaleLook end
-    if look ~= nil and BridgeLooks ~= nil and type(BridgeLooks.applyTo) == "function" then
-        local ok, err = pcall(BridgeLooks.applyTo, look, candidate, gender)
-        if not ok then warn("draft look rejected: " .. tostring(err)) end
-    end
-    store.gender = gender
-    if gender == "male" then
-        store.maleName = BridgeData.cleanName(draft.maleName) or BridgeData.DEFAULT_MALE_NAME
-    else
-        store.name = BridgeData.cleanName(draft.name) or BridgeData.DEFAULT_NAME
-    end
-    BridgeAppearance.applyToRecord(store, candidate, gender)
-    local voice = BridgeData.cleanVoice((gender == "male") and draft.voiceMale or draft.voiceFemale, gender)
-    if voice ~= nil then
-        local app = BridgeData.appearanceOf(store)
-        if type(app) == "table" then app.voice = voice end
-    end
     local clothing = (gender == "male") and draft.clothMale or draft.clothFemale
-    if type(clothing) == "table" then store.pregameOutfit = BridgeAppearance.copyClothing(clothing) end
     local species = (gender == "male") and draft.speciesMale or draft.speciesFemale
-    if type(species) == "string" and species ~= "" and species ~= "Hooman" then
-        store.pregameFur = species
-    end
-    local opts = BridgePregame.cleanOptions(draft.options)
-    for _, key in ipairs(BridgePregame.OPTION_BOOLS) do store[key] = opts[key] end
-    store.aimSense = opts.aimSense
-    if draft.meetPresent == true then
-        store.meetMode = cleanMeetMode(draft.meetMode)
-        store.meetDays = cleanMeetDays(draft.meetDays)
-        store.meetHint = cleanMeetHint(draft.meetHint)
-        store.meetTown = cleanMeetTown(draft.meetTown)
-        store.meetDistance = cleanMeetDistance(draft.meetDistance)
-        if store.meetMode > 1 and store.meetState == nil then
-            local hasBody = false
-            pcall(function() hasBody = Bridge ~= nil and Bridge.alive() == true end)
-            if not hasBody then
-                store.meetState = "pending"
-                store.want = false
-                if store.meetMode == 3 then
-                    store.meetAt = meetWorldAge() + store.meetDays * 24
-                else
-                    store.meetAt = 0
+    local ok, err = pcall(function()
+        local candidate = BridgeAppearance.defaultCandidate(gender)
+        if look ~= nil and BridgeLooks ~= nil and type(BridgeLooks.applyTo) == "function" then
+            local okLook, errLook = pcall(BridgeLooks.applyTo, look, candidate, gender)
+            if not okLook then warn("draft look rejected: " .. tostring(errLook)) end
+        end
+        store.gender = gender
+        if gender == "male" then
+            store.maleName = BridgeData.cleanName(draft.maleName) or BridgeData.DEFAULT_MALE_NAME
+        else
+            store.name = BridgeData.cleanName(draft.name) or BridgeData.DEFAULT_NAME
+        end
+        BridgeAppearance.applyToRecord(store, candidate, gender)
+        local voice = BridgeData.cleanVoice((gender == "male") and draft.voiceMale or draft.voiceFemale, gender)
+        if voice ~= nil then
+            local app = BridgeData.appearanceOf(store)
+            if type(app) == "table" then app.voice = voice end
+        end
+        if type(clothing) == "table" then store.pregameOutfit = BridgeAppearance.copyClothing(clothing) end
+        if type(species) == "string" and species ~= "" and species ~= "Hooman" then
+            store.pregameFur = species
+        end
+        local opts = BridgePregame.cleanOptions(draft.options)
+        for _, key in ipairs(BridgePregame.OPTION_BOOLS) do store[key] = opts[key] end
+        store.aimSense = opts.aimSense
+        if draft.meetPresent == true then
+            store.meetMode = cleanMeetMode(draft.meetMode)
+            store.meetDays = cleanMeetDays(draft.meetDays)
+            store.meetHint = cleanMeetHint(draft.meetHint)
+            store.meetTown = cleanMeetTown(draft.meetTown)
+            store.meetDistance = cleanMeetDistance(draft.meetDistance)
+            if store.meetMode > 1 and store.meetState == nil then
+                local hasBody = false
+                pcall(function() hasBody = Bridge ~= nil and Bridge.alive() == true end)
+                if not hasBody then
+                    store.meetState = "pending"
+                    store.want = false
+                    if store.meetMode == 3 then
+                        store.meetAt = meetWorldAge() + store.meetDays * 24
+                    else
+                        store.meetAt = 0
+                    end
                 end
             end
         end
+    end)
+    if not ok then
+        if BridgePregame.applyErrorLogged ~= true then
+            BridgePregame.applyErrorLogged = true
+            log("draft kept: apply failed " .. tostring(err))
+        end
+        return "retry"
     end
-    removeDraftFile()
+    store.pregameState = "applied"
+    store.pregameWorld = draft.world
+    store.pregameAppliedAt = os.time()
+    BridgePregame.appliedThisSession = true
+    BridgePregame.gaveUp = false
+    BridgePregame.applyErrorLogged = false
     BridgePregame.draft = nil
+    if type(Bridge) == "table" and Bridge.alive() and Bridge.kind == "zombie" and Bridge.body ~= nil
+        and BridgeInventory ~= nil and type(BridgeInventory.skin) == "function" then
+        pcall(BridgeInventory.skin, Bridge.body, store)
+        pcall(function() Bridge.body:resetModelNextFrame() end)
+    end
     log("draft applied: gender=" .. tostring(gender) .. " look=" .. tostring(look ~= nil)
-        .. " cloth=" .. tostring(type(clothing) == "table" and #clothing or 0))
-    return true
+        .. " cloth=" .. tostring(type(clothing) == "table" and #clothing or 0) .. " state=applied")
+    return "applied"
 end
 
 BridgePregameScreen = ISPanelJoypad:derive("BridgePregameScreen")
@@ -1085,15 +1221,18 @@ function BridgePregameScreen:ensureClothRow(loc)
     local parent = self.clothPanel or self
     local combo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onClothType)
     combo:initialise()
+    combo.autoAddJoypadButton = false
     combo.loc = loc
     parent:addChild(combo)
     local color = ISButton:new(0, 0, BTN_H, BTN_H, "", self, BridgePregameScreen.onClothColor)
     color:initialise()
     color:instantiate()
+    color.autoAddJoypadButton = false
     color.loc = loc
     parent:addChild(color)
     local tex = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onClothTexture)
     tex:initialise()
+    tex.autoAddJoypadButton = false
     tex.loc = loc
     parent:addChild(tex)
     local label = ISLabel:new(0, 0, BTN_H, vanillaText("UI_ClothingType_" .. tostring(loc), tostring(loc)),
@@ -2072,10 +2211,7 @@ function BridgePregameScreen:layoutRight()
     for _, control in ipairs(right) do self:markJoypadAdd(control) end
     self.rightControls = right
     for _, loc in ipairs(self.clothOrder or {}) do
-        local row = self:ensureClothRow(loc)
-        self:markJoypadAdd(row.combo)
-        self:markJoypadAdd(row.color)
-        self:markJoypadAdd(row.tex)
+        self:ensureClothRow(loc)
     end
 end
 
@@ -2173,11 +2309,31 @@ function BridgePregameScreen:layout()
 end
 
 function BridgePregameScreen:refreshJoypadRows()
-    self:autoGenerateJoypadButtonsLists()
     local joypad = self.joyfocus
-    if joypad == nil then return end
+    if joypad == nil then
+        pcall(function() joypad = JoypadState.getMainMenuJoypad() end)
+    end
+    if joypad == nil then
+        pcall(function() joypad = CoopCharacterCreation.getJoypad() end)
+    end
+    if joypad == nil then
+        if self.joypadRowsLogged ~= true then
+            self.joypadRowsLogged = true
+            print("[BridgePregame] joypad rows 0")
+        end
+        return
+    end
+
+    self:autoGenerateJoypadButtonsLists()
+
+    if self.joypadRowsLogged ~= true then
+        self.joypadRowsLogged = true
+        print("[BridgePregame] joypad rows " .. tostring(#(self.joypadButtonsY or {})))
+    end
+
     local focused = self:getJoypadFocus()
     if focused ~= nil and self:setJoypadFocus(focused, joypad) then return end
+    if #(self.joypadButtonsY or {}) == 0 then return end
     self:setJoypadFocusTopLeft(joypad)
 end
 
@@ -3121,6 +3277,11 @@ function BridgePregameScreen:onGainJoypadFocus(joypadData)
     ISPanelJoypad.onGainJoypadFocus(self, joypadData)
     if self.startBtn ~= nil then self:setISButtonForA(self.startBtn) end
     if self.backBtn ~= nil then self:setISButtonForB(self.backBtn) end
+    if #(self.joypadButtonsY or {}) == 0 and self.joypadRowsBuilding ~= true then
+        self.joypadRowsBuilding = true
+        pcall(self.refreshJoypadRows, self)
+        self.joypadRowsBuilding = false
+    end
     if self:getJoypadFocus() == nil then
         self:setJoypadFocusTopLeft(joypadData)
     end

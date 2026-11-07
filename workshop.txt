@@ -90,12 +90,15 @@ description=[h2]Recommended[/h2]
 description=[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3414634809]Spongie's Character Customisation[/url]: adds faces, skin details and muscle tone to her appearance.
 description=[url=https://steamcommunity.com/workshop/filedetails/?id=3592172476][B42:SP/MP] Take A Bath And Shower[/url]: allows her to take a shower.
 description= 
-description=[quote][url=https://steamcommunity.com/workshop/filedetails/discussion/3800989007/586186803158075336/]Full list of compatible mods[/url]
+description=[quote][url=https://docs.google.com/spreadsheets/d/e/2PACX-1vS5x5vz82DYmNK4wsiMYXSYctAzISmRRCgq_FFEIWZ6JsRRjhcDRa-TBd7Hwmge7dQVp-dw4qk2P2dc/pubhtml]Full list of compatible mods[/url]
 description=[/quote]
 description= 
 description=[b]Languages:[/b] English, Russian, Spanish, Italian, German, French. Thanks to [url=https://steamcommunity.com/id/layaya003]Layaya003[/url] for the Spanish translation, [url=https://steamcommunity.com/id/nycotex_]Nycotex[/url] for the Italian one, [url=https://steamcommunity.com/id/stumpenhumpen]stumpi[/url] and [url=https://steamcommunity.com/id/BigBear_AP]Beermur[/url] for the German one, and [url=https://steamcommunity.com/profiles/76561198010386593]cdestri[/url] for the French one!
 description= 
 description=[img]https://i.imgur.com/hVQwS6k.png[/img]
+description=
+description=[img]https://i.imgur.com/51pi5dh.png[/img]
+description=
 description=[quote]
 description=1. In-game, open the [b]Bug Report tab[/b] in the Rin home menu and turn on detailed logging.
 description=2. Reproduce the issue.

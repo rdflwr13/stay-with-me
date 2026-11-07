@@ -188,5 +188,21 @@
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option1": "250 м",
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option2": "500 м",
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option3": "750 м",
-    "Sandbox_StayWithMe_MeetMarkerRange_Values_option4": "1000 м"
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option4": "1000 м",
+    "Sandbox_StayWithMe_NightSight": "Ухудшение видимости в темноте",
+    "Sandbox_StayWithMe_NightSight_tooltip": "Насколько темнота сокращает расстояние, на котором она замечает угрозы. Выключено сохраняет обычную дальность обнаружения. Слабо, Реалистично и Жёстко сокращают её сильнее с наступлением темноты. Фонарик помогает в темноте. По умолчанию: Выключено.",
+    "Sandbox_StayWithMe_NightSight_Values_option1": "Выключено",
+    "Sandbox_StayWithMe_NightSight_Values_option2": "Слабо",
+    "Sandbox_StayWithMe_NightSight_Values_option3": "Реалистично",
+    "Sandbox_StayWithMe_NightSight_Values_option4": "Жёстко",
+    "Sandbox_StayWithMe_SpeechFont": "Размер текста реплик",
+    "Sandbox_StayWithMe_SpeechFont_tooltip": "Размер текста реплик над головой компаньона и строк в машине. Обычный соответствует прежнему размеру и виду. Крупный и Огромный увеличивают его. По умолчанию: Обычный.",
+    "Sandbox_StayWithMe_SpeechFont_Values_option1": "Обычный (по умолчанию)",
+    "Sandbox_StayWithMe_SpeechFont_Values_option2": "Крупный",
+    "Sandbox_StayWithMe_SpeechFont_Values_option3": "Огромный",
+    "Sandbox_StayWithMe_SpeechDuration": "Длительность реплик",
+    "Sandbox_StayWithMe_SpeechDuration_tooltip": "Как долго реплики над головой компаньона и строки в машине остаются на экране. Обычный — 5,25 секунды, Долгий — 7 секунд, Очень долгий — 9 секунд. По умолчанию: Обычный.",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option1": "Обычный (5,25 с)",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option2": "Долгий (7 с)",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option3": "Очень долгий (9 с)"
 }

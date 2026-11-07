@@ -188,5 +188,21 @@
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option1": "250 m",
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option2": "500 m",
     "Sandbox_StayWithMe_MeetMarkerRange_Values_option3": "750 m",
-    "Sandbox_StayWithMe_MeetMarkerRange_Values_option4": "1000 m"
+    "Sandbox_StayWithMe_MeetMarkerRange_Values_option4": "1000 m",
+    "Sandbox_StayWithMe_NightSight": "Pénalité d'obscurité",
+    "Sandbox_StayWithMe_NightSight_tooltip": "Dans quelle mesure l'obscurité réduit la distance à laquelle elle peut remarquer les menaces. Désactivé conserve sa portée de détection normale. Léger, Réaliste et Sévère la réduisent davantage à mesure qu'il fait sombre. Sa lampe torche aide dans le noir. Par défaut : Désactivé.",
+    "Sandbox_StayWithMe_NightSight_Values_option1": "Désactivé",
+    "Sandbox_StayWithMe_NightSight_Values_option2": "Léger",
+    "Sandbox_StayWithMe_NightSight_Values_option3": "Réaliste",
+    "Sandbox_StayWithMe_NightSight_Values_option4": "Sévère",
+    "Sandbox_StayWithMe_SpeechFont": "Taille du texte des répliques",
+    "Sandbox_StayWithMe_SpeechFont_tooltip": "Taille du texte des répliques au-dessus de la tête du compagnon et des lignes en voiture. Normal correspond à la taille et à l'apparence précédentes. Grand et Énorme l'agrandissent. Par défaut : Normal.",
+    "Sandbox_StayWithMe_SpeechFont_Values_option1": "Normal (par défaut)",
+    "Sandbox_StayWithMe_SpeechFont_Values_option2": "Grand",
+    "Sandbox_StayWithMe_SpeechFont_Values_option3": "Énorme",
+    "Sandbox_StayWithMe_SpeechDuration": "Durée des répliques",
+    "Sandbox_StayWithMe_SpeechDuration_tooltip": "Combien de temps les répliques au-dessus de la tête du compagnon et les lignes en voiture restent à l'écran. Normal dure 5,25 secondes, Long 7 secondes et Très long 9 secondes. Par défaut : Normal.",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option1": "Normal (5,25 s)",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option2": "Long (7 s)",
+    "Sandbox_StayWithMe_SpeechDuration_Values_option3": "Très long (9 s)"
 }

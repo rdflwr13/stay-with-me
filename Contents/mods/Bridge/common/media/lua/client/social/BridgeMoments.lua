@@ -93,6 +93,7 @@ function BridgeMoments.ready(slot, urgent)
 
     if urgent == true then return true end
 
+    if Bridge ~= nil and type(Bridge.speechBusy) == "function" and Bridge.speechBusy() then return false end
     if Bridge.time - (Bridge.lastSpokeAt or -99999) < BridgeMoments.MIN_GAP then return false end
     if urgent then return true end
     if Bridge.time - BridgeMoments.lastLine < GAP then return false end

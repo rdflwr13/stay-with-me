@@ -1200,6 +1200,20 @@ local function companionBody(z)
 end
 
 
+local function nightRange(base, body)
+    if BridgeSight ~= nil and type(BridgeSight.range) == "function" then
+        return BridgeSight.range(base, body)
+    end
+    return base
+end
+
+local function nightRelease(base, body)
+    if BridgeSight ~= nil and type(BridgeSight.releaseRange) == "function" then
+        return BridgeSight.releaseRange(base, body)
+    end
+    return base
+end
+
 local function targetOk(z, body, red)
     if z == nil or body == nil or z == body then return false end
     if Bridge.body ~= nil and z == Bridge.body then return false end
@@ -1228,7 +1242,7 @@ local function validTarget(z, body, red)
     if BridgeGunfight.gun == nil then return false end
     if not targetOk(z, body, red) then return false end
     if math.abs(z:getZ() - body:getZ()) >= 0.8 then return false end
-    local range = BridgeGunfight.modeRange or BridgeGunfight.gun.range
+    local range = nightRelease(BridgeGunfight.modeRange or BridgeGunfight.gun.range, body)
     if range <= 0 or dist(body, z) > range + 0.9 then return false end
     local cell = getCell()
     local nowT = Bridge.time or 0
@@ -1360,7 +1374,7 @@ pickState.nearForGun = function(body, radius, tag)
 end
 
 local function pickTarget(body, red)
-    local range = BridgeGunfight.modeRange or (BridgeGunfight.gun and BridgeGunfight.gun.range) or 0
+    local range = nightRange(BridgeGunfight.modeRange or (BridgeGunfight.gun and BridgeGunfight.gun.range) or 0, body)
     if range <= 0 then return nil end
     local cell = getCell()
     if cell == nil then return nil end

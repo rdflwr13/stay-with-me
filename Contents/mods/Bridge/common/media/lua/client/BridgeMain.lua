@@ -27,10 +27,23 @@ Bridge = Bridge or {}
 
 local BridgeKeep = Bridge
 
+local bridgeRestoredLogged = false
+
 local function keepBridge()
-    if Bridge == nil then Bridge = BridgeKeep end
+    if Bridge == nil then
+        Bridge = BridgeKeep
+        if not bridgeRestoredLogged then
+            bridgeRestoredLogged = true
+            print("[Bridge] global Bridge was nil; restored")
+        end
+    end
 end
 
+if BridgeData ~= nil then BridgeData.keepBridge = keepBridge end
+
+Events.OnInitGlobalModData.Add(keepBridge)
+Events.OnGameStart.Add(keepBridge)
+Events.OnCreatePlayer.Add(keepBridge)
 Events.OnTickEvenPaused.Add(keepBridge)
 Events.OnTick.Add(keepBridge)
 Events.OnSave.Add(keepBridge)
@@ -867,6 +880,7 @@ function Bridge.refreshStore()
 end
 
 function Bridge.initStore()
+    keepBridge()
     Bridge.mp = isClient()
 
     if Bridge.mp and Bridge.gotData and Bridge.world ~= nil then
@@ -880,6 +894,16 @@ function Bridge.initStore()
         Bridge.world = md
         if not Bridge.mp then Bridge.gotData = true end
         Bridge.refreshStore()
+        if not Bridge.mp and Bridge.gotData and Bridge.store ~= nil then
+            if BridgePregame ~= nil and type(BridgePregame.onStoreReady) == "function" then
+                local okPre, errPre = pcall(BridgePregame.onStoreReady, Bridge.store)
+                if not okPre then warn("pregame store ready failed: " .. tostring(errPre)) end
+            end
+        end
+        if Bridge.startGenderStore ~= Bridge.store then
+            Bridge.startGenderStore = Bridge.store
+            Bridge.startGenderDone = false
+        end
         if not Bridge.mp and not Bridge.staleLoaded and Bridge.store ~= nil then
             Bridge.staleLoaded = true
             local st = Bridge.store
@@ -1786,6 +1810,10 @@ function Bridge.spawnZombie(px, py, pz)
     if Bridge.redDead(red) then return "owner dead" end
     if Bridge.alive() then return "already alive" end
     pcall(Bridge.pickStartGender)
+    if BridgePregame ~= nil and type(BridgePregame.shouldWait) == "function"
+        and BridgePregame.shouldWait(Bridge.store) then
+        return "waiting for pregame appearance"
+    end
 
     local x = math.floor(px or red:getX())
     local y = math.floor(py or red:getY())
@@ -2457,7 +2485,7 @@ function Bridge.carLine(text)
     if BridgeCar == nil or red == nil or not BridgeCar.withRed(red) then return false end
     local name = tostring(Bridge.companionName())
     local line = name .. ": " .. tostring(text)
-    return (pcall(function() red:addLineChatElement(line, 0.95, 0.55, 0.75) end))
+    return Bridge.speechLineFor(red, line) == true
 end
 
 
@@ -2468,6 +2496,111 @@ end
 
 function Bridge.noteSpawned()
     Bridge.speakGraceUntil = Bridge.time + SPAWN_SPEAK_GRACE
+end
+
+
+function Bridge.speechFontIndex()
+    local index = 1
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        local ok, value = pcall(BridgeData.sandboxNumber, "SpeechFont", 1, 1, 3)
+        if ok then index = tonumber(value) or 1 end
+    end
+    if index < 1 then index = 1 end
+    if index > 3 then index = 3 end
+    return index
+end
+
+
+function Bridge.speechFont()
+    local index = Bridge.speechFontIndex()
+    local fonts = { UIFont.Dialogue, UIFont.Large, UIFont.Massive }
+    return fonts[index] or UIFont.Dialogue
+end
+
+
+local SPEECH_FONT_NAMES = { "Normal", "Large", "Huge" }
+local SPEECH_SECONDS = { 5.25, 7, 9 }
+
+
+function Bridge.speechSeconds()
+    local index = 1
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        local ok, value = pcall(BridgeData.sandboxNumber, "SpeechDuration", 1, 1, 3)
+        if ok then index = tonumber(value) or 1 end
+    end
+    if index < 1 then index = 1 end
+    if index > #SPEECH_SECONDS then index = #SPEECH_SECONDS end
+    return SPEECH_SECONDS[index] or 5.25
+end
+
+
+function Bridge.speechHoldMs()
+    local seconds = Bridge.speechSeconds()
+    local multiplier = 1
+    pcall(function()
+        local gameTime = getGameTime()
+        if gameTime ~= nil then multiplier = tonumber(gameTime:getTrueMultiplier()) or 1 end
+    end)
+    if multiplier <= 0 then multiplier = 1 end
+    local ms = seconds * 1000 / multiplier
+    if ms < 1000 then ms = 1000 end
+    if ms > 20000 then ms = 20000 end
+    return ms + math.min(250, ms * 0.05)
+end
+
+
+function Bridge.speechTag(text)
+    return "[cdt=" .. tostring(Bridge.speechSeconds()) .. "]" .. tostring(text)
+end
+
+
+function Bridge.speechLineFor(z, text, expectId)
+    if z == nil then return false, "no body" end
+    if expectId ~= nil then
+        local pid = nil
+        pcall(function() pid = z:getPersistentOutfitID() end)
+        if pid ~= expectId then return false, "wrong body" end
+        local marked = false
+        pcall(function() marked = z:getVariableBoolean(Bridge.BODY_VAR) == true end)
+        if not marked then return false, "not companion" end
+    end
+    local fontIndex = Bridge.speechFontIndex()
+    local seconds = Bridge.speechSeconds()
+    if Bridge.speechLoggedFont ~= fontIndex or Bridge.speechLoggedSeconds ~= seconds then
+        Bridge.speechLoggedFont, Bridge.speechLoggedSeconds = fontIndex, seconds
+        log(string.format("speech settings font=%s duration=%s s",
+            tostring(SPEECH_FONT_NAMES[fontIndex] or "Dialogue"), tostring(seconds)))
+    end
+    local displayText = Bridge.speechTag(text)
+    local ok, err = pcall(function()
+        z:addLineChatElement(displayText, 0.95, 0.55, 0.75,
+            Bridge.speechFont(), 30.0, "default",
+            true, false, false, false, false, true)
+    end)
+    if ok then return true end
+    return false, err
+end
+
+
+function Bridge.speechBusy()
+    local now = 0
+    pcall(function() now = getTimestampMs() end)
+    return now < (Bridge.speakUntilMs or 0)
+end
+
+
+function Bridge.noteSpoken(untilMs)
+    Bridge.speakUntilMs = untilMs
+end
+
+
+function Bridge.speechInfo()
+    local now = 0
+    pcall(function() now = getTimestampMs() end)
+    local remaining = math.max(0, (Bridge.speakUntilMs or 0) - now)
+    return string.format("font=%s seconds=%s remaining=%dms",
+        tostring(SPEECH_FONT_NAMES[Bridge.speechFontIndex()] or "Dialogue"),
+        tostring(Bridge.speechSeconds()), remaining)
 end
 
 
@@ -2498,12 +2631,20 @@ function Bridge.speakText(text)
     if inCar then
         shown = Bridge.carLine(text) == true
         where = shown and "car" or "blocked"
+        if shown then
+            local untilMs = getTimestampMs() + Bridge.speechHoldMs()
+            Bridge.noteSpoken(untilMs)
+        end
     elseif Bridge.alive() then
-        local okLine, lineErr = pcall(function() Bridge.body:addLineChatElement(text, 0.95, 0.55, 0.75) end)
+        local okLine, lineErr = Bridge.speechLineFor(Bridge.body, text)
         if not okLine then warn("overhead line failed: " .. tostring(lineErr)) end
         shown = okLine == true
         where = shown and "overhead" or "blocked"
-        if BridgeName ~= nil then BridgeName.spoke(Bridge.body) end
+        if shown then
+            local untilMs = getTimestampMs() + Bridge.speechHoldMs()
+            Bridge.noteSpoken(untilMs)
+            if BridgeName ~= nil then BridgeName.spoke(Bridge.body, untilMs) end
+        end
     end
     if Bridge.mp then
 
@@ -3202,11 +3343,19 @@ end
 
 function Bridge.pickStartGender()
     local st = Bridge.store
+    local status = nil
     if not Bridge.mp and st ~= nil and BridgePregame ~= nil
         and type(BridgePregame.consumeInto) == "function" then
-        pcall(BridgePregame.consumeInto, st)
+        local okPre, res = pcall(BridgePregame.consumeInto, st)
+        if okPre then status = res end
     end
-    if st == nil or not Bridge.gotData or not BridgeData.neverSpawned(st) then return false end
+    if st == nil or not Bridge.gotData then return false end
+    if (status == "wait" or status == "retry" or status == "invalid")
+        and BridgePregame ~= nil and type(BridgePregame.shouldWait) == "function"
+        and BridgePregame.shouldWait(st) then
+        return false
+    end
+    if not BridgeData.neverSpawned(st) then return false end
     local owner = BridgeData.owner()
     if owner == nil then return false end
     local fem = nil
@@ -3241,20 +3390,23 @@ function Bridge.say(text)
     Bridge.lastSpokeShown = false
     local said = "none"
     if BridgeCar ~= nil and BridgeCar.holdHidden() and Bridge.carLine(text) then
-
         said = "car"
+        Bridge.noteSpoken(getTimestampMs() + Bridge.speechHoldMs())
     elseif Bridge.alive() then
-        local ok = pcall(function() Bridge.body:addLineChatElement(text, 0.95, 0.55, 0.75) end)
+        local ok = Bridge.speechLineFor(Bridge.body, text)
         if not ok then warn("overhead line failed, falling back to Say") end
-        if BridgeName ~= nil then BridgeName.spoke(Bridge.body) end
         if ok then
             said = "line"
+            local untilMs = getTimestampMs() + Bridge.speechHoldMs()
+            Bridge.noteSpoken(untilMs)
+            if BridgeName ~= nil then BridgeName.spoke(Bridge.body, untilMs) end
         else
             local ok2 = pcall(function() Bridge.body:Say(text) end)
             said = ok2 and "say" or "failed"
         end
     elseif Bridge.carLine(text) then
         said = "car"
+        Bridge.noteSpoken(getTimestampMs() + Bridge.speechHoldMs())
     end
     local inChat = false
     if BridgeChat ~= nil and BridgeChat.sayCompanion ~= nil then
@@ -4052,9 +4204,13 @@ local function updateZombieBody(body)
             log("body revealed after " .. tostring(age) .. " ticks, " .. tostring(why))
             if Bridge.greetOnReveal then
                 Bridge.greetOnReveal = nil
-                Bridge.speakGraceUntil = 0
-                Bridge.speak("Hello")
-                Bridge.noteSpawned()
+                if why == "dressed" then
+                    Bridge.speakGraceUntil = 0
+                    Bridge.speak("Hello")
+                    Bridge.noteSpawned()
+                else
+                    log("greet skipped: " .. tostring(why))
+                end
             end
         end
     end
@@ -4757,6 +4913,7 @@ end
 
 local function applyLook(z, visuals, rec, who)
     z:setVariable(BODY_VAR, true)
+    if BridgeSizeMatterCompat ~= nil then pcall(BridgeSizeMatterCompat.neutralize, z, rec) end
 
     pcall(function()
         local laying = BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "lay"
@@ -5388,7 +5545,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
-    friendselftest = true, knoxselftest = true, theodoreselftest = true, light = true,
+    friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
     exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true, meet = true,
     perf = true, gunstate = true, loscombatselftest = true }
 
@@ -6138,11 +6295,29 @@ function Bridge.run(line)
         return BridgeKnoxComp.selftest()
     end
 
+    if cmd == "knoxsurvivorsselftest" then
+        if BridgeKnoxSurvivors == nil or type(BridgeKnoxSurvivors.selftest) ~= "function" then
+            return "BridgeKnoxSurvivors not loaded"
+        end
+        return BridgeKnoxSurvivors.selftest()
+    end
+
     if cmd == "theodoreselftest" then
         if BridgeTheodoreCompat == nil or type(BridgeTheodoreCompat.selftest) ~= "function" then
             return "BridgeTheodoreCompat not loaded"
         end
         return BridgeTheodoreCompat.selftest()
+    end
+
+    if cmd == "thecompat" then
+        if BridgeTHECompat ~= nil and parts[3] == "status"
+                and type(BridgeTHECompat.status) == "function" then
+            return BridgeTHECompat.status()
+        end
+        if BridgeTHECompat == nil or type(BridgeTHECompat.selftest) ~= "function" then
+            return "BridgeTHECompat not loaded"
+        end
+        return BridgeTHECompat.selftest()
     end
 
     if cmd == "sleepfix" then
@@ -6198,6 +6373,14 @@ function Bridge.run(line)
         if sub == nil or sub == "status" then return BridgeLight.statusText() end
         if sub == "selftest" then return BridgeLight.selftest() end
         return "light status|selftest"
+    end
+
+    if cmd == "sight" then
+        if BridgeSight == nil then return "sight not loaded" end
+        local sub = parts[3]
+        if sub == nil or sub == "status" then return BridgeSight.statusText() end
+        if sub == "selftest" then return BridgeSight.selftest() end
+        return "sight status|selftest"
     end
 
     if cmd == "menu" then
@@ -6921,7 +7104,7 @@ function Bridge.diagLines()
             add("speech", string.format("shown=%s where=%s chat_own=%s chat_vis=%s grace=%s",
                 tostring(Bridge.lastSpokeShown == true), tostring(Bridge.lastSpokeWhere or "none"),
                 tostring(own), tostring(vis),
-                tostring(Bridge.speechGraced() == true)))
+                tostring(Bridge.speechGraced() == true)) .. " " .. Bridge.speechInfo())
         end)
         pcall(function()
             local hex = ""
@@ -8203,7 +8386,9 @@ function Bridge.onTick()
 
     if Bridge.startGenderDone ~= true and Bridge.store ~= nil and Bridge.gotData then
         pcall(Bridge.pickStartGender)
-        if not BridgeData.neverSpawned(Bridge.store) then Bridge.startGenderDone = true end
+        local waiting = BridgePregame ~= nil and type(BridgePregame.shouldWait) == "function"
+            and BridgePregame.shouldWait(Bridge.store)
+        if not BridgeData.neverSpawned(Bridge.store) and not waiting then Bridge.startGenderDone = true end
     end
     if Bridge.genderPending ~= nil then
         if not Bridge.alive() then
@@ -8684,9 +8869,13 @@ function Bridge.onServerCommand(module, command, args)
                 local hidden = false
                 pcall(function() hidden = z:isInvisible() end)
                 if info.who == args.owner and not hidden then
-                    pcall(function() z:addLineChatElement(args.text, 0.95, 0.55, 0.75) end)
-                    if BridgeName ~= nil then BridgeName.spoke(z) end
-                    shown = true
+                    local ok = Bridge.speechLineFor(z, args.text, args.id)
+                    if ok then
+                        local untilMs = getTimestampMs() + Bridge.speechHoldMs()
+                        if BridgeName ~= nil then BridgeName.spoke(z, untilMs) end
+                        if z == Bridge.body then Bridge.noteSpoken(untilMs) end
+                        shown = true
+                    end
                 end
             end
 
@@ -8695,7 +8884,7 @@ function Bridge.onServerCommand(module, command, args)
                 local p = nil
                 pcall(function() p = getPlayerFromUsername(args.owner) end)
                 if p ~= nil then
-                    pcall(function() p:addLineChatElement(line, 0.95, 0.55, 0.75) end)
+                    Bridge.speechLineFor(p, line)
                 end
             end
         end
@@ -8713,6 +8902,7 @@ Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
 
 
 Events.OnGameStart.Add(function()
+    keepBridge()
     pcall(function()
         Bridge.floorPull = nil
         Bridge.floorMismatchSince = nil
@@ -9289,7 +9479,7 @@ end
 
 Events.OnPlayerDeath.Add(Bridge.onPlayerDeath)
 Events.OnCreatePlayer.Add(function(playerIndex)
-
+    keepBridge()
 
     if playerIndex ~= nil and playerIndex ~= 0 then return end
 
