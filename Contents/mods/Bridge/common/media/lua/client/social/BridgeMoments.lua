@@ -50,10 +50,10 @@ local function count(pool)
     n = 0
     for i = 1, 20 do
         local key = "IGUI_NotAlone_Soc_" .. pool .. "_" .. i
-        local text = nil
+        local found = false
 
-        pcall(function() text = getTextOrNull(key, "", "") end)
-        if text == nil or text == key or text == "" then break end
+        pcall(function() found = BridgeSpeech.exists(key) end)
+        if not found then break end
         n = i
     end
     BridgeMoments.poolSize[pool] = n
@@ -74,9 +74,9 @@ function BridgeMoments.line(event, a, b)
         local key = "IGUI_NotAlone_Soc_" .. pool .. "_" .. index
         pcall(function() key = BridgeSocial.lineKey(pool, index) end)
         pcall(function()
-            if b ~= nil then text = getText(key, a, b)
-            elseif a ~= nil then text = getText(key, a)
-            else text = getText(key) end
+            if b ~= nil then text = BridgeSpeech.get(key, a, b)
+            elseif a ~= nil then text = BridgeSpeech.get(key, a)
+            else text = BridgeSpeech.get(key) end
         end)
         local again = false
         pcall(function() again = BridgeSocial.sameAsLast(text) end)
@@ -496,6 +496,41 @@ function BridgeMoments.update(body)
         if momentSay("EvPanic", 5 * MINUTE, true) then return end
     end
     if busy then return end
+    local affectionRel = nil
+    pcall(function() affectionRel = BridgeData.relOf(Bridge.store) end)
+    if affectionRel ~= nil then
+        local seenNow = 0
+        pcall(function() seenNow = tonumber(affectionRel.seen) or 0 end)
+        local seenPrev = BridgeMoments.seenSnap
+        BridgeMoments.seenSnap = seenNow
+        if seenPrev ~= nil and seenNow > seenPrev then
+            local away = seenNow - seenPrev
+            if away > 24 and affectionRel.f >= 30 then
+                if momentSay("EvAffectionReunion", 120 * MINUTE, false, "AffectionReunion") then return end
+            end
+        end
+        local hurting = stat(red, "STRESS") > 0.55 or stat(red, "UNHAPPINESS") > 0.4
+            or stat(red, "PAIN") > 0.45
+        local fought = false
+        pcall(function() fought = BridgeSocial.recentFight() == true end)
+        if affectionRel.f >= 30 and (hurting or fought) then
+            if momentSay("EvAffectionComfort", 45 * MINUTE, false, "AffectionComfort") then return end
+        end
+        local relaxed = false
+        pcall(function() relaxed = BridgeSocial.relaxed(affectionRel) == true end)
+        local romance = false
+        pcall(function() romance = BridgeSocial.romanceOpen(affectionRel) == true end)
+        local world = 0
+        pcall(function() world = getGameTime():getWorldAgeHours() end)
+        local day = math.floor((tonumber(world) or 0) / 24)
+        if relaxed and romance and affectionRel.f >= 45 and affectionRel.r >= 30
+                and nightNow() and BridgeMoments.dateDay ~= day then
+            if momentSay("EvAffectionDate", 90 * MINUTE, false, "AffectionDate") then
+                BridgeMoments.dateDay = day
+                return
+            end
+        end
+    end
     if wetWeather() and stat(red, "WETNESS") > 0.6 then
         if momentSay("EvColdWet", 20 * MINUTE) then return end
     end

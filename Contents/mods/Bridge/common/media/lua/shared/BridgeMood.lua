@@ -62,6 +62,12 @@ BridgeMood.TALK = {
     Comfort = { unhappy = { 10, 20 }, stress = { 0.05, 0.15 } },
     Flirt = { unhappy = { 5, 15 }, bored = { 5, 10 } },
     Hug = { stress = { 0.15, 0.35 }, unhappy = { 15, 35 }, pain = { 15, 35 }, bored = { 15, 35 } },
+    Handshake = { bored = { 5, 5 }, unhappy = { 3, 3 } },
+    FistBump = { bored = { 8, 8 }, unhappy = { 3, 3 } },
+    ShoulderMassage = { stress = { 0.04, 0.08 }, unhappy = { 2, 5 }, bored = { 1, 3 }, pain = { 5, 10 } },
+    SlowDance = { stress = { 0.08, 0.15 }, unhappy = { 8, 15 }, bored = { 10, 20 } },
+    SlowDance2 = { stress = { 0.10, 0.18 }, unhappy = { 10, 18 }, bored = { 8, 15 } },
+    Kiss = { stress = { 0.15, 0.30 }, unhappy = { 15, 25 }, bored = { 5, 10 } },
 }
 BridgeMood.TALK_HOURS = 1
 

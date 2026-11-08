@@ -21,7 +21,11 @@ BridgeSocial.CAR_CHAT_CHANCE = 0.6
 local COMBAT_KILL_STEP = 5
 local COMBAT_DAILY_CAP = 3
 local COMBAT_NEAR = 10
-local REPEAT_SEC = { Chat = 30, Thanks = 45, Joke = 90, Compliment = 180, Comfort = 180, Flirt = 300, Hug = 300 }
+local REPEAT_SEC = {
+    Chat = 30, Thanks = 45, Joke = 90, Compliment = 180, Comfort = 180, Flirt = 300,
+    Handshake = 600, FistBump = 600, ShoulderMassage = 1800, Hug = 300,
+    SlowDance = 1800, Kiss = 3600, SlowDance2 = 3600,
+}
 
 local BUSY_DIST = 8
 local AFTER_FIGHT = 1200
@@ -38,7 +42,7 @@ function BridgeSocial.speak(key, fallback, gap)
     if now - (BridgeSocial.said[key] or -99999) < (gap or 120) then return end
     BridgeSocial.said[key] = now
     local text = nil
-    pcall(function() text = getTextOrNull("IGUI_NotAlone_Say_" .. tostring(key)) end)
+    pcall(function() text = BridgeSpeech.getOrNull("IGUI_NotAlone_Say_" .. tostring(key)) end)
     if text == nil or text == "" then text = fallback end
     pcall(function() if Bridge ~= nil and Bridge.speakText ~= nil then Bridge.speakText(text) end end)
 end
@@ -86,10 +90,10 @@ local function lineCount(pool)
     n = 0
     for i = 1, 30 do
         local key = "IGUI_NotAlone_Soc_" .. pool .. "_" .. i
-        local text = nil
+        local found = false
 
-        pcall(function() text = getTextOrNull(key, "", "") end)
-        if text == nil or text == key or text == "" then break end
+        pcall(function() found = BridgeSpeech.exists(key) end)
+        if not found then break end
         n = i
     end
     BridgeSocial.poolSize[pool] = n
@@ -105,9 +109,9 @@ function BridgeSocial.lineKey(pool, i)
     pcall(function() male = BridgeData.isMale(Bridge.store) end)
     if not male then return key end
     local m = "IGUI_NotAlone_SocM_" .. pool .. "_" .. i
-    local t = nil
-    pcall(function() t = getTextOrNull(m, "", "") end)
-    if t ~= nil and t ~= "" and t ~= m then return m end
+    local found = false
+    pcall(function() found = BridgeSpeech.exists(m) end)
+    if found then return m end
     return key
 end
 
@@ -169,7 +173,7 @@ function BridgeSocial.line(pool)
     local text = nil
     for _ = 1, 4 do
         local i = BridgeSocial.pick(pool, n)
-        pcall(function() text = getText(BridgeSocial.lineKey(pool, i), BridgeData.owner():getDisplayName()) end)
+        pcall(function() text = BridgeSpeech.get(BridgeSocial.lineKey(pool, i), BridgeData.owner():getDisplayName()) end)
         if n < 2 or not BridgeSocial.sameAsLast(text) then break end
     end
     return text
@@ -1720,6 +1724,11 @@ local function engaged()
 end
 
 
+function BridgeSocial.recentFight()
+    return recentFight()
+end
+
+
 function BridgeSocial.onCombatKill(z)
     if BridgeMeet ~= nil and type(BridgeMeet.quietCombat) == "function" and BridgeMeet.quietCombat() then return end
     local body = Bridge.body
@@ -1744,6 +1753,12 @@ end
 
 
 
+local function physOn()
+    local on = false
+    pcall(function() on = BridgeAnim ~= nil and type(BridgeAnim.enabled) == "function" and BridgeAnim.enabled() == true end)
+    return on
+end
+
 BridgeSocial.ACTIONS = {
     { id = "Chat", gate = function(r) return true end, tiered = true,
       chance = function(r) return 0.75 + r.f / 400 end, good = { 2, 0 }, bad = { 0, 0 }, anim = { "Yes", "Shrug" } },
@@ -1757,8 +1772,27 @@ BridgeSocial.ACTIONS = {
       chance = function(r) return 0.5 + r.f / 200 end, good = { 3, 0 }, bad = { 0, 0 }, anim = { "Yes", "No" } },
     { id = "Flirt", gate = function(r) return BridgeSocial.romanceOpen(r) end, romantic = true, tiered = true,
       chance = function(r) return 0.2 + (r.f - 30) / 150 + r.r / 150 end, good = { 1, 3 }, bad = { -1, -2 }, anim = { "WaveHi", "No" } },
-    { id = "Hug", gate = function(r) return r.f >= 45 and r.r >= 15 and r.days >= 4 and BridgeSocial.romanceOn() end, romantic = true,
-      chance = function(r) return 0.3 + r.r / 120 end, good = { 2, 3 }, bad = { -2, -3 }, anim = { "ComeHere", "No" } },
+    { id = "Handshake", gate = function(r) return physOn() and r.f >= 10 end, physical = true, noRoll = true,
+      group = "greetings", animId = "Handshake", mood = "Handshake", romantic = false,
+      good = { 1, 0 }, bad = { 0, 0 } },
+    { id = "FistBump", gate = function(r) return physOn() and r.f >= 20 end, physical = true, noRoll = true,
+      group = "greetings", animId = "FistBump", mood = "FistBump", romantic = false,
+      good = { 1, 0 }, bad = { 0, 0 } },
+    { id = "ShoulderMassage", gate = function(r) return physOn() and r.f >= 30 end, physical = true, noRoll = true,
+      group = "relax", animId = "ShoulderMassage", mood = "ShoulderMassage", romantic = false,
+      good = { 1, 0 }, bad = { 0, 0 } },
+    { id = "Hug", gate = function(r) return physOn() and r.f >= 45 and r.r >= 15 and r.days >= 4 and BridgeSocial.romanceOn() end,
+      physical = true, noRoll = true, group = "affection", animId = "Hug", mood = "Hug", romantic = true,
+      good = { 2, 3 }, bad = { 0, 0 } },
+    { id = "SlowDance", gate = function(r) return physOn() and BridgeSocial.romanceOpen(r) and r.r >= 25 and r.f >= 45 and r.days >= 3 end,
+      physical = true, noRoll = true, group = "affection", animId = "SlowDance", mood = "SlowDance", romantic = true,
+      good = { 1, 2 }, bad = { 0, 0 } },
+    { id = "Kiss", gate = function(r) return physOn() and BridgeSocial.romanceOpen(r) and r.r >= 40 and r.f >= 55 and r.days >= 5 end,
+      physical = true, noRoll = true, group = "affection", animId = "Kiss", mood = "Kiss", romantic = true,
+      good = { 1, 3 }, bad = { 0, 0 } },
+    { id = "SlowDance2", gate = function(r) return physOn() and BridgeSocial.romanceOpen(r) and r.r >= 50 and r.f >= 60 and r.days >= 6 end,
+      physical = true, noRoll = true, group = "affection", animId = "SlowDance2", mood = "SlowDance2", romantic = true,
+      good = { 1, 2 }, bad = { 0, 0 } },
 }
 
 local function actionById(id)
@@ -1769,13 +1803,35 @@ local function actionById(id)
 end
 
 
-function BridgeSocial.talkBlock(id, r, calm, busy)
+function BridgeSocial.physical(a)
+    return type(a) == "table" and a.physical == true
+end
+
+
+function BridgeSocial.blockTip(entry, tr)
+    if entry == nil or entry.blocked == nil then return nil end
+    local base = "TalkCant" .. entry.blocked
+    if entry.id ~= nil and type(tr) == "function" then
+        local full = base .. entry.id
+        local text = tr(full)
+        if type(text) == "string" and text ~= "" and text ~= full and text ~= ("IGUI_NotAlone_" .. full) then
+            return text
+        end
+    end
+    if type(tr) == "function" then return tr(base) end
+    return base
+end
+
+
+function BridgeSocial.talkBlock(id, r, calm, busy, animWhy)
     if busy then return "Busy" end
     local a = actionById(id)
+    if a ~= nil and a.physical and animWhy ~= nil then return "NoAnim" end
     if a ~= nil and a.romantic and recentFight() then return "AfterFight" end
     local since = Bridge.time - (BridgeSocial.last[id] or -999999)
     if since < BridgeSocial.repeatSec(id, r, calm) * 60 then return "Repeat" end
-    if a ~= nil then
+    if a ~= nil and id == "SlowDance2" and not calm then return "NotNow" end
+    if a ~= nil and not a.physical then
         local df, dr = a.good[1], a.good[2]
         if df > 0 or dr > 0 then
             local fullF = (df <= 0) or ((capF(r, calm) - (r.gainF or 0)) <= 0)
@@ -1826,6 +1882,26 @@ function BridgeSocial.talk(id)
         gesture("Shrug")
         log(id .. " repeat: shrug")
         return "repeat: shrug"
+    end
+    if a.physical then
+        local played, why = nil, nil
+        pcall(function() played, why = BridgeAnim.play(a.animId) end)
+        if played ~= true then
+            BridgeSocial.info = id .. " anim refused"
+            log(BridgeSocial.info .. ": " .. tostring(why))
+            return tostring(why or "no anim")
+        end
+        BridgeSocial.last[id] = Bridge.time
+        BridgeSocial.nagged[id] = nil
+        gain(r, a.good[1], a.good[2], calm)
+        if BridgeMood ~= nil then
+            local okMood, mood = pcall(BridgeMood.talked, a.mood or id)
+            log(id .. " mood: " .. tostring(okMood and mood or ("error " .. tostring(mood))))
+        end
+        say(id .. "_Good")
+        BridgeSocial.info = string.format("%s good f=%d r=%d", id, r.f, r.r)
+        log(BridgeSocial.info)
+        return BridgeSocial.info
     end
     BridgeSocial.last[id] = Bridge.time
     BridgeSocial.nagged[id] = nil
@@ -2134,18 +2210,34 @@ local function menuTip(option, text)
 end
 
 
-function BridgeSocial.talkOptions(r, calm, busy)
+local function animReason()
+    local why = nil
+    pcall(function()
+        if BridgeAnim ~= nil and type(BridgeAnim.reason) == "function" then why = BridgeAnim.reason() end
+    end)
+    return why
+end
+
+
+local function optionList(filter, r, calm, busy, animWhy)
     local list = {}
     for _, a in ipairs(BridgeSocial.ACTIONS) do
-        if a.gate(r) then
+        if filter(a) and a.gate(r) then
             list[#list + 1] = {
                 id = a.id,
                 label = "Talk_" .. a.id,
                 romantic = a.romantic == true,
-                blocked = BridgeSocial.talkBlock(a.id, r, calm, busy),
+                group = a.group,
+                blocked = BridgeSocial.talkBlock(a.id, r, calm, busy, animWhy),
             }
         end
     end
+    return list
+end
+
+
+function BridgeSocial.talkOptions(r, calm, busy, animWhy)
+    local list = optionList(function(a) return a.physical ~= true end, r, calm, busy, animWhy)
     if r.f >= 20 then
         list[#list + 1] = {
             id = "Ask",
@@ -2158,13 +2250,44 @@ function BridgeSocial.talkOptions(r, calm, busy)
 end
 
 
-function BridgeSocial.menuTalkOptions()
+function BridgeSocial.greetingOptions(r, calm, busy, animWhy)
+    return optionList(function(a) return a.physical == true and a.group == "greetings" end, r, calm, busy, animWhy)
+end
+
+
+function BridgeSocial.affectionOptions(r, calm, busy, animWhy)
+    return optionList(function(a) return a.physical == true and a.group ~= "greetings" end, r, calm, busy, animWhy)
+end
+
+
+local function menuContext()
     local r = rel()
     if r == nil then return nil end
     rollDay(r)
     local busy = zombiesNear(BUSY_DIST)
     local calm = BridgeSocial.relaxed(r)
-    return BridgeSocial.talkOptions(r, calm, busy)
+    return r, calm, busy, animReason()
+end
+
+
+function BridgeSocial.menuTalkOptions()
+    local r, calm, busy, animWhy = menuContext()
+    if r == nil then return nil end
+    return BridgeSocial.talkOptions(r, calm, busy, animWhy)
+end
+
+
+function BridgeSocial.menuGreetingOptions()
+    local r, calm, busy, animWhy = menuContext()
+    if r == nil then return nil end
+    return BridgeSocial.greetingOptions(r, calm, busy, animWhy)
+end
+
+
+function BridgeSocial.menuAffectionOptions()
+    local r, calm, busy, animWhy = menuContext()
+    if r == nil then return nil end
+    return BridgeSocial.affectionOptions(r, calm, busy, animWhy)
 end
 
 
@@ -2177,17 +2300,8 @@ function BridgeSocial.fillMenu(context, tr)
     context:addSubMenu(option, sub)
     local busy = zombiesNear(BUSY_DIST)
     local calm = BridgeSocial.relaxed(r)
-    local romantic = nil
-    for _, entry in ipairs(BridgeSocial.talkOptions(r, calm, busy)) do
-        local target = sub
-        if entry.romantic then
-            if romantic == nil then
-                local ro = sub:addOption(tr("Romance"))
-                romantic = ISContextMenu:getNew(sub)
-                sub:addSubMenu(ro, romantic)
-            end
-            target = romantic
-        end
+    local animWhy = animReason()
+    local function addEntry(target, entry)
         local opt
         if entry.ask then
             opt = target:addOption(tr(entry.label), nil, BridgeSocial.ask)
@@ -2196,9 +2310,17 @@ function BridgeSocial.fillMenu(context, tr)
         end
         if entry.blocked ~= nil then
             opt.notAvailable = true
-            menuTip(opt, tr("TalkCant" .. entry.blocked))
+            menuTip(opt, BridgeSocial.blockTip(entry, tr))
         end
     end
+    local greetings = BridgeSocial.greetingOptions(r, calm, busy, animWhy)
+    if #greetings > 0 then
+        local greetOption = sub:addOption(tr("Talk_Greetings"))
+        local greetSub = ISContextMenu:getNew(sub)
+        sub:addSubMenu(greetOption, greetSub)
+        for _, entry in ipairs(greetings) do addEntry(greetSub, entry) end
+    end
+    for _, entry in ipairs(BridgeSocial.talkOptions(r, calm, busy, animWhy)) do addEntry(sub, entry) end
 end
 
 if type(Events) == "table" and Events.OnZombieDead ~= nil then

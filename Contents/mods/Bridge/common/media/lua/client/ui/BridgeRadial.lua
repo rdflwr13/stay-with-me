@@ -82,6 +82,16 @@ local TALK_ICONS = {
     Ask = "ask",
 }
 
+local AFFECTION_ICONS = {
+    Handshake = "talk",
+    FistBump = "talk",
+    Hug = "hug",
+    Kiss = "hug",
+    SlowDance = "hug",
+    SlowDance2 = "hug",
+    ShoulderMassage = "hug",
+}
+
 local DEFAULT_ORDER = { "wait", "talk", "heal", "fight", "guns", "keep", "jobs", "actions", "equip" }
 local RADIAL_ONLY = {
     wait = true, talk = true, heal = true, fight = true, guns = true,
@@ -212,12 +222,41 @@ local function backLabel()
     return text
 end
 
-local function talkEntries()
+local function socialEntries(builder, icons)
+    local out = {}
+    if BridgeSocial == nil or type(BridgeSocial[builder]) ~= "function" then return out end
+    local opts = nil
+    pcall(function() opts = BridgeSocial[builder]() end)
+    if opts == nil then return out end
+    for _, option in ipairs(opts) do
+        if option.blocked == nil then
+            local id = option.id
+            out[#out + 1] = make(tr(option.label), ICONS[icons[id] or "hug"], function() BridgeSocial.talk(id) end)
+        end
+    end
+    return out
+end
+
+local function affectionEntries()
+    return socialEntries("menuAffectionOptions", AFFECTION_ICONS)
+end
+
+local function greetingEntries()
+    return socialEntries("menuGreetingOptions", AFFECTION_ICONS)
+end
+
+local function talkEntries(playerNum)
     local out = {}
     if BridgeSocial == nil or type(BridgeSocial.menuTalkOptions) ~= "function" then return out end
     local opts = nil
     pcall(function() opts = BridgeSocial.menuTalkOptions() end)
     if opts == nil then return out end
+    if #greetingEntries() > 0 then
+        local target = playerNum
+        out[#out + 1] = make(tr("Talk_Greetings"), ICONS.talk, function()
+            BridgeRadial.showRing("greetings", target)
+        end)
+    end
     for _, option in ipairs(opts) do
         if option.blocked == nil then
             local id = option.id
@@ -466,7 +505,9 @@ local function gunEntries()
 end
 
 function BridgeRadial.ringEntries(ring, playerNum)
-    if ring == "talk" then return talkEntries() end
+    if ring == "talk" then return talkEntries(playerNum) end
+    if ring == "affection" then return affectionEntries() end
+    if ring == "greetings" then return greetingEntries() end
     if ring == "fight" then return fightEntries() end
     if ring == "stay" then return stayEntries() end
     if ring == "work" then return workEntries(playerNum) end
@@ -516,6 +557,7 @@ function BridgeRadial.topEntries(playerNum)
     end
     local order = BridgeRadial.order(st)
     local gearDone = false
+    local affectionShown = false
     for _, id in ipairs(order) do
         local shown = BridgeData.menuShown(st, id)
         if id == "equip" or id == "torch" then
@@ -534,6 +576,10 @@ function BridgeRadial.topEntries(playerNum)
         elseif shown and id == "talk" then
             if #BridgeRadial.ringEntries("talk", playerNum) > 0 then
                 out[#out + 1] = make(tr("Talk"), ICONS.talk, function() BridgeRadial.showRing("talk", playerNum) end)
+            end
+            if #BridgeRadial.ringEntries("affection", playerNum) > 0 then
+                affectionShown = true
+                out[#out + 1] = make(tr("Affection"), ICONS.hug, function() BridgeRadial.showRing("affection", playerNum) end)
             end
         elseif shown and id == "heal" then
             local alive = Bridge.alive() == true
@@ -574,6 +620,9 @@ function BridgeRadial.topEntries(playerNum)
     end
     if #out == 0 then
         out[1] = make(tr("Call", companionName()), ICONS.call, BridgeMenu.onCall)
+    end
+    if not affectionShown and #BridgeRadial.ringEntries("affection", playerNum) > 0 then
+        out[#out + 1] = make(tr("Affection"), ICONS.hug, function() BridgeRadial.showRing("affection", playerNum) end)
     end
     return out
 end

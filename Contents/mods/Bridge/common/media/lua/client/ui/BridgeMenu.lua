@@ -645,24 +645,18 @@ end
 
 local function buildAffection(context, playerNum, env)
     if not env.inRange then return end
-    if BridgeAnim == nil or BridgeAnim.ORDER == nil or BridgeAnim.reason == nil then return end
+    if BridgeSocial == nil or type(BridgeSocial.menuAffectionOptions) ~= "function" then return end
+    local list = nil
+    pcall(function() list = BridgeSocial.menuAffectionOptions() end)
+    if list == nil or #list == 0 then return end
     local option = context:addOption(tr("Affection"))
     local sub = ISContextMenu:getNew(context)
     context:addSubMenu(option, sub)
-    local why = BridgeAnim.reason()
-    for _, id in ipairs(BridgeAnim.ORDER) do
-        local which = id
-        local v = BridgeAnim.VARIANTS[which]
-        local pool = BridgeAnim.POOLS and BridgeAnim.POOLS[which]
-        local label = v and v.label or (pool and pool.label)
-        if label ~= nil then
-            local o = sub:addOption(tr(label), nil, function() BridgeAnim.test(which) end)
-            if why ~= nil then
-                o.notAvailable = true
-                BridgeAnim.tip(o, why)
-            elseif BridgeTask ~= nil and BridgeTask.active then
-                o.notAvailable = true
-            end
+    for _, entry in ipairs(list) do
+        local o = sub:addOption(tr(entry.label), entry.id, BridgeSocial.talk)
+        if entry.blocked ~= nil then
+            o.notAvailable = true
+            tip(o, BridgeSocial.blockTip(entry, tr))
         end
     end
 end
@@ -698,7 +692,6 @@ BridgeMenu.ORDERABLE = {
     { id = "equip", label = "WindowEquip", build = buildEquip },
     { id = "wait", label = "MenuFollow", build = buildWait },
     { id = "actions", label = "Actions", build = buildActions },
-    { id = "affection", label = "Affection", build = buildAffection },
     { id = "fight", label = "Combat", build = buildFight },
     { id = "guns", label = "GunMenu", radialOnly = true },
     { id = "torch", label = "OptTorch", build = buildTorch },
@@ -751,6 +744,7 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
             entry.build(context, playerNum, env)
         end
     end
+    buildAffection(context, playerNum, env)
     if BridgeShower ~= nil and BridgeShower.hasPreShower ~= nil and BridgeShower.hasPreShower()
             and not (BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "shower") then
         local label = getText("IGUI_NotAlone_GetDressed")

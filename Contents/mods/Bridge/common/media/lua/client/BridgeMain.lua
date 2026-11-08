@@ -2481,20 +2481,7 @@ end
 
 function Bridge.speak(key, a, b)
     local text = key
-
-    local full = "IGUI_NotAlone_Say_" .. key
-    pcall(function()
-        if BridgeData.isMale(Bridge.store) then
-            local m = "IGUI_NotAlone_SayM_" .. key
-            local t = getTextOrNull(m, "", "")
-            if t ~= nil and t ~= "" and t ~= m then full = m end
-        end
-    end)
-    pcall(function()
-        if b ~= nil then text = getText(full, a, b)
-        elseif a ~= nil then text = getText(full, a)
-        else text = getText(full) end
-    end)
+    pcall(function() text = BridgeSpeech.getSay(key, a, b) end)
     return Bridge.speakText(text)
 end
 

@@ -44,7 +44,7 @@ end
 
 local function keyText(key)
     local value = nil
-    pcall(function() value = getTextOrNull(key, "", "") end)
+    pcall(function() value = BridgeSpeech.getOrNull(key) end)
     if value == nil or value == key or value == "" then return nil end
     return value
 end
@@ -120,7 +120,7 @@ local function speakText(pool, cooldown, slot, urgent)
         pcall(function() index = BridgeSocial.pick(pool, n) end)
         local key = "IGUI_NotAlone_Soc_" .. pool .. "_" .. index
         pcall(function() key = BridgeSocial.lineKey(pool, index) end)
-        pcall(function() text = getText(key) end)
+        pcall(function() text = BridgeSpeech.get(key) end)
         local again = false
         pcall(function() again = BridgeSocial.sameAsLast(text) end)
         if n < 2 or not again then break end

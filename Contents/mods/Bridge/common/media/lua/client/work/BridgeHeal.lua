@@ -970,7 +970,7 @@ local function say(key, a, b)
 
         local text = nil
         pcall(function() text = BridgeMoments.line(string.gsub(key, "_", ""), a, b) end)
-        text = text or tr("Say_" .. key, a, b)
+        text = text or BridgeSpeech.getSay(key, a, b)
 
 
 

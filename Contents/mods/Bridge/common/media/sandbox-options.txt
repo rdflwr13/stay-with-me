@@ -21,6 +21,20 @@ option StayWithMe.DailyRomanceCap
     translation = StayWithMe_DailyRomanceCap,
 }
 
+option StayWithMe.RomanceRequirementFriend
+{
+    type = integer, min = 0, max = 100, default = 30,
+    page = StayWithMe,
+    translation = StayWithMe_RomanceRequirementFriend,
+}
+
+option StayWithMe.RomanceRequirementDays
+{
+    type = integer, min = 0, max = 30, default = 2,
+    page = StayWithMe,
+    translation = StayWithMe_RomanceRequirementDays,
+}
+
 option StayWithMe.GiftAffectionMultiplier
 {
     type = double, min = 0, max = 5, default = 1.0,
@@ -42,18 +56,11 @@ option StayWithMe.DailyGiftCapRomance
     translation = StayWithMe_DailyGiftCapRomance,
 }
 
-option StayWithMe.RomanceRequirementFriend
+option StayWithMe.MoodEffectMultiplier
 {
-    type = integer, min = 0, max = 100, default = 30,
+    type = double, min = 0, max = 3, default = 1.0,
     page = StayWithMe,
-    translation = StayWithMe_RomanceRequirementFriend,
-}
-
-option StayWithMe.RomanceRequirementDays
-{
-    type = integer, min = 0, max = 30, default = 2,
-    page = StayWithMe,
-    translation = StayWithMe_RomanceRequirementDays,
+    translation = StayWithMe_MoodEffectMultiplier,
 }
 
 option StayWithMe.CarryCapacityBonus
@@ -63,11 +70,65 @@ option StayWithMe.CarryCapacityBonus
     translation = StayWithMe_CarryCapacityBonus,
 }
 
-option StayWithMe.MoodEffectMultiplier
+option StayWithMe.ForceSpawnNearPlayer
 {
-    type = double, min = 0, max = 3, default = 1.0,
+    type = boolean, default = false,
     page = StayWithMe,
-    translation = StayWithMe_MoodEffectMultiplier,
+    translation = StayWithMe_ForceSpawnNearPlayer,
+}
+
+option StayWithMe.MeetMarkerRange
+{
+    type = enum, numValues = 4, default = 2,
+    page = StayWithMe,
+    translation = StayWithMe_MeetMarkerRange,
+    valueTranslation = StayWithMe_MeetMarkerRange_Values,
+}
+
+option StayWithMe.NightSight
+{
+    type = enum, numValues = 4, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_NightSight,
+    valueTranslation = StayWithMe_NightSight_Values,
+}
+
+option StayWithMe.CarSeatPuppet
+{
+    type = boolean, default = false,
+    page = StayWithMe,
+    translation = StayWithMe_CarSeatPuppet,
+}
+
+option StayWithMe.SpeechLanguage
+{
+    type = enum, numValues = 9, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_SpeechLanguage,
+    valueTranslation = StayWithMe_SpeechLanguage_Values,
+}
+
+option StayWithMe.SpeechFont
+{
+    type = enum, numValues = 3, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_SpeechFont,
+    valueTranslation = StayWithMe_SpeechFont_Values,
+}
+
+option StayWithMe.SpeechDuration
+{
+    type = enum, numValues = 3, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_SpeechDuration,
+    valueTranslation = StayWithMe_SpeechDuration_Values,
+}
+
+option StayWithMe.MaxSpeechLines
+{
+    type = integer, min = 1, max = 5, default = 5,
+    page = StayWithMe,
+    translation = StayWithMe_MaxSpeechLines,
 }
 
 option StayWithMe.CompanionWheelKey
@@ -99,57 +160,4 @@ option StayWithMe.CompanionWheelSelectButton
     page = StayWithMe,
     translation = StayWithMe_CompanionWheelSelectButton,
     valueTranslation = StayWithMe_CompanionWheelSelectButton_Values,
-}
-
-option StayWithMe.ForceSpawnNearPlayer
-{
-    type = boolean, default = false,
-    page = StayWithMe,
-    translation = StayWithMe_ForceSpawnNearPlayer,
-}
-
-option StayWithMe.CarSeatPuppet
-{
-    type = boolean, default = false,
-    page = StayWithMe,
-    translation = StayWithMe_CarSeatPuppet,
-}
-
-option StayWithMe.MeetMarkerRange
-{
-    type = enum, numValues = 4, default = 2,
-    page = StayWithMe,
-    translation = StayWithMe_MeetMarkerRange,
-    valueTranslation = StayWithMe_MeetMarkerRange_Values,
-}
-
-option StayWithMe.NightSight
-{
-    type = enum, numValues = 4, default = 1,
-    page = StayWithMe,
-    translation = StayWithMe_NightSight,
-    valueTranslation = StayWithMe_NightSight_Values,
-}
-
-option StayWithMe.SpeechFont
-{
-    type = enum, numValues = 3, default = 1,
-    page = StayWithMe,
-    translation = StayWithMe_SpeechFont,
-    valueTranslation = StayWithMe_SpeechFont_Values,
-}
-
-option StayWithMe.SpeechDuration
-{
-    type = enum, numValues = 3, default = 1,
-    page = StayWithMe,
-    translation = StayWithMe_SpeechDuration,
-    valueTranslation = StayWithMe_SpeechDuration_Values,
-}
-
-option StayWithMe.MaxSpeechLines
-{
-    type = integer, min = 1, max = 5, default = 5,
-    page = StayWithMe,
-    translation = StayWithMe_MaxSpeechLines,
 }

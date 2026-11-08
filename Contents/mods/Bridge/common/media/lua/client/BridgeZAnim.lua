@@ -12,11 +12,10 @@ BridgeAnim.VARIANTS = {
     reversed = { label = "HugReversed", bump = "NAPghugLow2", emote = "PGHugHigh2", ms = 3700, gap = 0.171, mode = "front" },
     tight = { label = "HugTight", bump = "NAPghugHigh1", emote = "PGHugLow1", ms = 3700, gap = 0.132, mode = "front" },
     wide = { label = "HugWide", bump = "NAPghugHigh3", emote = "PGHugLow3", ms = 3700, gap = 0.211, mode = "front" },
-    backYou = { label = "BackHugYou", bump = "NAPGDance2Follow", emote = "PGDance2Lead", ms = 6349, gap = 0.03, mode = "frontSame", pinPlayer = true },
-    backHer = { label = "BackHugHer", bump = "NAPGDance2Lead", emote = "PGDance2Follow", ms = 6349, gap = 0.03, mode = "behind", pinPlayer = true },
+    backYou = { label = "BackHugYou", bump = "NAPGDance2Follow", emote = "PGDance2Lead", ms = 6349, gap = 0.03, mode = "frontSame", pinPlayer = true, loopUntilStop = true },
+    backHer = { label = "BackHugHer", bump = "NAPGDance2Lead", emote = "PGDance2Follow", ms = 6349, gap = 0.03, mode = "behind", pinPlayer = true, loopUntilStop = true },
     shoulderYou = { label = "ShoulderComfortYou", bump = "NAPGMassageF", emote = "PGMassageL", ms = 8000, gap = 0.03, mode = "frontSame", pinPlayer = true },
     shoulderHer = { label = "ShoulderComfortHer", bump = "NAPGMassageL", emote = "PGMassageF", ms = 8000, gap = 0.03, mode = "behind", pinPlayer = true },
-    lean = { label = "LeanIn", bump = "NAPGKissL", emote = "PGKissF", ms = 4800, gap = 0.303, mode = "front" },
     bump1 = { label = "FistBump", bump = "NAPGbump1", emote = "PGBump1", ms = 2500, gap = 0.421, mode = "front" },
     bump2 = { label = "FistBump", bump = "NAPGbump2", emote = "PGBump2", ms = 2500, gap = 0.474, mode = "front" },
     bump3 = { label = "FistBump", bump = "NAPGbump3", emote = "PGBump3", ms = 2500, gap = 0.526, mode = "front" },
@@ -33,8 +32,18 @@ BridgeAnim.POOLS = {
     bump  = { label = "FistBump",  ids = { "bump1", "bump2", "bump3" } },
     shake = { label = "Handshake", ids = { "shake1", "shake2", "shake3" } },
 }
-BridgeAnim.ORDER = { "romantic", "backYou", "backHer", "shoulderYou", "shoulderHer", "lean", "kiss", "bump", "shake", "dance" }
+BridgeAnim.ORDER = { "romantic", "backYou", "backHer", "shoulderYou", "shoulderHer", "kiss", "bump", "shake", "dance" }
 BridgeAnim.current = "romantic"
+
+BridgeAnim.SHIP = {
+    Handshake = "shake",
+    FistBump = "bump",
+    Hug = "romantic",
+    Kiss = "kissFollow",
+    SlowDance = "dance",
+    SlowDance2 = "backYou",
+    ShoulderMassage = "shoulderYou",
+}
 
 function BridgeAnim.pick(name)
     if BridgeAnim.VARIANTS[name] ~= nil then BridgeAnim.current = name end
@@ -54,7 +63,7 @@ function BridgeAnim.resolve(name)
     return BridgeAnim.pick(name)
 end
 
-BridgeAnim.DEBUG = true
+BridgeAnim.DEBUG = false
 
 function BridgeAnim.log(fmt, ...)
     if BridgeAnim.DEBUG ~= true then return end
@@ -426,6 +435,21 @@ function BridgeAnim.reason()
     local ready = playerReady(body)
     if ready ~= nil then return ready end
     return nil
+end
+
+function BridgeAnim.play(action)
+    local why = BridgeAnim.reason()
+    if why ~= nil then return false, why end
+    local id = BridgeAnim.SHIP[action] or action
+    local variant = BridgeAnim.resolve(id)
+    BridgeAnim.current = variant
+    BridgeTask.hugVariant = variant
+    local res = BridgeTask.start("anim", {})
+    if res ~= "started" then
+        BridgeTask.hugVariant = nil
+        return false, res
+    end
+    return true
 end
 
 function BridgeAnim.test(name)

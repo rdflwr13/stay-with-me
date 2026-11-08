@@ -206,5 +206,16 @@
     "Sandbox_StayWithMe_CompanionWheelKey_Values_option138": "Power",
     "Sandbox_StayWithMe_CompanionWheelKey_Values_option139": "Sleep",
     "Sandbox_StayWithMe_MaxSpeechLines": "Max Speech Lines",
-    "Sandbox_StayWithMe_MaxSpeechLines_tooltip": "How many on-foot speech lines the companion keeps visible above her head at once. 1 keeps the old single line. Up to 5. Each line stays for the normal Speech Duration. Does not affect car lines. Default: 5."
+    "Sandbox_StayWithMe_MaxSpeechLines_tooltip": "How many on-foot speech lines the companion keeps visible above her head at once. 1 keeps the old single line. Up to 5. Each line stays for the normal Speech Duration. Does not affect car lines. Default: 5.",
+    "Sandbox_StayWithMe_SpeechLanguage": "Companion Speech Language",
+    "Sandbox_StayWithMe_SpeechLanguage_tooltip": "Language used for the companion's spoken lines (speech bubbles and chat). Menus, tooltips and notifications stay in the game language. Translation mod (auto) uses an installed translation mod for this mod when one is found, and falls back to the game language otherwise. Default: Game language.",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option1": "Game language",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option2": "English",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option3": "Deutsch",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option4": "Español",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option5": "Français",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option6": "Italiano",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option7": "Português (BR)",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option8": "Русский",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)"
 }

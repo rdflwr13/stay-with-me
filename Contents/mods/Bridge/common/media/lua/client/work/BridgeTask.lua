@@ -1205,15 +1205,7 @@ end
 
 
 local function sayGet(key, a)
-    local full = "IGUI_NotAlone_Say_" .. key
-    pcall(function()
-        if Bridge ~= nil and BridgeData ~= nil and BridgeData.isMale(Bridge.store) then
-            local m = "IGUI_NotAlone_SayM_" .. key
-            local t = getTextOrNull(m, "", "")
-            if t ~= nil and t ~= "" and t ~= m then full = m end
-        end
-    end)
-    return getText(full, a)
+    return BridgeSpeech.getSay(key, a)
 end
 
 function BridgeTask.cleanNeedText(needs, mode)
@@ -4148,7 +4140,7 @@ function BridgeTask.kinds.washSink.update(body)
             return BridgeTask.finish()
         end
         if avail == nil or avail <= 0 then
-            Bridge.speakText(getText("IGUI_NotAlone_Say_NotEnoughWater"))
+            Bridge.speakText(BridgeSpeech.getSay("NotEnoughWater"))
             return BridgeTask.finish()
         end
         BridgeTask.washPhase = "going"
@@ -5316,9 +5308,9 @@ function BridgeTask.lootSay(item, kind)
     elseif kind == "body" then event = "LootCorpse" end
     if event == nil and type(pool) == "string" and string.sub(pool, 1, 7) == "Receive" then
         local cand = "Loot" .. string.sub(pool, 8)
-        local exists = nil
-        pcall(function() exists = getTextOrNull("IGUI_NotAlone_Soc_" .. cand .. "_Near_1", "", "") end)
-        if type(exists) == "string" and exists ~= "" and exists ~= ("IGUI_NotAlone_Soc_" .. cand .. "_Near_1") then
+        local exists = false
+        pcall(function() exists = BridgeSpeech.exists("IGUI_NotAlone_Soc_" .. cand .. "_Near_1") end)
+        if exists then
             event = cand
         end
     end

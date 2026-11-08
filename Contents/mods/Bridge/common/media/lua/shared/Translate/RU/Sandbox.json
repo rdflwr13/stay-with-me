@@ -204,5 +204,16 @@
     "Sandbox_StayWithMe_SpeechDuration_tooltip": "Как долго реплики над головой компаньона и строки в машине остаются на экране. Обычный — 5,25 секунды, Долгий — 7 секунд, Очень долгий — 9 секунд. По умолчанию: Обычный.",
     "Sandbox_StayWithMe_SpeechDuration_Values_option1": "Обычный (5,25 с)",
     "Sandbox_StayWithMe_SpeechDuration_Values_option2": "Долгий (7 с)",
-    "Sandbox_StayWithMe_SpeechDuration_Values_option3": "Очень долгий (9 с)"
+    "Sandbox_StayWithMe_SpeechDuration_Values_option3": "Очень долгий (9 с)",
+    "Sandbox_StayWithMe_SpeechLanguage": "Companion Speech Language",
+    "Sandbox_StayWithMe_SpeechLanguage_tooltip": "Language used for the companion's spoken lines (speech bubbles and chat). Menus, tooltips and notifications stay in the game language. Translation mod (auto) uses an installed translation mod for this mod when one is found, and falls back to the game language otherwise. Default: Game language.",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option1": "Game language",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option2": "English",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option3": "Deutsch",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option4": "Español",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option5": "Français",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option6": "Italiano",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option7": "Português (BR)",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option8": "Русский",
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)"
 }

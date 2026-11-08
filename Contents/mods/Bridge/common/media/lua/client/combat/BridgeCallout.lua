@@ -701,7 +701,7 @@ function BridgeCallout.forceMilestone(n)
     n = math.floor(n)
     local key = "IGUI_NotAlone_KillMilestone_" .. n
     local text = nil
-    pcall(function() text = getTextOrNull(key) end)
+    pcall(function() text = BridgeSpeech.getOrNull(key) end)
     if type(text) ~= "string" or text == "" or text == key then return false end
     if Bridge.quiet() then
         pcall(function() Bridge.bridgeEvent("KillMilestone" .. n, text) end)
@@ -1306,9 +1306,9 @@ local function homePoolCount(pool)
     local n = 0
     for i = 1, 20 do
         local key = "IGUI_NotAlone_Soc_" .. pool .. "_" .. i
-        local text = nil
-        pcall(function() text = getTextOrNull(key, "", "") end)
-        if text == nil or text == key or text == "" then break end
+        local found = false
+        pcall(function() found = BridgeSpeech.exists(key) end)
+        if not found then break end
         n = i
     end
     return n

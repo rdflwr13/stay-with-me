@@ -828,9 +828,33 @@ function BridgeData.lootMaxWeight(rec)
 end
 
 
-BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "affection", "fight", "guns", "torch", "jobs", "cancel" }
+BridgeData.MENU_ORDER_IDS = { "cancel", "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs" }
 BridgeData.MENU_ORDER_SET = {}
 for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do BridgeData.MENU_ORDER_SET[id] = true end
+
+BridgeData.LEGACY_MENU_ORDERS = {
+    { "talk", "heal", "equip", "wait", "actions", "affection", "fight", "guns", "torch", "jobs", "cancel" },
+    { "cancel", "talk", "heal", "equip", "wait", "actions", "affection", "fight", "guns", "torch", "jobs" },
+    { "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs", "cancel" },
+}
+
+function BridgeData.isLegacyMenuOrder(clean)
+    if type(clean) ~= "table" then return false end
+    for i = 1, #BridgeData.LEGACY_MENU_ORDERS do
+        local legacy = {}
+        for _, id in ipairs(BridgeData.LEGACY_MENU_ORDERS[i]) do
+            if BridgeData.MENU_ORDER_SET[id] then legacy[#legacy + 1] = id end
+        end
+        if #legacy == #clean then
+            local same = true
+            for j = 1, #legacy do
+                if legacy[j] ~= clean[j] then same = false break end
+            end
+            if same then return true end
+        end
+    end
+    return false
+end
 
 function BridgeData.cleanMenuOrder(value)
     if type(value) ~= "table" then return nil end
@@ -881,6 +905,7 @@ function BridgeData.menuOrder(rec)
     local out, seen = {}, {}
     local clean = nil
     if rec ~= nil then clean = BridgeData.cleanMenuOrder(rec.menuOrder) end
+    if clean ~= nil and BridgeData.isLegacyMenuOrder(clean) then clean = nil end
     if clean ~= nil then
         for _, id in ipairs(clean) do
             if not seen[id] then seen[id] = true out[#out + 1] = id end
