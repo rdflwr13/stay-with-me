@@ -17,10 +17,23 @@ BridgeAnim.VARIANTS = {
     shoulderYou = { label = "ShoulderComfortYou", bump = "NAPGMassageF", emote = "PGMassageL", ms = 8000, gap = 0.03, mode = "frontSame", pinPlayer = true },
     shoulderHer = { label = "ShoulderComfortHer", bump = "NAPGMassageL", emote = "PGMassageF", ms = 8000, gap = 0.03, mode = "behind", pinPlayer = true },
     lean = { label = "LeanIn", bump = "NAPGKissL", emote = "PGKissF", ms = 4800, gap = 0.303, mode = "front" },
+    bump1 = { label = "FistBump", bump = "NAPGbump1", emote = "PGBump1", ms = 2500, gap = 0.421, mode = "front" },
+    bump2 = { label = "FistBump", bump = "NAPGbump2", emote = "PGBump2", ms = 2500, gap = 0.474, mode = "front" },
+    bump3 = { label = "FistBump", bump = "NAPGbump3", emote = "PGBump3", ms = 2500, gap = 0.526, mode = "front" },
+    shake1 = { label = "Handshake", bump = "NAPGshake1", emote = "PGShake1", ms = 3000, gap = 0.316, mode = "front" },
+    shake2 = { label = "Handshake", bump = "NAPGshake2", emote = "PGShake2", ms = 3000, gap = 0.368, mode = "front" },
+    shake3 = { label = "Handshake", bump = "NAPGshake3", emote = "PGShake3", ms = 3000, gap = 0.421, mode = "front" },
+    kissLead = { label = "Kiss", bump = "NAPGKissL", emote = "PGKissF", ms = 4800, gap = 0.303, mode = "front" },
+    kissFollow = { label = "Kiss", bump = "NAPGKissF", emote = "PGKissL", ms = 4800, gap = 0.303, mode = "front" },
     dance = { label = "SlowDance", bump = "NAPGDanceLead", emote = "PGDanceFollow", ms = 6349, gap = 0.01, mode = "front", pinPlayer = true, loopUntilStop = true },
 }
 BridgeAnim.HUG_POOL = { "romantic", "reversed", "tight", "wide" }
-BridgeAnim.ORDER = { "romantic", "backYou", "backHer", "shoulderYou", "shoulderHer", "lean", "dance" }
+BridgeAnim.POOLS = {
+    kiss  = { label = "Kiss",      ids = { "kissLead", "kissFollow" } },
+    bump  = { label = "FistBump",  ids = { "bump1", "bump2", "bump3" } },
+    shake = { label = "Handshake", ids = { "shake1", "shake2", "shake3" } },
+}
+BridgeAnim.ORDER = { "romantic", "backYou", "backHer", "shoulderYou", "shoulderHer", "lean", "kiss", "bump", "shake", "dance" }
 BridgeAnim.current = "romantic"
 
 function BridgeAnim.pick(name)
@@ -32,6 +45,13 @@ function BridgeAnim.randomHug()
     local pick = BridgeAnim.HUG_POOL[ZombRand(#BridgeAnim.HUG_POOL) + 1]
     BridgeAnim.current = pick
     return pick
+end
+
+function BridgeAnim.resolve(name)
+    if name == "romantic" then return BridgeAnim.randomHug() end
+    local pool = BridgeAnim.POOLS[name]
+    if pool ~= nil then name = pool.ids[ZombRand(#pool.ids) + 1] end
+    return BridgeAnim.pick(name)
 end
 
 BridgeAnim.DEBUG = true
@@ -409,11 +429,9 @@ function BridgeAnim.reason()
 end
 
 function BridgeAnim.test(name)
-    if name == "romantic" then
-        name = BridgeAnim.randomHug()
-    else
-        BridgeAnim.pick(name)
-    end
+    local requested = name
+    name = BridgeAnim.resolve(name)
+    BridgeAnim.log("roll %s -> %s", tostring(requested), tostring(name))
     local why = BridgeAnim.reason()
     if why ~= nil then
         print("[BridgeAnim] cannot test " .. tostring(name) .. ": " .. tostring(why))

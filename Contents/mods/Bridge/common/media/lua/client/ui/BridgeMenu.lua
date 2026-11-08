@@ -653,8 +653,10 @@ local function buildAffection(context, playerNum, env)
     for _, id in ipairs(BridgeAnim.ORDER) do
         local which = id
         local v = BridgeAnim.VARIANTS[which]
-        if v ~= nil then
-            local o = sub:addOption(tr(v.label), nil, function() BridgeAnim.test(which) end)
+        local pool = BridgeAnim.POOLS and BridgeAnim.POOLS[which]
+        local label = v and v.label or (pool and pool.label)
+        if label ~= nil then
+            local o = sub:addOption(tr(label), nil, function() BridgeAnim.test(which) end)
             if why ~= nil then
                 o.notAvailable = true
                 BridgeAnim.tip(o, why)

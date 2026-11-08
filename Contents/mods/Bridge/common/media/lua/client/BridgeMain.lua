@@ -1444,6 +1444,7 @@ local SCARE_SEE = 7
 local SCARE_QUIET = 600
 local SCARE_EVERY = 600
 local SEEN_EVERY = 5
+local WATCH_SCAN_AGE = 15
 
 
 
@@ -1523,7 +1524,7 @@ local function watchOthers(red, body, around)
     pcall(function()
         local list = nil
         if BridgeZScan ~= nil then
-            list = BridgeZScan.near(red:getX(), red:getY(), SCARE_RADIUS, { tag = "watch.others" })
+            list = BridgeZScan.near(red:getX(), red:getY(), SCARE_RADIUS, { tag = "watch.others", age = WATCH_SCAN_AGE })
         end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
@@ -1688,6 +1689,34 @@ end
 
 
 
+
+local outlineSaid = nil
+
+function Bridge.clearCompanionOutline(player)
+    if player == nil then return end
+    if Bridge.body == nil or Bridge.kind ~= "zombie" then return end
+
+    local localPlayer = false
+    pcall(function() localPlayer = player:isLocalPlayer() == true end)
+    if not localPlayer then return end
+
+    local pn = nil
+    pcall(function() pn = player:getPlayerNum() end)
+    if pn == nil then return end
+
+    local lit = false
+    local ok = pcall(function() lit = Bridge.body:isOutlineHighlight(pn) == true end)
+    if not ok or not lit then return end
+
+    pcall(function() Bridge.body:setOutlineHighlight(pn, false) end)
+
+    if outlineSaid ~= Bridge.body then
+        outlineSaid = Bridge.body
+        if BridgeLog ~= nil and BridgeLog.on() then
+            print("[BridgeOutline] companion melee outline suppressed")
+        end
+    end
+end
 
 function Bridge.adoptServerBody(zombie)
     Bridge.invalidateBodyCaches(zombie)
@@ -4124,7 +4153,8 @@ for _, n in ipairs({ "BandageHead", "BandageLeftArm", "BandageLeftLeg", "Bandage
     "WipeHead", "WindowOpen", "IdleExt01_1H", "IdleExt02_1H", "IdleExt03_1H", "IdleExt01_2H", "IdleExt02_2H",
     "IdleExt03_2H", "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun", "IdleExt01_Rifle",
     "IdleExt02_Rifle", "IdleExt03_Rifle", "NAPghugHigh2", "NAPghugLow2", "NAPghugHigh1", "NAPghugHigh3",
-    "NAPGDance2Lead", "NAPGDance2Follow", "NAPGMassageL", "NAPGMassageF", "NAPGKissL", "NAPGDanceLead" }) do LOOK_ONCE[n] = true end
+    "NAPGDance2Lead", "NAPGDance2Follow", "NAPGMassageL", "NAPGMassageF", "NAPGKissL", "NAPGDanceLead",
+    "NAPGbump1", "NAPGbump2", "NAPGbump3", "NAPGshake1", "NAPGshake2", "NAPGshake3", "NAPGKissF" }) do LOOK_ONCE[n] = true end
 function Bridge.isLookOnce(name) return type(name) == "string" and LOOK_ONCE[name] == true end
 
 
@@ -7892,12 +7922,19 @@ function Bridge.pullOnTeleport()
     end
     local x, y = red:getX(), red:getY()
     local at = Bridge.redAt
-    Bridge.redAt = { x = x, y = y }
-    if at == nil then return end
-    local dx, dy = x - at.x, y - at.y
+    local px, py = nil, nil
+    if at ~= nil then
+        px, py = at.x, at.y
+    else
+        at = {}
+        Bridge.redAt = at
+    end
+    at.x, at.y = x, y
+    if px == nil then return end
+    local dx, dy = x - px, y - py
     local d2 = dx * dx + dy * dy
 
-    if d2 >= TELEPORT_JUMP * TELEPORT_JUMP and Bridge.spawnSelectorStagingAt(at.x, at.y) then
+    if d2 >= TELEPORT_JUMP * TELEPORT_JUMP and Bridge.spawnSelectorStagingAt(px, py) then
         Bridge.arrivalHoldStart("teleport from the Spawn Selector staging area")
     end
     if BridgeHorse ~= nil and type(BridgeHorse.blocksFollow) == "function" and BridgeHorse.blocksFollow() then return end
@@ -7979,28 +8016,38 @@ local function objectHasLadderFlag(obj)
     return found
 end
 
+local CLIMB_FLAGS = { "ClimbRope", "ClimbLadder", "AparosaLadder" }
+
+local function playerIsClimbingRope(red)
+    return red:isClimbingRope() == true
+end
+
+local function playerIsClimbing(red)
+    return red:isClimbing() == true
+end
+
+local function playerHasVar(red, flag)
+    return red:getVariableBoolean(flag) == true
+end
+
+local function playerIclnClimbing(red)
+    if not red:hasModData() then return false end
+    local md = red:getModData()
+    return md ~= nil and md.ICLNClimbState ~= nil
+end
+
 function Bridge.climbSignal(red)
     if red == nil then return nil end
-    local rope = false
-    pcall(function() rope = red:isClimbingRope() == true end)
-    if rope then return "rope" end
-    local climbing = false
-    pcall(function() climbing = red:isClimbing() == true end)
-    if climbing then return "ladder" end
-    local flags = { "ClimbRope", "ClimbLadder", "AparosaLadder" }
-    for i = 1, #flags do
-        local on = false
-        pcall(function() on = red:getVariableBoolean(flags[i]) == true end)
-        if on then return "ladder" end
+    local okRope, rope = pcall(playerIsClimbingRope, red)
+    if okRope and rope == true then return "rope" end
+    local okClimb, climbing = pcall(playerIsClimbing, red)
+    if okClimb and climbing == true then return "ladder" end
+    for i = 1, #CLIMB_FLAGS do
+        local okVar, on = pcall(playerHasVar, red, CLIMB_FLAGS[i])
+        if okVar and on == true then return "ladder" end
     end
-    local icln = false
-    pcall(function()
-        if red:hasModData() then
-            local md = red:getModData()
-            icln = md ~= nil and md.ICLNClimbState ~= nil
-        end
-    end)
-    if icln then return "ladder" end
+    local okIcln, icln = pcall(playerIclnClimbing, red)
+    if okIcln and icln == true then return "ladder" end
     return nil
 end
 
@@ -8106,7 +8153,9 @@ function Bridge.floorPullTick()
             pull.endedAt = nil
         end
         Bridge.zPrev = z
-        Bridge.xyPrev = { x = x, y = y }
+        local prev = Bridge.xyPrev
+        if prev == nil then prev = {} Bridge.xyPrev = prev end
+        prev.x, prev.y = x, y
         return
     end
 
@@ -8225,7 +8274,9 @@ function Bridge.floorPullTick()
     end
 
     Bridge.zPrev = z
-    Bridge.xyPrev = { x = x, y = y }
+    local prev = Bridge.xyPrev
+    if prev == nil then prev = {} Bridge.xyPrev = prev end
+    prev.x, prev.y = x, y
 end
 
 
@@ -9126,6 +9177,7 @@ Events.OnGameStart.Add(Bridge.initStore)
 Events.OnSave.Add(Bridge.onSave)
 Events.OnTick.Add(Bridge.onTick)
 Events.OnPlayerUpdate.Add(Bridge.onPlayerUpdate)
+Events.OnPlayerUpdate.Add(function(player) pcall(Bridge.clearCompanionOutline, player) end)
 Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
 
 
