@@ -2313,6 +2313,13 @@ function BridgeSocial.fillMenu(context, tr)
             menuTip(opt, BridgeSocial.blockTip(entry, tr))
         end
     end
+    local affection = BridgeSocial.affectionOptions(r, calm, busy, animWhy)
+    if #affection > 0 then
+        local affOption = sub:addOption(tr("Affection"))
+        local affSub = ISContextMenu:getNew(sub)
+        sub:addSubMenu(affOption, affSub)
+        for _, entry in ipairs(affection) do addEntry(affSub, entry) end
+    end
     local greetings = BridgeSocial.greetingOptions(r, calm, busy, animWhy)
     if #greetings > 0 then
         local greetOption = sub:addOption(tr("Talk_Greetings"))

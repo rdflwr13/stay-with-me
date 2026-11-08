@@ -161,3 +161,11 @@ option StayWithMe.CompanionWheelSelectButton
     translation = StayWithMe_CompanionWheelSelectButton,
     valueTranslation = StayWithMe_CompanionWheelSelectButton_Values,
 }
+
+option StayWithMe.BreathingVolume
+{
+    type = enum, numValues = 4, default = 3,
+    page = StayWithMe,
+    translation = StayWithMe_BreathingVolume,
+    valueTranslation = StayWithMe_BreathingVolume_Values,
+}

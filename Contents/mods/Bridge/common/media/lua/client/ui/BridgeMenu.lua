@@ -643,24 +643,6 @@ local function buildJobs(context, playerNum, env)
     end
 end
 
-local function buildAffection(context, playerNum, env)
-    if not env.inRange then return end
-    if BridgeSocial == nil or type(BridgeSocial.menuAffectionOptions) ~= "function" then return end
-    local list = nil
-    pcall(function() list = BridgeSocial.menuAffectionOptions() end)
-    if list == nil or #list == 0 then return end
-    local option = context:addOption(tr("Affection"))
-    local sub = ISContextMenu:getNew(context)
-    context:addSubMenu(option, sub)
-    for _, entry in ipairs(list) do
-        local o = sub:addOption(tr(entry.label), entry.id, BridgeSocial.talk)
-        if entry.blocked ~= nil then
-            o.notAvailable = true
-            tip(o, BridgeSocial.blockTip(entry, tr))
-        end
-    end
-end
-
 local function buildCancel(context, playerNum, env)
     BridgeMenu.addCancelTask(context)
 end
@@ -744,7 +726,6 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
             entry.build(context, playerNum, env)
         end
     end
-    buildAffection(context, playerNum, env)
     if BridgeShower ~= nil and BridgeShower.hasPreShower ~= nil and BridgeShower.hasPreShower()
             and not (BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "shower") then
         local label = getText("IGUI_NotAlone_GetDressed")

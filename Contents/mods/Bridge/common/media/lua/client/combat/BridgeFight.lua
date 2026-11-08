@@ -555,13 +555,26 @@ local function tire(item, dealt, hp, prone, body)
 end
 
 
+local function restScale()
+    local m = 1
+    if BridgeTask ~= nil and type(BridgeTask.ffMult) == "function" then
+        pcall(function() m = BridgeTask.ffMult() end)
+    else
+        pcall(function() m = getGameTime():getTrueMultiplier() end)
+    end
+    if type(m) ~= "number" or m < 1 then m = 1 end
+    if m > 10 then m = 10 end
+    return m
+end
+
+
 local function rest(busy, sitting)
     if BridgeFight.fatigue <= 0 then return end
     local r = FATIGUE_REST * (busy and FATIGUE_REST_BUSY or 1)
 
     if Bridge.pose ~= nil or sitting then r = r * FATIGUE_REST_SIT end
 
-    r = r * (Bridge.dt or 1)
+    r = r * (Bridge.dt or 1) * restScale()
     r = r * fitnessRecoverMult(fitnessLevel())
     BridgeFight.fatigue = math.max(0, BridgeFight.fatigue - r)
     sayFatigue()

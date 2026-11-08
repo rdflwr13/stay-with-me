@@ -217,5 +217,11 @@
     "Sandbox_StayWithMe_SpeechLanguage_Values_option6": "Italiano",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option7": "Português (BR)",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option8": "Русский",
-    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)"
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)",
+    "Sandbox_StayWithMe_BreathingVolume": "Breathing Volume",
+    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Controls the volume of the companion's breathing when she is winded. Off disables it. Quiet is 50% quieter than Normal. Loud is 50% louder. Default: Normal.",
+    "Sandbox_StayWithMe_BreathingVolume_Values_option1": "Off",
+    "Sandbox_StayWithMe_BreathingVolume_Values_option2": "Quiet",
+    "Sandbox_StayWithMe_BreathingVolume_Values_option3": "Normal (default)",
+    "Sandbox_StayWithMe_BreathingVolume_Values_option4": "Loud"
 }
