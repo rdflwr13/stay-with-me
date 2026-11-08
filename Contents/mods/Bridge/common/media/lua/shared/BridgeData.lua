@@ -60,6 +60,28 @@ function BridgeData.sandboxFlag(key, default)
 end
 
 
+BridgeData.HORSE_ACTIVE = nil
+
+function BridgeData.horseModActive()
+    local cached = BridgeData.HORSE_ACTIVE
+    if cached ~= nil then return cached end
+    if getActivatedMods == nil then return false end
+    local ok, active = pcall(function()
+        local mods = getActivatedMods()
+        if mods == nil then return nil end
+        return mods:contains("Horse") or mods:contains("\\Horse")
+    end)
+    if not ok or active == nil then return false end
+    BridgeData.HORSE_ACTIVE = active == true
+    return BridgeData.HORSE_ACTIVE
+end
+
+
+function BridgeData.horseRidingEnabled()
+    return BridgeData.horseModActive()
+end
+
+
 
 
 

@@ -93,6 +93,7 @@ Bridge.nextArmedIdleAnim = 0
 Bridge.scareStopped = 0
 Bridge.hiddenSince = nil
 Bridge.speakGraceUntil = 0
+Bridge.speechLines = {}
 Bridge.parked = false
 Bridge.mp = false
 Bridge.spawnAsked = nil
@@ -1697,6 +1698,7 @@ function Bridge.adoptServerBody(zombie)
     pcall(function() BridgeWeapon.reset() end)
     Bridge.body = zombie
     Bridge.kind = "zombie"
+    Bridge.clearSpeechOverlay()
     Bridge.noteSpawned()
     Bridge.target = nil
     Bridge.spawnAsked = nil
@@ -1863,6 +1865,7 @@ function Bridge.spawnZombie(px, py, pz)
 
         Bridge.body = body
         Bridge.kind = "zombie"
+        Bridge.clearSpeechOverlay()
         Bridge.noteSpawned()
         pcall(function() body:setVariable(BODY_VAR, true) end)
         Bridge.hideBody(body, true)
@@ -1956,6 +1959,7 @@ function Bridge.spawnPlayer()
 
         Bridge.body = body
         Bridge.kind = "player"
+        Bridge.clearSpeechOverlay()
         Bridge.noteSpawned()
     end)
 
@@ -1964,6 +1968,8 @@ function Bridge.spawnPlayer()
 end
 
 function Bridge.despawn(skipSave)
+    if BridgeHorse ~= nil and type(BridgeHorse.release) == "function" then pcall(BridgeHorse.release, "despawn", false) end
+    Bridge.clearSpeechOverlay()
     if not Bridge.mp and Bridge.alive() then
         pcall(function() if BridgeTask ~= nil and BridgeTask.closeOpenedDoors ~= nil then BridgeTask.closeOpenedDoors() end end)
     end
@@ -2197,6 +2203,9 @@ end
 function Bridge.teleportToRed(prefer)
     local red = BridgeData.owner()
     if red == nil then return "no player" end
+    if BridgeHorse ~= nil and type(BridgeHorse.blocksFollow) == "function" and BridgeHorse.blocksFollow() then
+        return "riding"
+    end
     if not Bridge.drivable() then return "no body or driven by another client" end
     Bridge.pose = nil
     if BridgeGunfight ~= nil and type(BridgeGunfight.interruptReload) == "function" then
@@ -2281,6 +2290,7 @@ end
 function Bridge.setMode(mode)
     if mode == "waitcar" then mode = "wait" end
     if not BridgeData.MODES[mode] then return "unknown mode " .. tostring(mode) end
+    if BridgeHorse ~= nil and type(BridgeHorse.release) == "function" then pcall(BridgeHorse.release, "mode", true) end
     if BridgeTask ~= nil and BridgeTask.active then BridgeTask.cancel("mode") end
 
     Bridge.newLifePending = nil
@@ -2558,6 +2568,164 @@ function Bridge.speechTag(text)
 end
 
 
+function Bridge.speechMaxLines()
+    local n = 5
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        local ok, v = pcall(BridgeData.sandboxNumber, "MaxSpeechLines", 5, 1, 5)
+        if ok then n = math.floor(tonumber(v) or 5) end
+    end
+    if n < 1 then n = 1 end
+    if n > 5 then n = 5 end
+    return n
+end
+
+
+function Bridge.clearSpeechOverlay()
+    Bridge.speechLines = {}
+end
+
+
+local function speechOverlayApplies(z)
+    if z == nil or z ~= Bridge.body then return false end
+    if Bridge.mp then return false end
+    if BridgeCar ~= nil and type(BridgeCar.withRed) == "function" then
+        local ok, inCar = pcall(BridgeCar.withRed, BridgeData.owner())
+        if ok and inCar then return false end
+    end
+    return true
+end
+
+
+local function speechClean(text)
+    local s = tostring(text or "")
+    s = s:gsub("%[img=[^%]]*%]", "")
+    s = s:gsub("%[/?col[^%]]*%]", "")
+    s = s:gsub("<[^>]*>", "")
+    return s
+end
+
+
+function Bridge.speechOverlayAdd(z, text)
+    local limit = Bridge.speechMaxLines()
+    local s = speechClean(text)
+    if s == "" then return end
+    while #Bridge.speechLines >= limit do
+        table.remove(Bridge.speechLines, 1)
+    end
+    pcall(function() z:addLineChatElement("", 1, 1, 1) end)
+    Bridge.speechLines[#Bridge.speechLines + 1] = {
+        text = s,
+        untilMs = getTimestampMs() + Bridge.speechHoldMs(),
+    }
+end
+
+
+function Bridge.speechOverlayPrune()
+    local now = 0
+    pcall(function() now = getTimestampMs() end)
+    for i = #Bridge.speechLines, 1, -1 do
+        if now >= Bridge.speechLines[i].untilMs then
+            table.remove(Bridge.speechLines, i)
+        end
+    end
+end
+
+
+local SPEECH_MAX_CHARS = 75
+local SPEECH_FADE_MS = 500
+local SPEECH_ANCHOR_Z = 0.6667
+
+
+local function speechWrap(text)
+    local rows = {}
+    local source = tostring(text or "") .. "\n"
+    for paragraph in source:gmatch("(.-)\n") do
+        if paragraph == "" then
+            rows[#rows + 1] = ""
+        else
+            local line = ""
+            for word in paragraph:gmatch("%S+") do
+                local attempt = line == "" and word or (line .. " " .. word)
+                if line ~= "" and #attempt > SPEECH_MAX_CHARS then
+                    rows[#rows + 1] = line
+                    line = word
+                else
+                    line = attempt
+                end
+                while #line > SPEECH_MAX_CHARS do
+                    rows[#rows + 1] = string.sub(line, 1, SPEECH_MAX_CHARS)
+                    line = string.sub(line, SPEECH_MAX_CHARS + 1)
+                end
+            end
+            if line ~= "" then rows[#rows + 1] = line end
+        end
+    end
+    if #rows == 0 then rows[1] = "" end
+    return rows
+end
+
+
+function Bridge.speechOverlayDraw()
+    local body = Bridge.body
+    local owner = BridgeData.owner()
+    if body == nil or owner == nil then return end
+    Bridge.speechOverlayPrune()
+    if #Bridge.speechLines == 0 then return end
+    if Bridge.mp then return end
+    if Bridge.speechMaxLines() <= 1 then Bridge.clearSpeechOverlay() return end
+    if BridgeCar ~= nil and type(BridgeCar.withRed) == "function" then
+        local carOK, inCar = pcall(BridgeCar.withRed, owner)
+        if carOK and inCar then Bridge.clearSpeechOverlay() return end
+    end
+    if dist2d(body, owner) > 30 then return end
+    local ok, err = pcall(function()
+        local bx = body:getX()
+        local by = body:getY()
+        local bz = body:getZ() + SPEECH_ANCHOR_Z
+        local sx = isoToScreenX(0, bx, by, bz)
+        local anchorY = isoToScreenY(0, bx, by, bz)
+        if sx == nil or anchorY == nil then return end
+        sx = math.floor(sx)
+        anchorY = math.floor(anchorY)
+        local font = Bridge.speechFont()
+        local tm = getTextManager()
+        local fontH = tm:getFontHeight(font)
+        local lineH = fontH + 1
+        local now = 0
+        pcall(function() now = getTimestampMs() end)
+        local entries = {}
+        local totalH = 0
+        for i = 1, #Bridge.speechLines do
+            local line = Bridge.speechLines[i]
+            local alpha = 1
+            local remaining = (line.untilMs or 0) - now
+            if remaining < SPEECH_FADE_MS then
+                alpha = remaining / SPEECH_FADE_MS
+                if alpha < 0 then alpha = 0 end
+            end
+            local rows = speechWrap(line.text)
+            for r = 1, #rows do
+                entries[#entries + 1] = { text = rows[r], alpha = alpha }
+                totalH = totalH + lineH
+            end
+        end
+        local y = anchorY - totalH
+        for i = 1, #entries do
+            local entry = entries[i]
+            tm:DrawStringCentre(font, sx + 1, y + 1, entry.text, 0, 0, 0, 0.65 * entry.alpha)
+            tm:DrawStringCentre(font, sx, y, entry.text, 0.95, 0.55, 0.75, entry.alpha)
+            y = y + lineH
+        end
+    end)
+    if not ok then warn("speech overlay draw failed: " .. tostring(err)) end
+end
+
+
+if Events ~= nil and Events.OnPostUIDraw ~= nil then
+    Events.OnPostUIDraw.Add(Bridge.speechOverlayDraw)
+end
+
+
 function Bridge.speechLineFor(z, text, expectId)
     if z == nil then return false, "no body" end
     if expectId ~= nil then
@@ -2567,6 +2735,14 @@ function Bridge.speechLineFor(z, text, expectId)
         local marked = false
         pcall(function() marked = z:getVariableBoolean(Bridge.BODY_VAR) == true end)
         if not marked then return false, "not companion" end
+    end
+    local maxLines = Bridge.speechMaxLines()
+    if speechOverlayApplies(z) then
+        if maxLines > 1 then
+            Bridge.speechOverlayAdd(z, text)
+            return true
+        end
+        Bridge.clearSpeechOverlay()
     end
     local fontIndex = Bridge.speechFontIndex()
     local seconds = Bridge.speechSeconds()
@@ -2587,6 +2763,8 @@ end
 
 
 function Bridge.speechBusy()
+    Bridge.speechOverlayPrune()
+    if #Bridge.speechLines > 0 then return true end
     local now = 0
     pcall(function() now = getTimestampMs() end)
     return now < (Bridge.speakUntilMs or 0)
@@ -4105,6 +4283,10 @@ local function updateZombieBody(body)
     end
     lookShare(body)
 
+    if BridgeHorse ~= nil and not BridgeHorse.softDisabled and type(BridgeHorse.frame) == "function" and BridgeHorse.frame(body) then
+        if BridgeVoice ~= nil and type(BridgeVoice.ensure) == "function" then pcall(BridgeVoice.ensure, body) end
+        return
+    end
 
     pcall(function() BridgeInventory.gestureGuard(body) end)
     handProbe(body, "frame start")
@@ -5455,6 +5637,11 @@ function Bridge.onZombieUpdate(zombie)
         if BridgeGore ~= nil then pcall(BridgeGore.guard, zombie) end
         if remote then
             pcall(function() applyLook(zombie, true, rec, who) end)
+            if BridgeHorse ~= nil and not BridgeHorse.softDisabled and type(BridgeHorse.pinRemote) == "function" then
+                local pinned = false
+                pcall(function() pinned = BridgeHorse.pinRemote(zombie, rec, who) == true end)
+                if pinned then return end
+            end
         else
             local okG, errG = pcall(function() guestDrive(zombie, who, rec) end)
             if not okG then Bridge.result = "guest error: " .. tostring(errG) Bridge.logError("guest", errG) end
@@ -5481,6 +5668,7 @@ function Bridge.onZombieUpdate(zombie)
         Bridge.hideBody(zombie, false)
         Bridge.body = zombie
         Bridge.kind = "zombie"
+        Bridge.clearSpeechOverlay()
         Bridge.noteSpawned()
         Bridge.follow = true
         Bridge.mode = "follow"
@@ -5506,6 +5694,7 @@ function Bridge.onZombieUpdate(zombie)
         pcall(function() if BridgeKnoxComp ~= nil then BridgeKnoxComp.markOurs(zombie) end end)
         Bridge.body = zombie
         Bridge.kind = "zombie"
+        Bridge.clearSpeechOverlay()
         Bridge.noteSpawned()
         Bridge.follow = true
         Bridge.hideBody(zombie, false)
@@ -7711,6 +7900,7 @@ function Bridge.pullOnTeleport()
     if d2 >= TELEPORT_JUMP * TELEPORT_JUMP and Bridge.spawnSelectorStagingAt(at.x, at.y) then
         Bridge.arrivalHoldStart("teleport from the Spawn Selector staging area")
     end
+    if BridgeHorse ~= nil and type(BridgeHorse.blocksFollow) == "function" and BridgeHorse.blocksFollow() then return end
     if not Bridge.alive() or Bridge.kind ~= "zombie" then return end
 
 
@@ -8040,6 +8230,7 @@ end
 
 
 function Bridge.parkAtHome()
+    if BridgeHorse ~= nil and type(BridgeHorse.blocksFollow) == "function" and BridgeHorse.blocksFollow() then return end
     if not Bridge.alive() or Bridge.kind ~= "zombie" or Bridge.mode == "follow" then return end
     local red = BridgeData.owner()
     if red == nil or dist2d(Bridge.body, red) <= HOME_FAR then return end
@@ -8227,6 +8418,7 @@ function Bridge.onTick()
     Bridge.dt = dt
     Bridge.prevTime = Bridge.time
     Bridge.time = Bridge.time + dt
+    if BridgeHorse ~= nil and not BridgeHorse.softDisabled and type(BridgeHorse.tick) == "function" then pcall(BridgeHorse.tick) end
     if BridgeInventory ~= nil and type(BridgeInventory.outfitSaveTick) == "function" then
         pcall(BridgeInventory.outfitSaveTick)
     end
@@ -8580,7 +8772,7 @@ function Bridge.onSave()
     if Bridge == nil then return end
     if Bridge.mp then return end
     if not Bridge.alive() or Bridge.kind ~= "zombie" then return end
-
+    if BridgeHorse ~= nil and type(BridgeHorse.release) == "function" then pcall(BridgeHorse.release, "save", false) end
     if Bridge.mourning ~= nil then
         Bridge.mournEnd("save")
         return
@@ -8883,6 +9075,10 @@ function Bridge.onServerCommand(module, command, args)
         if BridgeTorch ~= nil then pcall(function() BridgeTorch.onServerState(args) end) end
     elseif command == "carSeat" then
         pcall(function() BridgeCar.onSeat(args) end)
+    elseif command == "horse" then
+        if BridgeHorse ~= nil and type(BridgeHorse.onServerState) == "function" then
+            pcall(BridgeHorse.onServerState, args)
+        end
     elseif command == "gifted" then
         pcall(function() BridgeSocial.onGifted(args) end)
     elseif command == "mood" then
@@ -9164,6 +9360,7 @@ local function leavePoint(body, red, m, fx, fy, bad)
 end
 
 function Bridge.mournStart(body, red)
+    if BridgeHorse ~= nil and type(BridgeHorse.release) == "function" then pcall(BridgeHorse.release, "mourning", false) end
     Bridge.mourning = { since = Bridge.time, said = false, phase = "react", follow = Bridge.follow }
     pcall(function() BridgeHeal.stop("player died") end)
     pcall(function() BridgeWash.stop("player died") end)
@@ -9494,6 +9691,7 @@ end
 function Bridge.onPlayerDeath(player)
     if player ~= nil and player ~= BridgeData.owner() then return end
     Bridge.markDeath()
+    if BridgeHorse ~= nil and type(BridgeHorse.release) == "function" then pcall(BridgeHorse.release, "player death", false) end
     if Bridge.mp then return end
     if not Bridge.alive() or Bridge.kind ~= "zombie" then return end
     Bridge.saveOutfit()

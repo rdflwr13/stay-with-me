@@ -204,5 +204,7 @@
     "Sandbox_StayWithMe_CompanionWheelKey_Values_option136": "Function",
     "Sandbox_StayWithMe_CompanionWheelKey_Values_option137": "Clear",
     "Sandbox_StayWithMe_CompanionWheelKey_Values_option138": "Power",
-    "Sandbox_StayWithMe_CompanionWheelKey_Values_option139": "Sleep"
+    "Sandbox_StayWithMe_CompanionWheelKey_Values_option139": "Sleep",
+    "Sandbox_StayWithMe_MaxSpeechLines": "Max Speech Lines",
+    "Sandbox_StayWithMe_MaxSpeechLines_tooltip": "How many on-foot speech lines the companion keeps visible above her head at once. 1 keeps the old single line. Up to 5. Each line stays for the normal Speech Duration. Does not affect car lines. Default: 5."
 }

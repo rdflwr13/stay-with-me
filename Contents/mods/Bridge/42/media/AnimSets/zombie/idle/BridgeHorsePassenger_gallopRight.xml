@@ -1,0 +1,33 @@
+<?xml version='1.0' encoding='utf-8'?>
+<animNode>
+    <m_Name>BridgeHorsePassenger_gallopRight</m_Name>
+    <m_AnimName>Bob_Mounted_Gallop_Right_NoReins</m_AnimName>
+    <m_Priority>100</m_Priority>
+    <m_ConditionPriority>100</m_ConditionPriority>
+    <m_Looped>true</m_Looped>
+    <m_useDeferredMovement>false</m_useDeferredMovement>
+    <m_deferredBoneAxis>Y</m_deferredBoneAxis>
+    <m_BlendTime>0.18</m_BlendTime>
+    <m_SpeedScale>HorseRunSpeed</m_SpeedScale>
+    <m_Scalar>HorseGeneSpeed</m_Scalar>
+    <m_Conditions>
+        <m_Name>NotAloneBody</m_Name>
+        <m_Type>BOOL</m_Type>
+        <m_Value>true</m_Value>
+    </m_Conditions>
+    <m_Conditions>
+        <m_Name>BridgeHorsePassenger</m_Name>
+        <m_Type>BOOL</m_Type>
+        <m_Value>true</m_Value>
+    </m_Conditions>
+    <m_Conditions>
+        <m_Name>BridgeHorsePassengerGait</m_Name>
+        <m_Type>STRING</m_Type>
+        <m_Value>gallop</m_Value>
+    </m_Conditions>
+    <m_Conditions>
+        <m_Name>BridgeHorsePassengerTurn</m_Name>
+        <m_Type>STRING</m_Type>
+        <m_Value>right</m_Value>
+    </m_Conditions>
+</animNode>

@@ -4442,5 +4442,7 @@
     "IGUI_NotAlone_SeatPuppetClose": "Chiudi",
     "IGUI_NotAlone_SeatPuppetAdjust": "Regola la posizione del sedile del compagno...",
     "IGUI_NotAlone_SeatPuppetSaved": "Salvato per questo veicolo e sedile",
-    "IGUI_NotAlone_SeatPuppetNotInCar": "Al momento non è seduta su un sedile"
+    "IGUI_NotAlone_SeatPuppetNotInCar": "Al momento non è seduta su un sedile",
+    "IGUI_NotAlone_Say_HorseMount": "I'm on. Let's go.",
+    "IGUI_NotAlone_Say_HorseDismount": "I'll get down."
 }

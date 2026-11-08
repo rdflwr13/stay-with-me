@@ -4472,5 +4472,7 @@
     "IGUI_NotAlone_SeatPuppetClose": "Cerrar",
     "IGUI_NotAlone_SeatPuppetAdjust": "Ajustar el asiento de la acompañante...",
     "IGUI_NotAlone_SeatPuppetSaved": "Guardado para este vehículo y asiento",
-    "IGUI_NotAlone_SeatPuppetNotInCar": "Ahora mismo no está en un asiento"
+    "IGUI_NotAlone_SeatPuppetNotInCar": "Ahora mismo no está en un asiento",
+    "IGUI_NotAlone_Say_HorseMount": "I'm on. Let's go.",
+    "IGUI_NotAlone_Say_HorseDismount": "I'll get down."
 }

@@ -4636,5 +4636,7 @@
     "IGUI_NotAlone_SeatPuppetClose": "Закрыть",
     "IGUI_NotAlone_SeatPuppetAdjust": "Настроить сиденье компаньона...",
     "IGUI_NotAlone_SeatPuppetSaved": "Сохранено для этого автомобиля и сиденья",
-    "IGUI_NotAlone_SeatPuppetNotInCar": "Сейчас она не сидит на сиденье"
+    "IGUI_NotAlone_SeatPuppetNotInCar": "Сейчас она не сидит на сиденье",
+    "IGUI_NotAlone_Say_HorseMount": "I'm on. Let's go.",
+    "IGUI_NotAlone_Say_HorseDismount": "I'll get down."
 }

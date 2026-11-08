@@ -4460,5 +4460,7 @@
     "IGUI_NotAlone_SeatPuppetClose": "Close",
     "IGUI_NotAlone_SeatPuppetAdjust": "Adjust companion's seat...",
     "IGUI_NotAlone_SeatPuppetSaved": "Saved for this vehicle and seat",
-    "IGUI_NotAlone_SeatPuppetNotInCar": "She isn't in a seat right now"
+    "IGUI_NotAlone_SeatPuppetNotInCar": "She isn't in a seat right now",
+    "IGUI_NotAlone_Say_HorseMount": "I'm on. Let's go.",
+    "IGUI_NotAlone_Say_HorseDismount": "I'll get down."
 }

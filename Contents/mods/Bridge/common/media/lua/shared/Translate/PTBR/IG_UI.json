@@ -4423,5 +4423,7 @@
     "IGUI_NotAlone_SeatPuppetClose": "Fechar",
     "IGUI_NotAlone_SeatPuppetAdjust": "Ajustar o banco da companheira...",
     "IGUI_NotAlone_SeatPuppetSaved": "Salvo para este veículo e banco",
-    "IGUI_NotAlone_SeatPuppetNotInCar": "Ela não está em um banco agora"
+    "IGUI_NotAlone_SeatPuppetNotInCar": "Ela não está em um banco agora",
+    "IGUI_NotAlone_Say_HorseMount": "I'm on. Let's go.",
+    "IGUI_NotAlone_Say_HorseDismount": "I'll get down."
 }

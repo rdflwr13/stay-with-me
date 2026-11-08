@@ -4471,5 +4471,7 @@
     "IGUI_NotAlone_SeatPuppetClose": "Schließen",
     "IGUI_NotAlone_SeatPuppetAdjust": "Sitz der Begleiterin anpassen...",
     "IGUI_NotAlone_SeatPuppetSaved": "Für dieses Fahrzeug und diesen Sitz gespeichert",
-    "IGUI_NotAlone_SeatPuppetNotInCar": "Sie sitzt gerade auf keinem Sitz"
+    "IGUI_NotAlone_SeatPuppetNotInCar": "Sie sitzt gerade auf keinem Sitz",
+    "IGUI_NotAlone_Say_HorseMount": "I'm on. Let's go.",
+    "IGUI_NotAlone_Say_HorseDismount": "I'll get down."
 }
