@@ -2,6 +2,8 @@
 require "ISUI/ISCollapsableWindow"
 require "ISUI/ISTabPanel"
 require "ISUI/ISPanel"
+require "ISUI/ISLabel"
+require "ISUI/ISRect"
 require "ISUI/ISButton"
 require "ISUI/ISComboBox"
 require "ISUI/ISUI3DModel"
@@ -10,7 +12,7 @@ require "ISUI/ISColorPickerHSB"
 BridgeAppearance = BridgeAppearance or {}
 
 local PAD = 10
-local PREVIEW_W, PREVIEW_H = 170, 300
+local PREVIEW_W, PREVIEW_H = 260, 300
 
 local FONT_S, FONT_M, BTN_H = 0, 0, 0
 local function refreshFonts()
@@ -379,6 +381,64 @@ function BridgeAppearance.initCandidate(gender)
     c.gender = g
     if g == "male" then c.male = c else c.male = nil end
     return c
+end
+
+function BridgeAppearance.captureCandidate(c)
+    c = c or BridgeAppearance.candidate
+    local out = {
+        skin = c.skin,
+        hair = c.hair,
+        hairColor = c.hairColor ~= nil and copyColor(c.hairColor) or nil,
+        face = c.face,
+        details = {},
+        muscle = c.muscle,
+        makeup = {},
+        beard = c.beard,
+        beardColor = c.beardColor ~= nil and copyColor(c.beardColor) or nil,
+        fur = c.fur,
+        voice = nil,
+        gender = c.gender,
+    }
+    for i, d in ipairs(c.details or {}) do out.details[i] = d end
+    for i, m in ipairs(c.makeup or {}) do out.makeup[i] = m end
+    if type(c.voice) == "table" then
+        out.voice = {
+            name = c.voice.name,
+            prefix = c.voice.prefix,
+            type = c.voice.type,
+            pitch = c.voice.pitch,
+        }
+    end
+    return out
+end
+
+function BridgeAppearance.restoreCandidate(snap)
+    if type(snap) ~= "table" then return end
+    local c = BridgeAppearance.candidate
+    c.skin = snap.skin
+    c.hair = snap.hair
+    c.hairColor = snap.hairColor ~= nil and copyColor(snap.hairColor) or nil
+    c.face = snap.face
+    c.details = {}
+    for i, d in ipairs(snap.details or {}) do c.details[i] = d end
+    c.muscle = snap.muscle
+    c.makeup = {}
+    for i, m in ipairs(snap.makeup or {}) do c.makeup[i] = m end
+    c.beard = snap.beard
+    c.beardColor = snap.beardColor ~= nil and copyColor(snap.beardColor) or nil
+    c.fur = snap.fur
+    if type(snap.voice) == "table" then
+        c.voice = {
+            name = snap.voice.name,
+            prefix = snap.voice.prefix,
+            type = snap.voice.type,
+            pitch = snap.voice.pitch,
+        }
+    else
+        c.voice = nil
+    end
+    c.gender = snap.gender
+    if c.gender == "male" then c.male = c else c.male = nil end
 end
 
 function BridgeAppearance.loadCandidate(draft)
@@ -1594,6 +1654,719 @@ end
 
 
 
+local FORM_MIN_H = 120
+local LABEL_W = 88
+local COLOR_BTN_W = 48
+
+local function paintColorButton(button, color)
+    if button == nil then return end
+    local c = color or { r = 1, g = 1, b = 1 }
+    button.backgroundColor = { r = c.r or 1, g = c.g or 1, b = c.b or 1, a = 1 }
+    button:setTitle("")
+end
+
+BridgeAppearanceForm = ISPanel:derive("BridgeAppearanceForm")
+
+function BridgeAppearanceForm:addHeading(key, text)
+    local h = ISLabel:new(PAD, 0, FONT_S, text, 0.95, 0.95, 0.95, 1, UIFont.Small, true)
+    h:initialise()
+    self:addChild(h)
+    self.headings[key] = h
+    local d = ISRect:new(PAD, 0, 10, 1, 0.45, 0.55, 0.55, 0.55)
+    d:initialise()
+    self:addChild(d)
+    self.dividers[key] = d
+end
+
+function BridgeAppearanceForm:addLabel(key, text)
+    local l = ISLabel:new(PAD, 0, FONT_S, text, 0.82, 0.82, 0.82, 1, UIFont.Small, true)
+    l:initialise()
+    self:addChild(l)
+    self.labels[key] = l
+    return l
+end
+
+function BridgeAppearanceForm:addControl(control)
+    self:addChild(control)
+    self.controls[#self.controls + 1] = control
+    return control
+end
+
+function BridgeAppearanceForm:previewCandidate()
+    local c = BridgeAppearance.candidate
+    local out = {
+        skin = c.skin,
+        hair = c.hair,
+        hairColor = c.hairColor ~= nil and copyColor(c.hairColor) or nil,
+        face = c.face,
+        details = {},
+        muscle = c.muscle,
+        makeup = {},
+        beard = c.beard,
+        beardColor = c.beardColor ~= nil and copyColor(c.beardColor) or nil,
+        fur = c.fur,
+        voice = c.voice,
+    }
+    for i, d in ipairs(c.details or {}) do out.details[i] = d end
+    for i, m in ipairs(c.makeup or {}) do out.makeup[i] = m end
+    return out
+end
+
+function BridgeAppearanceForm:applyHover(mutator)
+    local c = self:previewCandidate()
+    if type(mutator) == "function" then mutator(c) end
+    BridgeAppearance.previewOverride = c
+    BridgeAppearance.refreshPreview()
+end
+
+function BridgeAppearanceForm:restoreHover()
+    if BridgeAppearance.previewOverride == nil then return end
+    BridgeAppearance.previewOverride = nil
+    BridgeAppearance.refreshPreview()
+end
+
+function BridgeAppearanceForm:bindHover(combo, mutator)
+    if combo == nil then return end
+    combo.pointOnItem = function(_combo, index)
+        if self.filling or _combo.__hoverIndex == index then return end
+        _combo.__hoverIndex = index
+        local data = _combo:getOptionData(index)
+        self:applyHover(function(c) mutator(c, data, index) end)
+    end
+    combo.onMouseMoveOutside = function(_combo)
+        _combo.__hoverIndex = nil
+        self:restoreHover()
+    end
+end
+
+function BridgeAppearanceForm:createChildren()
+    ISPanel.createChildren(self)
+    self:noBackground()
+    self.gender = BridgeData.genderOf(BridgeAppearance.uiStore())
+    self.headings = {}
+    self.dividers = {}
+    self.labels = {}
+    self.controls = {}
+    self.makeupCombos = {}
+    self.makeupOrder = {}
+    self.sectionY = {}
+    self.sectionVisible = {}
+
+    self:addHeading("body", tr("AppearanceBody"))
+    self:addHeading("hair", tr("AppearanceHair"))
+    self:addHeading("beard", tr("AppearanceBeard"))
+    self:addHeading("face", tr("PregameHead"))
+    self:addHeading("details", tr("AppearanceDetails"))
+    self:addHeading("makeup", tr("AppearanceMakeup"))
+
+    self:addLabel("skin", tr("AppearanceSkin"))
+    self:addLabel("muscle", tr("AppearanceBody"))
+    self:addLabel("species", gameText("IGUI_NotAlone_AppearanceFur", "Species"))
+    self:addLabel("voice", gameText("UI_characreation_voicetype", "Voice type"))
+    self:addLabel("hairStyle", tr("PregameStyle"))
+    self:addLabel("hairColor", tr("PregameColor"))
+    self:addLabel("beardStyle", tr("PregameStyle"))
+    self:addLabel("beardColor", tr("PregameColor"))
+    self:addLabel("face", tr("AppearanceFace"))
+    self:addLabel("detail", tr("PregameDetail"))
+
+    self.skinCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceForm.onSkin)
+    self.skinCombo:initialise()
+    local skins = BridgeData.skinsFor(self.gender)
+    for i, id in ipairs(skins) do
+        self.skinCombo:addOptionWithData(tr("SkinTone", i), id)
+    end
+    self:addControl(self.skinCombo)
+
+    self.muscleCombo = nil
+    if BridgeData.spnccMuscle(self.gender) ~= nil then
+        self.muscleCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceForm.onMuscle)
+        self.muscleCombo:initialise()
+        for level = 0, BridgeData.MUSCLE_MAX do
+            self.muscleCombo:addOptionWithData(tr("Muscle_" .. level), level)
+        end
+        self:addControl(self.muscleCombo)
+    end
+
+    self.speciesCombo = nil
+    if self.hideFur ~= true and BridgeAppearance.furOn() then
+        self.speciesCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceForm.onSpecies)
+        self.speciesCombo:initialise()
+        self.speciesCombo:addOptionWithData(gameText("IGUI_NotAlone_AppearanceHuman", "Human"), "Hooman")
+        for _, e in ipairs(BridgeAppearance.Catalog.furEntries()) do
+            self.speciesCombo:addOptionWithData(tostring(e.label), e.name)
+        end
+        self:addControl(self.speciesCombo)
+    end
+
+    self.voiceCombo = nil
+    if self.hideVoice ~= true then
+        self.voiceCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceForm.onVoice)
+        self.voiceCombo:initialise()
+        local styles = {}
+        if BridgeVoice ~= nil and type(BridgeVoice.stylesFor) == "function" then
+            pcall(function() styles = BridgeVoice.stylesFor(self.gender) end)
+        end
+        if type(styles) ~= "table" or #styles == 0 then styles = { BridgeData.defaultVoice(BridgeAppearance.uiStore()) } end
+        for i = 1, #styles do
+            local s = styles[i]
+            local label = vanillaText("IGUI_Voice_" .. tostring(s.name), tostring(s.name))
+            self.voiceCombo:addOptionWithData(label, s)
+        end
+        self:addControl(self.voiceCombo)
+    end
+
+    self.hairCombo = nil
+    local hairEntries = BridgeAppearance.Catalog.hairEntries()
+    if #hairEntries > 0 then
+        self.hairCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceForm.onHair)
+        self.hairCombo:initialise()
+        for _, e in ipairs(hairEntries) do
+            self.hairCombo:addOptionWithData(tostring(e.label), e.name)
+        end
+        self:addControl(self.hairCombo)
+    end
+
+    self.hairColorBtn = ISButton:new(PAD, 0, COLOR_BTN_W, BTN_H, "", self, BridgeAppearanceForm.onHairColor)
+    self.hairColorBtn:initialise()
+    self.hairColorBtn:instantiate()
+    self:addControl(self.hairColorBtn)
+
+    self.beardCombo = nil
+    self.beardColorBtn = nil
+    if BridgeData.isMale(BridgeAppearance.uiStore()) then
+        local beardEntries = {}
+        pcall(function()
+            if BridgeWindow ~= nil and type(BridgeWindow.beardStyles) == "function" then
+                beardEntries = BridgeWindow.beardStyles()
+            end
+        end)
+        if type(beardEntries) ~= "table" then beardEntries = {} end
+        if #beardEntries > 0 then
+            self.beardCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceForm.onBeard)
+            self.beardCombo:initialise()
+            for _, e in ipairs(beardEntries) do
+                self.beardCombo:addOptionWithData(tostring(e.label), e.id)
+            end
+            self:addControl(self.beardCombo)
+        end
+        self.beardColorBtn = ISButton:new(PAD, 0, COLOR_BTN_W, BTN_H, "", self, BridgeAppearanceForm.onBeardColor)
+        self.beardColorBtn:initialise()
+        self.beardColorBtn:instantiate()
+        self:addControl(self.beardColorBtn)
+    end
+
+    self.faceCombo = nil
+    if BridgeData.spnccFaces(self.gender) ~= nil then
+        self.faceCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceForm.onFace)
+        self.faceCombo:initialise()
+        for _, e in ipairs(BridgeAppearance.Catalog.faceEntries()) do
+            self.faceCombo:addOptionWithData(tostring(e.label), e.name)
+        end
+        self:addControl(self.faceCombo)
+    end
+
+    self.detailCombo = nil
+    self.detailAddBtn = nil
+    self.detailRemoveBtn = nil
+    self.detailClearBtn = nil
+    self.detailLines = {}
+    self.detailLabelByName = {}
+    local detailEntries = BridgeAppearance.Catalog.detailEntries()
+    for _, e in ipairs(detailEntries) do self.detailLabelByName[e.name] = e.label end
+    if BridgeData.spnccDetails(self.gender) ~= nil and #detailEntries > 0 then
+        self.detailCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceForm.onDetailSelect)
+        self.detailCombo:initialise()
+        for _, e in ipairs(detailEntries) do
+            self.detailCombo:addOptionWithData(tostring(e.label), e.name)
+        end
+        self:addControl(self.detailCombo)
+        self.detailAddBtn = ISButton:new(PAD, 0, 10, BTN_H, tr("PregameAdd"), self, BridgeAppearanceForm.onDetailAdd)
+        self.detailAddBtn:initialise()
+        self.detailAddBtn:instantiate()
+        self:addControl(self.detailAddBtn)
+        self.detailRemoveBtn = ISButton:new(PAD, 0, 10, BTN_H, tr("PregameRemove"), self, BridgeAppearanceForm.onDetailRemove)
+        self.detailRemoveBtn:initialise()
+        self.detailRemoveBtn:instantiate()
+        self:addControl(self.detailRemoveBtn)
+        self.detailClearBtn = ISButton:new(PAD, 0, 10, BTN_H, tr("AppearanceClearDetails"), self, BridgeAppearanceForm.onDetailClear)
+        self.detailClearBtn:initialise()
+        self.detailClearBtn:instantiate()
+        self:addControl(self.detailClearBtn)
+        self:addLabel("detailList", tr("PregameSelected"))
+    end
+
+    local defs = rawget(_G, "MakeUpDefinitions")
+    if defs ~= nil and type(defs.categories) == "table" and type(defs.makeup) == "table" then
+        local order = { "FullFace", "Eyes", "EyesShadow", "Lips" }
+        for _, cat in ipairs(order) do
+            local info = defs.categories[cat]
+            if info ~= nil then
+                local combo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceForm.onMakeup)
+                combo:initialise()
+                combo.category = cat
+                combo:addOptionWithData(tr("AppearanceNone"), nil)
+                for _, m in ipairs(defs.makeup) do
+                    if m.category == cat then
+                        combo:addOptionWithData(gameText("MakeUpType_" .. tostring(m.name), tostring(m.name)), m.item)
+                    end
+                end
+                self:addControl(combo)
+                self.makeupCombos[cat] = combo
+                self.makeupOrder[#self.makeupOrder + 1] = cat
+                self:addLabel("makeup_" .. cat, gameText("MakeUpCategory_" .. tostring(info.name), cat))
+            end
+        end
+    end
+
+    self:bindHover(self.skinCombo, function(c, data) c.skin = data end)
+    self:bindHover(self.muscleCombo, function(c, data) c.muscle = tonumber(data) or 0 end)
+    self:bindHover(self.speciesCombo, function(c, data) c.fur = (data ~= "Hooman") and data or nil end)
+    self:bindHover(self.hairCombo, function(c, data) c.hair = data end)
+    self:bindHover(self.beardCombo, function(c, data) c.beard = data end)
+    self:bindHover(self.faceCombo, function(c, data) c.face = data end)
+    self:bindHover(self.detailCombo, function(c, data)
+        local out = {}
+        for i, name in ipairs(c.details or {}) do out[i] = name end
+        if data ~= nil then
+            local present = false
+            for _, name in ipairs(out) do if name == data then present = true break end end
+            if not present then out[#out + 1] = data end
+        end
+        c.details = out
+    end)
+    for _, cat in ipairs(self.makeupOrder) do
+        local combo = self.makeupCombos[cat]
+        local category = cat
+        self:bindHover(combo, function(c, data)
+            local out = {}
+            for _, itemType in ipairs(c.makeup or {}) do
+                local meta = nil
+                pcall(function() meta = BridgeData.makeupMeta(itemType) end)
+                if meta == nil or meta.category ~= category then out[#out + 1] = itemType end
+            end
+            if data ~= nil then out[#out + 1] = data end
+            c.makeup = out
+        end)
+    end
+
+    self:refresh()
+end
+
+function BridgeAppearanceForm:prerender()
+    ISPanel.prerender(self)
+    self:setStencilRect(0, 0, self.width, self.height)
+end
+
+function BridgeAppearanceForm:render()
+    ISUIElement.render(self)
+    self:clearStencilRect()
+end
+
+function BridgeAppearanceForm:onMouseWheel(del)
+    self:setYScroll(self:getYScroll() - del * 40)
+end
+
+function BridgeAppearanceForm:selectedDetail()
+    local combo = self.detailCombo
+    if combo == nil then return nil end
+    local name = combo:getSelectedData()
+    if type(name) ~= "string" or name == "" then return nil end
+    return name
+end
+
+function BridgeAppearanceForm:ensureDetailLine(i)
+    local line = self.detailLines[i]
+    if line == nil then
+        line = ISLabel:new(PAD, 0, FONT_S, "", 0.82, 0.82, 0.82, 1, UIFont.Small, true)
+        line:initialise()
+        self:addChild(line)
+        self.detailLines[i] = line
+    end
+    return line
+end
+
+function BridgeAppearanceForm:refreshDetailList()
+    local details = BridgeAppearance.candidate.details or {}
+    for i, name in ipairs(details) do
+        local line = self:ensureDetailLine(i)
+        local label = self.detailLabelByName[name] or name
+        if type(line.setNameWithoutMoving) == "function" then
+            line:setNameWithoutMoving("- " .. tostring(label))
+        else
+            line:setName("- " .. tostring(label))
+        end
+    end
+    for i = #details + 1, #self.detailLines do
+        self.detailLines[i]:setVisible(false)
+    end
+end
+
+function BridgeAppearanceForm:refreshDetailButtons()
+    local name = self:selectedDetail()
+    local has = name ~= nil and BridgeAppearance.hasDetail(name)
+    if self.detailAddBtn ~= nil then
+        self.detailAddBtn:setEnable(name ~= nil and not has)
+    end
+    if self.detailRemoveBtn ~= nil then
+        self.detailRemoveBtn:setEnable(name ~= nil and has)
+    end
+    if self.detailClearBtn ~= nil then
+        local any = type(BridgeAppearance.candidate.details) == "table" and #BridgeAppearance.candidate.details > 0
+        self.detailClearBtn:setEnable(any)
+    end
+    self:refreshDetailList()
+end
+
+function BridgeAppearanceForm:refreshVoice()
+    local combo = self.voiceCombo
+    if combo == nil then return end
+    local voice = BridgeAppearance.candidate.voice
+    if type(voice) ~= "table" then voice = BridgeData.voiceOf(BridgeAppearance.uiStore()) end
+    local ty = tonumber(voice.type) or 0
+    local idx = nil
+    if type(combo.options) == "table" then
+        for i = 1, #combo.options do
+            local data = combo:getOptionData(i)
+            if type(data) == "table" and tostring(data.prefix) == tostring(voice.prefix)
+                and (tonumber(data.type) or 0) == ty
+                and tostring(data.name) == tostring(voice.name) then
+                idx = i
+                break
+            end
+        end
+    end
+    if idx == nil then
+        combo:addOptionWithData(tostring(voice.name or voice.prefix) .. " (missing)",
+            { name = voice.name, prefix = voice.prefix, type = ty,
+              pitch = tonumber(voice.pitch) or 0, bodyType = 0 })
+        idx = #combo.options
+    end
+    combo.selected = idx
+end
+
+function BridgeAppearanceForm:refresh()
+    self.filling = true
+    local c = BridgeAppearance.candidate
+    if self.skinCombo ~= nil then self.skinCombo:selectData(c.skin) end
+    if self.muscleCombo ~= nil then self.muscleCombo:selectData(c.muscle) end
+    if self.speciesCombo ~= nil then
+        local fur = c.fur
+        if fur == nil then fur = BridgeAppearance.furSpeciesOf(Bridge.body) end
+        self.speciesCombo:selectData(fur)
+    end
+    if self.voiceCombo ~= nil then self:refreshVoice() end
+    if self.hairCombo ~= nil then self.hairCombo:selectData(c.hair) end
+    if self.beardCombo ~= nil then self.beardCombo:selectData(c.beard) end
+    if self.faceCombo ~= nil then
+        self.faceCombo:selectData(c.face or "")
+        if type(self.faceCombo.selected) ~= "number" or self.faceCombo.selected < 1 then
+            self.faceCombo.selected = 1
+            c.face = nil
+        end
+    end
+    for cat, combo in pairs(self.makeupCombos) do
+        local current = nil
+        for _, t in ipairs(c.makeup or {}) do
+            local m = BridgeData.makeupMeta(t)
+            if m ~= nil and m.category == cat then current = t break end
+        end
+        combo:selectData(current)
+    end
+    if self.hairColorBtn ~= nil then
+        paintColorButton(self.hairColorBtn, c.hairColor or BridgeData.DEFAULT_HAIR_COLOR)
+    end
+    if self.beardColorBtn ~= nil then
+        paintColorButton(self.beardColorBtn, c.beardColor or BridgeData.beardColorOf(BridgeAppearance.uiStore()))
+    end
+    if self.detailCombo ~= nil then
+        if type(self.detailCombo.selected) ~= "number" or self.detailCombo.selected < 1 then
+            self.detailCombo.selected = 1
+        end
+        self:refreshDetailButtons()
+    end
+    self.filling = false
+    self:layout()
+end
+
+function BridgeAppearanceForm:layout()
+    local furry = BridgeAppearance.furrySelected()
+    local w = self.width
+    local scrollW = 18
+    if w > 60 then
+        if self.__bridgeScrollBars ~= true then
+            local ok = pcall(function() self:addScrollBars() end)
+            if ok then self.__bridgeScrollBars = true end
+        end
+        pcall(function() self:setScrollChildren(true) end)
+        if self.vscroll ~= nil then
+            pcall(function()
+                self.vscroll:setX(w - 17)
+                self.vscroll:setY(0)
+                self.vscroll:setWidth(17)
+                self.vscroll:setHeight(self.height)
+            end)
+        end
+    else
+        scrollW = 0
+    end
+    local controlW = w - PAD * 2 - LABEL_W - scrollW
+    if controlW < 60 then controlW = 60 end
+    local scroll = 0
+    pcall(function() scroll = self:getYScroll() end)
+
+    for _, h in pairs(self.headings) do h:setVisible(false) end
+    for _, d in pairs(self.dividers) do d:setVisible(false) end
+    for _, l in pairs(self.labels) do l:setVisible(false) end
+    for _, l in ipairs(self.detailLines or {}) do l:setVisible(false) end
+    for _, c in ipairs(self.controls) do c:setVisible(false) end
+
+    local y = PAD
+
+    local function heading(key)
+        local h = self.headings[key]
+        local d = self.dividers[key]
+        if key ~= "body" then y = y + PAD end
+        self.sectionY[key] = y
+        h:setX(PAD)
+        h:setY(y)
+        h:setVisible(true)
+        y = y + FONT_S + 3
+        d:setX(PAD)
+        d:setY(y)
+        d:setWidth(w - PAD * 2 - scrollW)
+        d:setVisible(true)
+        y = y + 6
+    end
+
+    local function row(key, control, width)
+        if control == nil then return end
+        local lab = self.labels[key]
+        if lab ~= nil then
+            lab:setX(PAD)
+            lab:setY(y + 3)
+            lab:setVisible(true)
+        end
+        control:setVisible(true)
+        control:setX(PAD + LABEL_W)
+        control:setY(y)
+        control:setWidth(width or controlW)
+        control:setHeight(BTN_H)
+        control.openUpwards = y > self.height * 0.55
+        y = y + BTN_H + 3
+    end
+
+    heading("body")
+    if not furry then
+        row("skin", self.skinCombo)
+        row("muscle", self.muscleCombo)
+    end
+    row("species", self.speciesCombo)
+    row("voice", self.voiceCombo)
+
+    local hairVisible = (not furry) and self.hairCombo ~= nil and self.hairColorBtn ~= nil
+    if hairVisible then
+        heading("hair")
+        row("hairStyle", self.hairCombo)
+        row("hairColor", self.hairColorBtn, COLOR_BTN_W)
+    end
+
+    local beardVisible = (not furry) and self.beardCombo ~= nil and self.beardColorBtn ~= nil
+    if beardVisible then
+        heading("beard")
+        row("beardStyle", self.beardCombo)
+        row("beardColor", self.beardColorBtn, COLOR_BTN_W)
+    end
+
+    local faceVisible = (not furry) and self.faceCombo ~= nil
+    if faceVisible then
+        heading("face")
+        row("face", self.faceCombo)
+    end
+
+    local detailsVisible = (not furry) and self.detailCombo ~= nil
+    if detailsVisible then
+        heading("details")
+        row("detail", self.detailCombo)
+        if self.detailAddBtn ~= nil and self.detailRemoveBtn ~= nil and self.detailClearBtn ~= nil then
+            local gap = 4
+            local bw = math.floor((controlW - gap) / 2)
+            local bx = PAD + LABEL_W
+            self.detailAddBtn:setVisible(true)
+            self.detailAddBtn:setX(bx)
+            self.detailAddBtn:setY(y)
+            self.detailAddBtn:setWidth(bw)
+            self.detailAddBtn:setHeight(BTN_H)
+            self.detailRemoveBtn:setVisible(true)
+            self.detailRemoveBtn:setX(bx + bw + gap)
+            self.detailRemoveBtn:setY(y)
+            self.detailRemoveBtn:setWidth(controlW - bw - gap)
+            self.detailRemoveBtn:setHeight(BTN_H)
+            y = y + BTN_H + 3
+            self.detailClearBtn:setVisible(true)
+            self.detailClearBtn:setX(bx)
+            self.detailClearBtn:setY(y)
+            self.detailClearBtn:setWidth(controlW)
+            self.detailClearBtn:setHeight(BTN_H)
+            y = y + BTN_H + 3
+        end
+        local details = BridgeAppearance.candidate.details or {}
+        if #details > 0 then
+            local head = self.labels.detailList
+            if head ~= nil then
+                head:setX(PAD)
+                head:setY(y)
+                head:setVisible(true)
+                y = y + FONT_S + 3
+            end
+            for i = 1, #details do
+                local line = self.detailLines[i]
+                if line ~= nil then
+                    line:setX(PAD + 10)
+                    line:setY(y)
+                    line:setVisible(true)
+                    y = y + FONT_S + 2
+                end
+            end
+            y = y + PAD
+        end
+    end
+
+    local makeupVisible = (not furry) and #self.makeupOrder > 0
+    if makeupVisible then
+        heading("makeup")
+        for _, cat in ipairs(self.makeupOrder) do
+            row("makeup_" .. cat, self.makeupCombos[cat])
+        end
+    end
+
+    self.sectionVisible.body = true
+    self.sectionVisible.hair = hairVisible
+    self.sectionVisible.beard = beardVisible
+    self.sectionVisible.face = faceVisible
+    self.sectionVisible.details = detailsVisible
+    self.sectionVisible.makeup = makeupVisible
+
+    self.contentH = y + PAD
+    pcall(function() self:setScrollHeight(math.max(self.contentH, self.height)) end)
+    pcall(function() self:setYScroll(scroll) end)
+end
+
+function BridgeAppearanceForm:minHeight()
+    return FORM_MIN_H
+end
+
+function BridgeAppearanceForm:scrollTo(key)
+    if key == nil then key = "body" end
+    if self.sectionVisible[key] ~= true then key = "body" end
+    local y = self.sectionY[key] or 0
+    pcall(function() self:setYScroll(-math.max(0, y - PAD)) end)
+end
+
+function BridgeAppearanceForm:onSkin(combo)
+    if self.filling then return end
+    BridgeAppearance.setSkin(combo:getSelectedData())
+end
+
+function BridgeAppearanceForm:onMuscle(combo)
+    if self.filling then return end
+    BridgeAppearance.setMuscle(combo:getSelectedData())
+end
+
+function BridgeAppearanceForm:onSpecies(combo)
+    if self.filling then return end
+    BridgeAppearance.candidate.fur = combo:getSelectedData()
+    BridgeAppearance.refreshPreview()
+    BridgeAppearance.refreshViews()
+end
+
+function BridgeAppearanceForm:onVoice(combo)
+    if self.filling then return end
+    local sel = combo:getSelectedData()
+    if type(sel) ~= "table" then return end
+    local voice = {
+        name = tostring(sel.name),
+        prefix = tostring(sel.prefix),
+        type = tonumber(sel.type) or 0,
+        pitch = math.floor((tonumber(sel.pitch) or 0) + 0.5),
+    }
+    BridgeAppearance.candidate.voice = voice
+    local player = nil
+    pcall(function() player = IsoPlayer.getInstance() end)
+    if Bridge.alive() and Bridge.body ~= nil and player ~= nil then
+        pcall(function() BridgeSound.preview(Bridge.body, voice, "ShoutHey") end)
+    end
+end
+
+function BridgeAppearanceForm:onHair(combo)
+    if self.filling then return end
+    BridgeAppearance.setHair(combo:getSelectedData())
+end
+
+function BridgeAppearanceForm:onBeard(combo)
+    if self.filling then return end
+    BridgeAppearance.setBeard(combo:getSelectedData())
+end
+
+function BridgeAppearanceForm:onFace(combo)
+    if self.filling then return end
+    BridgeAppearance.setFace(combo:getSelectedData())
+end
+
+function BridgeAppearanceForm:onHairColor(button)
+    if self.filling then return end
+    BridgeAppearance.openColorPicker(button, "hair")
+end
+
+function BridgeAppearanceForm:onBeardColor(button)
+    if self.filling then return end
+    BridgeAppearance.openColorPicker(button, "beard")
+end
+
+function BridgeAppearanceForm:onDetailSelect(combo)
+    if self.filling then return end
+    self:refreshDetailButtons()
+end
+
+function BridgeAppearanceForm:onDetailAdd(button)
+    if self.filling then return end
+    local name = self:selectedDetail()
+    if name ~= nil and not BridgeAppearance.hasDetail(name) then
+        BridgeAppearance.toggleDetail(name)
+    end
+    self:refreshDetailButtons()
+end
+
+function BridgeAppearanceForm:onDetailRemove(button)
+    if self.filling then return end
+    local name = self:selectedDetail()
+    if name ~= nil and BridgeAppearance.hasDetail(name) then
+        BridgeAppearance.toggleDetail(name)
+    end
+    self:refreshDetailButtons()
+end
+
+function BridgeAppearanceForm:onDetailClear(button)
+    if self.filling then return end
+    BridgeAppearance.candidate.details = {}
+    BridgeAppearance.refreshPreview()
+    BridgeAppearance.refreshViews()
+end
+
+function BridgeAppearanceForm:onMakeup(combo)
+    if self.filling then return end
+    BridgeAppearance.setMakeup(combo.category, combo:getSelectedData())
+end
+
+function BridgeAppearanceForm:new(x, y, width, height)
+    local o = ISPanel:new(x, y, width, height)
+    setmetatable(o, self)
+    self.__index = self
+    return o
+end
+
+
+
 BridgeAppearance.Window = ISCollapsableWindow:derive("BridgeAppearanceWindow")
 
 BridgeAppearance.ZOOM_MIN = 0
@@ -1663,6 +2436,15 @@ function BridgeAppearance.buildTabs(host, opts)
     end
 end
 
+function BridgeAppearance.buildForm(host, opts)
+    if host == nil then return end
+    host.form = BridgeAppearanceForm:new(0, 0, 10, 10)
+    if type(opts) == "table" and opts.noVoice == true then host.form.hideVoice = true end
+    if type(opts) == "table" and opts.noFur == true then host.form.hideFur = true end
+    host.form:initialise()
+    host:addChild(host.form)
+end
+
 function BridgeAppearance.Window:createChildren()
     ISCollapsableWindow.createChildren(self)
 
@@ -1698,7 +2480,7 @@ function BridgeAppearance.Window:createChildren()
     pcall(function() self.preview:setIsometric(false) end)
     self.previewBack = getTexture("media/ui/avatarBackgroundWhite.png")
 
-    BridgeAppearance.buildTabs(self)
+    BridgeAppearance.buildForm(self)
 
     self.zoomOutBtn = ISButton:new(PAD, 0, 30, BTN_H, "-", self, BridgeAppearance.Window.onZoomOut)
     self.zoomOutBtn:initialise()
@@ -1722,6 +2504,12 @@ function BridgeAppearance.Window:createChildren()
     self.closeBtn:instantiate()
     self:addChild(self.closeBtn)
 
+    self.resetText = vanillaText("IGUI_WorldMapEditor_Reset", "Reset")
+    self.resetBtn = ISButton:new(0, 0, 10, BTN_H, self.resetText, self, BridgeAppearance.Window.onReset)
+    self.resetBtn:initialise()
+    self.resetBtn:instantiate()
+    self:addChild(self.resetBtn)
+
     self.saveText = vanillaText("UI_characreation_BuildSave", "Save")
     self.delText = vanillaText("UI_characreation_BuildDel", "Del")
     self.lookCombo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgeAppearance.Window.onLook)
@@ -1741,6 +2529,13 @@ function BridgeAppearance.Window:createChildren()
     self.deleteBtn:setEnable(false)
     self:addChild(self.deleteBtn)
 
+    if self.collapseButton ~= nil then self.collapseButton:setVisible(false) end
+    if self.pinButton ~= nil then self.pinButton:setVisible(false) end
+    if self.closeButton ~= nil then
+        self.closeButton.anchorLeft = false
+        self.closeButton.anchorRight = true
+    end
+
     local mw, mh = self:minSize()
     self.minimumWidth, self.minimumHeight = mw, mh
     if self.width < mw then self:setWidth(mw) end
@@ -1756,24 +2551,22 @@ function BridgeAppearance.Window:footerWidths()
     local closeW = textW(UIFont.Small, self.closeText) + PAD * 3
     local saveW = math.max(50, textW(UIFont.Small, self.saveText) + PAD * 2)
     local delW = math.max(50, textW(UIFont.Small, self.delText) + PAD * 2)
-    return applyW, closeW, saveW, delW
+    local resetW = math.max(50, textW(UIFont.Small, self.resetText) + PAD * 2)
+    return applyW, closeW, saveW, delW, resetW
 end
 
 function BridgeAppearance.Window:minSize()
     local th = self:titleBarHeight()
     local rh = self:resizeWidgetHeight()
     local footerH = BTN_H + PAD * 2
-    local need = 40
-    for _, v in ipairs({ self.bodyView or false, self.faceView or false, self.hairView or false,
-        self.beardView or false, self.detailView or false, self.makeupView or false }) do
-        if v and type(v.minHeight) == "function" then need = math.max(need, v:minHeight()) end
-    end
-    local byTabs = th + PAD + self.panel.tabHeight + need + PAD + rh + footerH
+    local need = FORM_MIN_H
+    if self.form ~= nil and type(self.form.minHeight) == "function" then need = self.form:minHeight() end
+    local byForm = th + PAD + need + PAD + rh + footerH
     local byPreview = th + PAD + PREVIEW_MIN_H + PAD + BTN_H + PAD + rh + footerH
-    local applyW, closeW, saveW, delW = self:footerWidths()
-    local byFooter = PAD + 80 + PAD + saveW + PAD + delW + PAD + applyW + PAD + closeW + PAD
+    local applyW, closeW, saveW, delW, resetW = self:footerWidths()
+    local byFooter = PAD + 80 + PAD + saveW + PAD + delW + PAD + resetW + PAD + applyW + PAD + closeW + PAD
     return math.max(BridgeAppearance.MIN_WIDTH, byFooter),
-        math.max(BridgeAppearance.MIN_HEIGHT, byTabs, byPreview)
+        math.max(BridgeAppearance.MIN_HEIGHT, byForm, byPreview)
 end
 
 
@@ -1785,14 +2578,14 @@ function BridgeAppearance.Window:layout()
 
 
 
-    local tabX = PAD + PREVIEW_W + PAD
-    local tabW = self.width - tabX - PAD
-    if tabW < 80 then tabW = 80 end
-    local tabY = th + PAD
-    local tabH = self.height - tabY - rh - footerH - PAD
-    if tabH < 40 then tabH = 40 end
+    local formX = PAD + PREVIEW_W + PAD
+    local formW = self.width - formX - PAD
+    if formW < 80 then formW = 80 end
+    local formY = th + PAD
+    local formH = self.height - formY - rh - footerH - PAD
+    if formH < 40 then formH = 40 end
 
-    local previewH = math.min(PREVIEW_H, tabH, self.height - rh - footerH - th - PAD * 2 - BTN_H)
+    local previewH = formH - BTN_H
     if previewH < 40 then previewH = 40 end
     self.previewH = previewH
     self.preview:setX(PAD)
@@ -1800,23 +2593,12 @@ function BridgeAppearance.Window:layout()
     self.preview:setWidth(PREVIEW_W)
     self.preview:setHeight(previewH)
 
-    self.panel:setX(tabX)
-    self.panel:setY(tabY)
-    self.panel:setWidth(tabW)
-    self.panel:setHeight(tabH)
-
-    local innerH = tabH - self.panel.tabHeight
-    if innerH < 40 then innerH = 40 end
-
-    local views = { self.bodyView or false, self.faceView or false, self.hairView or false, self.beardView or false,
-        self.detailView or false, self.makeupView or false }
-    for i = 1, #views do
-        local v = views[i]
-        if v then
-            v:setWidth(tabW)
-            v:setHeight(innerH)
-            if type(v.layout) == "function" then v:layout() end
-        end
+    if self.form ~= nil then
+        self.form:setX(formX)
+        self.form:setY(formY)
+        self.form:setWidth(formW)
+        self.form:setHeight(formH)
+        self.form:layout()
     end
 
     local zy = th + PAD + previewH + PAD
@@ -1830,19 +2612,28 @@ function BridgeAppearance.Window:layout()
     self.zoomInBtn:setHeight(BTN_H)
 
     local by = self.height - rh - footerH + PAD
-    local applyW, closeW, saveW, delW = self:footerWidths()
+    local applyW, closeW, saveW, delW, resetW = self:footerWidths()
     local gap = PAD
+
+    if self.closeButton ~= nil then
+        self.closeButton:setX(self.width - 1 - self.closeButton:getWidth())
+        self.closeButton:setY(1)
+    end
 
     self.closeBtn:setX(self.width - PAD - closeW)
     self.closeBtn:setY(by)
     self.closeBtn:setWidth(closeW)
     self.closeBtn:setHeight(BTN_H)
-    self.applyBtn:setX(self.width - PAD - applyW - PAD - closeW)
+    self.applyBtn:setX(self.closeBtn:getX() - PAD - applyW)
     self.applyBtn:setY(by)
     self.applyBtn:setWidth(applyW)
     self.applyBtn:setHeight(BTN_H)
+    self.resetBtn:setX(self.applyBtn:getX() - PAD - resetW)
+    self.resetBtn:setY(by)
+    self.resetBtn:setWidth(resetW)
+    self.resetBtn:setHeight(BTN_H)
 
-    local limit = self.applyBtn:getX() - gap
+    local limit = self.resetBtn:getX() - gap
     local comboW = math.min(PREVIEW_W, limit - PAD - saveW - delW - gap * 2)
     if comboW < 80 then comboW = 80 end
     self.lookCombo:setX(PAD)
@@ -1907,22 +2698,11 @@ end
 
 function BridgeAppearance.Window:update()
     ISCollapsableWindow.update(self)
-    local v = nil
-    pcall(function() v = self.panel:getActiveView() end)
-    if v ~= nil and v ~= self.lastView then
-        self.lastView = v
-        self:applyTabZoom(v.tabKey)
-    end
     if self.lookCombo ~= nil then self:refreshLookButtons() end
 end
 
 function BridgeAppearance.Window:refresh()
-    if self.bodyView ~= nil then self.bodyView:refresh() end
-    if self.faceView ~= nil then self.faceView:refresh() end
-    if self.hairView ~= nil then self.hairView:refresh() end
-    if self.beardView ~= nil then self.beardView:refresh() end
-    if self.detailView ~= nil then self.detailView:refresh() end
-    if self.makeupView ~= nil then self.makeupView:refresh() end
+    if self.form ~= nil then self.form:refresh() end
 end
 
 function BridgeAppearance.Window:tabName(which)
@@ -1935,8 +2715,15 @@ function BridgeAppearance.Window:tabName(which)
 end
 
 function BridgeAppearance.Window:selectTab(which)
-    local name = self:tabName(which)
-    pcall(function() self.panel:activateView(name) end)
+    local key = which
+    if key ~= "body" and key ~= "face" and key ~= "hair" and key ~= "beard"
+        and key ~= "details" and key ~= "makeup" then
+        key = "body"
+    end
+    if self.form ~= nil then self.form:scrollTo(key) end
+    local visible = self.form ~= nil and self.form.sectionVisible[key] == true
+    local zoom = visible and BridgeAppearance.ZOOM[key] or 0
+    self:setZoom(zoom or 0)
 end
 
 function BridgeAppearance.Window:refreshLookButtons()
@@ -2105,45 +2892,17 @@ function BridgeAppearance.Window:onDeleteDone(button)
 end
 
 function BridgeAppearance.Window:applyTabVisibility()
-    if self.panel == nil or self.bodyView == nil then return end
-    local furry = BridgeAppearance.furrySelected()
-    local activeKey = nil
-    pcall(function()
-        local v = self.panel:getActiveView()
-        if v ~= nil then activeKey = v.tabKey end
-    end)
-    local wanted = {}
-    wanted[#wanted + 1] = { key = "body", name = self:tabName("body"), view = self.bodyView }
-    if not furry then
-        if self.faceView ~= nil then
-            wanted[#wanted + 1] = { key = "face", name = self:tabName("face"), view = self.faceView }
-        end
-        if self.hairView ~= nil then
-            wanted[#wanted + 1] = { key = "hair", name = self:tabName("hair"), view = self.hairView }
-        end
-        if self.beardView ~= nil then
-            wanted[#wanted + 1] = { key = "beard", name = self:tabName("beard"), view = self.beardView }
-        end
-        if self.detailView ~= nil then
-            wanted[#wanted + 1] = { key = "details", name = self:tabName("details"), view = self.detailView }
-        end
-        if self.makeupView ~= nil then
-            wanted[#wanted + 1] = { key = "makeup", name = self:tabName("makeup"), view = self.makeupView }
-        end
-    end
-    pcall(function()
-        local current = {}
-        for _, vo in ipairs(self.panel.viewList or {}) do current[#current + 1] = vo.view end
-        for _, v in ipairs(current) do self.panel:removeView(v) end
-        for _, e in ipairs(wanted) do self.panel:addView(e.name, e.view) end
-    end)
-    local target = nil
-    for _, e in ipairs(wanted) do
-        if e.key == activeKey then target = e.name break end
-    end
-    if target == nil then target = self:tabName("body") end
-    pcall(function() self.panel:activateView(target) end)
-    pcall(function() self:layout() end)
+    self:refresh()
+    self:layout()
+end
+
+function BridgeAppearance.Window:onReset()
+    if self.appearanceSnapshot == nil then return end
+    BridgeAppearance.previewOverride = nil
+    BridgeAppearance.restoreCandidate(self.appearanceSnapshot)
+    BridgeAppearance.refreshPreview()
+    BridgeAppearance.refreshViews()
+    self:onApply()
 end
 
 function BridgeAppearance.Window:onApply()
@@ -2185,6 +2944,7 @@ end
 
 function BridgeAppearance.Window:close()
     self:saveGeometry()
+    BridgeAppearance.previewOverride = nil
     ISCollapsableWindow.close(self)
     self:removeFromUIManager()
     if BridgeAppearance.instance == self then BridgeAppearance.instance = nil end
@@ -2298,6 +3058,7 @@ function BridgeAppearance.open(tab)
     local w = BridgeAppearance.Window:new(xx, yy, ww, wh)
     w:initialise()
     w:addToUIManager()
+    w.appearanceSnapshot = BridgeAppearance.captureCandidate(c)
     w:setX(math.max(0, math.min(w:getX(), sw - w:getWidth())))
     w:setY(math.max(0, math.min(w:getY(), sh - w:getHeight())))
     w:setVisible(true)

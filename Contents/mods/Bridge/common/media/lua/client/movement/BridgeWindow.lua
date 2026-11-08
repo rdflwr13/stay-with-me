@@ -1463,6 +1463,7 @@ function BridgeWindowSkills:render()
 end
 
 function BridgeWindowSkills:removeTooltip()
+    self.tooltipPerk = nil
     if self.tooltip ~= nil then
         self.tooltip:setVisible(false)
         self.tooltip:removeFromUIManager()
@@ -1471,8 +1472,20 @@ function BridgeWindowSkills:removeTooltip()
 end
 
 function BridgeWindowSkills:showTooltip(perk, lvl)
+    local item = self.rowItems ~= nil and self.rowItems[perk] or nil
+    local cur = item ~= nil and (item.level or 0) or skillLevel(perk)
+    local prog = item ~= nil and (item.prog or 0) or skillProgress(perk)
+    local stamp = math.floor((Bridge ~= nil and (Bridge.time or 0) or 0) / SKILL_TICKS)
+    if self.tooltip ~= nil and self.tooltipPerk == perk and self.tooltipLevel == lvl
+        and self.tooltipCur == cur and self.tooltipProg == prog and self.tooltipStamp == stamp then
+        return
+    end
+    self.tooltipPerk = perk
+    self.tooltipLevel = lvl
+    self.tooltipCur = cur
+    self.tooltipProg = prog
+    self.tooltipStamp = stamp
     local label = BridgeWindow.skillLabel(perk)
-    local cur = skillLevel(perk)
     local msg = label .. " " .. gameText("IGUI_XP_level", "level") .. " " .. (lvl + 1)
     if lvl < cur then
         msg = msg .. " <LINE> " .. gameText("IGUI_XP_UnLocked", "Unlocked")
