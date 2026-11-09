@@ -319,6 +319,26 @@ BridgeTask.corpseCarried = 0
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeTask] " .. tostring(text)) end end
 local function warn(text) print("[BridgeTask] " .. tostring(text)) end
 
+local function doorDebugSq(body)
+    local sq = nil
+    pcall(function() sq = body ~= nil and body:getCurrentSquare() or nil end)
+    if sq == nil then return "-" end
+    return sq:getX() .. "," .. sq:getY()
+end
+
+local function doorDebugDist(body, sq)
+    if body == nil or sq == nil then return -1 end
+    return math.sqrt((body:getX() - (sq:getX() + 0.5)) ^ 2 + (body:getY() - (sq:getY() + 0.5)) ^ 2)
+end
+
+local function doorDebugState(body, door)
+    if BridgeDoors == nil or BridgeDoors.debugInfo == nil then return "-" end
+    local text = nil
+    pcall(function() text = BridgeDoors.debugInfo(body, door) end)
+    if type(text) == "string" and text ~= "" then return text end
+    return "-"
+end
+
 function BridgeTask.clearCorpseState()
     BridgeTask.corpseDest = nil
     BridgeTask.carryCorpse = nil
@@ -606,12 +626,30 @@ function BridgeTask.doorStand(body, door)
         list = doorNeighbors(osq)
         for i = 1, #list do consider(list[i], not nearDsq) end
     end
-    if best == nil then return nil end
-    return { x = best:getX(), y = best:getY(), z = best:getZ() }
+    if best == nil then
+        local noneKey = "none:" .. dsq:getX() .. ":" .. dsq:getY()
+        if BridgeTask.doorStandKey ~= noneKey then
+            BridgeTask.doorStandKey = noneKey
+            log(string.format("door stand none door=%d,%d from=%s nearDsq=%s",
+                dsq:getX(), dsq:getY(), doorDebugSq(body), tostring(nearDsq)))
+        end
+        return nil
+    end
+    local stand = { x = best:getX(), y = best:getY(), z = best:getZ() }
+    local standKey = dsq:getX() .. ":" .. dsq:getY() .. ":" .. best:getX() .. ":" .. best:getY() .. ":" .. tostring(nearDsq)
+    if BridgeTask.doorStandKey ~= standKey then
+        BridgeTask.doorStandKey = standKey
+        log(string.format("door stand door=%d,%d opp=%s from=%s chosen=%d,%d side=%s",
+            dsq:getX(), dsq:getY(),
+            osq ~= nil and (osq:getX() .. "," .. osq:getY()) or "-",
+            doorDebugSq(body), best:getX(), best:getY(), tostring(nearDsq)))
+    end
+    return stand
 end
 
 
 local function doorSkip()
+    log("door skip info=" .. tostring(BridgeTask.info))
     BridgeTask.current = nil
     BridgeTask.spot = nil
     BridgeTask.bestD = nil
@@ -619,6 +657,8 @@ local function doorSkip()
     BridgeTask.pathFailTick = nil
     BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
     BridgeTask.openingSince = nil
+    BridgeTask.doorStandKey = nil
+    BridgeTask.doorWalkKey = nil
     if #BridgeTask.queue == 0 then return BridgeTask.finish() end
     return true
 end
@@ -639,6 +679,7 @@ local function doorUpdate(body, mode)
     end
 
     local target = BridgeTask.current
+    local newTarget = false
     if target == nil then
         if #BridgeTask.queue == 0 then return BridgeTask.finish() end
         target = table.remove(BridgeTask.queue, 1)
@@ -654,12 +695,19 @@ local function doorUpdate(body, mode)
         BridgeTask.checkX = nil
         BridgeTask.animHold = 0
         BridgeTask.progressAt = Bridge.time
+        BridgeTask.doorStandKey = nil
+        BridgeTask.doorWalkKey = nil
+        newTarget = true
     end
 
     local door = BridgeTask.doorObjectAt(target)
     if door == nil then
         BridgeTask.info = "door gone"
         return doorSkip()
+    end
+    if newTarget then
+        log(string.format("door target door=%d,%d,%d mode=%s queue=%d %s",
+            target.x, target.y, target.z, tostring(mode), #BridgeTask.queue, doorDebugState(body, door)))
     end
     local open = BridgeTask.doorOpen(door)
     if (mode == "open" and open) or (mode == "close" and not open) then
@@ -684,8 +732,25 @@ local function doorUpdate(body, mode)
             return doorSkip()
         end
         local walk, why = BridgeTask.walkTo(body, stand, BridgeTask.DOOR_REACH, false, true)
-        if walk == "unreachable" then return BridgeTask.dropTarget(why) end
+        local dsq = nil
+        pcall(function() dsq = door:getSquare() end)
+        local standSq = nil
+        pcall(function() standSq = getCell():getGridSquare(stand.x, stand.y, stand.z) end)
+        local walkKey = tostring(walk) .. "|" .. tostring(why) .. "|" .. stand.x .. "," .. stand.y
+        if BridgeTask.doorWalkKey ~= walkKey then
+            BridgeTask.doorWalkKey = walkKey
+            log(string.format("door walk walk=%s why=%s dDoor=%.2f dStand=%.2f body=%s stand=%d,%d %s",
+                tostring(walk), tostring(why), doorDebugDist(body, dsq), doorDebugDist(body, standSq),
+                doorDebugSq(body), stand.x, stand.y, doorDebugState(body, door)))
+        end
+        if walk == "unreachable" then
+            log("door drop why=" .. tostring(why))
+            return BridgeTask.dropTarget(why)
+        end
         if walk == "walking" then return true end
+        log(string.format("door act start mode=%s door=%d,%d dDoor=%.2f dStand=%.2f body=%s stand=%d,%d %s",
+            tostring(mode), target.x, target.y, doorDebugDist(body, dsq), doorDebugDist(body, standSq),
+            doorDebugSq(body), stand.x, stand.y, doorDebugState(body, door)))
         BridgeTask.phase = "act"
         BridgeTask.doorActAt = Bridge.time
         pcall(function()
@@ -730,23 +795,38 @@ local function doorUpdate(body, mode)
             return doorSkip()
         end
     end
+    local toggleSq = nil
+    pcall(function() toggleSq = door:getSquare() end)
+    log(string.format("door toggle mode=%s door=%d,%d dDoor=%.2f body=%s openBefore=%s %s",
+        tostring(mode), target.x, target.y, doorDebugDist(body, toggleSq), doorDebugSq(body),
+        tostring(before), doorDebugState(body, door)))
     BridgeTask.current = nil
     pcall(function() BridgeMove.toggleDoor(body, door) end)
     BridgeTask.doorNextAt = Bridge.time
         + (mode == "open" and BridgeTask.DOOR_ACT_GAP_OPEN or BridgeTask.DOOR_ACT_GAP_CLOSE)
     if BridgeTask.doorOpen(door) ~= before then
+        if mode == "open" then
+            if BridgeMove ~= nil and BridgeMove.markKeepOpen ~= nil then BridgeMove.markKeepOpen(door) end
+        elseif mode == "close" then
+            if BridgeMove ~= nil and BridgeMove.clearKeepOpen ~= nil then BridgeMove.clearKeepOpen(door) end
+        end
         BridgeTask.markDone()
         BridgeTask.info = "door done"
     else
         BridgeTask.info = "door toggle failed"
         BridgeTask.failCount = (BridgeTask.failCount or 0) + 1
     end
+    local afterOpen = before
+    pcall(function() afterOpen = BridgeTask.doorOpen(door) == true end)
+    log(string.format("door toggle result mode=%s door=%d,%d changed=%s open=%s",
+        tostring(mode), target.x, target.y, tostring(afterOpen ~= before), tostring(afterOpen)))
     if #BridgeTask.queue == 0 then return BridgeTask.finish() end
     return true
 end
 
 
 function BridgeTask.doorLeave(body)
+    log("door leave mode=" .. tostring(BridgeTask.doorMode))
     if BridgeTask.doorHold then
         if BridgeMove ~= nil then BridgeMove.holdDoors = BridgeTask.doorHoldPrev == true end
     end
@@ -756,6 +836,8 @@ function BridgeTask.doorLeave(body)
     BridgeTask.doorMode = nil
     BridgeTask.doorActAt = nil
     BridgeTask.doorNextAt = nil
+    BridgeTask.doorStandKey = nil
+    BridgeTask.doorWalkKey = nil
     local fromCar = BridgeTask.fromCar
     BridgeTask.fromCar = nil
     if fromCar then
@@ -1997,9 +2079,20 @@ local function routeAbort(branch, why, body, target)
         spot = spot,
     }
     BridgeTask.lastUnreachable = snap
-    log(string.format("route abort branch=%s why=%s progressAge=%.1f sinceAge=%.1f bestD=%s dSpot=%.2f dGoal=%.2f pathing=%s result=%s obs=%s climb=%s opening=%s",
+    local doorExtra = ""
+    if (BridgeTask.kind == "openDoors" or BridgeTask.kind == "closeDoors") and BridgeTask.current ~= nil then
+        local doorObj = nil
+        pcall(function() doorObj = BridgeTask.doorObjectAt(BridgeTask.current) end)
+        local stand = BridgeTask.spot or target or BridgeTask.current
+        local dsq = nil
+        if doorObj ~= nil then pcall(function() dsq = doorObj:getSquare() end) end
+        doorExtra = string.format(" door=%d,%d stand=%d,%d body=%s dDoor=%.2f",
+            BridgeTask.current.x, BridgeTask.current.y, stand.x or -1, stand.y or -1,
+            doorDebugSq(body), doorDebugDist(body, dsq))
+    end
+    log(string.format("route abort branch=%s why=%s progressAge=%.1f sinceAge=%.1f bestD=%s dSpot=%.2f dGoal=%.2f pathing=%s result=%s obs=%s climb=%s opening=%s%s",
         tostring(branch), tostring(why), snap.progressAge, snap.sinceAge, tostring(snap.bestD),
-        dSpot, dGoal, pathing, result, obs, climbText, openText))
+        dSpot, dGoal, pathing, result, obs, climbText, openText, doorExtra))
 end
 
 function BridgeTask.noteWindowAttempts(body)
@@ -2204,7 +2297,22 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
         local point, dpx, dpy = BridgeNav.detour(body, target.x, target.y, target.z, BridgeTask,
             { step = 1.6, ticks = 150 })
         if point ~= nil then
-            log(string.format("stalled: stepping around via %d,%d", dpx, dpy))
+            local stallExtra = ""
+            if BridgeTask.kind == "openDoors" or BridgeTask.kind == "closeDoors" then
+                local fromSq = nil
+                pcall(function() fromSq = body:getCurrentSquare() end)
+                local standSq = nil
+                pcall(function() standSq = getCell():getGridSquare(target.x, target.y, target.z) end)
+                local blockedTo = false
+                if fromSq ~= nil and standSq ~= nil then
+                    pcall(function() blockedTo = fromSq:isBlockedTo(standSq) == true end)
+                end
+                local isDoor = BridgeTask.current ~= nil and target.x == BridgeTask.current.x and target.y == BridgeTask.current.y
+                stallExtra = string.format(" from=%s stand=%d,%d standIsDoor=%s blockedTo=%s dStand=%.2f",
+                    fromSq ~= nil and (fromSq:getX() .. "," .. fromSq:getY()) or "-",
+                    target.x, target.y, tostring(isDoor), tostring(blockedTo), doorDebugDist(body, standSq))
+            end
+            log(string.format("stalled: stepping around via %d,%d%s", dpx, dpy, stallExtra))
         end
         if BridgeTask.spot ~= nil then
             local key = BridgeTask.spot.x .. "," .. BridgeTask.spot.y
@@ -2775,7 +2883,11 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     else
         Bridge.speak("JobStart")
     end
-    log("start " .. tostring(kind) .. " targets=" .. tostring(#targets) .. " prevMode=" .. tostring(BridgeTask.prevMode))
+    local startExtra = ""
+    if kind == "openDoors" or kind == "closeDoors" then
+        startExtra = " reach=" .. tostring(BridgeTask.DOOR_REACH) .. " mode=" .. tostring(kind == "openDoors" and "open" or "close")
+    end
+    log("start " .. tostring(kind) .. " targets=" .. tostring(#targets) .. " prevMode=" .. tostring(BridgeTask.prevMode) .. startExtra)
     return "started"
 end
 

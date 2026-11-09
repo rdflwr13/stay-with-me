@@ -1774,8 +1774,8 @@ BridgeServer.Commands.state = function(player, args)
 
             local tier = BridgeData.relTier(rel)
             local bonus = (tier == "Close" and 3) or (tier == "Friend" and 2) or (tier == "Pal" and 1) or 0
-            rel.gainF = math.min(rel.gainF, BridgeData.sandboxNumber("DailyFriendCap", 6, 0, 50) + bonus)
-            rel.gainR = math.min(rel.gainR, BridgeData.sandboxNumber("DailyRomanceCap", 3, 0, 50) + bonus)
+    rel.gainF = math.min(rel.gainF, BridgeData.sandboxNumber("DailyFriendCap", 10, 0, 50) + bonus)
+    rel.gainR = math.min(rel.gainR, BridgeData.sandboxNumber("DailyRomanceCap", 6, 0, 50) + bonus)
             rel.giftF = math.min(rel.giftF, BridgeData.sandboxNumber("DailyGiftCapFriend", 3, 0, 50) + bonus)
             rel.giftR = math.min(rel.giftR, BridgeData.sandboxNumber("DailyGiftCapRomance", 1, 0, 50) + bonus)
 

@@ -1130,6 +1130,7 @@ BridgeData.GENDERED_KEYS = {
     Need_Axe = true, Need_CleanImplement = true, Need_Cleaner = true, Need_CleanSupplies = true,
     Talk_Thanks = true, Talk_Comfort = true, Rel_Crush = true, InvAssign = true, LookDefault = true,
     TalkCantBusy = true, TalkCantRepeat = true, TalkCantFull = true, TalkCantAfterFight = true,
+    TalkCantPhysicalFull = true,
     CombatAggressive = true, CombatAggressiveTip = true, CombatGuardTip = true,
     OptAutoHeal = true, OptAutoHealTip = true, OptGifts = true,
     OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRelPopupsTip = true, OptRomanceTip = true,

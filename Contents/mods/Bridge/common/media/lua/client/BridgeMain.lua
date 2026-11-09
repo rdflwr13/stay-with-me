@@ -2542,9 +2542,99 @@ end
 
 
 function Bridge.speechFont()
+    local face = Bridge.speechFontType()
+    if face ~= nil then return face end
     local index = Bridge.speechFontIndex()
     local fonts = { UIFont.Dialogue, UIFont.Large, UIFont.Massive }
     return fonts[index] or UIFont.Dialogue
+end
+
+
+Bridge.SPEECH_FACES = {
+    { font = nil, name = "Default" },
+    { font = UIFont.Handwritten, name = "Handwritten" },
+    { font = UIFont.SdfRobertoSans, name = "Roberto Sans" },
+    { font = UIFont.SdfOldRegular, name = "Old Style" },
+    { font = UIFont.SdfBold, name = "Bold" },
+    { font = UIFont.Title, name = "Title" },
+    { font = UIFont.CodeMedium, name = "Monospace" },
+    { font = UIFont.SdfItalic, name = "Italic" },
+}
+
+
+function Bridge.speechFontTypeIndex()
+    local index = 1
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        local ok, value = pcall(BridgeData.sandboxNumber, "SpeechFontType", 1, 1, 8)
+        if ok then index = tonumber(value) or 1 end
+    end
+    index = math.floor(index)
+    if index < 1 then index = 1 end
+    if index > #Bridge.SPEECH_FACES then index = #Bridge.SPEECH_FACES end
+    return index
+end
+
+
+function Bridge.speechFontType()
+    local index = Bridge.speechFontTypeIndex()
+    if index <= 1 then return nil end
+    local face = Bridge.SPEECH_FACES[index]
+    if face == nil or face.font == nil then
+        if Bridge.speechFaceWarned ~= true then
+            Bridge.speechFaceWarned = true
+            warn("speech font type unavailable: " .. tostring(face ~= nil and face.name or index))
+        end
+        return nil
+    end
+    return face.font
+end
+
+
+Bridge.SPEECH_COLOR_DEFAULT = { 242, 140, 191 }
+
+
+function Bridge.speechColorRaw()
+    if BridgeData == nil then return nil end
+    local sandbox = nil
+    pcall(function() sandbox = BridgeData.sandbox() end)
+    if type(sandbox) ~= "table" then return nil end
+    local text = sandbox.SpeechColor
+    if type(text) == "string" then return text end
+    return nil
+end
+
+
+function Bridge.speechColor()
+    local raw = Bridge.speechColorRaw()
+    if raw == nil then return 0.95, 0.55, 0.75 end
+    local cache = Bridge.speechColorCache
+    if cache ~= nil and cache.raw == raw then return cache.r, cache.g, cache.b end
+    local values = {}
+    for value in string.gmatch(raw, "%d+") do
+        values[#values + 1] = tonumber(value)
+        if #values >= 3 then break end
+    end
+    if #values < 3 then
+        if Bridge.speechColorWarned ~= raw then
+            Bridge.speechColorWarned = raw
+            warn("speech color invalid: " .. tostring(raw) .. " (expected R,G,B)")
+        end
+        return 0.95, 0.55, 0.75
+    end
+    local r = math.min(255, math.max(0, values[1]))
+    local g = math.min(255, math.max(0, values[2]))
+    local b = math.min(255, math.max(0, values[3]))
+    local nr, ng, nb = r / 255, g / 255, b / 255
+    Bridge.speechColorCache = { raw = raw, r = nr, g = ng, b = nb }
+    return nr, ng, nb
+end
+
+
+function Bridge.speechShadow()
+    local r, g, b = Bridge.speechColor()
+    local luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    if luminance < 0.35 then return 1, 1, 1, 0.55 end
+    return 0, 0, 0, 0.65
 end
 
 
@@ -2681,6 +2771,33 @@ local function speechWrap(text)
 end
 
 
+local function speechWrapMeasured(font, text)
+    local rows = {}
+    local tm = getTextManager()
+    local source = tostring(text or "") .. "\n"
+    for paragraph in source:gmatch("(.-)\n") do
+        if paragraph == "" then
+            rows[#rows + 1] = ""
+        else
+            local line = ""
+            for word in paragraph:gmatch("%S+") do
+                local attempt = line == "" and word or (line .. " " .. word)
+                local width = 0
+                pcall(function() width = tm:MeasureStringX(font, attempt) end)
+                if line ~= "" and width > 420 then
+                    rows[#rows + 1] = line
+                    line = word
+                else
+                    line = attempt
+                end
+            end
+            if line ~= "" then rows[#rows + 1] = line end
+        end
+    end
+    if #rows == 0 then rows[1] = "" end
+    return rows
+end
+
 function Bridge.speechOverlayDraw()
     local body = Bridge.body
     local owner = BridgeData.owner()
@@ -2704,6 +2821,9 @@ function Bridge.speechOverlayDraw()
         sx = math.floor(sx)
         anchorY = math.floor(anchorY)
         local font = Bridge.speechFont()
+        local typed = Bridge.speechFontType() ~= nil
+        local cr, cg, cb = Bridge.speechColor()
+        local sr, sg, sb, sa = Bridge.speechShadow()
         local tm = getTextManager()
         local fontH = tm:getFontHeight(font)
         local lineH = fontH + 1
@@ -2719,7 +2839,7 @@ function Bridge.speechOverlayDraw()
                 alpha = remaining / SPEECH_FADE_MS
                 if alpha < 0 then alpha = 0 end
             end
-            local rows = speechWrap(line.text)
+            local rows = typed and speechWrapMeasured(font, line.text) or speechWrap(line.text)
             for r = 1, #rows do
                 entries[#entries + 1] = { text = rows[r], alpha = alpha }
                 totalH = totalH + lineH
@@ -2728,8 +2848,8 @@ function Bridge.speechOverlayDraw()
         local y = anchorY - totalH
         for i = 1, #entries do
             local entry = entries[i]
-            tm:DrawStringCentre(font, sx + 1, y + 1, entry.text, 0, 0, 0, 0.65 * entry.alpha)
-            tm:DrawStringCentre(font, sx, y, entry.text, 0.95, 0.55, 0.75, entry.alpha)
+            tm:DrawStringCentre(font, sx + 1, y + 1, entry.text, sr, sg, sb, sa * entry.alpha)
+            tm:DrawStringCentre(font, sx, y, entry.text, cr, cg, cb, entry.alpha)
             y = y + lineH
         end
     end)
@@ -2762,14 +2882,24 @@ function Bridge.speechLineFor(z, text, expectId)
     end
     local fontIndex = Bridge.speechFontIndex()
     local seconds = Bridge.speechSeconds()
-    if Bridge.speechLoggedFont ~= fontIndex or Bridge.speechLoggedSeconds ~= seconds then
+    local typeIndex = Bridge.speechFontTypeIndex()
+    local typeFace = Bridge.SPEECH_FACES[typeIndex]
+    local typeName = typeFace ~= nil and typeFace.name or "Default"
+    local rawColor = Bridge.speechColorRaw()
+    if Bridge.speechLoggedFont ~= fontIndex or Bridge.speechLoggedSeconds ~= seconds
+        or Bridge.speechLoggedType ~= typeIndex or Bridge.speechLoggedColor ~= rawColor then
         Bridge.speechLoggedFont, Bridge.speechLoggedSeconds = fontIndex, seconds
-        log(string.format("speech settings font=%s duration=%s s",
-            tostring(SPEECH_FONT_NAMES[fontIndex] or "Dialogue"), tostring(seconds)))
+        Bridge.speechLoggedType, Bridge.speechLoggedColor = typeIndex, rawColor
+        local cr, cg, cb = Bridge.speechColor()
+        log(string.format("speech settings font=%s type=%s color=%d,%d,%d duration=%s s",
+            tostring(SPEECH_FONT_NAMES[fontIndex] or "Dialogue"), tostring(typeName),
+            math.floor(cr * 255 + 0.5), math.floor(cg * 255 + 0.5), math.floor(cb * 255 + 0.5),
+            tostring(seconds)))
     end
+    local cr, cg, cb = Bridge.speechColor()
     local displayText = Bridge.speechTag(text)
     local ok, err = pcall(function()
-        z:addLineChatElement(displayText, 0.95, 0.55, 0.75,
+        z:addLineChatElement(displayText, cr, cg, cb,
             Bridge.speechFont(), 30.0, "default",
             true, false, false, false, false, true)
     end)
@@ -2796,8 +2926,14 @@ function Bridge.speechInfo()
     local now = 0
     pcall(function() now = getTimestampMs() end)
     local remaining = math.max(0, (Bridge.speakUntilMs or 0) - now)
-    return string.format("font=%s seconds=%s remaining=%dms",
+    local typeIndex = Bridge.speechFontTypeIndex()
+    local typeFace = Bridge.SPEECH_FACES[typeIndex]
+    local typeName = typeFace ~= nil and typeFace.name or "Default"
+    local cr, cg, cb = Bridge.speechColor()
+    return string.format("font=%s type=%s color=%d,%d,%d seconds=%s remaining=%dms",
         tostring(SPEECH_FONT_NAMES[Bridge.speechFontIndex()] or "Dialogue"),
+        tostring(typeName),
+        math.floor(cr * 255 + 0.5), math.floor(cg * 255 + 0.5), math.floor(cb * 255 + 0.5),
         tostring(Bridge.speechSeconds()), remaining)
 end
 
@@ -9127,7 +9263,10 @@ function Bridge.onServerCommand(module, command, args)
     elseif command == "say" and args.text ~= nil then
         local name = args.name or BridgeData.DEFAULT_NAME
         if args.chat ~= false then
-            pcall(function() BridgeChat.addLine(name, args.text, 0.95, 0.55, 0.75) end)
+            pcall(function()
+                local cr, cg, cb = Bridge.speechColor()
+                BridgeChat.addLine(name, args.text, cr, cg, cb)
+            end)
         elseif args.owner ~= BridgeData.me() then
 
             local shown = false

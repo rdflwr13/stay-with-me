@@ -4118,10 +4118,16 @@ function BridgeMove.toggleDoor(body, door, kind)
     if kind == "double" then
         local blocked = true
         pcall(function() blocked = IsoDoor.isDoubleDoorObstructed(door) end)
-        if blocked then return false end
+        if blocked then
+            log("toggleDoor rejected kind=double obstructed")
+            return false
+        end
         IsoDoor.toggleDoubleDoor(door, true)
     elseif kind == "garage" then
-        if wasOpen and carInDoorway(doorCells(door, kind)) then return false end
+        if wasOpen and carInDoorway(doorCells(door, kind)) then
+            log("toggleDoor rejected kind=garage car in doorway")
+            return false
+        end
         IsoDoor.toggleGarageDoor(door, true)
     else
 
@@ -4151,6 +4157,7 @@ function BridgeMove.toggleDoor(body, door, kind)
         end
     end
     local open = door:IsOpen()
+    log(sformat("toggleDoor kind=%s open=%s wasOpen=%s byGame=%s", tostring(kind), tostring(open), tostring(wasOpen), tostring(byGame)))
     if open == wasOpen then return false end
     if byGame then return true end
 
@@ -4164,7 +4171,16 @@ end
 
 
 BridgeMove.opened = {}
+BridgeMove.keepOpenDoors = setmetatable({}, { __mode = "k" })
 BridgeMove.doorLast = "none"
+
+function BridgeMove.markKeepOpen(door)
+    if door ~= nil then BridgeMove.keepOpenDoors[door] = true end
+end
+
+function BridgeMove.clearKeepOpen(door)
+    if door ~= nil then BridgeMove.keepOpenDoors[door] = nil end
+end
 DOOR.FORGET = 1800
 DOOR.BACK = 180
 
@@ -4187,6 +4203,12 @@ end
 function BridgeMove.rememberDoor(body, door, kind, cells, north)
     if #cells == 0 then return end
     local rec = { door = door, kind = kind, cells = cells, north = north, tick = Bridge.time }
+    local keep = BridgeMove.keepOpenDoors[door] == true
+    if not keep and BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "openDoors" then
+        keep = true
+        BridgeMove.keepOpenDoors[door] = true
+    end
+    rec.keepOpen = keep
     rec.edge = north and cells[1].y or cells[1].x
     rec.side = doorSide(rec, body:getX(), body:getY())
 
@@ -4228,12 +4250,26 @@ function BridgeMove.rememberDoorNear(body)
                                 if r.door == object then have = true end
                             end
                             if not have then
+                                local adopted = false
                                 pcall(function()
                                     local kind = doorKind(object)
                                     local cells, north = doorCells(object, kind)
                                     local anchor = doorAnchor(object, kind)
                                     BridgeMove.rememberDoor(body, anchor, kind, cells, north)
+                                    adopted = true
                                 end)
+                                if adopted then
+                                    local dox, doy, ddist = -1, -1, -1
+                                    pcall(function()
+                                        local dsq = object:getSquare()
+                                        if dsq ~= nil then dox, doy = dsq:getX(), dsq:getY() end
+                                        local ocx, ocy = BridgeDoors.center(object)
+                                        if ocx ~= nil and ocy ~= nil then
+                                            ddist = math.sqrt((body:getX() - ocx) ^ 2 + (body:getY() - ocy) ^ 2)
+                                        end
+                                    end)
+                                    log(sformat("door adopt at %d,%d d=%.2f body=%.2f,%.2f", dox, doy, ddist, body:getX(), body:getY()))
+                                end
                             end
                         end
                     end
@@ -4376,7 +4412,9 @@ function BridgeMove.closeBehind(body)
         local why = nil
         local open = false
         pcall(function() open = rec.door:getObjectIndex() ~= -1 and rec.door:IsOpen() end)
-        if not open then
+        if rec.keepOpen == true and open then
+            why = nil
+        elseif not open then
             why = "closed by someone else"
         elseif Bridge.time - rec.tick > DOOR.FORGET then
             why = "left open: timeout"
@@ -4402,7 +4440,12 @@ function BridgeMove.closeBehind(body)
         end
         if why ~= nil then
             table.remove(list, i)
-            BridgeMove.doorLast = sformat("%s: %s at %d,%d", why, rec.kind, rec.cells[1].x, rec.cells[1].y)
+            if why == "closed by someone else" then BridgeMove.clearKeepOpen(rec.door) end
+            local detail = ""
+            if why == "left open: walked away" then
+                detail = sformat(" d=%.2f limit=%.1f", doorReach(rec, bx, by), DOOR.REACH)
+            end
+            BridgeMove.doorLast = sformat("%s: %s at %d,%d%s", why, rec.kind, rec.cells[1].x, rec.cells[1].y, detail)
             log("door " .. BridgeMove.doorLast)
         end
     end

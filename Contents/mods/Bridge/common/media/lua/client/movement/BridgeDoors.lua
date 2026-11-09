@@ -641,4 +641,38 @@ function BridgeDoors.canReach(fromSq, toSq)
     return result == true
 end
 
+function BridgeDoors.debugInfo(body, door)
+    if door == nil then return "-" end
+    local parts = {}
+    local dsq, osq, bs = nil, nil, nil
+    pcall(function() dsq = door:getSquare() end)
+    pcall(function() osq = door:getOppositeSquare() end)
+    pcall(function() bs = body ~= nil and body:getCurrentSquare() or nil end)
+    parts[#parts + 1] = "doorSq=" .. (dsq ~= nil and (dsq:getX() .. "," .. dsq:getY()) or "-")
+    parts[#parts + 1] = "opp=" .. (osq ~= nil and (osq:getX() .. "," .. osq:getY()) or "-")
+    parts[#parts + 1] = "bodySq=" .. (bs ~= nil and (bs:getX() .. "," .. bs:getY()) or "-")
+    local north = false
+    pcall(function() north = door:getNorth() == true end)
+    parts[#parts + 1] = "north=" .. tostring(north)
+    local open = false
+    pcall(function() open = door:IsOpen() == true end)
+    parts[#parts + 1] = "open=" .. tostring(open)
+    local locked = false
+    pcall(function() locked = door:isLocked() == true end)
+    parts[#parts + 1] = "locked=" .. tostring(locked)
+    local lockKey = false
+    pcall(function() lockKey = door:isLockedByKey() == true end)
+    parts[#parts + 1] = "lockKey=" .. tostring(lockKey)
+    local barricade = false
+    pcall(function() barricade = door:isBarricaded() == true end)
+    parts[#parts + 1] = "barricade=" .. tostring(barricade)
+    local obstructed = false
+    pcall(function() obstructed = door:isObstructed() == true end)
+    parts[#parts + 1] = "obstructed=" .. tostring(obstructed)
+    local idx = -1
+    pcall(function() idx = door:getObjectIndex() end)
+    parts[#parts + 1] = "idx=" .. tostring(idx)
+    return table.concat(parts, " ")
+end
+
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeDoors] loaded") end

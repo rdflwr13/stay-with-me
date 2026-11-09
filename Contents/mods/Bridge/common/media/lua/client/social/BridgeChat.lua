@@ -99,7 +99,8 @@ function BridgeChat.sayCompanion(text)
         local ok = pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "say", { text = text }) end)
         return ok
     end
-    return BridgeChat.addLine(BridgeChat.companionName(), text, 0.95, 0.55, 0.75)
+    local cr, cg, cb = Bridge.speechColor()
+    return BridgeChat.addLine(BridgeChat.companionName(), text, cr, cg, cb)
 end
 
 

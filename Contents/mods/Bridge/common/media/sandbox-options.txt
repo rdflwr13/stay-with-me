@@ -9,14 +9,14 @@ option StayWithMe.RelationshipGainMultiplier
 
 option StayWithMe.DailyFriendCap
 {
-    type = integer, min = 0, max = 50, default = 6,
+    type = integer, min = 0, max = 50, default = 10,
     page = StayWithMe,
     translation = StayWithMe_DailyFriendCap,
 }
 
 option StayWithMe.DailyRomanceCap
 {
-    type = integer, min = 0, max = 50, default = 3,
+    type = integer, min = 0, max = 50, default = 6,
     page = StayWithMe,
     translation = StayWithMe_DailyRomanceCap,
 }
@@ -114,6 +114,21 @@ option StayWithMe.SpeechFont
     page = StayWithMe,
     translation = StayWithMe_SpeechFont,
     valueTranslation = StayWithMe_SpeechFont_Values,
+}
+
+option StayWithMe.SpeechFontType
+{
+    type = enum, numValues = 8, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_SpeechFontType,
+    valueTranslation = StayWithMe_SpeechFontType_Values,
+}
+
+option StayWithMe.SpeechColor
+{
+    type = string, default = "242,140,191",
+    page = StayWithMe,
+    translation = StayWithMe_SpeechColor,
 }
 
 option StayWithMe.SpeechDuration

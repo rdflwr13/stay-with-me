@@ -300,11 +300,11 @@ local function giftCaps()
 end
 
 local function capF(r, relaxed)
-    return BridgeData.sandboxNumber("DailyFriendCap", 6, 0, 50) + tierBonus(r) + ((relaxed == true) and 2 or 0)
+    return BridgeData.sandboxNumber("DailyFriendCap", 10, 0, 50) + tierBonus(r) + ((relaxed == true) and 2 or 0)
 end
 
 local function capR(r, relaxed)
-    return BridgeData.sandboxNumber("DailyRomanceCap", 3, 0, 50) + tierBonus(r) + ((relaxed == true) and 2 or 0)
+    return BridgeData.sandboxNumber("DailyRomanceCap", 6, 0, 50) + tierBonus(r) + ((relaxed == true) and 2 or 0)
 end
 
 local function gain(r, df, dr, relaxed)
@@ -1173,6 +1173,7 @@ function BridgeSocial.giftCommand(sub, a, b)
         BridgeSocial.last = {}
         BridgeSocial.nagged = {}
         BridgeSocial.talkFullDay = nil
+        BridgeSocial.physicalFullDay = nil
         BridgeSocial.giftFullDay = nil
         return "talk/gift cooldowns cleared"
     end
@@ -1183,6 +1184,7 @@ function BridgeSocial.giftCommand(sub, a, b)
         r.giftF, r.giftR = 0, 0
         r.days = (r.days or 0) + 1
         BridgeSocial.talkFullDay = nil
+        BridgeSocial.physicalFullDay = nil
         BridgeSocial.giftFullDay = nil
         BridgeSocial.save(true)
         return string.format("next day: days=%d, daily counters reset", r.days)
@@ -1774,25 +1776,25 @@ BridgeSocial.ACTIONS = {
       chance = function(r) return 0.2 + (r.f - 30) / 150 + r.r / 150 end, good = { 1, 3 }, bad = { -1, -2 }, anim = { "WaveHi", "No" } },
     { id = "Handshake", gate = function(r) return physOn() and r.f >= 10 end, physical = true, noRoll = true,
       group = "greetings", animId = "Handshake", mood = "Handshake", romantic = false,
-      good = { 1, 0 }, bad = { 0, 0 } },
+      good = { 2, 0 }, bad = { 0, 0 } },
     { id = "FistBump", gate = function(r) return physOn() and r.f >= 20 end, physical = true, noRoll = true,
       group = "greetings", animId = "FistBump", mood = "FistBump", romantic = false,
-      good = { 1, 0 }, bad = { 0, 0 } },
+      good = { 2, 0 }, bad = { 0, 0 } },
     { id = "ShoulderMassage", gate = function(r) return physOn() and r.f >= 30 end, physical = true, noRoll = true,
       group = "relax", animId = "ShoulderMassage", mood = "ShoulderMassage", romantic = false,
-      good = { 1, 0 }, bad = { 0, 0 } },
+      good = { 3, 0 }, bad = { 0, 0 } },
     { id = "Hug", gate = function(r) return physOn() and r.f >= 45 and r.r >= 15 and r.days >= 4 and BridgeSocial.romanceOn() end,
       physical = true, noRoll = true, group = "affection", animId = "Hug", mood = "Hug", romantic = true,
-      good = { 2, 3 }, bad = { 0, 0 } },
+      good = { 3, 4 }, bad = { 0, 0 } },
     { id = "SlowDance", gate = function(r) return physOn() and BridgeSocial.romanceOpen(r) and r.r >= 25 and r.f >= 45 and r.days >= 3 end,
       physical = true, noRoll = true, group = "affection", animId = "SlowDance", mood = "SlowDance", romantic = true,
-      good = { 1, 2 }, bad = { 0, 0 } },
+      good = { 2, 3 }, bad = { 0, 0 } },
     { id = "Kiss", gate = function(r) return physOn() and BridgeSocial.romanceOpen(r) and r.r >= 40 and r.f >= 55 and r.days >= 5 end,
       physical = true, noRoll = true, group = "affection", animId = "Kiss", mood = "Kiss", romantic = true,
-      good = { 1, 3 }, bad = { 0, 0 } },
+      good = { 2, 5 }, bad = { 0, 0 } },
     { id = "SlowDance2", gate = function(r) return physOn() and BridgeSocial.romanceOpen(r) and r.r >= 50 and r.f >= 60 and r.days >= 6 end,
       physical = true, noRoll = true, group = "affection", animId = "SlowDance2", mood = "SlowDance2", romantic = true,
-      good = { 1, 2 }, bad = { 0, 0 } },
+      good = { 2, 4 }, bad = { 0, 0 } },
 }
 
 local function actionById(id)
@@ -1831,12 +1833,15 @@ function BridgeSocial.talkBlock(id, r, calm, busy, animWhy)
     local since = Bridge.time - (BridgeSocial.last[id] or -999999)
     if since < BridgeSocial.repeatSec(id, r, calm) * 60 then return "Repeat" end
     if a ~= nil and id == "SlowDance2" and not calm then return "NotNow" end
-    if a ~= nil and not a.physical then
+    if a ~= nil then
         local df, dr = a.good[1], a.good[2]
         if df > 0 or dr > 0 then
             local fullF = (df <= 0) or ((capF(r, calm) - (r.gainF or 0)) <= 0)
             local fullR = (dr <= 0) or (not BridgeSocial.romanceOn()) or ((capR(r, calm) - (r.gainR or 0)) <= 0)
-            if fullF and fullR then return "Full" end
+            if fullF and fullR then
+                if a.physical then return "PhysicalFull" end
+                return "Full"
+            end
         end
     end
     return nil
@@ -1882,6 +1887,23 @@ function BridgeSocial.talk(id)
         gesture("Shrug")
         log(id .. " repeat: shrug")
         return "repeat: shrug"
+    end
+    if a.physical then
+        local pfl, pfr = a.good[1], a.good[2]
+        if pfl > 0 or pfr > 0 then
+            local fullF = (pfl <= 0) or ((capF(r, calm) - (r.gainF or 0)) <= 0)
+            local fullR = (pfr <= 0) or (not BridgeSocial.romanceOn()) or ((capR(r, calm) - (r.gainR or 0)) <= 0)
+            if fullF and fullR then
+                if BridgeSocial.physicalFullDay ~= r.day then
+                    BridgeSocial.physicalFullDay = r.day
+                    say("PhysicalFull")
+                end
+                gesture("Shrug")
+                BridgeSocial.info = id .. " physical full"
+                log(BridgeSocial.info)
+                return BridgeSocial.info
+            end
+        end
     end
     if a.physical then
         local played, why = nil, nil
