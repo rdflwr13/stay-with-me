@@ -24,6 +24,22 @@ local function ffMult()
 end
 BridgeTask.ffMult = ffMult
 
+local function exhaustionProfile()
+    local bf = rawget(_G, "BridgeFight")
+    if bf ~= nil and type(bf.profile) == "function" then
+        local ok, prof = pcall(bf.profile)
+        if ok and prof ~= nil and type(prof.work) == "table" then return prof end
+    end
+    return nil
+end
+
+local function workValue(key, fallback)
+    local prof = exhaustionProfile()
+    local value = prof ~= nil and prof.work[key] or nil
+    if type(value) ~= "number" then return fallback end
+    return value
+end
+
 BridgeTask.CHOP_RANGE = 1.45
 BridgeTask.STOP_DIST = 0.9
 BridgeTask.SPOT_NUDGE = 0.42
@@ -2419,6 +2435,20 @@ function BridgeTask.speakMissing(kind)
     Bridge.speak(key)
 end
 
+function BridgeTask.needRestSay()
+    local prof = exhaustionProfile()
+    if prof ~= nil and prof.needRestPool == true then
+        local said = false
+        pcall(function()
+            said = BridgeMoments ~= nil
+                and BridgeMoments.say("EvNeedRest", 60 * SECOND, true, "NeedRest") == true
+        end)
+        return said
+    end
+    Bridge.speak("JobNeedRest")
+    return true
+end
+
 function BridgeTask.dangerNear(body, radius)
     local danger = false
     local red = BridgeData.owner()
@@ -2593,18 +2623,18 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     end
 
     if kind == "chopTree" and BridgeFight ~= nil
-            and (1 - (BridgeFight.fatigue or 0)) < BridgeTask.CHOP_REFUSE_STAMINA then
-        Bridge.speak("JobNeedRest")
+            and (1 - (BridgeFight.fatigue or 0)) < workValue("chopStart", BridgeTask.CHOP_REFUSE_STAMINA) then
+        BridgeTask.needRestSay()
         return "tired"
     end
     if kind == "moveCorpses" and BridgeFight ~= nil
-            and (1 - (BridgeFight.fatigue or 0)) < BridgeTask.CORPSE_REFUSE_STAMINA then
-        Bridge.speak("JobNeedRest")
+            and (1 - (BridgeFight.fatigue or 0)) < workValue("corpseStart", BridgeTask.CORPSE_REFUSE_STAMINA) then
+        BridgeTask.needRestSay()
         return "tired"
     end
     if kind == "pryDoor" and BridgeFight ~= nil
-            and (1 - (BridgeFight.fatigue or 0)) < BridgeTask.PRY_STAMINA_MIN then
-        Bridge.speak("JobNeedRest")
+            and (1 - (BridgeFight.fatigue or 0)) < workValue("pryStart", BridgeTask.PRY_STAMINA_MIN) then
+        BridgeTask.needRestSay()
         return "tired"
     end
 
@@ -3230,7 +3260,7 @@ end
 
 
 function BridgeTask.chopBeginRest(body)
-    if BridgeFight == nil or (BridgeFight.fatigue or 0) < BridgeTask.CHOP_REST_AT then return false end
+    if BridgeFight == nil or (BridgeFight.fatigue or 0) < workValue("restFatigue", BridgeTask.CHOP_REST_AT) then return false end
     BridgeTask.chopRest = true
     BridgeTask.chopRestSitAt = Bridge.time + BridgeTask.CHOP_REST_SIT_DELAY
     BridgeTask.swingStart = nil
@@ -3282,7 +3312,7 @@ function BridgeTask.kinds.chopTree.update(body)
         local f = 0
         pcall(function() f = tonumber(BridgeFight and BridgeFight.fatigue) or 0 end)
         BridgeTask.info = string.format("resting %d%%", math.floor((1 - f) * 100 + 0.5))
-        if f <= (1 - BridgeTask.CHOP_RESUME_STAMINA) then
+        if f <= (1 - workValue("resumeStamina", BridgeTask.CHOP_RESUME_STAMINA)) then
             BridgeTask.chopRest = false
             standUp(body)
             BridgeTask.chopResumeAt = Bridge.time + BridgeTask.CHOP_RESUME_DELAY
@@ -3312,7 +3342,7 @@ function BridgeTask.kinds.chopTree.update(body)
 
 
 
-    if BridgeFight ~= nil and (BridgeFight.fatigue or 0) >= BridgeTask.CHOP_REST_AT
+    if BridgeFight ~= nil and (BridgeFight.fatigue or 0) >= workValue("restFatigue", BridgeTask.CHOP_REST_AT)
             and (BridgeTask.current ~= nil or #BridgeTask.queue > 0) then
         if BridgeTask.chopBeginRest(body) then return true end
     end
@@ -7959,7 +7989,7 @@ function BridgeTask.kinds.moveCorpses.update(body)
         local f = 0
         pcall(function() f = tonumber(BridgeFight and BridgeFight.fatigue) or 0 end)
         BridgeTask.info = string.format("resting %d%%", math.floor((1 - f) * 100 + 0.5))
-        if f <= (1 - BridgeTask.CORPSE_RESUME_STAMINA) then
+        if f <= (1 - workValue("resumeStamina", BridgeTask.CORPSE_RESUME_STAMINA)) then
             BridgeTask.corpseRest = false
             standUp(body)
             BridgeTask.corpseResumeAt = Bridge.time + BridgeTask.CORPSE_RESUME_DELAY
@@ -7989,7 +8019,7 @@ function BridgeTask.kinds.moveCorpses.update(body)
 
 
     if BridgeTask.carryCorpse == nil and BridgeFight ~= nil
-            and (BridgeFight.fatigue or 0) >= BridgeTask.CORPSE_REST_AT
+            and (BridgeFight.fatigue or 0) >= workValue("restFatigue", BridgeTask.CORPSE_REST_AT)
             and (BridgeTask.current ~= nil or #BridgeTask.queue > 0) then
         BridgeTask.corpseRest = true
         BridgeTask.corpseRestSitAt = Bridge.time + BridgeTask.CORPSE_REST_SIT_DELAY

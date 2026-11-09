@@ -588,6 +588,37 @@ BridgeMove.nearReset = function() nearCache = nil end
 
 
 
+local function profileMoveSpeed()
+    local bf = rawget(_G, "BridgeFight")
+    if bf == nil or type(bf.profile) ~= "function" then return 1.0 end
+    local okP, prof = pcall(bf.profile)
+    if not okP or prof == nil or type(prof.moveSpeed) ~= "table" then return 1.0 end
+    local okL, level = pcall(bf.exhaustionLevel)
+    if not okL then return 1.0 end
+    local mult = tonumber(prof.moveSpeed[(tonumber(level) or 0) + 1])
+    if mult == nil then return 1.0 end
+    if mult < 0.60 then mult = 0.60 elseif mult > 1.0 then mult = 1.0 end
+    return mult
+end
+BridgeMove.exhaustionSpeed = profileMoveSpeed
+
+function BridgeMove.exhaustionRunBlocked(d, followAllowed)
+    local bf = rawget(_G, "BridgeFight")
+    if bf == nil or type(bf.profile) ~= "function" then return false end
+    local okP, prof = pcall(bf.profile)
+    if not okP or prof == nil then return false end
+    local limit = tonumber(prof.noRunFrom) or 99
+    if limit <= 0 then return false end
+    local okL, level = pcall(bf.exhaustionLevel)
+    if not okL or (tonumber(level) or 0) < limit then return false end
+    if followAllowed and Bridge ~= nil and Bridge.follow and type(bf.mode) == "function" then
+        local okM, mode = pcall(bf.mode)
+        local leash = okM and tonumber(mode and mode.leash) or nil
+        if leash ~= nil and (tonumber(d) or 0) > leash then return false end
+    end
+    return true
+end
+
 function BridgeMove.applyAnimVars(body)
     local ws = BridgeMove.blendOverride
     if ws == nil and BridgeMove.steering and BridgeMove.followWs ~= nil then ws = BridgeMove.followWs end
@@ -788,6 +819,18 @@ local GAIT_HOLD = 24
 
 
 local function drive(body, red, F, pf, bx, by, px, py, want, kind, running, d, err)
+    local bf = rawget(_G, "BridgeFight")
+    if bf ~= nil and type(bf.profile) == "function" then
+        local okP, prof = pcall(bf.profile)
+        if okP and prof ~= nil and type(prof.moveSpeed) == "table" then
+            local okL, level = pcall(bf.exhaustionLevel)
+            local mult = okL and tonumber(prof.moveSpeed[(tonumber(level) or 0) + 1]) or nil
+            if mult ~= nil then
+                if mult < 0.60 then mult = 0.60 elseif mult > 1.0 then mult = 1.0 end
+                if mult < 1.0 then want = want * mult end
+            end
+        end
+    end
     local s = clamp(want / math.max(0.02, BridgeMove.stepPerMul), 0.15, 1.6)
 
     local st = ""
@@ -893,6 +936,9 @@ local function drive(body, red, F, pf, bx, by, px, py, want, kind, running, d, e
             elseif wantT > walkMax + 0.012 or running then
                 gait = "Run"
             end
+        end
+        if gait == "Run" and BridgeMove.exhaustionRunBlocked(d, F == BridgeMove.follow and Bridge ~= nil and Bridge.follow == true) then
+            gait = "Walk"
         end
         local prevGait = F.gait
         if prevGait ~= nil and prevGait ~= gait then F.gaitAt = Bridge.time end
@@ -3983,6 +4029,23 @@ end
 
 
 BridgeMove.slowDist = 1.6
+local function capRun(walk, d)
+    if walk ~= "Run" then return walk end
+    local bf = rawget(_G, "BridgeFight")
+    if bf == nil or type(bf.profile) ~= "function" then return walk end
+    local okP, prof = pcall(bf.profile)
+    if not okP or prof == nil then return walk end
+    local limit = tonumber(prof.noRunFrom) or 99
+    if limit <= 0 then return walk end
+    local okL, level = pcall(bf.exhaustionLevel)
+    if not okL or (tonumber(level) or 0) < limit then return walk end
+    if Bridge ~= nil and Bridge.follow and type(bf.mode) == "function" then
+        local okM, mode = pcall(bf.mode)
+        local leash = okM and tonumber(mode and mode.leash) or nil
+        if leash ~= nil and (tonumber(d) or 0) > leash then return walk end
+    end
+    return "Walk"
+end
 local function pickWalkType(d)
     if BridgeMove.forcedWalk ~= nil then return BridgeMove.forcedWalk end
     local red = BridgeData.owner()
@@ -3990,9 +4053,9 @@ local function pickWalkType(d)
     if red ~= nil then
         pcall(function() running = red:isRunning() or red:isSprinting() end)
     end
-    if running or d > RUN.DIST then return "Run" end
+    if running or d > RUN.DIST then return capRun("Run", d) end
 
-    if BridgeMove.walkType == "Run" and d > RUN.STOP then return "Run" end
+    if BridgeMove.walkType == "Run" and d > RUN.STOP then return capRun("Run", d) end
     if BridgeMove.slowDist > 0 and BridgeMove.redMoving and d < BridgeMove.slowDist then return "SlowWalk" end
     return "Walk"
 end
@@ -6898,6 +6961,12 @@ function BridgeMove.goToward(body, x, y, z, way)
 
     if BridgeMove.cross ~= nil then crossEnd(body, "other move") end
     local pf = body:getPathFindBehavior2()
+    local exSpeed = BridgeMove.exhaustionSpeed()
+    if exSpeed < 1.0 then
+        pcall(function()
+            body:setVariable("WalkSpeed", ((BridgeMove.walkType == "SlowWalk") and 0.75 or 1.0) * exSpeed)
+        end)
+    end
     if way then
         if BridgeMove.climbStep(body) then return end
         local okDoor, atDoor = pcall(function() return BridgeMove.doorStep(body) end)

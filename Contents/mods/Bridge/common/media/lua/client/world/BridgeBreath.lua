@@ -57,6 +57,11 @@ local function stamina()
 end
 
 local function tierFor(s)
+    local bf = rawget(_G, "BridgeFight")
+    if bf ~= nil and type(bf.exhaustionLevel) == "function" then
+        local ok, tier = pcall(bf.exhaustionLevel, s)
+        if ok then return tier end
+    end
     if s >= 0.75 then return 0 end
     if s > 0.50 then return 1 end
     if s > 0.25 then return 2 end

@@ -2848,7 +2848,11 @@ function Bridge.speechOverlayDraw()
         local y = anchorY - totalH
         for i = 1, #entries do
             local entry = entries[i]
-            tm:DrawStringCentre(font, sx + 1, y + 1, entry.text, sr, sg, sb, sa * entry.alpha)
+            local a = sa * entry.alpha
+            tm:DrawStringCentre(font, sx - 1, y, entry.text, sr, sg, sb, a)
+            tm:DrawStringCentre(font, sx + 1, y, entry.text, sr, sg, sb, a)
+            tm:DrawStringCentre(font, sx, y - 1, entry.text, sr, sg, sb, a)
+            tm:DrawStringCentre(font, sx, y + 1, entry.text, sr, sg, sb, a)
             tm:DrawStringCentre(font, sx, y, entry.text, cr, cg, cb, entry.alpha)
             y = y + lineH
         end
@@ -2857,8 +2861,8 @@ function Bridge.speechOverlayDraw()
 end
 
 
-if Events ~= nil and Events.OnPostUIDraw ~= nil then
-    Events.OnPostUIDraw.Add(Bridge.speechOverlayDraw)
+if Events ~= nil and Events.OnPreUIDraw ~= nil then
+    Events.OnPreUIDraw.Add(Bridge.speechOverlayDraw)
 end
 
 
@@ -4511,13 +4515,20 @@ local function updateZombieBody(body)
         Bridge.sneakVar(body, sneak == true)
         pcall(function() Bridge.sneakTrace(body, red, sneak == true) end)
     end
-    body:setWalkType(BridgeMove.walkType)
-    if BridgeMove.walkType ~= Bridge.walkTypeSet then
+    local walk = BridgeMove.walkType
+    local walkDist = nil
+    if red ~= nil then walkDist = dist2d(body, red) end
+    if walk == "Run" and type(BridgeMove.exhaustionRunBlocked) == "function"
+            and BridgeMove.exhaustionRunBlocked(walkDist, Bridge.follow == true) then
+        walk = "Walk"
+    end
+    body:setWalkType(walk)
+    if walk ~= Bridge.walkTypeSet then
 
 
-        Bridge.walkTypeSet = BridgeMove.walkType
+        Bridge.walkTypeSet = walk
         pcall(function() body:setSpeedTypeFromWalkType() end)
-        pcall(function() body:setVariable("WalkSpeed", (BridgeMove.walkType == "SlowWalk") and 0.75 or 1.0) end)
+        pcall(function() body:setVariable("WalkSpeed", (walk == "SlowWalk") and 0.75 or 1.0) end)
     end
     body:setSpeedMod((BridgeMove.moving and Bridge.follow) and BridgeMove.speed or 1)
 
@@ -5036,6 +5047,7 @@ local function updateZombieBody(body)
     end
 
     handProbe(body, "before fight")
+    pcall(BridgeFight.staminaTick, body)
     local followPriority = false
     if Bridge.follow and BridgeMove ~= nil and type(BridgeMove.followPriority) == "function" then
         local okPri, pri = pcall(BridgeMove.followPriority, body, red)
@@ -5894,7 +5906,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
-    exercise = true, endurance = true, skills = true, task = true, shower = true, sound = true, meet = true,
+    exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, sound = true, meet = true,
     perf = true, gunstate = true, loscombatselftest = true }
 
 
@@ -6192,6 +6204,10 @@ function Bridge.run(line)
         BridgeFight.enabled = (parts[3] ~= "off")
         if not BridgeFight.enabled then BridgeFight.reset(Bridge.body) end
         return "fight=" .. tostring(BridgeFight.enabled)
+    end
+    if cmd == "exhaustion" then
+        if BridgeFight == nil or type(BridgeFight.setExhaustion) ~= "function" then return "no fight module" end
+        return BridgeFight.setExhaustion(parts[3])
     end
     if cmd == "stamina" then
         if BridgeFight == nil then return "no fight module" end

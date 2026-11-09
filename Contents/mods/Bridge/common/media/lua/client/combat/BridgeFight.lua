@@ -24,6 +24,73 @@ local RESTED_SAY = 0.2
 BridgeFight.TIRED_THRESHOLD = TIRED_SAY
 function BridgeFight.tiredThreshold() return TIRED_SAY end
 
+BridgeFight.EXHAUSTION_PROFILES = {
+    [1] = {
+        id = "default", moveSpeed = { 1.0, 1.0, 1.0, 1.0, 1.0 }, noRunFrom = 99,
+        moveDrain = 0.0, swingMode = "fatigue", critMode = "fatigue",
+        missScale = 1.0, damageScale = 1.0,
+        work = { chopStart = 0.40, corpseStart = 0.40, pryStart = 0.30,
+            restFatigue = 0.90, resumeStamina = 0.80 },
+        speech = "legacy", needRestPool = false,
+    },
+    [2] = {
+        id = "player", moveSpeed = { 1.0, 0.95, 0.90, 0.80, 0.60 }, noRunFrom = 2,
+        moveDrain = 0.25, swingMode = "level", critMode = "level",
+        missScale = 0.0, damageScale = 0.0,
+        work = { chopStart = 0.40, corpseStart = 0.40, pryStart = 0.30,
+            restFatigue = 0.90, resumeStamina = 0.80 },
+        speech = "level", needRestPool = true,
+    },
+    [3] = {
+        id = "harsh", moveSpeed = { 1.0, 0.95, 0.90, 0.80, 0.60 }, noRunFrom = 2,
+        moveDrain = 0.50, swingMode = "fatigue", critMode = "fatigue",
+        missScale = 1.0, damageScale = 1.0,
+        work = { chopStart = 0.50, corpseStart = 0.50, pryStart = 0.50,
+            restFatigue = 0.75, resumeStamina = 0.75 },
+        speech = "level", needRestPool = true,
+    },
+}
+
+BridgeFight.exhaustionOn = true
+BridgeFight.profileTick = nil
+BridgeFight.profileValue = nil
+BridgeFight.saidLevel = 0
+BridgeFight.recoveredSaid = nil
+
+function BridgeFight.exhaustionLevel(stamina)
+    local s = tonumber(stamina)
+    if s == nil then s = 1 - (tonumber(BridgeFight.fatigue) or 0) end
+    if s > 0.75 then return 0 end
+    if s > 0.50 then return 1 end
+    if s > 0.25 then return 2 end
+    if s > 0.10 then return 3 end
+    return 4
+end
+
+function BridgeFight.profile()
+    if BridgeFight.exhaustionOn == false then return BridgeFight.EXHAUSTION_PROFILES[1] end
+    local tick = tonumber(Bridge and Bridge.tick) or 0
+    if BridgeFight.profileTick == tick and BridgeFight.profileValue ~= nil then
+        return BridgeFight.profileValue
+    end
+    local index = 1
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        local ok, value = pcall(BridgeData.sandboxNumber, "ExhaustionImpact", 1, 1, 3)
+        if ok then index = tonumber(value) or 1 end
+    end
+    if index < 1 then index = 1 elseif index > 3 then index = 3 end
+    local value = BridgeFight.EXHAUSTION_PROFILES[index] or BridgeFight.EXHAUSTION_PROFILES[1]
+    BridgeFight.profileTick, BridgeFight.profileValue = tick, value
+    return value
+end
+
+function BridgeFight.setExhaustion(value)
+    local off = value == "off" or value == false
+    BridgeFight.exhaustionOn = not off
+    BridgeFight.profileTick, BridgeFight.profileValue = nil, nil
+    return "exhaustion=" .. (off and "off" or "on")
+end
+
 local ATTACK_TIME = 28
 SWING.LEN = 60
 SWING.MIN = 35
@@ -453,7 +520,13 @@ local function swingFrames(item)
     if len < SWING.MIN then len = SWING.MIN end
     if len > SWING.MAX then len = SWING.MAX end
 
-    len = math.floor(len * (1 + TIRED_SWING * BridgeFight.fatigue) + 0.5)
+    local prof = BridgeFight.profile()
+    if prof.swingMode == "level" then
+        local f = 1 / math.max(0.80, 1 - 0.07 * BridgeFight.exhaustionLevel())
+        len = math.floor(len * f + 0.5)
+    else
+        len = math.floor(len * (1 + TIRED_SWING * BridgeFight.fatigue) + 0.5)
+    end
 
 
     return len, math.min(math.floor(len * 0.45 + 0.5), HIT_FALLBACK_MAX)
@@ -498,7 +571,7 @@ local function missChance(body)
     local crowd = crowdAround(body)
     BridgeFight.crowd = crowd
     local fromCrowd = math.min(CROWD.MISS_MAX, CROWD.MISS * math.max(0, crowd - 1))
-    local chance = MISS_CHANCE + TIRED_MISS * BridgeFight.fatigue + fromCrowd
+    local chance = MISS_CHANCE + TIRED_MISS * BridgeFight.profile().missScale * BridgeFight.fatigue + fromCrowd
     BridgeFight.lastMiss = chance
     return math.min(90, chance)
 end
@@ -507,6 +580,31 @@ end
 
 local function sayFatigue()
     if BridgeMoments == nil then return end
+    local prof = BridgeFight.profile()
+    if prof.speech == "level" then
+        local level = BridgeFight.exhaustionLevel()
+        if level >= 3 then BridgeFight.recoveredSaid = false end
+        if level > (BridgeFight.saidLevel or 0) then
+            local event, cool = nil, 0
+            if level == 1 or level == 2 then
+                event, cool = "EvWinded", 120 * 60
+            elseif level == 3 then
+                event, cool = "EvSpent", 180 * 60
+            elseif level == 4 then
+                event, cool = "EvExhausted", 240 * 60
+            end
+            local said = false
+            if event ~= nil then
+                pcall(function() said = BridgeMoments.say(event, cool, true, event) == true end)
+            end
+            if said then BridgeFight.saidLevel = level end
+        elseif level <= 2 and BridgeFight.recoveredSaid == false then
+            local said = false
+            pcall(function() said = BridgeMoments.say("EvRecovered", 120 * 60, true, "EvRecovered") == true end)
+            if said then BridgeFight.recoveredSaid = true end
+        end
+        return
+    end
 
 
     if not BridgeFight.saidTired and BridgeFight.fatigue >= TIRED_SAY then
@@ -520,6 +618,38 @@ local function sayFatigue()
         pcall(function() said = BridgeMoments.say("EvRested", 2 * 3600, true) == true end)
         if said then BridgeFight.saidTired = false end
     end
+end
+
+function BridgeFight.staminaTick(body)
+    if Bridge == nil or body == nil then return end
+    if not Bridge.alive() or Bridge.kind ~= "zombie" then return end
+    local prof = BridgeFight.profile()
+    if (tonumber(prof.moveDrain) or 0) <= 0 then return end
+    if Bridge.mp then
+        local owner, player = nil, nil
+        pcall(function() owner = BridgeData.owner() end)
+        pcall(function() player = getPlayer() end)
+        if owner == nil or player == nil or owner ~= player then return end
+    end
+    local move = rawget(_G, "BridgeMove")
+    if move == nil then return end
+    if move.walkType ~= "Run" then return end
+    if move.stepTick == nil or (Bridge.time - move.stepTick) > 5 then return end
+    local red, sprinting = nil, false
+    pcall(function() red = BridgeData.owner() end)
+    if red ~= nil then pcall(function() sprinting = red:isSprinting() == true end) end
+    local globals = rawget(_G, "ZomboidGlobals")
+    local rate
+    if sprinting and move.redMoving == true then
+        rate = (globals ~= nil and tonumber(globals.SprintingEnduranceReduce)) or 0.000455
+    else
+        rate = (globals ~= nil and tonumber(globals.RunningEnduranceReduce)) or 0.000052
+    end
+    local before = BridgeFight.exhaustionLevel()
+    local f = (tonumber(BridgeFight.fatigue) or 0) + rate * (tonumber(prof.moveDrain) or 0) * (tonumber(Bridge.dt) or 1)
+    if f > 1 then f = 1 elseif f < 0 then f = 0 end
+    BridgeFight.fatigue = f
+    if BridgeFight.exhaustionLevel() > before then sayFatigue() end
 end
 
 
@@ -623,7 +753,9 @@ local function critRoll(item)
     if type(critChance) ~= "number" then critChance = 0 end
     if type(critMult) ~= "number" or critMult <= 0 then critMult = 1 end
     local _, _, eff = weaponSkill(item)
-    critChance = math.max(10, math.min(90, critChance + CRIT_PER_LEVEL * eff - TIRED_CRIT * BridgeFight.fatigue))
+    local tired = TIRED_CRIT * BridgeFight.fatigue
+    if BridgeFight.profile().critMode == "level" then tired = 5 * BridgeFight.exhaustionLevel() end
+    critChance = math.max(10, math.min(90, critChance + CRIT_PER_LEVEL * eff - tired))
     return ZombRand(100) < critChance, critChance, critMult
 end
 
@@ -690,7 +822,7 @@ local function computeSwing(item, fixedDmg)
         rawDmg = dmg
         if crit then dmg = dmg * math.max(2, critMult) end
         dmg = dmg * mult
-        dmg = dmg * (1 - TIRED_DAMAGE * BridgeFight.fatigue)
+        dmg = dmg * (1 - TIRED_DAMAGE * BridgeFight.profile().damageScale * BridgeFight.fatigue)
         if GROUND_BONUS_ON == 1 and BridgeFight.floorSwing then
             dmg = dmg * math.max(critMult, 5)
         end
@@ -1312,6 +1444,8 @@ end
 function BridgeFight.resetFatigue()
     BridgeFight.fatigue = 0
     BridgeFight.saidTired = false
+    BridgeFight.saidLevel = 0
+    BridgeFight.recoveredSaid = nil
 end
 
 
@@ -1353,6 +1487,8 @@ function BridgeFight.applyStamina(rec)
     if left < 0 then left = 0 end
     BridgeFight.fatigue = left
     BridgeFight.saidTired = false
+    BridgeFight.saidLevel = 0
+    BridgeFight.recoveredSaid = nil
     if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { fatigue = left }) end)
     end
@@ -3374,7 +3510,7 @@ function BridgeFight.update(body)
         local st = t:getActionStateName()
         crossing = st == "climbfence" or st == "climbwindow"
     end)
-    if crossing then
+    if crossing and d > (range or 0) + 0.1 then
         BridgeFight.info = "target crossing edge"
         return true
     end
