@@ -57,6 +57,11 @@ BridgeTask.WALK_TIMEOUT = 20 * SECOND
 BridgeTask.WALK_NO_PROGRESS = 5 * SECOND
 BridgeTask.PATH_FAIL_LIMIT = 2
 BridgeTask.WINDOW_TRY_LIMIT = 2
+BridgeTask.WATCHDOG_ENABLED = true
+BridgeTask.WATCHDOG_WINDOW = 60
+BridgeTask.WATCHDOG_FLIPS = 24
+BridgeTask.WATCHDOG_COOLDOWN = 600
+BridgeTask.DIAG_GAP = 300
 
 
 BridgeTask.SIT_RANGE = 0.35
@@ -3180,6 +3185,161 @@ function BridgeTask.progress()
     return nil
 end
 
+local function safeItemName(item)
+    local name = nil
+    pcall(function()
+        if item ~= nil and item.getName ~= nil then name = item:getName() end
+    end)
+    if name == nil then return "-" end
+    return tostring(name)
+end
+
+function BridgeTask.statusLine()
+    local t = BridgeTask.current
+    local tx, ty, tz = "-", "-", "-"
+    if t ~= nil then
+        tx, ty, tz = tostring(t.x or "-"), tostring(t.y or "-"), tostring(t.z or "-")
+    end
+    local spot = BridgeTask.spot
+    local sx, sy = "-", "-"
+    if spot ~= nil then
+        sx, sy = tostring(spot.x or "-"), tostring(spot.y or "-")
+    end
+    local listN = 0
+    if BridgeTask.lootList ~= nil then listN = #BridgeTask.lootList end
+    local nextAt = "-"
+    if BridgeTask.lootNextAt ~= nil then
+        nextAt = string.format("%.1f", BridgeTask.lootNextAt - Bridge.time)
+    end
+    local gestures = 0
+    if BridgeInventory ~= nil and BridgeInventory.gestures ~= nil then
+        gestures = #BridgeInventory.gestures
+    end
+    local qn = BridgeTask.queue ~= nil and #BridgeTask.queue or 0
+    return string.format("kind=%s phase=%s info=%s active=%s target=%s,%s,%s queue=%d spot=%s,%s progressAge=%.1f still=%s bestD=%s pathFails=%s lootSettled=%s list=%d idx=%s pending=%s nextAt=%s noRoom=%s gestures=%d",
+        tostring(BridgeTask.kind), tostring(BridgeTask.phase), tostring(BridgeTask.info), tostring(BridgeTask.active),
+        tx, ty, tz, qn, sx, sy,
+        Bridge.time - (BridgeTask.progressAt or Bridge.time),
+        tostring(BridgeTask.still or 0), tostring(BridgeTask.bestD or "-"), tostring(BridgeTask.pathFails or 0),
+        tostring(BridgeTask.lootSettled), listN, tostring(BridgeTask.lootIdx or "-"),
+        safeItemName(BridgeTask.lootPending), nextAt, tostring(BridgeTask.lootNoRoom or 0), gestures)
+end
+
+function BridgeTask.bodyLine()
+    local body = Bridge.body
+    if body == nil then return "body=-" end
+    local bx, by, bz = 0, 0, 0
+    local asn, bump, fin = "-", "-", "-"
+    pcall(function() bx, by, bz = body:getX(), body:getY(), body:getZ() end)
+    pcall(function() asn = tostring(body:getActionStateName()) end)
+    pcall(function() bump = tostring(body:getBumpType()) end)
+    pcall(function() fin = tostring(body:getVariableBoolean("BumpAnimFinished")) end)
+    local pathing, moving, steering, hold = false, false, false, false
+    if BridgeMove ~= nil then
+        pathing = BridgeMove.pathing == true
+        moving = BridgeMove.moving == true
+        steering = BridgeMove.steering == true
+    end
+    hold = Bridge.holdPos ~= nil
+    local pd = "-"
+    local red = BridgeData ~= nil and BridgeData.owner ~= nil and BridgeData.owner() or nil
+    if red ~= nil then
+        pcall(function()
+            local dx, dy = body:getX() - red:getX(), body:getY() - red:getY()
+            pd = string.format("%.1f", math.sqrt(dx * dx + dy * dy))
+        end)
+    end
+    return string.format("body=%.2f,%.2f,%.2f asn=%s bump=%s fin=%s pathing=%s moving=%s steering=%s holdPos=%s playerD=%s",
+        bx, by, bz, tostring(asn), tostring(bump), tostring(fin),
+        tostring(pathing), tostring(moving), tostring(steering), tostring(hold), tostring(pd))
+end
+
+function BridgeTask.diag()
+    if not BridgeTask.active then return end
+    local now = Bridge.time
+    local t = BridgeTask.current
+    local tx = t ~= nil and t.x or nil
+    local ty = t ~= nil and t.y or nil
+    local tz = t ~= nil and t.z or nil
+    local qn = BridgeTask.queue ~= nil and #BridgeTask.queue or 0
+    local changed = BridgeTask.diagKind ~= BridgeTask.kind
+        or BridgeTask.diagPhase ~= BridgeTask.phase
+        or BridgeTask.diagTx ~= tx
+        or BridgeTask.diagTy ~= ty
+        or BridgeTask.diagTz ~= tz
+        or BridgeTask.diagQN ~= qn
+        or BridgeTask.diagLootIdx ~= BridgeTask.lootIdx
+        or BridgeTask.diagPending ~= BridgeTask.lootPending
+    if changed and BridgeTask.diagLastAt ~= nil and (now - BridgeTask.diagLastAt) < 60 then
+        changed = false
+    end
+    local due = BridgeTask.diagNextAt == nil or now >= BridgeTask.diagNextAt
+    if not due and not changed then return end
+    BridgeTask.diagKind = BridgeTask.kind
+    BridgeTask.diagPhase = BridgeTask.phase
+    BridgeTask.diagTx = tx
+    BridgeTask.diagTy = ty
+    BridgeTask.diagTz = tz
+    BridgeTask.diagQN = qn
+    BridgeTask.diagLootIdx = BridgeTask.lootIdx
+    BridgeTask.diagPending = BridgeTask.lootPending
+    BridgeTask.diagNextAt = now + BridgeTask.DIAG_GAP
+    BridgeTask.diagLastAt = now
+    log("taskdiag " .. BridgeTask.statusLine() .. " " .. BridgeTask.bodyLine())
+end
+
+function BridgeTask.watchdog(body, def)
+    if not BridgeTask.WATCHDOG_ENABLED then return end
+    if not BridgeTask.active or body == nil or def == nil then return end
+    local kind = BridgeTask.kind
+    if kind == "sit" or kind == "lay" or kind == "sleep" or kind == "exercise"
+        or kind == "anim" or kind == "hug" or kind == "shower" or kind == "wash" then
+        return
+    end
+    local now = Bridge.time
+    if BridgeTask.watchCooldown ~= nil and now < BridgeTask.watchCooldown then return end
+    local moving = BridgeMove ~= nil and (BridgeMove.pathing or BridgeMove.moving or BridgeMove.steering)
+    local busy = false
+    if BridgeMove ~= nil and (BridgeMove.doorAct ~= nil or BridgeMove.window ~= nil
+        or BridgeMove.cross ~= nil or BridgeMove.pendingClimb ~= nil) then busy = true end
+    if BridgeTask.lootPending ~= nil then busy = true end
+    if BridgeTask.lootNextAt ~= nil and now < BridgeTask.lootNextAt then busy = true end
+    if BridgeInventory ~= nil and BridgeInventory.gestureRunning ~= nil and BridgeInventory.gestureRunning() then busy = true end
+    if moving or busy then
+        BridgeTask.watchFlips = 0
+        BridgeTask.watchPrev = nil
+        BridgeTask.watchSince = now
+        return
+    end
+    local asn, bump, fin = "", "", false
+    pcall(function() asn = tostring(body:getActionStateName()) end)
+    pcall(function() bump = tostring(body:getBumpType()) end)
+    pcall(function() fin = body:getVariableBoolean("BumpAnimFinished") == true end)
+    if BridgeTask.watchSince == nil or (now - BridgeTask.watchSince) >= BridgeTask.WATCHDOG_WINDOW then
+        BridgeTask.watchSince = now
+        BridgeTask.watchFlips = 0
+        BridgeTask.watchPrev = nil
+    end
+    local standing = (bump == "Stand" or bump == "" or bump == "nil") and not fin
+    local flipState = standing and (asn == "bumped" or asn == "idle")
+    if flipState and BridgeTask.watchPrev ~= nil and BridgeTask.watchPrev ~= asn then
+        if (BridgeTask.watchPrev == "bumped" and asn == "idle")
+            or (BridgeTask.watchPrev == "idle" and asn == "bumped") then
+            BridgeTask.watchFlips = (BridgeTask.watchFlips or 0) + 1
+        end
+    end
+    BridgeTask.watchPrev = flipState and asn or nil
+    if (BridgeTask.watchFlips or 0) >= BridgeTask.WATCHDOG_FLIPS then
+        local flips = BridgeTask.watchFlips
+        BridgeTask.watchFlips = 0
+        BridgeTask.watchPrev = nil
+        BridgeTask.watchSince = now
+        BridgeTask.watchCooldown = now + BridgeTask.WATCHDOG_COOLDOWN
+        log("task watchdog: oscillation flips=" .. tostring(flips) .. " " .. BridgeTask.statusLine() .. " " .. BridgeTask.bodyLine())
+        BridgeTask.cancel("oscillation")
+    end
+end
+
 function BridgeTask.update(body)
     if not BridgeTask.active then return false end
     if body == nil or Bridge.body ~= body or BridgeTask.body ~= body then
@@ -3226,6 +3386,11 @@ function BridgeTask.update(body)
             if p ~= nil then BridgeProgress.show(p) end
         end
     end)
+    if BridgeTask.active then
+        pcall(BridgeTask.diag)
+        pcall(BridgeTask.watchdog, body, def)
+        if not BridgeTask.active then return false end
+    end
     return res
 end
 

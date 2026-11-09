@@ -6665,6 +6665,12 @@ function Bridge.run(line)
             line = line .. string.format(" stamina=%.2f cd_h=%.1f", 1 - BridgeExercise.fatigue(),
                 BridgeExercise.cooldownLeft(nil) or 0)
         end
+        if BridgeTask.statusLine ~= nil then
+            line = line .. " " .. tostring(BridgeTask.statusLine())
+        end
+        if BridgeTask.bodyLine ~= nil then
+            line = line .. " " .. tostring(BridgeTask.bodyLine())
+        end
         return line
     end
 

@@ -904,14 +904,14 @@ BridgeWorkSelect.kinds = {
     openDoors = {
         collect = function(b) return BridgeWorkSelect.doorsIn(b, "open") end,
         max = BridgeWorkSelect.MAX_DOORS,
-        maxSide = 8,
+        maxSide = 10,
         min = 1,
         noneSay = "JobNoDoorsOpen",
     },
     closeDoors = {
         collect = function(b) return BridgeWorkSelect.doorsIn(b, "close") end,
         max = BridgeWorkSelect.MAX_DOORS,
-        maxSide = 8,
+        maxSide = 10,
         min = 1,
         noneSay = "JobNoDoorsClose",
     },
