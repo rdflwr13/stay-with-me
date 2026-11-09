@@ -24,7 +24,7 @@ local COMBAT_NEAR = 10
 local REPEAT_SEC = {
     Chat = 30, Thanks = 45, Joke = 90, Compliment = 180, Comfort = 180, Flirt = 300,
     Handshake = 600, FistBump = 600, ShoulderMassage = 1800, Hug = 300,
-    SlowDance = 1800, Kiss = 3600, SlowDance2 = 3600,
+    SlowDance = 1800, Kiss = 3600,
 }
 
 local BUSY_DIST = 8
@@ -1792,9 +1792,6 @@ BridgeSocial.ACTIONS = {
     { id = "Kiss", gate = function(r) return physOn() and BridgeSocial.romanceOpen(r) and r.r >= 40 and r.f >= 55 and r.days >= 5 end,
       physical = true, noRoll = true, group = "affection", animId = "Kiss", mood = "Kiss", romantic = true,
       good = { 2, 5 }, bad = { 0, 0 } },
-    { id = "SlowDance2", gate = function(r) return physOn() and BridgeSocial.romanceOpen(r) and r.r >= 50 and r.f >= 60 and r.days >= 6 end,
-      physical = true, noRoll = true, group = "affection", animId = "SlowDance2", mood = "SlowDance2", romantic = true,
-      good = { 2, 4 }, bad = { 0, 0 } },
 }
 
 local function actionById(id)
@@ -1832,7 +1829,6 @@ function BridgeSocial.talkBlock(id, r, calm, busy, animWhy)
     if a ~= nil and a.romantic and recentFight() then return "AfterFight" end
     local since = Bridge.time - (BridgeSocial.last[id] or -999999)
     if since < BridgeSocial.repeatSec(id, r, calm) * 60 then return "Repeat" end
-    if a ~= nil and id == "SlowDance2" and not calm then return "NotNow" end
     if a ~= nil then
         local df, dr = a.good[1], a.good[2]
         if df > 0 or dr > 0 then

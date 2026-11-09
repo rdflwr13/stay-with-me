@@ -94,6 +94,7 @@ Bridge.scareStopped = 0
 Bridge.hiddenSince = nil
 Bridge.speakGraceUntil = 0
 Bridge.speechLines = {}
+Bridge.subtitleLines = {}
 Bridge.parked = false
 Bridge.mp = false
 Bridge.spawnAsked = nil
@@ -2598,6 +2599,12 @@ function Bridge.speechColorRaw()
     local sandbox = nil
     pcall(function() sandbox = BridgeData.sandbox() end)
     if type(sandbox) ~= "table" then return nil end
+    if sandbox.SpeechColorR ~= nil or sandbox.SpeechColorG ~= nil or sandbox.SpeechColorB ~= nil then
+        local r = math.floor(BridgeData.sandboxNumber("SpeechColorR", Bridge.SPEECH_COLOR_DEFAULT[1], 0, 255))
+        local g = math.floor(BridgeData.sandboxNumber("SpeechColorG", Bridge.SPEECH_COLOR_DEFAULT[2], 0, 255))
+        local b = math.floor(BridgeData.sandboxNumber("SpeechColorB", Bridge.SPEECH_COLOR_DEFAULT[3], 0, 255))
+        return string.format("%d,%d,%d", r, g, b)
+    end
     local text = sandbox.SpeechColor
     if type(text) == "string" then return text end
     return nil
@@ -2686,6 +2693,34 @@ function Bridge.speechMaxLines()
 end
 
 
+function Bridge.companionSpeechMode()
+    local mode = 1
+    pcall(function()
+        mode = BridgeData.sandboxNumber("CompanionSpeech", 1, 1, 3)
+    end)
+    mode = math.floor(tonumber(mode) or 1)
+    if mode < 1 then mode = 1 end
+    if mode > 3 then mode = 3 end
+    if Bridge.speechLoggedMode ~= mode then
+        Bridge.speechLoggedMode = mode
+        log("companion speech mode=" .. tostring(mode))
+    end
+    return mode
+end
+
+
+function Bridge.speechBubblesOn()
+    local mode = Bridge.companionSpeechMode()
+    return mode == 1 or mode == 3
+end
+
+
+function Bridge.subtitlesOn()
+    local mode = Bridge.companionSpeechMode()
+    return mode == 2 or mode == 3
+end
+
+
 function Bridge.clearSpeechOverlay()
     Bridge.speechLines = {}
 end
@@ -2771,7 +2806,8 @@ local function speechWrap(text)
 end
 
 
-local function speechWrapMeasured(font, text)
+local function speechWrapMeasured(font, text, maxWidth, hardSplit)
+    maxWidth = maxWidth or 420
     local rows = {}
     local tm = getTextManager()
     local source = tostring(text or "") .. "\n"
@@ -2784,11 +2820,27 @@ local function speechWrapMeasured(font, text)
                 local attempt = line == "" and word or (line .. " " .. word)
                 local width = 0
                 pcall(function() width = tm:MeasureStringX(font, attempt) end)
-                if line ~= "" and width > 420 then
+                if line ~= "" and width > maxWidth then
                     rows[#rows + 1] = line
                     line = word
                 else
                     line = attempt
+                end
+                if hardSplit then
+                    while #line > 1 do
+                        local lineWidth = 0
+                        pcall(function() lineWidth = tm:MeasureStringX(font, line) end)
+                        if lineWidth <= maxWidth then break end
+                        local cut = #line - 1
+                        while cut > 1 do
+                            local pieceWidth = 0
+                            pcall(function() pieceWidth = tm:MeasureStringX(font, string.sub(line, 1, cut)) end)
+                            if pieceWidth <= maxWidth then break end
+                            cut = cut - 1
+                        end
+                        rows[#rows + 1] = string.sub(line, 1, cut)
+                        line = string.sub(line, cut + 1)
+                    end
                 end
             end
             if line ~= "" then rows[#rows + 1] = line end
@@ -2799,6 +2851,10 @@ local function speechWrapMeasured(font, text)
 end
 
 function Bridge.speechOverlayDraw()
+    if not Bridge.speechBubblesOn() then
+        if #Bridge.speechLines > 0 then Bridge.clearSpeechOverlay() end
+        return
+    end
     local body = Bridge.body
     local owner = BridgeData.owner()
     if body == nil or owner == nil then return end
@@ -2866,6 +2922,123 @@ if Events ~= nil and Events.OnPreUIDraw ~= nil then
 end
 
 
+function Bridge.clearSubtitles()
+    Bridge.subtitleLines = {}
+end
+
+
+function Bridge.subtitleApplies(z)
+    if z == nil then return false end
+    if z == Bridge.body then return true end
+    if z == BridgeData.owner() then return true end
+    return false
+end
+
+
+function Bridge.subtitleAdd(z, text)
+    local s = speechClean(text)
+    if s == "" then return false end
+    local name = tostring(Bridge.companionName())
+    local prefix = name .. ": "
+    if string.sub(s, 1, #prefix) ~= prefix then s = prefix .. s end
+    local limit = Bridge.speechMaxLines()
+    while #Bridge.subtitleLines >= limit do
+        table.remove(Bridge.subtitleLines, 1)
+    end
+    Bridge.subtitleLines[#Bridge.subtitleLines + 1] = {
+        text = s,
+        untilMs = getTimestampMs() + Bridge.speechHoldMs(),
+    }
+    return true
+end
+
+
+function Bridge.subtitlePrune()
+    local now = 0
+    pcall(function() now = getTimestampMs() end)
+    for i = #Bridge.subtitleLines, 1, -1 do
+        if now >= Bridge.subtitleLines[i].untilMs then
+            table.remove(Bridge.subtitleLines, i)
+        end
+    end
+end
+
+
+function Bridge.subtitlesBlockedByUI()
+    local blocked = false
+    pcall(function()
+        if UIManager ~= nil and UIManager.isModalVisible ~= nil
+            and UIManager.isModalVisible() then blocked = true end
+        if not blocked and ISWorldMap_instance ~= nil
+            and ISWorldMap_instance:isVisible() then blocked = true end
+    end)
+    return blocked
+end
+
+
+function Bridge.subtitleDraw()
+    if not Bridge.subtitlesOn() then
+        if #Bridge.subtitleLines > 0 then Bridge.clearSubtitles() end
+        return
+    end
+    Bridge.subtitlePrune()
+    if #Bridge.subtitleLines == 0 then return end
+    if Bridge.subtitlesBlockedByUI() then return end
+    if BridgeData == nil or BridgeData.owner() == nil then return end
+    local ok, err = pcall(function()
+        local sw = getCore():getScreenWidth()
+        local sh = getCore():getScreenHeight()
+        local font = Bridge.speechFont()
+        local cr, cg, cb = Bridge.speechColor()
+        local sr, sg, sb, sa = Bridge.speechShadow()
+        local tm = getTextManager()
+        local lineH = tm:getFontHeight(font) + 1
+        local maxWidth = sw * 0.55
+        local now = 0
+        pcall(function() now = getTimestampMs() end)
+        local entries = {}
+        for i = 1, #Bridge.subtitleLines do
+            local line = Bridge.subtitleLines[i]
+            local alpha = 1
+            local remaining = (line.untilMs or 0) - now
+            if remaining < SPEECH_FADE_MS then
+                alpha = remaining / SPEECH_FADE_MS
+                if alpha < 0 then alpha = 0 end
+            end
+            if alpha > 0 then
+                local rows = speechWrapMeasured(font, line.text, maxWidth, true)
+                for r = 1, #rows do
+                    if rows[r] ~= "" then
+                        entries[#entries + 1] = { text = rows[r], alpha = alpha }
+                    end
+                end
+            end
+        end
+        while #entries > 6 do
+            table.remove(entries, 1)
+        end
+        if #entries == 0 then return end
+        local y = math.floor(sh * 0.82) - #entries * lineH
+        local cx = sw / 2
+        for i = 1, #entries do
+            local entry = entries[i]
+            tm:DrawStringCentre(font, cx + 1, y + 1, entry.text, sr, sg, sb, sa * entry.alpha)
+            tm:DrawStringCentre(font, cx, y, entry.text, cr, cg, cb, entry.alpha)
+            y = y + lineH
+        end
+    end)
+    if not ok and Bridge.subtitleWarned ~= true then
+        Bridge.subtitleWarned = true
+        warn("subtitle draw failed: " .. tostring(err))
+    end
+end
+
+
+if Events ~= nil and Events.OnPostUIDraw ~= nil then
+    Events.OnPostUIDraw.Add(Bridge.subtitleDraw)
+end
+
+
 function Bridge.speechLineFor(z, text, expectId)
     if z == nil then return false, "no body" end
     if expectId ~= nil then
@@ -2876,13 +3049,27 @@ function Bridge.speechLineFor(z, text, expectId)
         pcall(function() marked = z:getVariableBoolean(Bridge.BODY_VAR) == true end)
         if not marked then return false, "not companion" end
     end
+    local mode = Bridge.companionSpeechMode()
+    local subtitles = (mode == 2 or mode == 3)
+    local bubbles = (mode == 1 or mode == 3)
+    local subtitleOK = false
+    if subtitles and Bridge.subtitleApplies(z) then
+        subtitleOK = Bridge.subtitleAdd(z, text) == true
+    end
     local maxLines = Bridge.speechMaxLines()
-    if speechOverlayApplies(z) then
+    if bubbles and speechOverlayApplies(z) then
         if maxLines > 1 then
             Bridge.speechOverlayAdd(z, text)
             return true
         end
         Bridge.clearSpeechOverlay()
+    end
+    if not bubbles then
+        if subtitleOK then return true end
+        if subtitles and Bridge.subtitleApplies(z) and tostring(text or "") ~= "" then
+            return true
+        end
+        return false, "speech display off"
     end
     local fontIndex = Bridge.speechFontIndex()
     local seconds = Bridge.speechSeconds()
@@ -2915,6 +3102,10 @@ end
 function Bridge.speechBusy()
     Bridge.speechOverlayPrune()
     if #Bridge.speechLines > 0 then return true end
+    if Bridge.subtitlesOn() then
+        Bridge.subtitlePrune()
+        if #Bridge.subtitleLines > 0 then return true end
+    end
     local now = 0
     pcall(function() now = getTimestampMs() end)
     return now < (Bridge.speakUntilMs or 0)
@@ -2934,11 +3125,13 @@ function Bridge.speechInfo()
     local typeFace = Bridge.SPEECH_FACES[typeIndex]
     local typeName = typeFace ~= nil and typeFace.name or "Default"
     local cr, cg, cb = Bridge.speechColor()
-    return string.format("font=%s type=%s color=%d,%d,%d seconds=%s remaining=%dms",
+    if Bridge.subtitlesOn() then Bridge.subtitlePrune() end
+    return string.format("font=%s type=%s color=%d,%d,%d seconds=%s remaining=%dms mode=%d subtitles=%d",
         tostring(SPEECH_FONT_NAMES[Bridge.speechFontIndex()] or "Dialogue"),
         tostring(typeName),
         math.floor(cr * 255 + 0.5), math.floor(cg * 255 + 0.5), math.floor(cb * 255 + 0.5),
-        tostring(Bridge.speechSeconds()), remaining)
+        tostring(Bridge.speechSeconds()), remaining,
+        Bridge.companionSpeechMode(), #Bridge.subtitleLines)
 end
 
 

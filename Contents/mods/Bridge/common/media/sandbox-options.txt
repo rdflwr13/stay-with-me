@@ -140,11 +140,25 @@ option StayWithMe.SpeechFontType
     valueTranslation = StayWithMe_SpeechFontType_Values,
 }
 
-option StayWithMe.SpeechColor
+option StayWithMe.SpeechColorR
 {
-    type = string, default = "242,140,191",
+    type = integer, min = 0, max = 255, default = 242,
     page = StayWithMe,
-    translation = StayWithMe_SpeechColor,
+    translation = StayWithMe_SpeechColorR,
+}
+
+option StayWithMe.SpeechColorG
+{
+    type = integer, min = 0, max = 255, default = 140,
+    page = StayWithMe,
+    translation = StayWithMe_SpeechColorG,
+}
+
+option StayWithMe.SpeechColorB
+{
+    type = integer, min = 0, max = 255, default = 191,
+    page = StayWithMe,
+    translation = StayWithMe_SpeechColorB,
 }
 
 option StayWithMe.SpeechDuration
@@ -160,6 +174,14 @@ option StayWithMe.MaxSpeechLines
     type = integer, min = 1, max = 5, default = 5,
     page = StayWithMe,
     translation = StayWithMe_MaxSpeechLines,
+}
+
+option StayWithMe.CompanionSpeech
+{
+    type = enum, numValues = 3, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_CompanionSpeech,
+    valueTranslation = StayWithMe_CompanionSpeech_Values,
 }
 
 option StayWithMe.CompanionWheelKey

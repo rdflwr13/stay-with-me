@@ -31,7 +31,13 @@ local ICONS = {
     thanks = "media/textures/RadialMenu/TalkThanks.png",
     comfort = "media/textures/RadialMenu/TalkComfort.png",
     flirt = "media/textures/RadialMenu/TalkFlirt.png",
-    hug = "media/ui/emotes/group.png",
+    hug = "media/textures/RadialMenu/InteractionHug.png",
+    interactionHandshake = "media/textures/RadialMenu/InteractionHandShake.png",
+    interactionFistBump = "media/textures/RadialMenu/InteractionFistBump.png",
+    interactionKiss = "media/textures/RadialMenu/InteractionKiss.png",
+    interactionDance = "media/textures/RadialMenu/InteractionDance.png",
+    interactionMassage = "media/textures/RadialMenu/InteractionShoulderMassage.png",
+    interactionSubMenu = "media/textures/RadialMenu/InteractionSubMenu.png",
     ask = "media/textures/RadialMenu/TalkAsk.png",
     bodyguard = "media/textures/RadialMenu/FightCoverMe.png",
     escort = "media/textures/RadialMenu/FightClearAroundUs.png",
@@ -83,13 +89,12 @@ local TALK_ICONS = {
 }
 
 local AFFECTION_ICONS = {
-    Handshake = "talk",
-    FistBump = "talk",
+    Handshake = "interactionHandshake",
+    FistBump = "interactionFistBump",
     Hug = "hug",
-    Kiss = "hug",
-    SlowDance = "hug",
-    SlowDance2 = "hug",
-    ShoulderMassage = "hug",
+    Kiss = "interactionKiss",
+    SlowDance = "interactionDance",
+    ShoulderMassage = "interactionMassage",
 }
 
 local DEFAULT_ORDER = { "wait", "talk", "heal", "fight", "guns", "keep", "jobs", "actions", "equip" }
@@ -579,7 +584,7 @@ function BridgeRadial.topEntries(playerNum)
             end
             if #BridgeRadial.ringEntries("affection", playerNum) > 0 then
                 affectionShown = true
-                out[#out + 1] = make(tr("Affection"), ICONS.hug, function() BridgeRadial.showRing("affection", playerNum) end)
+                out[#out + 1] = make(tr("Affection"), ICONS.interactionSubMenu, function() BridgeRadial.showRing("affection", playerNum) end)
             end
         elseif shown and id == "heal" then
             local alive = Bridge.alive() == true
@@ -622,7 +627,7 @@ function BridgeRadial.topEntries(playerNum)
         out[1] = make(tr("Call", companionName()), ICONS.call, BridgeMenu.onCall)
     end
     if not affectionShown and #BridgeRadial.ringEntries("affection", playerNum) > 0 then
-        out[#out + 1] = make(tr("Affection"), ICONS.hug, function() BridgeRadial.showRing("affection", playerNum) end)
+        out[#out + 1] = make(tr("Affection"), ICONS.interactionSubMenu, function() BridgeRadial.showRing("affection", playerNum) end)
     end
     return out
 end
