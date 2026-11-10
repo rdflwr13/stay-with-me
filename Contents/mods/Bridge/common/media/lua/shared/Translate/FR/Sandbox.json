@@ -236,5 +236,7 @@
     "Sandbox_StayWithMe_SpeechLanguage_Values_option6": "Italiano",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option7": "Português (BR)",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option8": "Русский",
-    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)"
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots": "Décalage de l'icône de la barre latérale (emplacements)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots_tooltip": "Décale le bouton de barre latérale de la compagne vers le bas de ce nombre d'emplacements. Utile si l'icône d'un autre mod le chevauche. 0 conserve la position par défaut. C'est un réglage de monde, il s'applique à tous les joueurs."
 }

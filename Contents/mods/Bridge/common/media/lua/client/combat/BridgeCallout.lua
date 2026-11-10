@@ -375,7 +375,7 @@ function BridgeCallout.defer(event)
     for _, item in ipairs(q) do if item == event then return false end end
     if #q >= 4 then table.remove(q, 1) end
     q[#q + 1] = event
-    dlog("deferred " .. event)
+    if BridgeCallout.DEBUG == 1 then dlog("deferred " .. event) end
     return true
 end
 
@@ -457,13 +457,15 @@ attempt = function(event, priority)
         if priority then BridgeCallout.deferred = {} end
         BridgeCallout.info = event
         log(event)
-        if priority then
-            dlog("said priority " .. event .. " (slot " .. tostring(e.slot) .. ")")
-        else
-            local grp = "?"
-            pcall(function() grp = BridgeMoments.group() end)
-            dlog("said " .. event .. " (slot " .. tostring(e.slot) .. ", " .. tostring(grp)
-                .. ", cd " .. tostring(e.cooldown) .. "s)")
+        if BridgeCallout.DEBUG == 1 then
+            if priority then
+                dlog("said priority " .. event .. " (slot " .. tostring(e.slot) .. ")")
+            else
+                local grp = "?"
+                pcall(function() grp = BridgeMoments.group() end)
+                dlog("said " .. event .. " (slot " .. tostring(e.slot) .. ", " .. tostring(grp)
+                    .. ", cd " .. tostring(e.cooldown) .. "s)")
+            end
         end
     else
         BridgeCallout.info = "blocked " .. event
@@ -488,7 +490,7 @@ local function flush()
         local ev = q[i]
         if trySay(ev) then
             table.remove(q, i)
-            dlog("said deferred " .. ev)
+            if BridgeCallout.DEBUG == 1 then dlog("said deferred " .. ev) end
             return true
         end
         i = i + 1
@@ -2097,7 +2099,7 @@ function BridgeCallout.update(body)
                     n = 0
                     if raw >= BridgeHorde.TIERS[1] then
                         n = BridgeHorde.countSeen(hx, hy, hz, BridgeHorde.RADIUS, body, red, raw)
-                        vlog(string.format("horde: raw=%d seen=%d at %.1f,%.1f", raw, n, hx, hy))
+                        if Bridge.verbose then vlog(string.format("horde: raw=%d seen=%d at %.1f,%.1f", raw, n, hx, hy)) end
                     end
                     BridgeCallout.hordeAt = Bridge.time
                     BridgeCallout.hordeRaw, BridgeCallout.hordeSeen = raw, n

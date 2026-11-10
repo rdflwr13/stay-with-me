@@ -1698,14 +1698,14 @@ function BridgeCar.update(body)
 end
 
 
-function BridgeCar.tick()
+function BridgeCar.tick(red)
     local mult = 1
     pcall(function() mult = getGameTime():getTrueMultiplier() end)
     if type(mult) ~= "number" or mult ~= mult or mult < 1 then mult = 1 end
     if mult > 60 then mult = 60 end
     BridgeCar.gt = (BridgeCar.gt or 0) + (Bridge.dt or 1) * mult
     if BridgeCar.closeAt ~= nil and Bridge.time >= BridgeCar.closeAt then BridgeCar.closeDoor("done") end
-    local red = BridgeData.owner()
+    red = red or BridgeData.owner()
     if red == nil then return end
     local dead = false
     pcall(function() dead = red:isDead() end)

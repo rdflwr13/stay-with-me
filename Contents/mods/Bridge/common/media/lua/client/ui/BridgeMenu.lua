@@ -769,8 +769,14 @@ function BridgeMenu.sidebarTarget(panel, btn, screenH)
         end
     end
     if last == nil then return nil end
-    local x, y = 0, bottom + UI_BORDER_SPACING + 5
-    if screenH ~= nil and screenH > 0 and panel:getAbsoluteY() + y + btn:getHeight() > screenH then
+    local slots = 0
+    pcall(function()
+        slots = BridgeData.sandboxNumber("SidebarOffsetSlots", 0, 0, 12)
+    end)
+    local gap = UI_BORDER_SPACING + 5
+    local h = btn:getHeight()
+    local x, y = 0, bottom + gap + math.floor(slots) * (h + gap)
+    if screenH ~= nil and screenH > 0 and panel:getAbsoluteY() + y + h > screenH then
         x, y = last:getRight() + UI_BORDER_SPACING, last:getY()
     end
     return x, y

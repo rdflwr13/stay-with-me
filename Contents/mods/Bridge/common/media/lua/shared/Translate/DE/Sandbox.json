@@ -236,5 +236,7 @@
     "Sandbox_StayWithMe_SpeechLanguage_Values_option6": "Italiano",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option7": "Português (BR)",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option8": "Русский",
-    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)"
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots": "Sidebar-Symbol-Versatz (Slots)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots_tooltip": "Verschiebt die Seitenleisten-Schaltfläche der Begleiterin um diese Anzahl Slots nach unten. Nützlich, wenn ein Symbol einer anderen Mod sie überlappt. 0 behält die Standardposition. Dies ist eine Welteinstellung und gilt für alle Spieler."
 }

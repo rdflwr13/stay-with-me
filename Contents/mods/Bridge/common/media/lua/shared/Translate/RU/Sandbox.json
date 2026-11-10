@@ -236,5 +236,7 @@
     "Sandbox_StayWithMe_SpeechLanguage_Values_option6": "Italiano",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option7": "Português (BR)",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option8": "Русский",
-    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)"
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots": "Смещение значка боковой панели (слоты)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots_tooltip": "Сдвигает кнопку спутницы на боковой панели вниз на указанное число слотов. Используйте, если значок другого мода перекрывает её. 0 сохраняет положение по умолчанию. Это мировая настройка, поэтому она действует для всех игроков."
 }

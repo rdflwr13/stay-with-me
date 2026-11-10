@@ -34,6 +34,21 @@ BridgeExercise.TIERS = {
     { count = 50, key = "ExTierPeak", label = "Peak Form" },
 }
 
+BridgeExercise.MOVES = {
+    squats = "NA_Squat",
+    pushups = "NA_PushUp",
+    situp = "NA_SitUp",
+    burpees = "NA_Burpee",
+}
+BridgeExercise.RANDOM = { "NA_Squat", "NA_PushUp", "NA_SitUp", "NA_Burpee" }
+BridgeExercise.ANIMS = {
+    NA_Squat = true,
+    NA_PushUp = true,
+    NA_SitUp = true,
+    NA_Burpee = true,
+}
+BridgeExercise.SWITCH_REPS = 10
+
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeExercise] " .. tostring(text)) end end
 
 
@@ -96,6 +111,29 @@ function BridgeExercise.tierLabel(count)
     local text = t.label
     if BridgeData ~= nil and BridgeData.text ~= nil then pcall(function() text = BridgeData.text(t.key) end) end
     return text
+end
+
+
+function BridgeExercise.animFor(ex)
+    if ex == nil then return nil end
+    return BridgeExercise.MOVES[tostring(ex)]
+end
+
+function BridgeExercise.pickAnim(except)
+    local pool = BridgeExercise.RANDOM
+    if #pool == 0 then return BridgeExercise.ANIM end
+    if #pool == 1 then return pool[1] end
+    local pick = pool[ZombRand(#pool) + 1]
+    local guard = 0
+    while pick == except and guard < 8 do
+        pick = pool[ZombRand(#pool) + 1]
+        guard = guard + 1
+    end
+    return pick
+end
+
+function BridgeExercise.isAnim(bump)
+    return BridgeExercise.ANIMS[tostring(bump)] == true
 end
 
 

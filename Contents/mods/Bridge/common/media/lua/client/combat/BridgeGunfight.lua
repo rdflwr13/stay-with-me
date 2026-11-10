@@ -1466,18 +1466,20 @@ local function pickTarget(body, red)
     local function chosen(z, why)
         BridgeGunfight.lockSince = Bridge.time
         BridgeGunfight.lockReason = why
-        local typ = "?"
-        pcall(function() typ = tostring(z:getType()) end)
-        local speed = "?"
-        local bonus = 0
-        if BridgeFight ~= nil and type(BridgeFight.speedName) == "function" then
-            speed = BridgeFight.speedName(z)
+        if Bridge.verbose then
+            local typ = "?"
+            pcall(function() typ = tostring(z:getType()) end)
+            local speed = "?"
+            local bonus = 0
+            if BridgeFight ~= nil and type(BridgeFight.speedName) == "function" then
+                speed = BridgeFight.speedName(z)
+            end
+            if BridgeFight ~= nil and type(BridgeFight.speedScore) == "function" then
+                bonus = BridgeFight.speedScore(z) or 0
+            end
+            vlog(string.format("pick %s type=%s d=%.1f dred=%.1f speed=%s bonus=%+.1f", tostring(why), typ,
+                dist(body, z), dist(red, z), speed, bonus))
         end
-        if BridgeFight ~= nil and type(BridgeFight.speedScore) == "function" then
-            bonus = BridgeFight.speedScore(z) or 0
-        end
-        vlog(string.format("pick %s type=%s d=%.1f dred=%.1f speed=%s bonus=%+.1f", tostring(why), typ,
-            dist(body, z), dist(red, z), speed, bonus))
         return z
     end
 

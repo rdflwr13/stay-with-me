@@ -214,3 +214,10 @@ option StayWithMe.CompanionWheelSelectButton
     translation = StayWithMe_CompanionWheelSelectButton,
     valueTranslation = StayWithMe_CompanionWheelSelectButton_Values,
 }
+
+option StayWithMe.SidebarOffsetSlots
+{
+    type = integer, min = 0, max = 12, default = 0,
+    page = StayWithMe,
+    translation = StayWithMe_SidebarOffsetSlots,
+}

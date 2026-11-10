@@ -236,5 +236,7 @@
     "Sandbox_StayWithMe_SpeechLanguage_Values_option6": "Italiano",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option7": "Português (BR)",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option8": "Русский",
-    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)"
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots": "Scostamento icona barra laterale (slot)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots_tooltip": "Sposta verso il basso il pulsante della barra laterale della compagna di questo numero di slot. Utile se l'icona di un'altra mod lo sovrappone. 0 mantiene la posizione predefinita. È un'impostazione del mondo, quindi vale per tutti i giocatori."
 }

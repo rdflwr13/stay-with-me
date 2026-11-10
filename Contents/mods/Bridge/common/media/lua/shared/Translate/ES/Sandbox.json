@@ -238,5 +238,7 @@
     "Sandbox_StayWithMe_SpeechLanguage_Values_option6": "Italiano",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option7": "Português (BR)",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option8": "Русский",
-    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)"
+    "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Translation mod (auto)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots": "Desplazamiento del icono de la barra lateral (ranuras)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots_tooltip": "Mueve el botón de la barra lateral de la compañera hacia abajo esta cantidad de ranuras. Úsalo si el icono de otro mod se superpone. 0 mantiene la posición predeterminada. Es un ajuste del mundo, así que se aplica a todos los jugadores."
 }

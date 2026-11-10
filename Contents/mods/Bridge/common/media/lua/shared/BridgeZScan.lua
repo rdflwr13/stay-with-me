@@ -690,13 +690,10 @@ local function refreshRefs(maxAge)
     return buildCoords()
 end
 
-local function readCoords(z, xs, ys, zs, i)
+local function readOne(z, xs, ys, zs, alive, bod, rem, i, var, remoteHook, isClientNow)
     xs[i] = z:getX()
     ys[i] = z:getY()
     zs[i] = z:getZ()
-end
-
-local function readFlags(z, alive, bod, rem, i, var, remoteHook, isClientNow)
     alive[i] = z:isAlive() == true
     bod[i] = z:getVariableBoolean(var) == true
     if type(remoteHook) == "function" then
@@ -745,15 +742,20 @@ buildCoords = function()
     local isClientNow = clientNow()
     local remoteHook = S.isRemoteOf
     local var = bodyVar()
+    local m = memoNow()
     for i = 1, s.n do
         local z = s.refs[i]
         xs[i], ys[i], zs[i] = nil, nil, nil
         alive[i], bod[i], rem[i] = nil, nil, nil
-        local ok = pcall(readCoords, z, xs, ys, zs, i)
+        local ok = pcall(readOne, z, xs, ys, zs, alive, bod, rem, i, var, remoteHook, isClientNow)
         if not ok then
             xs[i], ys[i], zs[i] = nil, nil, nil
-        else
-            pcall(readFlags, z, alive, bod, rem, i, var, remoteHook, isClientNow)
+            alive[i], bod[i], rem[i] = nil, nil, nil
+        elseif z ~= nil then
+            if alive[i] ~= nil then m.alive[z] = alive[i] end
+            if rem[i] ~= nil then m.rem[z] = rem[i] end
+            if bod[i] ~= nil then m.bod[z] = bod[i] end
+            if bod[i] == true then m.comp[z] = true end
         end
     end
     if reuse and scratch.n > s.n then
@@ -767,17 +769,6 @@ buildCoords = function()
     s.alive, s.bod, s.rem = alive, bod, rem
     s.level = 1
     s.buckets = nil
-
-    local m = memoNow()
-    for i = 1, s.n do
-        local z = s.refs[i]
-        if z ~= nil then
-            if alive[i] ~= nil then m.alive[z] = alive[i] end
-            if rem[i] ~= nil then m.rem[z] = rem[i] end
-            if bod[i] ~= nil then m.bod[z] = bod[i] end
-            if bod[i] == true then m.comp[z] = true end
-        end
-    end
 
     S.stats.coordBuilds = S.stats.coordBuilds + 1
     local ms = nowMs() - started

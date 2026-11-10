@@ -496,7 +496,11 @@ function BridgeFastForward.holdStand(b)
                 or BridgeTask.kind == "moveCorpses"
                 or BridgeTask.kind == "washSink" or BridgeTask.kind == "fillWater"
                 or BridgeTask.kind == "emptyFluid" or BridgeTask.kind == "pryDoor") then
-        if BridgeTask.kind == "exercise" and bump ~= BridgeTask.EXERCISE_ANIM then return false end
+        local isExerciseAnim = bump == BridgeTask.EXERCISE_ANIM
+        if BridgeExercise ~= nil and BridgeExercise.isAnim ~= nil then
+            pcall(function() isExerciseAnim = isExerciseAnim or BridgeExercise.isAnim(bump) end)
+        end
+        if BridgeTask.kind == "exercise" and not isExerciseAnim then return false end
         if bump == "" or bump == "nil" then return false end
         pcall(function() fin = b:getVariableBoolean("BumpAnimFinished") == true end)
         if not fin then return false end

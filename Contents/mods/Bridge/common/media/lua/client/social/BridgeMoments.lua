@@ -77,9 +77,11 @@ local function count(pool)
 end
 
 
-function BridgeMoments.line(event, a, b)
-    local group = BridgeMoments.group()
+function BridgeMoments.lineIn(event, group, a, b, fallbackGroup)
+    if group == nil then group = "Near" end
+    if fallbackGroup == nil then fallbackGroup = "Near" end
     local pool = event .. "_" .. group
+    if count(pool) == 0 then pool = event .. "_" .. fallbackGroup end
     if count(pool) == 0 then pool = event .. "_Near" end
     local n = count(pool)
     if n == 0 then return nil end
@@ -99,6 +101,10 @@ function BridgeMoments.line(event, a, b)
         if n < 2 or not again then break end
     end
     return text
+end
+
+function BridgeMoments.line(event, a, b)
+    return BridgeMoments.lineIn(event, BridgeMoments.group(), a, b, "Near")
 end
 
 

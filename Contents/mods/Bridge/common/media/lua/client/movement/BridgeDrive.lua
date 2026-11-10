@@ -837,9 +837,9 @@ end
 
 
 
-function BridgeDrive.tick()
+function BridgeDrive.tick(red)
     if BridgeDrive.ENABLED == 0 then return end
-    local red = BridgeData.owner()
+    red = red or BridgeData.owner()
     if red == nil then return end
     if BridgeCar == nil or not BridgeCar.withRed(red) then reset() return end
     local car = nil

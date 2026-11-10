@@ -249,5 +249,7 @@
     "Sandbox_StayWithMe_BreathingVolume_Values_option1": "Off",
     "Sandbox_StayWithMe_BreathingVolume_Values_option2": "Quiet",
     "Sandbox_StayWithMe_BreathingVolume_Values_option3": "Normal (default)",
-    "Sandbox_StayWithMe_BreathingVolume_Values_option4": "Loud"
+    "Sandbox_StayWithMe_BreathingVolume_Values_option4": "Loud",
+    "Sandbox_StayWithMe_SidebarOffsetSlots": "Sidebar icon offset (slots)",
+    "Sandbox_StayWithMe_SidebarOffsetSlots_tooltip": "Moves the companion's sidebar button down by this many slots. Use it if another mod's sidebar icon overlaps it. 0 keeps the default position. This is a world setting, so it applies to all players."
 }

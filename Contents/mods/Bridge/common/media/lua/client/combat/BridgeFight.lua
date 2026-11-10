@@ -3369,11 +3369,13 @@ function BridgeFight.update(body)
 
         pcall(function()
             local foreign = BridgeData.foreign(z)
-            local banditNpc, banditHostile = BridgeData.bandit(z)
-            local line = string.format("target picked: hp=%.2f d=%.1f dred=%.1f state=%s foreign=%s hostile=%s",
-                z:getHealth(), dist(z, body), dist(z, red), tostring(z:getActionStateName()), tostring(foreign),
-                banditNpc and ("bandit " .. tostring(banditHostile)) or tostring(foreign and BridgeData.alifeHostile(z) or "-"))
-            if foreign then log(line) else vlog(line) end
+            if foreign or Bridge.verbose then
+                local banditNpc, banditHostile = BridgeData.bandit(z)
+                local line = string.format("target picked: hp=%.2f d=%.1f dred=%.1f state=%s foreign=%s hostile=%s",
+                    z:getHealth(), dist(z, body), dist(z, red), tostring(z:getActionStateName()), tostring(foreign),
+                    banditNpc and ("bandit " .. tostring(banditHostile)) or tostring(foreign and BridgeData.alifeHostile(z) or "-"))
+                if foreign then log(line) else vlog(line) end
+            end
         end)
     end
 

@@ -322,6 +322,8 @@ BridgeTask.exerciseRepAt = nil
 BridgeTask.exerciseRepMark = nil
 BridgeTask.exerciseBudget = nil
 BridgeTask.exerciseMirror = nil
+BridgeTask.exerciseAnim = nil
+BridgeTask.exerciseSwitchReps = nil
 BridgeTask.exerciseStopReason = nil
 
 
@@ -7205,11 +7207,41 @@ end
 BridgeTask.exerciseBank = exerciseBank
 
 
+local function exercisePick(body, current)
+    if BridgeTask.exerciseMirror == true then
+        local ex = nil
+        pcall(function()
+            local red = BridgeData.owner()
+            if red ~= nil then
+                local fit = nil
+                pcall(function() fit = red:getFitness() end)
+                if fit ~= nil then pcall(function() ex = fit:getCurrentExe() end) end
+            end
+        end)
+        local mapped = nil
+        if BridgeExercise ~= nil and BridgeExercise.animFor ~= nil then
+            pcall(function() mapped = BridgeExercise.animFor(ex) end)
+        end
+        if mapped ~= nil then return mapped end
+    end
+    if BridgeExercise ~= nil and BridgeExercise.pickAnim ~= nil then
+        local picked = nil
+        pcall(function() picked = BridgeExercise.pickAnim(current) end)
+        if picked ~= nil then return picked end
+    end
+    return BridgeTask.EXERCISE_ANIM
+end
+
+
 local function exerciseClear(body)
     if body == nil then return end
-    pcall(function()
-        if tostring(body:getBumpType()) == BridgeTask.EXERCISE_ANIM then body:setBumpType("") end
-    end)
+    local bump = ""
+    pcall(function() bump = tostring(body:getBumpType()) end)
+    local isExercise = bump == BridgeTask.EXERCISE_ANIM
+    if BridgeExercise ~= nil and BridgeExercise.isAnim ~= nil then
+        pcall(function() isExercise = isExercise or BridgeExercise.isAnim(bump) end)
+    end
+    if isExercise then pcall(function() body:setBumpType("") end) end
     pcall(function() body:setVariable("BumpAnimFinished", true) end)
 end
 
@@ -7259,7 +7291,7 @@ BridgeTask.exerciseDrain = exerciseDrain
 
 function BridgeTask.kinds.exercise.update(body)
     if BridgeTask.EXERCISE_ENABLED ~= 1 then return BridgeTask.finish() end
-    local anim = BridgeTask.EXERCISE_ANIM
+    local anim = BridgeTask.exerciseAnim or BridgeTask.EXERCISE_ANIM
     local stopAt = exerciseConst("STAMINA_STOP", 0.90)
 
 
@@ -7269,6 +7301,9 @@ function BridgeTask.kinds.exercise.update(body)
         BridgeTask.exerciseBudget = 0
         BridgeTask.exerciseReps = 0
         BridgeTask.exerciseHalfSaid = false
+        anim = exercisePick(body, nil)
+        BridgeTask.exerciseAnim = anim
+        BridgeTask.exerciseSwitchReps = 0
         pcall(function() body:setVariable("BumpAnimFinished", false) end)
         pcall(function() body:setBumpType(anim) end)
         if BridgeTask.exerciseMirror == true then
@@ -7292,7 +7327,7 @@ function BridgeTask.kinds.exercise.update(body)
         Bridge.speak("ExerciseStart")
         BridgeTask.exerciseProgress()
         BridgeTask.info = "exercise: start"
-        log(string.format("exercise start mirror=%s stamina=%.2f", tostring(BridgeTask.exerciseMirror), 1 - exerciseFatigue()))
+        log(string.format("exercise start mirror=%s anim=%s stamina=%.2f", tostring(BridgeTask.exerciseMirror), tostring(anim), 1 - exerciseFatigue()))
         return true
     end
 
@@ -7365,6 +7400,22 @@ function BridgeTask.kinds.exercise.update(body)
     if reps ~= before then
         BridgeTask.exerciseReps = reps
         log(string.format("exercise reps %d->%d drain=%.3f fatigue=%.2f ff=%.1f", before, reps, exerciseDrain(), exerciseFatigue(), ffMult()))
+        local switchEvery = 10
+        if BridgeExercise ~= nil and type(BridgeExercise.SWITCH_REPS) == "number" then
+            switchEvery = BridgeExercise.SWITCH_REPS
+        end
+        if switchEvery > 0 and reps - (BridgeTask.exerciseSwitchReps or 0) >= switchEvery then
+            local nextAnim = exercisePick(body, BridgeTask.exerciseAnim)
+            if nextAnim ~= nil and nextAnim ~= BridgeTask.exerciseAnim then
+                BridgeTask.exerciseAnim = nextAnim
+                pcall(function()
+                    body:setVariable("BumpAnimFinished", false)
+                    body:setBumpType(nextAnim)
+                end)
+                log(string.format("exercise switch anim=%s reps=%d", tostring(nextAnim), reps))
+            end
+            BridgeTask.exerciseSwitchReps = reps
+        end
         if math.floor(reps / 4) > math.floor(before / 4) then
             Bridge.speak("ExerciseEffort" .. (1 + ZombRand(3)))
         end
@@ -7424,6 +7475,8 @@ function BridgeTask.kinds.exercise.leave(body)
     BridgeTask.exerciseRepMark = nil
     BridgeTask.exerciseBudget = nil
     BridgeTask.exerciseMirror = nil
+    BridgeTask.exerciseAnim = nil
+    BridgeTask.exerciseSwitchReps = nil
     BridgeTask.exerciseStopReason = nil
     BridgeTask.exerciseReps = nil
     BridgeTask.exerciseHalfSaid = nil
