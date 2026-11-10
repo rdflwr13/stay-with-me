@@ -126,8 +126,15 @@ function BridgeMoments.ready(slot, urgent)
 end
 
 
-function BridgeMoments.say(event, cooldown, urgent, slot)
+function BridgeMoments.say(event, cooldown, urgent, slot, kind)
     slot = slot or event
+    kind = kind or (Bridge ~= nil and type(Bridge.isHealthSpeech) == "function"
+        and Bridge.isHealthSpeech(event) and "health" or "moments")
+    if Bridge ~= nil and type(Bridge.speechAllowed) == "function"
+            and not Bridge.speechAllowed(event, kind) then
+        BridgeMoments.info = "blocked " .. tostring(event)
+        return false
+    end
     if not BridgeMoments.ready(slot, urgent) then return false end
     local text = BridgeMoments.line(event)
     if text == nil then return false end
@@ -137,6 +144,7 @@ function BridgeMoments.say(event, cooldown, urgent, slot)
     local quiet = false
     pcall(function() quiet = Bridge.quiet() end)
     if quiet then
+        if type(Bridge.markSpeech) == "function" then Bridge.markSpeech() end
         pcall(function() Bridge.bridgeEvent(event, text) end)
         BridgeMoments.info = event .. " quiet"
         log(event .. " quiet")
@@ -300,45 +308,6 @@ local function drinkingNow(red)
     return alc
 end
 
-local SMELL_RADIUS = 8
-local SMELL_TIERS = { 4, 8, 16 }
-local function bodiesNear(red, radius)
-    local n = 0
-    pcall(function()
-        local cell = getCell()
-        local cx, cy, cz = math.floor(red:getX()), math.floor(red:getY()), math.floor(red:getZ())
-        local r = tonumber(radius) or SMELL_RADIUS
-        for dx = -r, r do
-            for dy = -r, r do
-                local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
-                if sq ~= nil then
-                    local bodies = nil
-                    pcall(function() bodies = sq:getDeadBodys() end)
-                    if bodies ~= nil then
-                        local sz = 0
-                        pcall(function() sz = bodies:size() end)
-                        n = n + (tonumber(sz) or 0)
-                    end
-                end
-            end
-        end
-    end)
-    return n
-end
-
-local function smellTierOf(n)
-    local best = nil
-    for i = 1, #SMELL_TIERS do
-        if n >= SMELL_TIERS[i] then best = SMELL_TIERS[i] end
-    end
-    return best
-end
-
-
-
-
-
-
 local FLAGS = { "bite", "bullet", "glass", "deep", "fracture", "burn", "cut", "scratch", "bleed" }
 local function flagsOf(w)
     return { bite = w.bitten, bullet = w.bullet, glass = w.glass, deep = w.deep and not w.stitched,
@@ -488,8 +457,14 @@ function BridgeMoments.deviceTick(red, body, danger, busy, fightNow, say)
     if red == nil or body == nil then return false end
     if danger or busy or fightNow then return false end
     if Bridge == nil then return false end
+    if type(Bridge.speechAllowed) == "function" and not Bridge.speechAllowed("EvIdleWorldTV", "device") then
+        return false
+    end
+    local tvCool = BridgeMoments.cool["IdleWorldTV"] or 0
+    local radioCool = BridgeMoments.cool["IdleWorldRadio"] or 0
+    if Bridge.time < tvCool and Bridge.time < radioCool then return false end
     if Bridge.time < (BridgeMoments.deviceAt or 0) then return false end
-    BridgeMoments.deviceAt = Bridge.time + 300
+    BridgeMoments.deviceAt = Bridge.time + 900
     local sq = nil
     pcall(function() sq = red:getCurrentSquare() end)
     if sq == nil then return false end
@@ -499,14 +474,14 @@ function BridgeMoments.deviceTick(red, body, danger, busy, fightNow, say)
     local tv, radio = roomDeviceCached(room, sq, math.floor(red:getZ()))
     if tv then
         if BridgeMoments.lastShowAt == nil or Bridge.time - BridgeMoments.lastShowAt >= 30 * 60 then
-            if say("EvIdleWorldTV", 10 * MINUTE, false, "IdleWorldTV") then return true end
+            if say("EvIdleWorldTV", 10 * MINUTE, false, "IdleWorldTV", "device") then return true end
         end
         return false
     end
     if radio then
         local inCar = false
         pcall(function() inCar = red:getVehicle() ~= nil end)
-        if not inCar and say("EvIdleWorldRadio", 10 * MINUTE, false, "IdleWorldRadio") then return true end
+        if not inCar and say("EvIdleWorldRadio", 10 * MINUTE, false, "IdleWorldRadio", "device") then return true end
     end
     return false
 end
@@ -531,16 +506,13 @@ function BridgeMoments.onDeviceText(guid, codes, x, y, z, line)
     if proom == nil or droom ~= proom then return end
     local tv = false
     pcall(function()
-        local objs = dsq:getObjects()
-        if objs == nil then return end
-        for i = 0, objs:size() - 1 do
-            local o = objs:get(i)
-            if o ~= nil and instanceof(o, "IsoTelevision") then tv = true return end
-        end
+        local hasTv = roomDeviceCached(droom, dsq, z)
+        tv = hasTv == true
     end)
     if not tv then return end
     if not teachesCodes(codes) then return end
-    if BridgeMoments.say("EvIdleTVShow", 5 * MINUTE, "soft", "IdleTVShow") then
+    if type(Bridge.speechAllowed) == "function" and not Bridge.speechAllowed("EvIdleTVShow", "device") then return end
+    if BridgeMoments.say("EvIdleTVShow", 5 * MINUTE, "soft", "IdleTVShow", "device") then
         BridgeMoments.lastShowAt = Bridge.time
     end
 end
@@ -559,6 +531,8 @@ function BridgeMoments.update(body)
     local asleep = false
     pcall(function() asleep = red:isAsleep() end)
     if asleep then return end
+    local restFF = Bridge.mode == "rest"
+        or (BridgeFastForward ~= nil and BridgeFastForward.active() == true)
 
     local momentSay = BridgeMoments.say
     local sayBlocked = false
@@ -682,6 +656,7 @@ function BridgeMoments.update(body)
         if not autoHeal then ev = "EvHurtAsk" end
         if momentSay(ev, 2 * MINUTE, true, "EvBleed") then return end
     end
+    if restFF then return end
 
 
 
@@ -797,16 +772,6 @@ function BridgeMoments.update(body)
             if momentSay("EvEating", 20 * MINUTE) then return end
         end
     end
-    local smell = BridgeMoments.smellTier
-    if Bridge.time >= (BridgeMoments.smellAt or 0) then
-        BridgeMoments.smellAt = Bridge.time + 120
-        smell = smellTierOf(bodiesNear(red, SMELL_RADIUS))
-        BridgeMoments.smellTier = smell
-    end
-    if smell ~= nil then
-        if momentSay("EvSmell" .. smell, 10 * MINUTE, false, "Smell" .. smell) then return end
-    end
-
     if BridgeMoments.deviceTick(red, body, danger, busy, fightNow, momentSay) then return end
 end
 

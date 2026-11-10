@@ -221,3 +221,11 @@ option StayWithMe.SidebarOffsetSlots
     page = StayWithMe,
     translation = StayWithMe_SidebarOffsetSlots,
 }
+
+option StayWithMe.CompanionUpdateRate
+{
+    type = enum, numValues = 4, default = 1,
+    page = StayWithMe,
+    translation = StayWithMe_CompanionUpdateRate,
+    valueTranslation = StayWithMe_CompanionUpdateRate_Values,
+}

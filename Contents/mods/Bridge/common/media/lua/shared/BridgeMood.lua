@@ -210,11 +210,6 @@ local IDLE_SQUARE = 1800
 
 
 
-local function companion(z)
-    if Bridge.isCompanion ~= nil then return Bridge.isCompanion(z) end
-    return z:getVariableBoolean(Bridge.BODY_VAR)
-end
-
 local function zombiesSeen(red, body)
     local near = false
     pcall(function()
@@ -226,11 +221,16 @@ local function zombiesSeen(red, body)
         local rx, ry, rz = red:getX(), red:getY(), red:getZ()
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-
             if z ~= nil and z ~= body then
-                local dx, dy = z:getX() - rx, z:getY() - ry
-                if dx * dx + dy * dy < DANGER * DANGER and math.abs(z:getZ() - rz) < 1 and z:isAlive()
-                    and not companion(z) and not BridgeData.harmless(z) and red:CanSee(z) then
+                local zx, zy, zz = nil, nil, nil
+                if BridgeZScan ~= nil and type(BridgeZScan.pos) == "function" then
+                    zx, zy, zz = BridgeZScan.pos(z)
+                end
+                if zx == nil then zx, zy, zz = z:getX(), z:getY(), z:getZ() end
+                local dx, dy = zx - rx, zy - ry
+                if dx * dx + dy * dy < DANGER * DANGER and math.abs(zz - rz) < 1
+                    and BridgeZScan.isAlive(z) and not BridgeZScan.isCompanion(z)
+                    and not BridgeZScan.isHarmless(z) and BridgeZScan.canSee(z, red, nil) then
                     near = true
                     break
                 end

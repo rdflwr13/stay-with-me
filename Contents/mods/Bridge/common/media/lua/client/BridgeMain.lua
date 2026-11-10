@@ -71,6 +71,7 @@ Bridge.manualUpdate = false
 Bridge.result = "loaded"
 Bridge.skipped = false
 Bridge.zombieTicks = 0
+Bridge.bodyAiAt = 0
 Bridge.idleSince = 0
 Bridge.armedIdleSince = 0
 Bridge.checked = setmetatable({}, { __mode = "k" })
@@ -239,6 +240,9 @@ function Bridge.itemsChanged()
     Bridge.itemsDirtyAt = Bridge.time
     if BridgeBackup ~= nil then
         BridgeBackup.counter = (tonumber(BridgeBackup.counter) or 0) + 1
+    end
+    if BridgeGunRules ~= nil and type(BridgeGunRules.bumpItems) == "function" then
+        BridgeGunRules.bumpItems()
     end
     if BridgeGunfight ~= nil and type(BridgeGunfight.invalidateAmmoPresence) == "function" then
         BridgeGunfight.invalidateAmmoPresence()
@@ -1519,7 +1523,7 @@ local SCARE_CLOSE = 5
 local SCARE_SEE = 7
 local SCARE_QUIET = 600
 local SCARE_EVERY = 600
-local SEEN_EVERY = 5
+local SEEN_EVERY = 15
 local WATCH_SCAN_AGE = 15
 
 
@@ -3279,10 +3283,100 @@ function Bridge.speechInfo()
 end
 
 
+-- bridge-speech-gap begin
+Bridge.speechGapAt = Bridge.speechGapAt or {}
+
+local SPEECH_GAP_FOOT = 8 * 60
+local SPEECH_GAP_CAR = 12 * 60
+
+local SPEECH_HEALTH_EVENTS = {
+    EvHealthHalf = true, EvDying = true, EvDyingLast = true,
+    EvBite = true, EvBullet = true, EvBulletNoTools = true,
+    EvGlass = true, EvGlassNoTweezers = true, EvDeep = true, EvDeepNoSuture = true,
+    EvFracture = true, EvFractureNoSplint = true, EvBurn = true, EvCut = true,
+    EvScratch = true, EvBleed = true, EvBleedNoBandage = true, EvHurtAsk = true,
+    EvFightBite = true, EvFightHurt = true, EvPlayerHit = true,
+}
+
+function Bridge.speechContext()
+    local owner = nil
+    pcall(function() owner = BridgeData ~= nil and BridgeData.owner() or nil end)
+    if owner == nil then return "foot" end
+    local car = false
+    pcall(function()
+        if BridgeCar ~= nil and type(BridgeCar.withRed) == "function" then
+            car = BridgeCar.withRed(owner) == true
+        end
+    end)
+    if not car then
+        pcall(function() car = owner:getVehicle() ~= nil end)
+    end
+    return car and "car" or "foot"
+end
+
+function Bridge.markSpeech(ctx)
+    if Bridge.speechGapAt == nil then Bridge.speechGapAt = {} end
+    ctx = ctx or Bridge.speechContext()
+    Bridge.speechGapAt[ctx] = tonumber(Bridge.time) or 0
+end
+
+local function speechGapFor(ctx)
+    return ctx == "car" and SPEECH_GAP_CAR or SPEECH_GAP_FOOT
+end
+
+function Bridge.speechGapActive(ctx)
+    ctx = ctx or Bridge.speechContext()
+    local at = Bridge.speechGapAt ~= nil and Bridge.speechGapAt[ctx] or nil
+    if at == nil then return false end
+    return (tonumber(Bridge.time) or 0) - at < speechGapFor(ctx)
+end
+
+function Bridge.speechGapRemaining(ctx)
+    ctx = ctx or Bridge.speechContext()
+    local at = Bridge.speechGapAt ~= nil and Bridge.speechGapAt[ctx] or nil
+    if at == nil then return 0 end
+    local left = speechGapFor(ctx) - ((tonumber(Bridge.time) or 0) - at)
+    if left < 0 then left = 0 end
+    return left / 60
+end
+
+function Bridge.isHealthSpeech(event)
+    local name = tostring(event or "")
+    if name == "" then return false end
+    name = name:gsub("Quiet$", "")
+    if name:sub(1, 5) == "Heal_" or name:sub(1, 5) == "Fire_" or name:sub(1, 3) == "We_" then
+        return true
+    end
+    return SPEECH_HEALTH_EVENTS[name] == true
+end
+
+function Bridge.speechInCombat()
+    if BridgeFight == nil then return false end
+    if BridgeFight.state ~= nil and BridgeFight.state ~= "idle" then return true end
+    return BridgeFight.target ~= nil
+end
+
+function Bridge.speechAllowed(event, kind, ctx)
+    kind = kind or "ambient"
+    if kind == "health" or Bridge.isHealthSpeech(event) then return true end
+    ctx = ctx or Bridge.speechContext()
+    if ctx == "car" then
+        if kind ~= "drive" then return false end
+    elseif kind == "drive" then
+        return false
+    end
+    if Bridge.speechGapActive(ctx) then return false end
+    if ctx == "foot" and Bridge.speechInCombat() then return kind == "combat" end
+    return true
+end
+-- bridge-speech-gap end
+
+
 function Bridge.speakText(text)
     Bridge.lastSpokeText = tostring(text)
     Bridge.lastSpokeWhere = "none"
     Bridge.lastSpokeShown = false
+    if type(Bridge.markSpeech) == "function" then Bridge.markSpeech() end
 
     local inCar = BridgeCar ~= nil and BridgeCar.withRed(BridgeData.owner())
         and (not Bridge.alive() or BridgeCar.holdHidden())
@@ -6080,6 +6174,93 @@ function Bridge.watchGuest(z, who, remote)
     end
 end
 
+local BODY_AI_GAP = 1
+
+function Bridge.companionUpdateGap()
+    local idx = 1
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        local ok, v = pcall(BridgeData.sandboxNumber, "CompanionUpdateRate", 1, 1, 4)
+        if ok and v ~= nil then
+            idx = math.max(1, math.min(4, math.floor(tonumber(v) or 1)))
+        end
+    end
+    if idx == 4 then return 2 end
+    if idx == 3 then return 1.5 end
+    if idx == 2 then return 1.2 end
+    return BODY_AI_GAP
+end
+
+function Bridge.companionUpdateDue(state, key, gap)
+    local now = tonumber(Bridge.time)
+    if now == nil then return true end
+    gap = tonumber(gap) or 1
+    local nextAt = state[key]
+    if nextAt == nil or now < nextAt - gap * 2 then nextAt = now end
+    if now < nextAt then return false end
+    nextAt = nextAt + gap
+    if nextAt < now - gap then nextAt = now + gap end
+    state[key] = nextAt
+    return true
+end
+
+local function bodyAiDue(body, red)
+    local now = tonumber(Bridge.time)
+    if now == nil then return true end
+    if now < (Bridge.bodyAiAt or 0) then
+        Bridge.bodyAiAt = now
+        return true
+    end
+    if BridgeFight ~= nil then
+        if BridgeFight.state ~= nil and BridgeFight.state ~= "idle" then return true end
+        if BridgeFight.target ~= nil then return true end
+    end
+    if BridgeGunfight ~= nil then
+        if BridgeGunfight.state ~= nil and BridgeGunfight.state ~= "idle"
+                and BridgeGunfight.state ~= "open" then
+            return true
+        end
+        if BridgeGunfight.reloadStage ~= nil then
+            return true
+        end
+    end
+    if BridgeTask ~= nil and BridgeTask.active then return true end
+    if Bridge.mourning ~= nil then return true end
+    if Bridge.hiddenSince ~= nil then return true end
+    if Bridge.hitRestore ~= nil or Bridge.hitClean ~= nil then return true end
+    if (Bridge.groundTicks or 0) > 0 then return true end
+    if BridgeMove ~= nil then
+        if BridgeMove.pendingClimb ~= nil or BridgeMove.cross ~= nil then return true end
+        if BridgeMove.climbUntil ~= nil and now < BridgeMove.climbUntil then return true end
+        if BridgeMove.tallFence then return true end
+    end
+    if red == nil then pcall(function() red = BridgeData.owner() end) end
+    if red ~= nil then
+        local veh = nil
+        pcall(function() veh = red:getVehicle() end)
+        if veh ~= nil then return true end
+        local asleep = false
+        pcall(function() asleep = red:isAsleep() == true end)
+        if asleep then return true end
+    end
+    return Bridge.companionUpdateDue(Bridge, "bodyAiNext", Bridge.companionUpdateGap())
+end
+
+local function runBodyUpdate(zombie, red)
+    if not bodyAiDue(zombie, red) then return end
+    local now = Bridge.time or 0
+    local elapsed = now - (Bridge.bodyAiAt or now)
+    if elapsed < 0 or elapsed > 5 then elapsed = Bridge.dt or 1 end
+    Bridge.bodyAiAt = now
+    local savedDt = Bridge.dt
+    if elapsed > (savedDt or 1) then Bridge.dt = elapsed end
+    local ok, err = pcall(updateZombieBody, zombie)
+    Bridge.dt = savedDt
+    if not ok then
+        BridgeMove.pathResult = "update error: " .. tostring(err)
+        Bridge.logError("body.update", err)
+    end
+end
+
 local function onlineIdOf(z)
     return z:getOnlineID()
 end
@@ -6192,8 +6373,7 @@ function Bridge.onZombieUpdate(zombie)
             end
             Bridge.remoteClaim = nil
             if Bridge.body ~= zombie then Bridge.adoptServerBody(zombie) end
-            local okUpd, err = pcall(function() updateZombieBody(zombie) end)
-            if not okUpd then BridgeMove.pathResult = "update error: " .. tostring(err) Bridge.logError("body.update", err) end
+            runBodyUpdate(zombie, BridgeData.owner())
             return
         end
         pcall(function() Bridge.watchGuest(zombie, who, remote) end)
@@ -6260,8 +6440,7 @@ function Bridge.onZombieUpdate(zombie)
         Bridge.hideBody(zombie, false)
         log("adopted existing body")
     end
-    local okUpd, err = pcall(function() updateZombieBody(zombie) end)
-    if not okUpd then BridgeMove.pathResult = "update error: " .. tostring(err) Bridge.logError("body.update", err) end
+    runBodyUpdate(zombie, BridgeData.owner())
 end
 
 
@@ -9130,6 +9309,91 @@ function Bridge.view3D(pn)
     return false
 end
 
+function Bridge.stuckDiagnostics()
+    local parts = {}
+    local function add(k, v) parts[#parts + 1] = tostring(k) .. "=" .. tostring(v) end
+    local body = Bridge.body
+    local red = nil
+    pcall(function() red = BridgeData ~= nil and BridgeData.owner() or nil end)
+    local bx, by, bz = nil, nil, nil
+    pcall(function() if body ~= nil then bx, by, bz = body:getX(), body:getY(), body:getZ() end end)
+    if bx ~= nil then add("pos", string.format("%.2f,%.2f,%.2f", bx, by, bz or 0)) end
+    if red ~= nil then
+        local rx, ry, rz = nil, nil, nil
+        pcall(function() rx, ry, rz = red:getX(), red:getY(), red:getZ() end)
+        if rx ~= nil then
+            add("red", string.format("%.2f,%.2f,%.2f", rx, ry, rz or 0))
+            if bx ~= nil then
+                add("d", string.format("%.2f", math.sqrt((bx - rx) ^ 2 + (by - ry) ^ 2)))
+            end
+        end
+    end
+    local st, bump = "", ""
+    pcall(function() if body ~= nil then st = tostring(body:getActionStateName()) end end)
+    pcall(function() if body ~= nil then bump = tostring(body:getBumpType()) end end)
+    add("st", st)
+    add("bump", bump)
+    if BridgeMove ~= nil then
+        add("pathResult", BridgeMove.pathResult)
+        add("obstacle", BridgeMove.obstacle)
+        add("pathing", BridgeMove.pathing)
+        add("moving", BridgeMove.moving)
+        add("steering", BridgeMove.steering)
+        local g = BridgeMove.goal
+        if g ~= nil then
+            add("goal", string.format("%.2f,%.2f", tonumber(g.x) or 0, tonumber(g.y) or 0))
+            if bx ~= nil then
+                add("goalD", string.format("%.2f",
+                    math.sqrt(((tonumber(g.x) or bx) - bx) ^ 2 + ((tonumber(g.y) or by) - by) ^ 2)))
+            end
+            if body ~= nil and type(BridgeMove.aheadText) == "function" then
+                local ahead = nil
+                pcall(function() ahead = BridgeMove.aheadText(body, g.x, g.y) end)
+                if ahead ~= nil then add("ahead", ahead) end
+            end
+        else
+            add("goal", "nil")
+        end
+        local F = BridgeMove.follow
+        if F ~= nil then
+            add("fkind", F.kind)
+            add("fstuck", F.stuck)
+            add("fpathUntil", F.pathUntil)
+            add("fnavHold", F.navHoldUntil)
+            add("fnavStatus", F.navStatus)
+            add("fnavReason", F.navReason)
+            if F.nav ~= nil then add("fpathFails", F.nav.pathFails) end
+            local at = F.stuckAt
+            if at ~= nil then
+                add("fstuckAt", string.format("%.2f,%.2f,t%.1f,leave%.1f",
+                    at.x or 0, at.y or 0, at.tick or 0, at.leave or 0))
+            end
+        end
+    end
+    add("walk60", Bridge.walk60)
+    add("red60", Bridge.red60)
+    add("engineWalk", Bridge.engineWalk)
+    add("stuckCount", Bridge.stuckCount)
+    if BridgeFight ~= nil then
+        add("fight", BridgeFight.state)
+        add("fightTarget", BridgeFight.target ~= nil)
+    end
+    if BridgeGunfight ~= nil then
+        add("gun", BridgeGunfight.state)
+        add("gunTarget", BridgeGunfight.target ~= nil)
+        add("drawn", BridgeGunfight.drawn)
+    end
+    if BridgeTask ~= nil then add("task", BridgeTask.active) end
+    if BridgeCar ~= nil and type(BridgeCar.busy) == "function" then
+        local b = false
+        pcall(function() b = BridgeCar.busy() end)
+        add("car", b)
+    end
+    add("t", Bridge.time)
+    add("tick", Bridge.tick)
+    return table.concat(parts, " ")
+end
+
 function Bridge.onTick()
     Bridge.tick = Bridge.tick + 1
     local dt = 1
@@ -9164,7 +9428,7 @@ function Bridge.onTick()
     driveTick(red)
 
 
-    if Bridge.every(15) and BridgeCallout ~= nil and type(BridgeCallout.cityTick) == "function" then
+    if Bridge.every(300) and BridgeCallout ~= nil and type(BridgeCallout.cityTick) == "function" then
         pcall(BridgeCallout.cityTick, Bridge.body)
     end
 
@@ -9188,8 +9452,16 @@ function Bridge.onTick()
 
 
 
-                    local far = math.sqrt((Bridge.body:getX() - red:getX()) ^ 2
-                                        + (Bridge.body:getY() - red:getY()) ^ 2) > 3
+                    local bbx, bby = Bridge.body:getX(), Bridge.body:getY()
+                    local far = math.sqrt((bbx - red:getX()) ^ 2
+                                        + (bby - red:getY()) ^ 2) > 6
+                    local goalFar = true
+                    if BridgeMove.goal ~= nil then
+                        local gx, gy = tonumber(BridgeMove.goal.x), tonumber(BridgeMove.goal.y)
+                        if gx ~= nil and gy ~= nil then
+                            goalFar = math.sqrt((gx - bbx) ^ 2 + (gy - bby) ^ 2) > 5
+                        end
+                    end
                     local trying = BridgeMove.pathing or BridgeMove.moving
 
 
@@ -9215,15 +9487,15 @@ function Bridge.onTick()
                         fightingNow = true
                         Bridge.stuckCount = 0
                     end
-                    if far and trying and not climbingNow and not fightingNow and Bridge.walk60 < 0.3 then
+                    if far and goalFar and trying and not climbingNow and not fightingNow and Bridge.walk60 < 0.3 then
                         Bridge.stuckCount = Bridge.stuckCount + 1
-                        if Bridge.stuckCount >= 3 and Bridge.autoTeleportAllowed() then
+                        local n = Bridge.stuckCount
+                        local detail = nil
+                        pcall(function() detail = Bridge.stuckDiagnostics() end)
+                        if detail ~= nil then log("stuck sample " .. tostring(n) .. ": " .. detail) end
+                        if n >= 3 and Bridge.autoTeleportAllowed() then
                             Bridge.stuckCount = 0
-                            pcall(function()
-                                log(string.format("stuck, teleporting: st=%s bump=%s obstacle=%s path=%s",
-                                    tostring(Bridge.body:getActionStateName()), tostring(Bridge.body:getBumpType()),
-                                    tostring(BridgeMove.obstacle), tostring(BridgeMove.pathResult)))
-                            end)
+                            if detail ~= nil then log("stuck, teleporting: " .. detail) end
                             Bridge.teleportToRed()
                         end
                     else

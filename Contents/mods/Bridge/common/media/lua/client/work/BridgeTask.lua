@@ -2492,11 +2492,16 @@ function BridgeTask.dangerNear(body, radius)
             local z = list:get(i)
             local nearEnough = false
             if z ~= nil and z ~= body then
-                local ddx, ddy = z:getX() - bx, z:getY() - by
+                local zx, zy, zz = nil, nil, nil
+                if BridgeZScan ~= nil and type(BridgeZScan.pos) == "function" then
+                    zx, zy, zz = BridgeZScan.pos(z)
+                end
+                if zx == nil then zx, zy, zz = z:getX(), z:getY(), z:getZ() end
+                local ddx, ddy = zx - bx, zy - by
                 local d = math.sqrt(ddx * ddx + ddy * ddy)
-                local rdx, rdy = z:getX() - rx, z:getY() - ry
+                local rdx, rdy = zx - rx, zy - ry
                 local dr2 = math.sqrt(rdx * rdx + rdy * rdy)
-                nearEnough = math.abs(z:getZ() - bz) < 0.8 and (d < dr or dr2 < dr)
+                nearEnough = math.abs(zz - bz) < 0.8 and (d < dr or dr2 < dr)
             end
             if nearEnough then
                 local threat = false

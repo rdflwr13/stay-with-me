@@ -107,6 +107,8 @@ end
 local function speakText(pool, cooldown, slot, urgent)
     if BridgeMoments == nil or Bridge.speakText == nil then return false end
     if Bridge.time == nil then return false end
+    if Bridge ~= nil and type(Bridge.speechAllowed) == "function"
+            and not Bridge.speechAllowed(pool, "combat") then return false end
     if not BridgeMoments.ready(slot, urgent or "soft") then return false end
     local n = 0
     for i = 1, 8 do
@@ -131,6 +133,7 @@ local function speakText(pool, cooldown, slot, urgent)
     local quiet = false
     pcall(function() quiet = Bridge.quiet() end)
     if quiet then
+        if type(Bridge.markSpeech) == "function" then Bridge.markSpeech() end
         pcall(function() Bridge.bridgeEvent(pool, text) end)
         BridgeMoments.info = pool .. " quiet"
         log(pool .. " quiet")
@@ -148,7 +151,7 @@ function BridgeGunTalk.sayBanded(base, cooldown, slot, urgent)
     local event = BridgeGunTalk.eventFor(base, BridgeGunTalk.band())
     if not BridgeGunTalk.has(event) then return false end
     local said = false
-    pcall(function() said = BridgeMoments.say(event, cooldown, urgent or "soft", slot) == true end)
+    pcall(function() said = BridgeMoments.say(event, cooldown, urgent or "soft", slot, "combat") == true end)
     return said
 end
 

@@ -409,6 +409,18 @@ function M.selftest()
 end
 
 local function onTick()
+    local bt = tonumber(Bridge ~= nil and Bridge.time or nil)
+    if bt ~= nil then
+        local gap = 1
+        if Bridge ~= nil and type(Bridge.companionUpdateGap) == "function" then gap = Bridge.companionUpdateGap() end
+        if Bridge ~= nil and type(Bridge.companionUpdateDue) == "function" then
+            if not Bridge.companionUpdateDue(M, "tickNext", gap) then return end
+        else
+            if M.tickAt == nil or bt < M.tickAt then M.tickAt = bt end
+            if (bt - M.tickAt) < gap then return end
+            M.tickAt = bt
+        end
+    end
     local ok, err = pcall(M.tick)
     if not ok and tickErrors < 3 then
         tickErrors = tickErrors + 1

@@ -328,7 +328,9 @@ local function homeTargets(perFloorCap, totalCap)
     for i = 1, #floors do keyParts[#keyParts + 1] = floors[i] end
     local key = table.concat(keyParts, ":")
     local now = Bridge.time or 0
-    if homeMemoKey == key and homeMemoAt ~= nil and now - homeMemoAt < HOME_TARGET_TTL then
+    local ttl = HOME_TARGET_TTL
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then ttl = BridgePerf.age("homeTargets", HOME_TARGET_TTL) end
+    if homeMemoKey == key and homeMemoAt ~= nil and now - homeMemoAt < ttl then
         return homeMemoOut
     end
     local out, seen, bldCache = {}, {}, {}
@@ -416,7 +418,25 @@ local function ammoCacheKey(gun, minRounds)
     if h ~= nil then
         hk = string.format("%s:%s:%s:%s:%s", tostring(h.x), tostring(h.y), tostring(h.z), tostring(h.w), tostring(h.h))
     end
-    return tostring(g) .. "|" .. hk .. "|" .. tostring(minRounds or 0)
+    local owner = nil
+    pcall(function() owner = BridgeData ~= nil and BridgeData.owner() or nil end)
+    local own = owner ~= nil and tostring(owner) or "none"
+    local care = "0"
+    pcall(function()
+        if BridgeData ~= nil and BridgeData.optionOf(Bridge.store, "gunMagCare") then care = "1" end
+    end)
+    local floors = "none"
+    if h ~= nil then
+        local list = nil
+        pcall(function() list = BridgeHome.includedFloors(h, allFloorsOn()) end)
+        if type(list) == "table" and #list > 0 then
+            local parts = {}
+            for i = 1, #list do parts[i] = tostring(list[i]) end
+            table.sort(parts)
+            floors = table.concat(parts, ",")
+        end
+    end
+    return tostring(g) .. "|" .. hk .. "|" .. own .. "|" .. care .. "|" .. floors .. "|" .. tostring(minRounds or 0)
 end
 
 function BridgeFetch.findAmmo(gun, minRounds)
@@ -425,8 +445,14 @@ function BridgeFetch.findAmmo(gun, minRounds)
     local cacheKey = ammoCacheKey(gun, minRounds)
     local hit = BridgeFetch.ammoCache[cacheKey]
     local now = Bridge.time or 0
-    if hit ~= nil and now - (hit.at or 0) < BridgeFetch.AMMO_CACHE_TTL then
-        return hit.item, hit.kind, hit.value
+    local ttl = BridgeFetch.AMMO_CACHE_TTL
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then ttl = BridgePerf.age("fetchAmmo", BridgeFetch.AMMO_CACHE_TTL) end
+    if hit ~= nil and now - (hit.at or 0) < ttl then
+        if hit.item == nil then return hit.item, hit.kind, hit.value end
+        local alive = false
+        pcall(function() alive = hit.item:getContainer() ~= nil end)
+        if alive then return hit.item, hit.kind, hit.value end
+        BridgeFetch.ammoCache[cacheKey] = nil
     end
     local cap = BridgeFetch.AMMO_SCAN_CAP or 240
     local targets = homeTargets(cap, cap)

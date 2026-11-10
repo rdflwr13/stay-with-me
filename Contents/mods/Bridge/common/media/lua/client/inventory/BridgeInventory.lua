@@ -966,6 +966,7 @@ end
 
 function BridgeInventory.afterChange(b, item, pre, kind)
     if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+    if type(BridgeInventory.resetWornBags) == "function" then pcall(BridgeInventory.resetWornBags, b) end
     local can, why, wait = BridgeInventory.canGesture(b)
     if not can and not wait then
         if #BridgeInventory.gestures > 0 then BridgeInventory.gestureFlush(b, "cannot gesture now") end
@@ -1496,7 +1497,9 @@ end
 function BridgeInventory.wornBags(b)
     local now = Bridge ~= nil and tonumber(Bridge.time) or nil
     now = now or 0
-    if b ~= nil and wornBagBody == b and wornBagList ~= nil and now - wornBagAt < 30 then
+    local ttl = 30
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then ttl = BridgePerf.age("wornBags", 30) end
+    if b ~= nil and wornBagBody == b and wornBagList ~= nil and now - wornBagAt < ttl then
         return wornBagList
     end
     local bags = {}
@@ -4345,6 +4348,7 @@ function BridgeInventory.receive(args)
         return "receive failed, returned: " .. tostring(err)
     end
     answer(true)
+    if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
 
     if BridgeHeal ~= nil then BridgeHeal.emptySig = nil end
     refreshPanels()
@@ -4477,6 +4481,7 @@ function BridgeInventory.took(args)
             end
         end)
         if b ~= nil then redress(b) end
+        if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
         refreshPanels()
         pcall(function() Bridge.saveOutfit() end)
     end

@@ -85,17 +85,23 @@ local function containerEmpty(item)
     return n == 0
 end
 
-local wornSetBody, wornSetValue = nil, nil
+local wornSetBody, wornSetValue, wornSetAt = nil, nil, nil
 
 local function wornBagSet(body)
-    if body ~= nil and wornSetBody == body and wornSetValue ~= nil then return wornSetValue end
+    local now = Bridge ~= nil and tonumber(Bridge.time) or 0
+    local ttl = 30
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then ttl = BridgePerf.age("wornBags", 30) end
+    if body ~= nil and wornSetBody == body and wornSetValue ~= nil
+            and wornSetAt ~= nil and now - wornSetAt < ttl then
+        return wornSetValue
+    end
     local set = {}
     if BridgeInventory ~= nil and type(BridgeInventory.wornBags) == "function" then
         pcall(function()
             for _, bag in ipairs(BridgeInventory.wornBags(body)) do set[bag] = true end
         end)
     end
-    wornSetBody, wornSetValue = body, set
+    wornSetBody, wornSetValue, wornSetAt = body, set, now
     return set
 end
 
@@ -1098,7 +1104,7 @@ function BridgeDeposit.clear()
     BridgeDeposit.poolCache = {}
     BridgeDeposit.catCache = {}
     BridgeDeposit.catTypeCache = {}
-    wornSetBody, wornSetValue = nil, nil
+    wornSetBody, wornSetValue, wornSetAt = nil, nil, nil
     if BridgeTask ~= nil and type(BridgeTask.lootAbortAct) == "function" then pcall(BridgeTask.lootAbortAct) end
     if BridgeMove ~= nil then BridgeMove.holdDoors = false end
     saveOutfit()
@@ -1125,7 +1131,7 @@ local function initJob(body, pending)
     end
     job.items = items
     job.plan, job.planEntry, job.assign = nil, nil, nil
-    wornSetBody, wornSetValue = nil, nil
+    wornSetBody, wornSetValue, wornSetAt = nil, nil, nil
     if job.dests == nil then job.dests = {} end
     ensureIndex(job)
     job.allDests = {}

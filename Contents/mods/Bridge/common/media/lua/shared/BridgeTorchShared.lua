@@ -109,6 +109,13 @@ local itemMemo = setmetatable({}, { __mode = "k" })
 local batteryMemo = setmetatable({}, { __mode = "k" })
 local ITEM_MEMO_TICKS = 6
 
+local function memoTtl()
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then
+        return BridgePerf.age("torch", ITEM_MEMO_TICKS)
+    end
+    return ITEM_MEMO_TICKS
+end
+
 local function memoClock()
     if Bridge ~= nil and tonumber(Bridge.tick) ~= nil then return tonumber(Bridge.tick) end
     if BridgeServer ~= nil and tonumber(BridgeServer.tick) ~= nil then return tonumber(BridgeServer.tick) end
@@ -296,7 +303,7 @@ function BridgeTorchShared.findBattery(body)
     if body == nil then return nil end
     local now = memoClock()
     local memo = now ~= nil and batteryMemo[body] or nil
-    if memo ~= nil and now - memo.at < ITEM_MEMO_TICKS then return memo.item end
+    if memo ~= nil and now - memo.at < memoTtl() then return memo.item end
     local found = nil
     eachItem(body, function(it)
         local t = nil
@@ -364,7 +371,7 @@ function BridgeTorchShared.findTorch(body)
     if body == nil then return nil end
     local now = memoClock()
     local memo = now ~= nil and itemMemo[body] or nil
-    if memo ~= nil and now - memo.at < ITEM_MEMO_TICKS then return memo.item end
+    if memo ~= nil and now - memo.at < memoTtl() then return memo.item end
 
     local function bestOf(predicate, allowEmpty)
         local best, bestScore = nil, -1

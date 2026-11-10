@@ -26,9 +26,9 @@ BridgeCallout.WEAPON_LOW = 0.15
 BridgeCallout.LASTFIGHT_MIN_HOURS = 1
 BridgeCallout.LASTFIGHT_MAX_HOURS = 24
 BridgeCallout.AMMO_NEAR = 12
-BridgeCallout.SCAN_FIGHT = 15
-BridgeCallout.SCAN_IDLE = 30
-BridgeCallout.SCAN_QUIET = 60
+BridgeCallout.SCAN_FIGHT = 60
+BridgeCallout.SCAN_IDLE = 120
+BridgeCallout.SCAN_QUIET = 120
 
 BridgeCallout.PLACE_GAP = 60 * 60
 BridgeCallout.PLACE_DWELL = 3 * 60
@@ -180,7 +180,7 @@ BridgeCallout.SAY = {
 
 BridgeCallout.REPEAT_GAP = 8
 BridgeCallout.HORDE_CD = 60
-BridgeCallout.HORDE_SCAN_EVERY = 60
+BridgeCallout.HORDE_SCAN_EVERY = 300
 
 BridgeCallout.MILESTONES = { [1] = true, [5] = true, [10] = true, [25] = true, [50] = true,
     [100] = true, [250] = true, [500] = true, [1000] = true }
@@ -300,6 +300,9 @@ local function gunThreat()
     local active = false
     pcall(function() active = BridgeFight ~= nil and BridgeFight.state == "gun" end)
     if active then return true end
+    if Bridge ~= nil and type(Bridge.speechGapActive) == "function" and Bridge.speechGapActive("foot") then
+        return false
+    end
     local now = Bridge.time or 0
     if BridgeCallout.gunThreatAt == now then return BridgeCallout.gunThreatValue == true end
     local body, red = Bridge.body, nil
@@ -329,7 +332,7 @@ local function gunThreat()
             local wx, wy = bx or rx, by or ry
             local list = nil
             if BridgeZS ~= nil and wx ~= nil and wy ~= nil then
-                list = BridgeZS.nearUnion(wx, wy, rx or wx, ry or wy, 15.1)
+                list = BridgeZS.nearUnion(wx, wy, rx or wx, ry or wy, 15.1, { tag = "callout.scan" })
             end
             if list == nil then list = getCell():getZombieList() end
             for i = 0, list:size() - 1 do
@@ -445,13 +448,13 @@ attempt = function(event, priority)
     local e = BridgeCallout.EVENTS[event]
     if e == nil then return false end
     if BridgeCallout.SAY[event] == 0 then return false end
-    local gap = BridgeCallout.REPEAT_GAP * BridgeCallout.SEC
-    if Bridge.time - BridgeCallout.lastAny < gap then
+    if Bridge ~= nil and type(Bridge.speechAllowed) == "function"
+            and not Bridge.speechAllowed(event, "combat") then
         if priority then BridgeCallout.info = "blocked " .. event end
         return false
     end
     local said = false
-    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeCallout.SEC, true, e.slot) == true end)
+    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeCallout.SEC, true, e.slot, "combat") == true end)
     if said then
         BridgeCallout.lastAny = Bridge.time
         if priority then BridgeCallout.deferred = {} end
@@ -710,7 +713,18 @@ function BridgeCallout.forceMilestone(n)
     local text = nil
     pcall(function() text = BridgeSpeech.getOrNull(key) end)
     if type(text) ~= "string" or text == "" or text == key then return false end
+    if Bridge ~= nil and type(Bridge.speechAllowed) == "function" then
+        local ctx = Bridge.speechContext()
+        if not Bridge.speechAllowed("KillMilestone" .. n, "combat", ctx) then
+            local left = 0
+            if type(Bridge.speechGapRemaining) == "function" then left = Bridge.speechGapRemaining(ctx) end
+            BridgeCallout.milestoneDue = { n = n, at = Bridge.time + math.max(1, math.ceil((tonumber(left) or 0) * 60)) }
+            BridgeCallout.info = "milestone held"
+            return false
+        end
+    end
     if Bridge.quiet() then
+        if type(Bridge.markSpeech) == "function" then Bridge.markSpeech() end
         pcall(function() Bridge.bridgeEvent("KillMilestone" .. n, text) end)
     else
         Bridge.speakText(text)
@@ -1038,6 +1052,7 @@ end
 
 local function placeCanSpeak()
     if Bridge.time - BridgeCallout.placeLastAt < BridgeCallout.PLACE_GAP then return false end
+    if Bridge.time < (BridgeMoments.cool["Place"] or 0) then return false end
     local fighting = false
     pcall(function()
         fighting = BridgeFight ~= nil and (BridgeFight.state ~= "idle" or BridgeFight.target ~= nil)
@@ -1186,7 +1201,7 @@ end
 local function homeFire()
     if BridgeMoments == nil or type(BridgeMoments.say) ~= "function" then return false end
     local said = false
-    pcall(function() said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn") == true end)
+    pcall(function() said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn", "home") == true end)
     return said
 end
 
@@ -1461,7 +1476,7 @@ function BridgeCallout.homeCommand(parts)
         BridgeMoments.cool["HomeReturn"] = -99999
         local said = false
         pcall(function()
-            said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn") == true
+            said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn", "home") == true
         end)
         if said then
             BridgeCallout.homeFired = true
@@ -1691,7 +1706,7 @@ function BridgeCallout.cityTick(body)
 
     if pool ~= nil and BridgeMoments ~= nil and type(BridgeMoments.say) == "function" then
         local said = false
-        pcall(function() said = BridgeMoments.say(pool, BridgeCallout.CITY_GAP, true, "City") == true end)
+        pcall(function() said = BridgeMoments.say(pool, BridgeCallout.CITY_GAP, true, "City", "city") == true end)
         if said then
             BridgeCallout.cityLastAt = Bridge.time
             vlog("city " .. box.id .. " -> " .. pool)
@@ -1740,7 +1755,7 @@ function BridgeCallout.citiesCommand(sub, a)
         local pool = (sub == "fire") and ("City_" .. box.id) or ("City_" .. box.id .. "Again")
         local said = false
         if BridgeMoments ~= nil and type(BridgeMoments.say) == "function" then
-            pcall(function() said = BridgeMoments.say(pool, 0, true, "City") == true end)
+            pcall(function() said = BridgeMoments.say(pool, 0, true, "City", "city") == true end)
         end
         BridgeCallout.cityLastAt = Bridge.time
         return string.format("cities %s %s -> %s (%s)", tostring(sub), tostring(box.id), pool, said and "spoke" or "no line")
@@ -2005,7 +2020,17 @@ end
 
 function BridgeCallout.update(body)
     if body == nil then return end
-    local scanDue = Bridge.every(15)
+    local redOwner = nil
+    pcall(function() redOwner = BridgeData.owner() end)
+    local asleepNow = false
+    pcall(function() asleepNow = redOwner ~= nil and redOwner:isAsleep() == true end)
+    if Bridge.mode == "rest"
+        or (BridgeFastForward ~= nil and BridgeFastForward.active())
+        or asleepNow then
+        BridgeCallout.dueAt = Bridge.time + BridgeCallout.SCAN_QUIET
+        return
+    end
+    local scanDue = Bridge.every(300)
     if scanDue and type(BridgeCallout.homeTrack) == "function" then
         pcall(function() BridgeCallout.homeTrack(body, BridgeData.owner()) end)
     end
@@ -2097,7 +2122,13 @@ function BridgeCallout.update(body)
         BridgeCallout.lastHealth = health
     end
 
-    if BridgeHorde ~= nil then
+    local hordeAllowed = true
+    if Bridge ~= nil then
+        if type(Bridge.speechGapActive) == "function" and Bridge.speechGapActive("foot") then hordeAllowed = false end
+        if type(Bridge.speechInCombat) == "function" and Bridge.speechInCombat() then hordeAllowed = false end
+    end
+    if Bridge.time < (BridgeMoments.cool["Horde"] or 0) then hordeAllowed = false end
+    if hordeAllowed and BridgeHorde ~= nil then
         local SAY = BridgeCallout.SAY
         if SAY.EvHorde32 ~= 0 or SAY.EvHorde16 ~= 0 or SAY.EvHorde8 ~= 0 or SAY.EvHorde4 ~= 0 then
             local raw, n = BridgeCallout.hordeRaw, BridgeCallout.hordeSeen

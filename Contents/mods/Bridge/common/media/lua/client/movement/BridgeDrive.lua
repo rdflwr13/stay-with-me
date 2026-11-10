@@ -21,8 +21,6 @@ BridgeDrive.ON = {
     ROADKILL = 1,
     WEATHER = 1,
     DARK    = 1,
-    SMELL   = 1,
-    SICK    = 1,
     FUEL    = 1,
     ENGINE  = 1,
     LIGHT   = 1,
@@ -56,8 +54,9 @@ BridgeDrive.SCAN_MIN    = 6
 BridgeDrive.SCAN_MAX    = 22
 BridgeDrive.SCAN_HALF   = 2.5
 BridgeDrive.HORDE_COUNT = 4
-BridgeDrive.SCAN_EVERY  = 15
-BridgeDrive.HORDE_EVERY = 30
+BridgeDrive.SCAN_EVERY  = 300
+BridgeDrive.AHEAD_EVERY = 15
+BridgeDrive.HORDE_EVERY = 300
 
 
 
@@ -69,7 +68,7 @@ BridgeDrive.GREET_RADIUS = 8
 BridgeDrive.ANIMAL_MIN    = 8
 BridgeDrive.ANIMAL_MAX    = 30
 BridgeDrive.ANIMAL_HALF   = 15
-BridgeDrive.ANIMAL_EVERY  = 30
+BridgeDrive.ANIMAL_EVERY  = 300
 BridgeDrive.ANIMAL_FULL_EVERY = 600
 BridgeDrive.ANIMAL_REPEAT = 600
 
@@ -79,7 +78,7 @@ BridgeDrive.EXIT_RADIUS = 8
 
 BridgeDrive.STATE_EVERY      = 300
 BridgeDrive.ROADKILL_MIN_KMH = 15
-BridgeDrive.EAT_EVERY        = 60
+BridgeDrive.EAT_EVERY        = 300
 
 
 BridgeDrive.HP_STEPS  = { 50, 30, 15 }
@@ -90,7 +89,7 @@ BridgeDrive.CHAT_MIN   = 5400
 BridgeDrive.CHAT_SPAN  = 9000
 
 
-BridgeDrive.WEATHER_CHECK = 30
+BridgeDrive.WEATHER_CHECK = 300
 BridgeDrive.RAIN_ON    = 0.05
 BridgeDrive.RAIN_OFF   = 0.02
 BridgeDrive.RAIN_HEAVY = 0.7
@@ -99,16 +98,6 @@ BridgeDrive.SNOW_OFF   = 0.02
 BridgeDrive.FOG        = 0.4
 BridgeDrive.WIND       = 0.5
 
-
-BridgeDrive.SMELL_EVERY  = 60
-BridgeDrive.SMELL_RADIUS = 4
-BridgeDrive.SMELL_TIERS  = { 4, 8, 16 }
-
-
-BridgeDrive.CORPSE_SICK_MIN    = 0.3
-BridgeDrive.CORPSE_SICK_RADIUS = 8
-BridgeDrive.CORPSE_MIN         = 4
-BridgeDrive.CORPSE_EMOTE_GAP   = 600
 
 
 
@@ -321,10 +310,6 @@ BridgeDrive.EVENTS = {
     EvCarTiredNight   = { slot = "DriveTiredNight",  cooldown = 600,  urgent = true,  cat = "STATE" },
     EvCarEating       = { slot = "DriveEating",      cooldown = 120,  urgent = true,  cat = "STATE" },
     EvCarDrinking     = { slot = "DriveDrinking",    cooldown = 120,  urgent = true,  cat = "STATE" },
-    EvCarSmell4       = { slot = "DriveSmell4",       cooldown = 300,  urgent = false, cat = "SMELL" },
-    EvCarSmell8       = { slot = "DriveSmell8",       cooldown = 300,  urgent = false, cat = "SMELL" },
-    EvCarSmell16      = { slot = "DriveSmell16",      cooldown = 300,  urgent = false, cat = "SMELL" },
-    EvCarCorpseSick   = { slot = "DriveCorpseSick",   cooldown = 300,  urgent = true,  cat = "SICK" },
 
     EvCarLowFuel      = { slot = "DriveLowFuel",      cooldown = 600,  urgent = true,  cat = "FUEL" },
     EvCarOutOfFuel    = { slot = "DriveOutOfFuel",    cooldown = 900,  urgent = true,  cat = "FUEL" },
@@ -406,9 +391,13 @@ local function say(event)
     if e == nil then return false end
     if BridgeDrive.ENABLED == 0 then return false end
     if e.cat ~= nil and BridgeDrive.ON[e.cat] ~= 1 then return false end
-    if Bridge.time - BridgeDrive.lastAny < BridgeDrive.GAP * BridgeDrive.SEC then return false end
+    if Bridge ~= nil and type(Bridge.speechAllowed) == "function"
+            and not Bridge.speechAllowed(event, "drive") then
+        BridgeDrive.info = "blocked " .. event
+        return false
+    end
     local said = false
-    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeDrive.SEC, e.urgent == true and "soft" or false, e.slot) == true end)
+    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeDrive.SEC, e.urgent == true and "soft" or false, e.slot, "drive") == true end)
     if said then
         BridgeDrive.lastAny = Bridge.time
         BridgeDrive.info = event
@@ -534,33 +523,6 @@ local function mcall(obj, name, ...)
     return nil
 end
 
-
-
-local corpseAt, corpseRed, corpseR, corpseVal = nil, nil, nil, 0
-
-local function corpsesNear(red, radius)
-    if red == nil then return 0 end
-    local tick = Bridge.time or 0
-    local r = tonumber(radius) or BridgeDrive.SMELL_RADIUS
-    if corpseAt == tick and corpseRed == red and corpseR == r then return corpseVal end
-    local n = 0
-    pcall(function()
-        local cell = getCell()
-        local cx, cy, cz = math.floor(red:getX()), math.floor(red:getY()), math.floor(red:getZ())
-        local r = tonumber(radius) or BridgeDrive.SMELL_RADIUS
-        for dx = -r, r do
-            for dy = -r, r do
-                local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
-                if sq ~= nil then
-                    local bodies = mcall(sq, "getDeadBodys")
-                    n = n + (tonumber(mcall(bodies, "size")) or 0)
-                end
-            end
-        end
-    end)
-    corpseAt, corpseRed, corpseR, corpseVal = tick, red, r, n
-    return n
-end
 
 
 local function isBodyZ(z)
@@ -859,6 +821,8 @@ function BridgeDrive.tick(red)
     pcall(function() car = red:getVehicle() end)
     if car == nil then reset() return end
     local driving = drivingForward(car)
+    local carGap = Bridge ~= nil and type(Bridge.speechGapActive) == "function"
+        and Bridge.speechGapActive("car")
 
 
 
@@ -953,10 +917,22 @@ function BridgeDrive.tick(red)
     end
 
 
+    local carAhead = false
+    if driving and Bridge.every(BridgeDrive.AHEAD_EVERY) then
+        carAhead = scanAhead(car)
+        BridgeDrive.aheadNow = carAhead
+    else
+        carAhead = BridgeDrive.aheadNow == true
+    end
+
     if Bridge.every(BridgeDrive.SCAN_EVERY) then
         local hordeDue = Bridge.every(BridgeDrive.HORDE_EVERY)
+        local hordeReady = Bridge.time >= math.max(
+            BridgeMoments.cool["DriveHorde"] or 0,
+            BridgeMoments.cool["DriveZombie"] or 0,
+            BridgeMoments.cool["DriveZombieClose"] or 0)
         local hordeTier = nil
-        if hordeDue and BridgeHorde ~= nil then
+        if hordeDue and hordeReady and BridgeHorde ~= nil and not carGap and BridgeDrive.ON.ZOMBIE == 1 then
             local cx, cy, cz = nil, nil, nil
             pcall(function() cx, cy, cz = car:getX(), car:getY(), car:getZ() end)
             if cx ~= nil then
@@ -967,19 +943,19 @@ function BridgeDrive.tick(red)
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
-        local carAhead = false
-        if driving then carAhead = scanAhead(car) end
         if carAhead and driving and say("EvCarAhead") then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
-        if hordeDue and hordeTier == nil and BridgeHorde ~= nil
+        if hordeDue and hordeReady and hordeTier == nil and BridgeHorde ~= nil
+            and not carGap and BridgeDrive.ON.ZOMBIE == 1
             and BridgeHorde.countCone(car, 0, 6, nil, true, red) > 0
             and say("EvCarZombieClose") then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
-        if hordeDue and hordeTier == nil and BridgeHorde ~= nil
+        if hordeDue and hordeReady and hordeTier == nil and BridgeHorde ~= nil
+            and not carGap and BridgeDrive.ON.ZOMBIE == 1
             and BridgeHorde.countCone(car, BridgeDrive.SCAN_MIN, BridgeDrive.SCAN_MAX, nil, true, red) > 0
             and say("EvCarZombie") then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
@@ -989,25 +965,7 @@ function BridgeDrive.tick(red)
 
 
 
-    if BridgeDrive.greetDone and Bridge.every(BridgeDrive.SMELL_EVERY) then
-        local sick = statOf(red, "SICKNESS")
-        if sick > BridgeDrive.CORPSE_SICK_MIN then
-            local n = 0
-            pcall(function() n = corpsesNear(red, BridgeDrive.CORPSE_SICK_RADIUS) end)
-            if n >= BridgeDrive.CORPSE_MIN then
-                if Bridge.time - (BridgeDrive.corpseEmoteAt or -99999) > BridgeDrive.CORPSE_EMOTE_GAP then
-                    BridgeDrive.corpseEmoteAt = Bridge.time
-                    if BridgeSocial ~= nil and BridgeSocial.emote ~= nil then
-                        pcall(function() BridgeSocial.emote("PullAtCollar", true) end)
-                    end
-                end
-                if say("EvCarCorpseSick") then
-                    BridgeDrive.hpBase = hp or BridgeDrive.hpBase
-                    return
-                end
-            end
-        end
-    end
+
 
 
     if BridgeDrive.greetDone and Bridge.every(BridgeDrive.STATE_EVERY) then
@@ -1018,7 +976,7 @@ function BridgeDrive.tick(red)
     end
 
 
-    if BridgeDrive.greetDone and Bridge.every(30) then
+    if BridgeDrive.greetDone and Bridge.every(BridgeDrive.STATE_EVERY) then
         local ratio = nil
         pcall(function() ratio = fuelRatio(car) end)
         local econd = nil
@@ -1160,18 +1118,7 @@ function BridgeDrive.tick(red)
     end
 
 
-    if Bridge.every(BridgeDrive.SMELL_EVERY) then
-        local n = 0
-        pcall(function() n = corpsesNear(red, BridgeDrive.SMELL_RADIUS) end)
-        local tier = nil
-        for i = 1, #BridgeDrive.SMELL_TIERS do
-            if n >= BridgeDrive.SMELL_TIERS[i] then tier = BridgeDrive.SMELL_TIERS[i] end
-        end
-        if tier ~= nil and say("EvCarSmell" .. tier) then
-            BridgeDrive.hpBase = hp or BridgeDrive.hpBase
-            return
-        end
-    end
+
 
 
     if BridgeDrive.ON.ANIMAL == 1 and Bridge.every(BridgeDrive.ANIMAL_EVERY) then

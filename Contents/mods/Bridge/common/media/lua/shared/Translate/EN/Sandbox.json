@@ -251,5 +251,11 @@
     "Sandbox_StayWithMe_BreathingVolume_Values_option3": "Normal (default)",
     "Sandbox_StayWithMe_BreathingVolume_Values_option4": "Loud",
     "Sandbox_StayWithMe_SidebarOffsetSlots": "Sidebar icon offset (slots)",
-    "Sandbox_StayWithMe_SidebarOffsetSlots_tooltip": "Moves the companion's sidebar button down by this many slots. Use it if another mod's sidebar icon overlaps it. 0 keeps the default position. This is a world setting, so it applies to all players."
+    "Sandbox_StayWithMe_SidebarOffsetSlots_tooltip": "Moves the companion's sidebar button down by this many slots. Use it if another mod's sidebar icon overlaps it. 0 keeps the default position. This is a world setting, so it applies to all players.",
+    "Sandbox_StayWithMe_CompanionUpdateRate": "Companion Update Rate",
+    "Sandbox_StayWithMe_CompanionUpdateRate_tooltip": "How often the companion's non-combat body work and visual state updates. Smooth (60 Hz) is recommended and gives the best follow, steering, magazine-care, and visual responsiveness. Combat, reload, tasks, car, health, climb, hit recovery, and rendering are unaffected and always run at full rate. Lower settings save CPU but can make follow and care feel less smooth; Minimum (30 Hz) is the lowest recommended value.",
+    "Sandbox_StayWithMe_CompanionUpdateRate_Values_option1": "Smooth (60 Hz)",
+    "Sandbox_StayWithMe_CompanionUpdateRate_Values_option2": "Balanced (50 Hz)",
+    "Sandbox_StayWithMe_CompanionUpdateRate_Values_option3": "Performance (40 Hz)",
+    "Sandbox_StayWithMe_CompanionUpdateRate_Values_option4": "Minimum (30 Hz)"
 }

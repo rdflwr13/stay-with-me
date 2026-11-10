@@ -597,21 +597,37 @@ local function crowdAround(body, radius)
     local key = string.format("%.2f", radius)
     local cached = crowdMemo.byRadius[key]
     if cached ~= nil then return cached end
-    local n = 0
-    pcall(function()
-        local bx, by = body:getX(), body:getY()
-        local list = nil
-        if BridgeZS ~= nil then list = BridgeZS.near(bx, by, radius + 0.05, { tag = "fight.crowd" }) end
-        if list == nil then list = getCell():getZombieList() end
-        for i = 0, list:size() - 1 do
-            local z = list:get(i)
-            if z ~= nil and z ~= body and not isBody(z) and z:isAlive() and z:getHealth() > 0
-                and math.abs(z:getZ() - body:getZ()) < 0.8 and dist(z, body) < radius
-                and not BridgeData.harmless(z) then
-                n = n + 1
+    local n = nil
+    local scan = BridgeFight.escapeScan
+    if scan ~= nil and scan.tick == tick and scan.body == body and scan.g2 ~= nil
+        and radius <= 2.0 then
+        n = scan.g2
+    end
+    if n == nil then
+        n = 0
+        pcall(function()
+            local bx, by = body:getX(), body:getY()
+            local bz = body:getZ()
+            local list = nil
+            if BridgeZS ~= nil then list = BridgeZS.near(bx, by, radius + 0.05, { tag = "fight.crowd" }) end
+            if list == nil then list = getCell():getZombieList() end
+            for i = 0, list:size() - 1 do
+                local z = list:get(i)
+                if z ~= nil and z ~= body and zsAlive(z) and zsHealth(z) and not isBody(z)
+                    and not zsHarmless(z) then
+                    local zx, zy, zz = nil, nil, nil
+                    if BridgeZScan ~= nil and type(BridgeZScan.pos) == "function" then
+                        zx, zy, zz = BridgeZScan.pos(z)
+                    end
+                    if zx == nil then zx, zy, zz = z:getX(), z:getY(), z:getZ() end
+                    if math.abs(zz - bz) < 0.8 then
+                        local dx, dy = zx - bx, zy - by
+                        if dx * dx + dy * dy < radius * radius then n = n + 1 end
+                    end
+                end
             end
-        end
-    end)
+        end)
+    end
     crowdMemo.byRadius[key] = n
     return n
 end
@@ -1269,16 +1285,16 @@ local function pickTarget(body, red, mode)
             elseif banned then reason = "banned"
             elseif busy then reason = "busy"
             elseif isBody(z) then reason = "harmless"
-            elseif not (z:isAlive() and z:getHealth() > 0) then reason = "dead"
-            elseif BridgeFight.ownerRisen(z, red) then reason = "dead"
+            elseif not (zsAlive(z) and zsHealth(z)) then reason = "dead"
+            elseif zsRisen(z, red) then reason = "dead"
             elseif math.abs(z:getZ() - anchor:getZ()) >= 0.8 then reason = "remote"
-            elseif BridgeData.harmless(z) then reason = "harmless"
+            elseif zsHarmless(z) then reason = "harmless"
             elseif not visible(z, anchor) then reason = "invisible"
             end
             local candScore = nil
-            if z ~= nil and not banned and not busy and not isBody(z) and z:isAlive() and z:getHealth() > 0
-                and not BridgeFight.ownerRisen(z, red)
-                and math.abs(z:getZ() - anchor:getZ()) < 0.8 and not BridgeData.harmless(z) and visible(z, anchor) then
+            if z ~= nil and not banned and not busy and not isBody(z) and zsAlive(z) and zsHealth(z)
+                and not zsRisen(z, red)
+                and math.abs(z:getZ() - anchor:getZ()) < 0.8 and not zsHarmless(z) and visible(z, anchor) then
                 local dRed = dist(z, red)
                 local dSelf = dist(z, body)
                 local remoteOk = (not isRemote) or dSelf <= reach + 0.3
@@ -1671,12 +1687,17 @@ end
 
 local function footBodyOk(z, body, bz, red)
     if not (zsAlive(z) and zsHealth(z)) then return false end
-    if math.abs(z:getZ() - bz) >= 0.8 then return false end
+    local zx, zy, zz = nil, nil, nil
+    if BridgeZScan ~= nil and type(BridgeZScan.pos) == "function" then
+        zx, zy, zz = BridgeZScan.pos(z)
+    end
+    if zx == nil then zx, zy, zz = z:getX(), z:getY(), z:getZ() end
+    if math.abs(zz - bz) >= 0.8 then return false end
     if instanceof(z, "IsoAnimal") then return false end
     if isBody(z) then return false end
     if zsRisen(z, red) then return false end
     if zsHarmless(z) then return false end
-    return true, z:getX(), z:getY()
+    return true, zx, zy
 end
 
 BridgeFight.footState = BridgeFight.footState
@@ -1750,13 +1771,6 @@ BridgeFight.footState.add = function(st, z, zx, zy)
 end
 
 local function footScan(body, red)
-    local out = { n = 0, pressN = 0, nearN = 0, otherNear = 0, g2 = 0, g25 = 0, pushX = 0, pushY = 0,
-                  cx = nil, cy = nil, centerDist = nil, threat = nil, threatD = math.huge,
-                  standThreat = nil, standD = math.huge, pressThreat = nil, pressD = math.huge,
-                  sectorMask = 0, sectorN = 0, opposite = 0,
-                  sectorMaskGun = 0, sectorNGun = 0, oppositeGun = 0,
-                  sectorMaskCrowd = 0, sectorNCrowd = 0, oppositeCrowd = 0 }
-    local bx, by, bz = body:getX(), body:getY(), body:getZ()
     local target = BridgeFight.target
     local scanLimit = FOOT.CROWD
     if BridgeGunfight ~= nil and BridgeGunfight.isAssigned ~= nil then
@@ -1767,9 +1781,25 @@ local function footScan(body, red)
             if want > scanLimit then scanLimit = want end
         end
     end
+    local tick = Bridge.tick or 0
+    local memo = BridgeFight.footMemo
+    if memo ~= nil and memo.tick == tick and memo.body == body and memo.red == red
+            and memo.target == target and memo.scanLimit == scanLimit then
+        return memo.S
+    end
+    local out = { n = 0, pressN = 0, nearN = 0, otherNear = 0, g2 = 0, g25 = 0, pushX = 0, pushY = 0,
+                  cx = nil, cy = nil, centerDist = nil, threat = nil, threatD = math.huge,
+                  standThreat = nil, standD = math.huge, pressThreat = nil, pressD = math.huge,
+                  sectorMask = 0, sectorN = 0, opposite = 0,
+                  sectorMaskGun = 0, sectorNGun = 0, oppositeGun = 0,
+                  sectorMaskCrowd = 0, sectorNCrowd = 0, oppositeCrowd = 0 }
+    local bx, by, bz = body:getX(), body:getY(), body:getZ()
 
     local fs = BridgeFight.footState
     fs.epoch = fs.epoch + 1
+    out.tick = Bridge.tick or 0
+    out.body = body
+    out.scanLimit = scanLimit
     local st = { body = body, bx = bx, by = by, bz = bz, out = out, scanLimit = scanLimit,
         target = target, epoch = fs.epoch, cx = 0, cy = 0, cn = 0 }
 
@@ -1841,6 +1871,10 @@ local function footScan(body, red)
         end
     end
     out.crowdN, out.crowdX, out.crowdY = cn, out.cx, out.cy
+    memo = BridgeFight.footMemo
+    if memo == nil then memo = {} BridgeFight.footMemo = memo end
+    memo.tick, memo.body, memo.red = tick, body, red
+    memo.target, memo.scanLimit, memo.S = target, scanLimit, out
     return out
 end
 BridgeFight.scan = footScan
@@ -2749,10 +2783,10 @@ local function extraTargets(body, item, primary, want)
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and z ~= primary and z ~= body and z:isAlive() and z:getHealth() > 0
+            if z ~= nil and z ~= primary and z ~= body and zsAlive(z) and zsHealth(z)
                 and not instanceof(z, "IsoPlayer") and (red == nil or z ~= red)
-                and not isBody(z) and not remoteZombie(z) and not BridgeData.harmless(z)
-                and not BridgeFight.ownerRisen(z, red)
+                and not isBody(z) and not remoteZombie(z) and not zsHarmless(z)
+                and not zsRisen(z, red)
                 and math.abs(z:getZ() - body:getZ()) < 0.8 then
                 local d = dist(body, z)
                 if d <= range + 0.3 then
@@ -2835,10 +2869,10 @@ local function shoveTargets(body)
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and z ~= body and z:isAlive() and z:getHealth() > 0
+            if z ~= nil and z ~= body and zsAlive(z) and zsHealth(z)
                 and not instanceof(z, "IsoPlayer") and (red == nil or z ~= red)
-                and not isBody(z) and not remoteZombie(z) and not BridgeData.harmless(z)
-                and not BridgeFight.ownerRisen(z, red) and not isProne(z)
+                and not isBody(z) and not remoteZombie(z) and not zsHarmless(z)
+                and not zsRisen(z, red) and not isProne(z)
                 and math.abs(z:getZ() - body:getZ()) < 0.8 then
                 local d = dist(body, z)
                 if d <= SHOVE.RANGE then

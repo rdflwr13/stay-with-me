@@ -18,7 +18,7 @@ BridgeAmbient.ON = {
 
 
 BridgeAmbient.CFG = {
-    CHECK          = 30,
+    CHECK          = 600,
     GAP            = 12,
     NEAR           = 20,
     LIGHTNING_DIST = 30,
@@ -32,9 +32,8 @@ BridgeAmbient.CFG = {
     FOG            = 0.4,
     WIND           = 0.5,
     CLOUD          = 0.6,
-    HELI_FRESH_MS  = 1500,
-    HELI_GONE_MS   = 2000,
-    HELI_PAUSE_MS  = 3000,
+    HELI_WINDOW_MS = 120000,
+    HELI_EVERY     = 600,
 }
 
 
@@ -62,9 +61,7 @@ BridgeAmbient.EVENTS = {
     EvNeedLightIn    = { slot = "AmbNeedLightIn",  cooldown = 15 * 60, cat = "DARK" },
     EvLightOn        = { slot = "AmbLightOn",      cooldown = 10 * 60, cat = "DARK" },
     EvNoPowerIn      = { slot = "AmbNoPowerIn",    cooldown = 30 * 60, cat = "DARK" },
-    EvHeliArrive     = { slot = "Heli", cooldown = 30, cat = "HELI", urgent = true },
-    EvHeliSustained  = { slot = "Heli", cooldown = 30, cat = "HELI", urgent = true },
-    EvHeliLeave      = { slot = "Heli", cooldown = 30, cat = "HELI", urgent = true },
+    EvHeli           = { slot = "Heli", cooldown = 600, cat = "HELI", urgent = true },
 }
 
 BridgeAmbient.prev = nil
@@ -72,13 +69,7 @@ BridgeAmbient.lastAny = -99999
 BridgeAmbient.fightingAt = -99999
 BridgeAmbient.info = "none"
 
-BridgeAmbient._heliWas = false
-BridgeAmbient._heliVisit = nil
-BridgeAmbient._heliAnnounced = false
-BridgeAmbient._heliSustained = false
-BridgeAmbient._heliPending = nil
-BridgeAmbient._heliStaleSince = nil
-BridgeAmbient._heliLastPoll = 0
+BridgeAmbient._heliNextAt = 0
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeAmbient] " .. tostring(text)) end end
 
@@ -102,6 +93,9 @@ end
 local function dangerNear(red, body)
     local dist = BridgeAmbient.CFG.DANGER
     if dist <= 0 then return false end
+    if Bridge ~= nil and type(Bridge.speechGapActive) == "function" and Bridge.speechGapActive("foot") then
+        return false
+    end
     local near = false
     local frame = nil
     pcall(function() if BridgeScan ~= nil then frame = BridgeScan.frame(body, red) end end)
@@ -236,10 +230,10 @@ local function say(event)
     local e = BridgeAmbient.EVENTS[event]
     if e == nil then return false end
     if e.cat ~= nil and BridgeAmbient.ON[e.cat] ~= 1 then return false end
-    if not e.urgent and Bridge.time - BridgeAmbient.lastAny < BridgeAmbient.CFG.GAP * BridgeAmbient.SEC then return false end
+    local kind = e.cat == "HELI" and "heli" or "ambient"
     local said = false
     local urgency = e.urgent and true or "soft"
-    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeAmbient.SEC, urgency, e.slot) == true end)
+    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeAmbient.SEC, urgency, e.slot, kind) == true end)
     if said then
         BridgeAmbient.lastAny = Bridge.time
         BridgeAmbient.info = event
@@ -255,16 +249,16 @@ local function fire(list)
 end
 
 local function heliOverhead(red)
-    local fresh = false
+    local seen = false
     if red == nil then return false end
     pcall(function()
         local events = red:getMusicIntensityEvents()
         if events == nil then return end
         local ev = events:findEventById("HelicopterOverhead")
         if ev == nil then return end
-        fresh = ev:getElapsedTime() < BridgeAmbient.CFG.HELI_FRESH_MS
+        seen = (tonumber(ev:getElapsedTime()) or 0) < BridgeAmbient.CFG.HELI_WINDOW_MS
     end)
-    return fresh == true
+    return seen == true
 end
 
 local function heliCanSpeak(red, body, near)
@@ -273,82 +267,43 @@ local function heliCanSpeak(red, body, near)
     if red == nil or body == nil then return false end
     if not near then return false end
     if Bridge.mode == "rest" then return false end
+    if BridgeFastForward ~= nil and BridgeFastForward.active() then return false end
+    if Bridge ~= nil then
+        if type(Bridge.speechContext) == "function" and Bridge.speechContext() == "car" then return false end
+        if type(Bridge.speechInCombat) == "function" and Bridge.speechInCombat() then return false end
+        if type(Bridge.speechGapActive) == "function" and Bridge.speechGapActive("foot") then return false end
+    end
     local asleep = false
     pcall(function() asleep = red:isAsleep() == true end)
     return not asleep
 end
 
 local function heliTick(red, body, near)
-    local now = getTimestampMs()
-    local fresh = heliOverhead(red)
-    local last = BridgeAmbient._heliLastPoll
-    BridgeAmbient._heliLastPoll = now
-
-    if last > 0 and now - last > BridgeAmbient.CFG.HELI_PAUSE_MS then
-        BridgeAmbient._heliWas = fresh
-        return false
-    end
-
-    local was = BridgeAmbient._heliWas == true
-    BridgeAmbient._heliWas = fresh
-
-    if fresh and not was and BridgeAmbient._heliVisit == nil then
-        BridgeAmbient._heliVisit = Bridge.time
-        BridgeAmbient._heliAnnounced = false
-        BridgeAmbient._heliSustained = false
-        BridgeAmbient._heliStaleSince = nil
-        BridgeAmbient._heliPending = "arrive"
-    end
-
-    if fresh then
-        BridgeAmbient._heliStaleSince = nil
-        if BridgeAmbient._heliPending == "leave" then
-            BridgeAmbient._heliPending =
-                (BridgeAmbient._heliAnnounced and not BridgeAmbient._heliSustained) and "sustain" or nil
-        end
-    elseif BridgeAmbient._heliVisit ~= nil then
-        BridgeAmbient._heliStaleSince = BridgeAmbient._heliStaleSince or now
-        if now - BridgeAmbient._heliStaleSince >= BridgeAmbient.CFG.HELI_GONE_MS then
-            if BridgeAmbient._heliAnnounced then
-                BridgeAmbient._heliPending = "leave"
-            else
-                BridgeAmbient._heliVisit = nil
-                BridgeAmbient._heliPending = nil
-                BridgeAmbient._heliStaleSince = nil
-            end
-        end
-    end
-
+    if BridgeAmbient._heliNextAt == nil then BridgeAmbient._heliNextAt = 0 end
+    local cool = BridgeMoments ~= nil and BridgeMoments.cool and (BridgeMoments.cool["Heli"] or 0) or 0
+    if (Bridge.time or 0) < cool then return false end
+    if (Bridge.time or 0) < BridgeAmbient._heliNextAt then return false end
+    BridgeAmbient._heliNextAt = (Bridge.time or 0) + BridgeAmbient.CFG.HELI_EVERY
     if not heliCanSpeak(red, body, near) then return false end
-
-    local pending = BridgeAmbient._heliPending
-    if pending == "arrive" then
-        if say("EvHeliArrive") then
-            BridgeAmbient._heliAnnounced = true
-            BridgeAmbient._heliPending = "sustain"
-            log("heli EvHeliArrive")
-            return true
-        end
-    elseif pending == "sustain" then
-        if not fresh then return false end
-        if say("EvHeliSustained") then
-            BridgeAmbient._heliSustained = true
-            BridgeAmbient._heliPending = nil
-            log("heli EvHeliSustained")
-            return true
-        end
-    elseif pending == "leave" then
-        if say("EvHeliLeave") then
-            BridgeAmbient._heliVisit = nil
-            BridgeAmbient._heliAnnounced = false
-            BridgeAmbient._heliSustained = false
-            BridgeAmbient._heliStaleSince = nil
-            BridgeAmbient._heliPending = nil
-            log("heli EvHeliLeave")
-            return true
-        end
+    if not heliOverhead(red) then return false end
+    if say("EvHeli") then
+        BridgeAmbient._heliNextAt = BridgeMoments.cool["Heli"] or ((Bridge.time or 0) + BridgeAmbient.CFG.HELI_EVERY)
+        log("heli EvHeli")
+        return true
     end
     return false
+end
+
+local function weatherReadyAt()
+    local at = math.huge
+    if BridgeMoments == nil or BridgeMoments.cool == nil then return 0 end
+    for _, e in pairs(BridgeAmbient.EVENTS) do
+        if e.cat ~= "HELI" and (e.cat == nil or BridgeAmbient.ON[e.cat] == 1) then
+            local t = BridgeMoments.cool[e.slot] or 0
+            if t < at then at = t end
+        end
+    end
+    return at
 end
 
 function BridgeAmbient.update(body)
@@ -358,6 +313,14 @@ function BridgeAmbient.update(body)
     if not Bridge.alive() then return end
     local red = BridgeData.owner()
     if red == nil then return end
+    local asleep = false
+    pcall(function() asleep = red:isAsleep() == true end)
+    if Bridge.mode == "rest"
+        or (BridgeFastForward ~= nil and BridgeFastForward.active())
+        or asleep then
+        BridgeAmbient.prev = nil
+        return
+    end
 
     local near = false
     pcall(function()
@@ -372,6 +335,7 @@ function BridgeAmbient.update(body)
     local p = BridgeAmbient.prev
     BridgeAmbient.prev = s
     if p == nil then return end
+    if (Bridge.time or 0) < weatherReadyAt() then return end
 
     if blocked(red, body) then return end
     if not near then return end
@@ -430,13 +394,7 @@ Events.OnThunderEvent.Add(function(x, y, strike, light, rumble)
 end)
 
 function BridgeAmbient.heliReset()
-    BridgeAmbient._heliWas = false
-    BridgeAmbient._heliVisit = nil
-    BridgeAmbient._heliAnnounced = false
-    BridgeAmbient._heliSustained = false
-    BridgeAmbient._heliPending = nil
-    BridgeAmbient._heliStaleSince = nil
-    BridgeAmbient._heliLastPoll = 0
+    BridgeAmbient._heliNextAt = 0
 end
 
 if not BridgeAmbient._heliHooked then

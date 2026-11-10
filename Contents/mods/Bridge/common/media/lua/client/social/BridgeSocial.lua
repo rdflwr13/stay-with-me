@@ -39,12 +39,12 @@ function BridgeSocial.speak(key, fallback, gap)
     if key == nil then return end
     local now = 0
     pcall(function() now = Bridge.time or 0 end)
-    if now - (BridgeSocial.said[key] or -99999) < (gap or 120) then return end
     BridgeSocial.said[key] = now
     local text = nil
     pcall(function() text = BridgeSpeech.getOrNull("IGUI_NotAlone_Say_" .. tostring(key)) end)
     if text == nil or text == "" then text = fallback end
     pcall(function() if Bridge ~= nil and Bridge.speakText ~= nil then Bridge.speakText(text) end end)
+    if BridgeMoments ~= nil and Bridge.time ~= nil then BridgeMoments.lastLine = Bridge.time end
 end
 
 local function hours()
@@ -180,11 +180,19 @@ function BridgeSocial.line(pool)
 end
 
 local function say(pool, routine)
-    if routine == true and Bridge ~= nil and type(Bridge.speechBusy) == "function" and Bridge.speechBusy() then
+    local menu = BridgeSocial.menuSpeech == true
+    if not menu and routine == true and Bridge ~= nil and type(Bridge.speechBusy) == "function" and Bridge.speechBusy() then
+        return nil
+    end
+    if not menu and Bridge ~= nil and type(Bridge.speechAllowed) == "function"
+            and not Bridge.speechAllowed(pool, "social") then
         return nil
     end
     local text = BridgeSocial.line(pool)
-    if text ~= nil then Bridge.speakText(text) end
+    if text ~= nil then
+        Bridge.speakText(text)
+        if BridgeMoments ~= nil and Bridge.time ~= nil then BridgeMoments.lastLine = Bridge.time end
+    end
     return text
 end
 
@@ -197,6 +205,8 @@ function BridgeSocial.sayExact(pool, cooldown, slot)
     if not ready then return false end
     if Bridge.time - (Bridge.lastSpokeAt or -99999) < BridgeMoments.MIN_GAP then return false end
     if Bridge ~= nil and type(Bridge.speechBusy) == "function" and Bridge.speechBusy() then return false end
+    if Bridge ~= nil and type(Bridge.speechAllowed) == "function"
+            and not Bridge.speechAllowed(pool, "social") then return false end
     local text = nil
     pcall(function() text = BridgeSocial.line(pool) end)
     if text == nil then return false end
@@ -205,6 +215,7 @@ function BridgeSocial.sayExact(pool, cooldown, slot)
     local quiet = false
     pcall(function() quiet = Bridge.quiet() end)
     if quiet then
+        if type(Bridge.markSpeech) == "function" then Bridge.markSpeech() end
         pcall(function() Bridge.bridgeEvent(pool, text) end)
         BridgeMoments.info = pool .. " quiet"
     else
@@ -1844,7 +1855,7 @@ function BridgeSocial.talkBlock(id, r, calm, busy, animWhy)
 end
 
 
-function BridgeSocial.talk(id)
+local function talkImpl(id)
     local a = actionById(id)
     local r = rel()
     if a == nil or r == nil then return "unknown action" end
@@ -1969,6 +1980,18 @@ end
 
 
 local SNACKS = { "Base.GranolaBar", "Base.Crisps", "Base.BeefJerky", "Base.Chocolate_Candy" }
+
+
+function BridgeSocial.talk(id)
+    BridgeSocial.menuSpeech = true
+    local ok, result = pcall(talkImpl, id)
+    BridgeSocial.menuSpeech = false
+    if not ok then
+        BridgeSocial.info = "talk error: " .. tostring(result)
+        return BridgeSocial.info
+    end
+    return result
+end
 
 
 function BridgeSocial.pickGift(red)
@@ -2137,7 +2160,7 @@ end
 
 
 function BridgeSocial.update(body)
-    if Bridge.time - BridgeSocial.lastCheck < 60 then return end
+    if Bridge.time - BridgeSocial.lastCheck < 600 then return end
     BridgeSocial.lastCheck = Bridge.time
     local r = rel()
     local red = BridgeData.owner()
@@ -2164,7 +2187,8 @@ function BridgeSocial.update(body)
         if now > r.seen then r.seen = now end
     end
     BridgeSocial.save()
-    if not together or Bridge.mode == "rest" then return end
+    if not together or Bridge.mode == "rest"
+        or (BridgeFastForward ~= nil and BridgeFastForward.active()) then return end
     local asleep = false
     pcall(function() asleep = red:isAsleep() end)
     if asleep then return end

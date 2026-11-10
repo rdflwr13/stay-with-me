@@ -973,6 +973,7 @@ end
 
 local function say(key, a, b)
     if Bridge ~= nil and Bridge.speakText ~= nil then
+        if type(Bridge.speechAllowed) == "function" and not Bridge.speechAllowed(key, "health") then return end
 
         local text = nil
         pcall(function() text = BridgeMoments.line(string.gsub(key, "_", ""), a, b) end)
@@ -983,6 +984,7 @@ local function say(key, a, b)
         local quiet = false
         pcall(function() quiet = Bridge.quiet() end)
         if quiet then
+            if type(Bridge.markSpeech) == "function" then Bridge.markSpeech() end
             pcall(function() Bridge.bridgeEvent(key, text) end)
             return
         end
@@ -1202,7 +1204,13 @@ function BridgeHeal.isThreat(z, body, red)
         pcall(function() companion = Bridge.BODY_VAR ~= nil and z:getVariableBoolean(Bridge.BODY_VAR) end)
     end
     if companion then return false end
-    if math.abs(z:getZ() - red:getZ()) >= 0.8 then return false end
+    local zz = nil
+    if BridgeZScan ~= nil and type(BridgeZScan.pos) == "function" then
+        local _, _, pz = BridgeZScan.pos(z)
+        zz = pz
+    end
+    if zz == nil then zz = z:getZ() end
+    if math.abs(zz - red:getZ()) >= 0.8 then return false end
 
     local harmless = false
     if BridgeZScan ~= nil and type(BridgeZScan.isHarmless) == "function" then
