@@ -23,6 +23,31 @@ local OUTSIDE = -1
 local graphCache = {}
 local pendingGraphs = {}
 
+local keyDenyAt = {}
+local keyFindAt = {}
+local logDeny = nil
+local logReject = nil
+
+local function logOn()
+    return BridgeLog ~= nil and BridgeLog.on() == true
+end
+
+local function keyClock()
+    return Bridge ~= nil and tonumber(Bridge.time) or 0
+end
+
+local function logRate(tbl, key, gap)
+    local now = keyClock()
+    if now < (tbl[key] or 0) then return false end
+    local n = 0
+    for _ in pairs(tbl) do n = n + 1 end
+    if n > 256 then
+        for k in pairs(tbl) do tbl[k] = nil end
+    end
+    tbl[key] = now + (gap or 120)
+    return true
+end
+
 local function dist2d(ax, ay, bx, by)
     local dx, dy = ax - bx, ay - by
     return math.sqrt(dx * dx + dy * dy)
@@ -81,7 +106,8 @@ function BridgeDoors.isPassable(door)
             yes = true
             return
         end
-        yes = BridgeDoors.canOpen(door) and not door:isLocked() and not door:isLockedByKey()
+        yes = BridgeDoors.canOpen(door) and ((not door:isLocked() and not door:isLockedByKey())
+            or BridgeDoors.hasKey(door))
     end)
     return yes
 end
@@ -95,7 +121,8 @@ function BridgeDoors.canOpen(door, fromSq)
             pcall(function()
                 locked = door:isLocked() or door:isLockedByKey() or door:isLockedByPadlock() or door:getLockedByCode() > 0
             end)
-            yes = not locked
+            yes = (not locked) or BridgeDoors.hasKey(door)
+            if not yes and logDeny ~= nil then logDeny(door, "thumpable") end
             return
         end
         local a, b = door:getSquare(), door:getOppositeSquare()
@@ -111,10 +138,271 @@ function BridgeDoors.canOpen(door, fromSq)
         end
         local customLock = false
         pcall(function() customLock = door:hasModData() and door:getModData().CustomLock == true end)
-        if door:isLockedByKey() or customLock or door:isLocked() then return end
+        if door:isLockedByKey() or customLock or door:isLocked() then
+            if BridgeDoors.hasKey(door) then yes = true end
+            if not yes and logDeny ~= nil then logDeny(door, "door") end
+            return
+        end
         yes = true
     end)
     return yes
+end
+
+local function callFn(obj, name, ...)
+    local fn = obj ~= nil and obj[name] or nil
+    if type(fn) ~= "function" then return false, nil end
+    local ok, value = pcall(fn, obj, ...)
+    if not ok then return false, nil end
+    return true, value
+end
+
+local function callObj(obj, name, ...)
+    local ok, value = callFn(obj, name, ...)
+    if ok then return value end
+    return nil
+end
+
+function BridgeDoors.keyId(door)
+    if door == nil then return nil end
+    local id = nil
+    if instanceof(door, "IsoDoor") then
+        id = callObj(door, "checkKeyId")
+    elseif instanceof(door, "IsoThumpable") then
+        id = callObj(door, "getKeyId")
+    end
+    id = tonumber(id)
+    if id == nil or id <= 0 then return nil end
+    return id
+end
+
+local function lockKind(door)
+    if door == nil or not instanceof(door, "IsoDoor") then return "single" end
+    local garage = IsoDoor ~= nil and IsoDoor.getGarageDoorIndex or nil
+    if type(garage) == "function" then
+        local ok, idx = pcall(garage, door)
+        if ok and idx ~= -1 then return "garage" end
+    end
+    local double = IsoDoor ~= nil and IsoDoor.getDoubleDoorIndex or nil
+    if type(double) == "function" then
+        local ok, idx = pcall(double, door)
+        if ok and idx ~= -1 then return "double" end
+    end
+    return "single"
+end
+
+local keyMemo = setmetatable({}, { __mode = "k" })
+BridgeDoors.KEY_MEMO_TICKS = 30
+
+local function computeKey(door, body)
+    if lockKind(door) ~= "single" then return false end
+    if callObj(door, "isBarricaded") == true then return false end
+    if callObj(door, "hasModData") == true then
+        local md = callObj(door, "getModData")
+        if md ~= nil and md.CustomLock == true then return false end
+    end
+    local props = callObj(door, "getProperties")
+    if props ~= nil and callObj(props, "has", "forceLocked") == true then return false end
+    if instanceof(door, "IsoThumpable") then
+        if callObj(door, "isLockedByPadlock") == true then return false end
+        local code = tonumber(callObj(door, "getLockedByCode")) or 0
+        if code > 0 then return false end
+    end
+    local id = BridgeDoors.keyId(door)
+    if id == nil then return false end
+    local inv = callObj(body, "getInventory")
+    if inv == nil then return false end
+    local held = callObj(inv, "haveThisKeyId", id)
+    return held ~= nil and held ~= false
+end
+
+function BridgeDoors.hasKey(door, body, fresh)
+    if door == nil then return false end
+    if body == nil then body = Bridge ~= nil and Bridge.body or nil end
+    if body == nil then return false end
+    local dk = nil
+    pcall(function() dk = BridgeDoors.key(door) end)
+    if dk == "?" then dk = nil end
+    local now = Bridge ~= nil and tonumber(Bridge.time) or 0
+    local memo = nil
+    if not fresh and dk ~= nil then
+        memo = keyMemo[body]
+        if memo == nil then
+            memo = {}
+            keyMemo[body] = memo
+        end
+        local rec = memo[dk]
+        if rec ~= nil and now - rec.at <= BridgeDoors.KEY_MEMO_TICKS then return rec.value end
+    end
+    local value = computeKey(door, body)
+    if memo ~= nil and dk ~= nil then
+        local rec = memo[dk]
+        if rec == nil then
+            if (memo.__n or 0) >= 64 then
+                for k in pairs(memo) do memo[k] = nil end
+                memo.__n = 0
+            end
+            memo.__n = (memo.__n or 0) + 1
+            rec = {}
+            memo[dk] = rec
+        end
+        rec.at = now
+        rec.value = value
+    end
+    return value
+end
+
+function BridgeDoors.unlock(door)
+    if door == nil then return false end
+    local was = callObj(door, "isLocked") == true or callObj(door, "isLockedByKey") == true
+    if not was then return true end
+    local done = false
+    if instanceof(door, "IsoDoor") then
+        local a = callFn(door, "setLocked", false)
+        local b = callFn(door, "setLockedByKey", false)
+        done = a or b
+    elseif instanceof(door, "IsoThumpable") then
+        local a = callFn(door, "setIsLocked", false)
+        local b = callFn(door, "setLockedByKey", false)
+        done = a or b
+    end
+    if done then
+        callFn(door, "syncIsoObject", false, 0, nil, nil)
+        log("key unlock " .. tostring(BridgeDoors.key(door)))
+    end
+    return done
+end
+
+local function customLockFlag(door)
+    if callObj(door, "hasModData") ~= true then return false end
+    local md = callObj(door, "getModData")
+    return md ~= nil and md.CustomLock == true
+end
+
+local function forceLockedFlag(door)
+    local props = callObj(door, "getProperties")
+    return props ~= nil and callObj(props, "has", "forceLocked") == true
+end
+
+local function keyItemList(body)
+    local inv = body ~= nil and callObj(body, "getInventory") or nil
+    if inv == nil then return "inv=nil" end
+    local out, seen, count = {}, {}, 0
+    local function walk(cont, depth)
+        if cont == nil or depth > 2 or count >= 16 then return end
+        local items = callObj(cont, "getItems")
+        if items == nil then return end
+        local n = tonumber(callObj(items, "size")) or 0
+        for i = 0, n - 1 do
+            if count >= 16 then return end
+            local it = callObj(items, "get", i)
+            if it ~= nil then
+                local typ = tostring(callObj(it, "getType") or "?")
+                local id = tonumber(callObj(it, "getKeyId"))
+                local isKey = string.find(typ, "Key", 1, true) ~= nil
+                if isKey or (id ~= nil and id ~= -1 and id ~= 0) then
+                    out[#out + 1] = "d" .. tostring(depth) .. ":" .. typ .. "#" .. tostring(id or "?")
+                    count = count + 1
+                end
+                local isc = callObj(it, "IsInventoryContainer")
+                if isc == true then
+                    local sub = callObj(it, "getInventory")
+                    if sub ~= nil and not seen[sub] then
+                        seen[sub] = true
+                        walk(sub, depth + 1)
+                    end
+                end
+            end
+        end
+    end
+    seen[inv] = true
+    walk(inv, 0)
+    if #out == 0 then return "keys=none" end
+    return "keys=" .. table.concat(out, ",")
+end
+
+function BridgeDoors.keyWhy(door, body)
+    if door == nil then return "door=nil" end
+    if body == nil then body = Bridge ~= nil and Bridge.body or nil end
+    local class = "other"
+    if instanceof(door, "IsoDoor") then
+        class = "IsoDoor"
+    elseif instanceof(door, "IsoThumpable") then
+        class = "IsoThumpable"
+    end
+    local dbl, gar = "-", "-"
+    if IsoDoor ~= nil then
+        local f = IsoDoor.getDoubleDoorIndex
+        if type(f) == "function" then
+            local ok, v = pcall(f, door)
+            if ok then dbl = tostring(v) end
+        end
+        f = IsoDoor.getGarageDoorIndex
+        if type(f) == "function" then
+            local ok, v = pcall(f, door)
+            if ok then gar = tostring(v) end
+        end
+    end
+    local dsx, dsy = nil, nil
+    local dsq = callObj(door, "getSquare")
+    if dsq ~= nil then
+        dsx, dsy = callObj(dsq, "getX"), callObj(dsq, "getY")
+    end
+    local id = BridgeDoors.keyId(door)
+    local inv = body ~= nil and callObj(body, "getInventory") or nil
+    local have = nil
+    if inv ~= nil and id ~= nil then have = callObj(inv, "haveThisKeyId", id) end
+    local storeId = nil
+    if Bridge ~= nil and Bridge.store ~= nil then storeId = Bridge.store.bodyId end
+    local parts = {
+        "door=" .. tostring(dsx) .. "," .. tostring(dsy),
+        "class=" .. class,
+        "kind=" .. lockKind(door),
+        "dbl=" .. dbl,
+        "gar=" .. gar,
+        "locked=" .. tostring(callObj(door, "isLocked")),
+        "lockKey=" .. tostring(callObj(door, "isLockedByKey")),
+        "padlock=" .. tostring(callObj(door, "isLockedByPadlock")),
+        "code=" .. tostring(callObj(door, "getLockedByCode")),
+        "bar=" .. tostring(callObj(door, "isBarricaded")),
+        "obs=" .. tostring(callObj(door, "isObstructed")),
+        "custom=" .. tostring(customLockFlag(door)),
+        "forced=" .. tostring(forceLockedFlag(door)),
+        "check=" .. tostring(callObj(door, "checkKeyId")),
+        "keyId=" .. tostring(id),
+        "have=" .. tostring(have),
+        "isBody=" .. tostring(body ~= nil and Bridge ~= nil and body == Bridge.body),
+        "storeId=" .. tostring(storeId),
+        "bx=" .. tostring(body ~= nil and callObj(body, "getX") or nil),
+        "by=" .. tostring(body ~= nil and callObj(body, "getY") or nil),
+    }
+    return table.concat(parts, " ")
+end
+
+function BridgeDoors.keyInfo(door, body)
+    return BridgeDoors.keyWhy(door, body) .. " " .. keyItemList(body)
+end
+
+logDeny = function(door, branch)
+    if not logOn() then return end
+    local k = "deny|" .. tostring(BridgeDoors.key(door))
+    if not logRate(keyDenyAt, k, 120) then return end
+    log("deny branch=" .. tostring(branch) .. " " .. BridgeDoors.keyWhy(door, nil))
+end
+
+logReject = function(d, avoid, fromX, fromY, leaving)
+    if not logOn() then return end
+    local k = "find|" .. tostring(d.key)
+    if not logRate(keyFindAt, k, 120) then return end
+    local near = d.outside
+    if leaving then near = d.inside end
+    local dNear = "-"
+    if near ~= nil then dNear = string.format("%.2f", dist2d(fromX, fromY, near:getX() + 0.5, near:getY() + 0.5)) end
+    log("find reject key=" .. tostring(d.key)
+        .. " avoid=" .. tostring(avoid ~= nil and avoid[d.key] == true)
+        .. " in=" .. tostring(d.inside ~= nil)
+        .. " out=" .. tostring(d.outside ~= nil)
+        .. " dNear=" .. tostring(dNear)
+        .. " " .. BridgeDoors.keyWhy(d.obj, nil))
 end
 
 function BridgeDoors.isClimbable(obj)
@@ -411,7 +699,16 @@ function BridgeDoors.debugOpenings(building, z, leaving)
             end
             local sx, sy = -1, -1
             pcall(function() local s = d.obj:getSquare(); sx, sy = s:getX(), s:getY() end)
-            parts[#parts + 1] = string.format("%s:%s@%d,%d", d.kind, why, sx, sy)
+            if d.kind == "door" then
+                local kinfo = "-"
+                if why == "locked" or why == "barricaded" or why == "obstructed" then
+                    kinfo = BridgeDoors.keyWhy(d.obj, nil)
+                end
+                parts[#parts + 1] = string.format("%s:%s@%d,%d in=%s out=%s [%s]",
+                    d.kind, why, sx, sy, tostring(d.inside ~= nil), tostring(d.outside ~= nil), kinfo)
+            else
+                parts[#parts + 1] = string.format("%s:%s@%d,%d", d.kind, why, sx, sy)
+            end
         end
     end)
     return table.concat(parts, " | ")
@@ -430,6 +727,8 @@ function BridgeDoors.findOpening(building, z, fromX, fromY, toX, toY, leaving, d
                     extra = 0
                 elseif BridgeDoors.canOpen(d.obj, leaving and d.inside or d.outside) then
                     extra = BridgeDoors.CLOSED_PENALTY
+                elseif logReject ~= nil then
+                    logReject(d, avoid, fromX, fromY, leaving)
                 end
             elseif d.kind == "window" and BridgeDoors.canClimbAcross(d.inside, d.outside) then
                 if BridgeDoors.isClimbable(d.obj) then

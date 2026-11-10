@@ -4484,5 +4484,13 @@
     "IGUI_NotAlone_SeatPuppetSaved": "Salvo para este veículo e banco",
     "IGUI_NotAlone_SeatPuppetNotInCar": "Ela não está em um banco agora",
     "IGUI_NotAlone_Say_HorseMount": "I'm on. Let's go.",
-    "IGUI_NotAlone_Say_HorseDismount": "I'll get down."
+    "IGUI_NotAlone_Say_HorseDismount": "I'll get down.",
+    "IGUI_NotAlone_Soc_EvIdleMechanic_Near_1": "Precisa de uma mão aí embaixo?",
+    "IGUI_NotAlone_Soc_EvIdleMechanic_Near_2": "Cuidado com o motor.",
+    "IGUI_NotAlone_Soc_EvIdleWorldTV_Near_1": "A TV está ligada. Eu aguento o barulho.",
+    "IGUI_NotAlone_Soc_EvIdleWorldTV_Near_2": "Tem algo bom passando?",
+    "IGUI_NotAlone_Soc_EvIdleWorldRadio_Near_1": "O rádio está ligado. Tem sinal?",
+    "IGUI_NotAlone_Soc_EvIdleWorldRadio_Near_2": "Música? Bom.",
+    "IGUI_NotAlone_Soc_EvIdleTVShow_Near_1": "Seu programa está passando!",
+    "IGUI_NotAlone_Soc_EvIdleTVShow_Near_2": "Ei, está começando. Vem."
 }

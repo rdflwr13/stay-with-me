@@ -21,6 +21,22 @@ local SECOND = 60
 
 BridgeMoments.MIN_GAP = 4 * SECOND
 
+local SKILL = {
+    SPR = true, LFT = true, NIM = true, SNE = true, BAA = true, BUA = true, CRP = true, COO = true,
+    FRM = true, DOC = true, ELC = true, MTL = true, FKN = true, CRV = true, AIM = true, REL = true,
+    FIS = true, TRA = true, FOR = true, TAI = true, MEC = true, CMB = true, SPE = true, SBU = true,
+    LBA = true, SBA = true, MAS = true, POT = true, BLA = true, GLA = true, HUS = true, BUT = true,
+    TRK = true, RCP = true,
+}
+
+local function teachesCodes(codes)
+    if type(codes) ~= "string" or codes == "" then return false end
+    for code in string.gmatch(codes, "([^,]+)") do
+        if #code > 4 and SKILL[string.sub(code, 1, 3)] == true then return true end
+    end
+    return false
+end
+
 
 local HEALTH_STEPS = { 50, 30, 15 }
 local HEALTH_EVENTS = { "EvHealthHalf", "EvDying", "EvDyingLast" }
@@ -355,6 +371,174 @@ function BridgeMoments.freshWounds(wounds)
 end
 
 
+function BridgeMoments.available(p, b, range)
+    if p == nil or b == nil then return false end
+    if Bridge == nil or BridgeData == nil then return false end
+    if type(Bridge.alive) == "function" and not Bridge.alive() then return false end
+    if Bridge.hiddenSince ~= nil or Bridge.parked or Bridge.sleepParked ~= nil then return false end
+    local asleep = false
+    pcall(function() asleep = p:isAsleep() == true end)
+    if asleep then return false end
+    if BridgeTask ~= nil and type(BridgeTask.idleChatBlocked) == "function"
+            and BridgeTask.idleChatBlocked() then return false end
+    if BridgeFight ~= nil and (BridgeFight.target ~= nil
+            or (BridgeFight.state ~= nil and BridgeFight.state ~= "idle")) then return false end
+    if zombiesNear(p, 10) then return false end
+    local d2 = (p:getX() - b:getX()) ^ 2 + (p:getY() - b:getY()) ^ 2
+    if d2 > (range or 12) ^ 2 or math.abs(p:getZ() - b:getZ()) >= 1 then return false end
+    return true
+end
+
+local function objCall(obj, name, ...)
+    local fn = obj ~= nil and obj[name] or nil
+    if type(fn) ~= "function" then return nil end
+    local ok, value = pcall(fn, obj, ...)
+    if ok then return value end
+    return nil
+end
+
+local function isA(obj, cls)
+    if type(instanceof) ~= "function" then return false end
+    local ok, value = pcall(instanceof, obj, cls)
+    return ok and value == true
+end
+
+local deviceRoomCache = {}
+local deviceRoomCount = 0
+local DEVICE_ROOM_TICKS = 900
+
+local function roomDevice(room, z)
+    local tv, radio = false, false
+    if room == nil then return tv, radio end
+    local squares = objCall(room, "getSquares")
+    if squares == nil then return tv, radio end
+    local n = tonumber(objCall(squares, "size")) or 0
+    for i = 0, n - 1 do
+        local sq = objCall(squares, "get", i)
+        local sz = objCall(sq, "getZ")
+        if sz ~= nil and math.floor(sz) == z then
+            local objs = objCall(sq, "getObjects")
+            if objs ~= nil then
+                local count = tonumber(objCall(objs, "size")) or 0
+                for j = 0, count - 1 do
+                    local o = objCall(objs, "get", j)
+                    if o ~= nil then
+                        local isTV = isA(o, "IsoTelevision")
+                        local isRadio = false
+                        if not isTV then isRadio = isA(o, "IsoRadio") end
+                        if isTV or isRadio then
+                            local dd = objCall(o, "getDeviceData")
+                            if dd ~= nil then
+                                local on = objCall(dd, "getIsTurnedOn") == true
+                                local signal = objCall(dd, "isReceivingSignal") == true
+                                if on and signal then
+                                    if isTV then tv = true else radio = true end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return tv, radio
+end
+
+local function roomCacheKey(room, sq, z)
+    local id = objCall(sq, "getRoomIDString")
+    if id == nil then
+        local num = objCall(sq, "getRoomID")
+        if num ~= nil then id = tostring(num) end
+    end
+    if id == nil then return nil end
+    local bid = nil
+    local bld = objCall(room, "getBuilding")
+    if bld ~= nil then bid = objCall(bld, "getID") end
+    return tostring(bid or "-") .. "|" .. tostring(id) .. "@" .. tostring(z)
+end
+
+local function roomDeviceCached(room, sq, z)
+    local key = roomCacheKey(room, sq, z)
+    local now = Bridge ~= nil and tonumber(Bridge.time) or 0
+    if key ~= nil then
+        local rec = deviceRoomCache[key]
+        if rec ~= nil and now - rec.at <= DEVICE_ROOM_TICKS then return rec.tv, rec.radio end
+    end
+    local tv, radio = roomDevice(room, z)
+    if key ~= nil then
+        if deviceRoomCache[key] == nil then
+            deviceRoomCount = deviceRoomCount + 1
+            if deviceRoomCount > 256 then
+                for k in pairs(deviceRoomCache) do deviceRoomCache[k] = nil end
+                deviceRoomCount = 1
+            end
+        end
+        deviceRoomCache[key] = { at = now, tv = tv, radio = radio }
+    end
+    return tv, radio
+end
+
+function BridgeMoments.deviceTick(red, body, danger, busy, fightNow, say)
+    if red == nil or body == nil then return false end
+    if danger or busy or fightNow then return false end
+    if Bridge == nil then return false end
+    if Bridge.time < (BridgeMoments.deviceAt or 0) then return false end
+    BridgeMoments.deviceAt = Bridge.time + 300
+    local sq = nil
+    pcall(function() sq = red:getCurrentSquare() end)
+    if sq == nil then return false end
+    local room = nil
+    pcall(function() room = sq:getRoom() end)
+    if room == nil then return false end
+    local tv, radio = roomDeviceCached(room, sq, math.floor(red:getZ()))
+    if tv then
+        if BridgeMoments.lastShowAt == nil or Bridge.time - BridgeMoments.lastShowAt >= 30 * 60 then
+            if say("EvIdleWorldTV", 10 * MINUTE, false, "IdleWorldTV") then return true end
+        end
+        return false
+    end
+    if radio then
+        local inCar = false
+        pcall(function() inCar = red:getVehicle() ~= nil end)
+        if not inCar and say("EvIdleWorldRadio", 10 * MINUTE, false, "IdleWorldRadio") then return true end
+    end
+    return false
+end
+
+function BridgeMoments.onDeviceText(guid, codes, x, y, z, line)
+    if Bridge == nil then return end
+    if type(x) ~= "number" or type(y) ~= "number" or type(z) ~= "number" then return end
+    if x == -1 and y == -1 and z == -1 then return end
+    local p = nil
+    if BridgeData ~= nil and type(BridgeData.owner) == "function" then p = BridgeData.owner() end
+    local b = Bridge.body
+    if p == nil or b == nil then return end
+    if not BridgeMoments.available(p, b, 12) then return end
+    local psq = nil
+    pcall(function() psq = p:getCurrentSquare() end)
+    local dsq = nil
+    pcall(function() dsq = getCell():getGridSquare(x, y, z) end)
+    if psq == nil or dsq == nil then return end
+    local proom, droom = nil, nil
+    pcall(function() proom = psq:getRoom() end)
+    pcall(function() droom = dsq:getRoom() end)
+    if proom == nil or droom ~= proom then return end
+    local tv = false
+    pcall(function()
+        local objs = dsq:getObjects()
+        if objs == nil then return end
+        for i = 0, objs:size() - 1 do
+            local o = objs:get(i)
+            if o ~= nil and instanceof(o, "IsoTelevision") then tv = true return end
+        end
+    end)
+    if not tv then return end
+    if not teachesCodes(codes) then return end
+    if BridgeMoments.say("EvIdleTVShow", 5 * MINUTE, "soft", "IdleTVShow") then
+        BridgeMoments.lastShowAt = Bridge.time
+    end
+end
+
 function BridgeMoments.update(body)
     if Bridge.time - BridgeMoments.lastCheck < 30 then return end
     BridgeMoments.lastCheck = Bridge.time
@@ -371,7 +555,9 @@ function BridgeMoments.update(body)
     if asleep then return end
 
     local momentSay = BridgeMoments.say
+    local sayBlocked = false
     if BridgeTask ~= nil and BridgeTask.idleChatBlocked ~= nil and BridgeTask.idleChatBlocked() then
+        sayBlocked = true
         momentSay = function() return false end
     end
 
@@ -457,6 +643,7 @@ function BridgeMoments.update(body)
 
 
         if not present[name] and Bridge.time - at > 30 * 60 then return false end
+        if sayBlocked then return false end
         local event = slot
         if lackKind ~= nil and not has(lackKind) then event = withLack end
         if not autoHeal then event = "EvHurtAsk" end
@@ -538,7 +725,10 @@ function BridgeMoments.update(body)
         if momentSay("EvTiredNight", 20 * MINUTE) then return end
     end
     if stat(red, "PAIN") > 0.45 then
-        local pills = hasItem(body, red, { "Base.Pills" })
+        local pills = false
+        if not sayBlocked and BridgeMoments.ready("Pain", false) then
+            pills = hasItem(body, red, { "Base.Pills" })
+        end
         if momentSay(pills and "EvPain" or "EvPainNoPills", 15 * MINUTE, false, "Pain") then return end
     end
     if stat(red, "SICKNESS") > 0.3 or stat(red, "FOOD_SICKNESS") > 0.3 then
@@ -601,10 +791,22 @@ function BridgeMoments.update(body)
             if momentSay("EvEating", 20 * MINUTE) then return end
         end
     end
-    local smell = smellTierOf(bodiesNear(red, SMELL_RADIUS))
+    local smell = BridgeMoments.smellTier
+    if Bridge.time >= (BridgeMoments.smellAt or 0) then
+        BridgeMoments.smellAt = Bridge.time + 120
+        smell = smellTierOf(bodiesNear(red, SMELL_RADIUS))
+        BridgeMoments.smellTier = smell
+    end
     if smell ~= nil then
         if momentSay("EvSmell" .. smell, 10 * MINUTE, false, "Smell" .. smell) then return end
     end
+
+    if BridgeMoments.deviceTick(red, body, danger, busy, fightNow, momentSay) then return end
+end
+
+if Events ~= nil and Events.OnDeviceText ~= nil and not BridgeMoments.deviceTextHooked then
+    BridgeMoments.deviceTextHooked = true
+    Events.OnDeviceText.Add(BridgeMoments.onDeviceText)
 end
 
 log("loaded")

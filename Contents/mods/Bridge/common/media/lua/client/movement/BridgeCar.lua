@@ -1939,4 +1939,33 @@ function BridgeCar.tick()
     end
 end
 
+function BridgeCar.onMechanicsOpened(action)
+    if BridgeMoments == nil or type(BridgeMoments.say) ~= "function" then return end
+    local p = nil
+    if BridgeData ~= nil and type(BridgeData.owner) == "function" then p = BridgeData.owner() end
+    if p == nil or action == nil or action.character ~= p then return end
+    if p:getVehicle() ~= nil then return end
+    if type(BridgeMoments.available) == "function"
+            and not BridgeMoments.available(p, Bridge.body, 10) then return end
+    BridgeMoments.say("EvIdleMechanic", 10 * 60 * 60, "soft", "IdleMechanic")
+end
+
+function BridgeCar.hookMechanics()
+    local A = ISOpenMechanicsUIAction
+    if A == nil or A.bridgeIdleHooked then return end
+    if type(A.perform) ~= "function" then return end
+    A.bridgeIdleHooked = true
+    local base = A.perform
+    A.perform = function(self, ...)
+        local result = base(self, ...)
+        pcall(BridgeCar.onMechanicsOpened, self)
+        return result
+    end
+end
+
+if Events ~= nil and Events.OnGameStart ~= nil then
+    Events.OnGameStart.Add(BridgeCar.hookMechanics)
+end
+pcall(BridgeCar.hookMechanics)
+
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeCar] loaded") end

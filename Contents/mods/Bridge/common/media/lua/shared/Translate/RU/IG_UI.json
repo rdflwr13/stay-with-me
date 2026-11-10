@@ -4697,5 +4697,13 @@
     "IGUI_NotAlone_SeatPuppetSaved": "Сохранено для этого автомобиля и сиденья",
     "IGUI_NotAlone_SeatPuppetNotInCar": "Сейчас она не сидит на сиденье",
     "IGUI_NotAlone_Say_HorseMount": "I'm on. Let's go.",
-    "IGUI_NotAlone_Say_HorseDismount": "I'll get down."
+    "IGUI_NotAlone_Say_HorseDismount": "I'll get down.",
+    "IGUI_NotAlone_Soc_EvIdleMechanic_Near_1": "Нужна помощь там внизу?",
+    "IGUI_NotAlone_Soc_EvIdleMechanic_Near_2": "Осторожнее с двигателем.",
+    "IGUI_NotAlone_Soc_EvIdleWorldTV_Near_1": "Телевизор включён. Я уж потерплю шум.",
+    "IGUI_NotAlone_Soc_EvIdleWorldTV_Near_2": "Что-нибудь хорошее идёт?",
+    "IGUI_NotAlone_Soc_EvIdleWorldRadio_Near_1": "Радио включено. Есть сигнал?",
+    "IGUI_NotAlone_Soc_EvIdleWorldRadio_Near_2": "Музыка? Хорошо.",
+    "IGUI_NotAlone_Soc_EvIdleTVShow_Near_1": "Твоя передача началась!",
+    "IGUI_NotAlone_Soc_EvIdleTVShow_Near_2": "Эй, начинается. Идём."
 }

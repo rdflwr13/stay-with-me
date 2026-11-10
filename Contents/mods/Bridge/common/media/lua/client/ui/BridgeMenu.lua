@@ -1431,6 +1431,12 @@ function BridgeMenu.onPryMenu(playerNum, context, worldobjects, test)
     if not present() then return end
     local door = doorUnder(worldobjects)
     if door == nil then return end
+    if BridgeDoors ~= nil and BridgeLog ~= nil and BridgeLog.on() then
+        print("[BridgeDoors] pry " .. tostring(BridgeDoors.keyInfo(door, Bridge.body)))
+    end
+    local keyed = false
+    pcall(function() keyed = BridgeDoors ~= nil and BridgeDoors.hasKey(door, Bridge.body, true) == true end)
+    if keyed then return end
     local sq = nil
     pcall(function() sq = door:getSquare() end)
     if sq == nil then return end

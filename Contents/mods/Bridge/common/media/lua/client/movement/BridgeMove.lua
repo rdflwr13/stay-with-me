@@ -4203,6 +4203,11 @@ function BridgeMove.toggleDoor(body, door, kind)
 
 
         local actor = BridgeData.owner()
+        if not wasOpen and BridgeDoors ~= nil then
+            local locked = false
+            pcall(function() locked = door:isLocked() == true or door:isLockedByKey() == true end)
+            if locked and BridgeDoors.hasKey(door, body, true) then BridgeDoors.unlock(door) end
+        end
         if actor ~= nil then
             pcall(function() door:ToggleDoor(actor) end)
             byGame = door:IsOpen() ~= wasOpen
@@ -4759,7 +4764,15 @@ local function pruneBadDoors()
             if window then
                 pcall(function() open = rec.obj:IsOpen() == true end)
             end
-            if open then BridgeMove.badDoors[key] = nil end
+            if open then
+                BridgeMove.badDoors[key] = nil
+            elseif rec.obj ~= nil and BridgeDoors ~= nil and BridgeDoors.isDoor(rec.obj) then
+                local locked = false
+                pcall(function() locked = rec.obj:isLocked() == true or rec.obj:isLockedByKey() == true end)
+                if locked and BridgeDoors.hasKey(rec.obj, Bridge.body) then
+                    BridgeMove.badDoors[key] = nil
+                end
+            end
         end
     end
 end
@@ -4789,10 +4802,20 @@ function BridgeMove.doorBlocked(object)
     local open = false
     pcall(function() open = object:IsOpen() == true end)
     if open then return false end
-    if BridgeMove.doorFailObj == object and Bridge.time < (BridgeMove.doorFailUntil or 0) then return true end
     local key = nil
     pcall(function() key = BridgeDoors ~= nil and BridgeDoors.key(object) or nil end)
-    return BridgeMove.badDoor(key)
+    local fails = BridgeMove.doorFailObj == object and Bridge.time < (BridgeMove.doorFailUntil or 0)
+    if not fails and not BridgeMove.badDoor(key) then return false end
+    local locked = false
+    pcall(function() locked = object:isLocked() == true or object:isLockedByKey() == true end)
+    if locked and BridgeDoors ~= nil and BridgeDoors.hasKey(object, Bridge.body) then
+        if key ~= nil then BridgeMove.badDoors[key] = nil end
+        BridgeMove.doorFailObj = nil
+        BridgeMove.doorFailUntil = 0
+        BridgeMove.doorFail = nil
+        return false
+    end
+    return true
 end
 
 BridgeMove.openWindows = BridgeMove.openWindows or {}
@@ -5004,8 +5027,15 @@ function BridgeMove.routeViaOpening(body, gx, gy, gz)
     BridgeMove.openingWay = { x = nx, y = ny, z = bz, key = plan.key, bld = leaving and bK or tK,
         obj = plan.obj, kind = plan.kind, far = plan.far,
         best = math.huge, bestAt = Bridge.time }
-    log(sformat("opening route %s key=%s near=%d,%d far=%d,%d",
-        tostring(plan.kind), tostring(plan.key), plan.near:getX(), plan.near:getY(), plan.far:getX(), plan.far:getY()))
+    local doors, wins = 0, 0
+    pcall(function()
+        for _, d in ipairs(BridgeDoors.exteriorOpenings(building, bz)) do
+            if d.kind == "door" then doors = doors + 1 else wins = wins + 1 end
+        end
+    end)
+    log(string.format("opening route %s key=%s near=%d,%d far=%d,%d t=%d doors=%d wins=%d",
+        tostring(plan.kind), tostring(plan.key), plan.near:getX(), plan.near:getY(), plan.far:getX(), plan.far:getY(),
+        math.floor(Bridge.time or 0), doors, wins))
     pcall(function()
         log("openings: " .. tostring(BridgeDoors.debugOpenings(building, bz, leaving)))
     end)
@@ -6057,6 +6087,8 @@ function BridgeMove.openDoor(body, object)
     end
     local locked = false
     pcall(function() locked = object:isLocked() or object:isLockedByKey() end)
+    local hasKey = false
+    if locked and BridgeDoors ~= nil then hasKey = BridgeDoors.hasKey(object, body, true) end
     local inRoom = false
     pcall(function() inRoom = body:getCurrentSquare():getRoom() ~= nil end)
     local ra, rb = nil, nil
@@ -6070,7 +6102,7 @@ function BridgeMove.openDoor(body, object)
         pcall(function() behindRed = redWentThrough(doorCells(object, doorKind(object))) end)
         if behindRed then log("door locked, but player just went through it: opening") end
     end
-    local refuse = locked and not inRoom and not behindRed
+    local refuse = locked and not inRoom and not behindRed and not hasKey
     if refuse and ra == nil and rb == nil then
         local actor = BridgeData.owner()
         local wasOpen = false
@@ -6099,10 +6131,13 @@ function BridgeMove.openDoor(body, object)
 
 
         if locked and instanceof(object, "IsoDoor") then
+            if hasKey then log("key unlock " .. tostring(key)) end
             pcall(function()
                 object:setLocked(false)
                 object:setLockedByKey(false)
             end)
+        elseif hasKey then
+            if BridgeDoors ~= nil then BridgeDoors.unlock(object) end
         end
         if not BridgeMove.toggleDoor(body, object, kind) then
             BridgeMove.obstacle = "door blocked"
@@ -6181,7 +6216,10 @@ function BridgeMove.doorOpenable(body, object)
         pcall(function() locked = object:isLocked() or object:isLockedByKey() end)
         local inRoom = false
         pcall(function() inRoom = body:getCurrentSquare():getRoom() ~= nil end)
-        if (locked and not inRoom) or object:isObstructed() then ok = false return end
+        local hasKey = false
+        if locked and not inRoom and BridgeDoors ~= nil then hasKey = BridgeDoors.hasKey(object, body) end
+        if object:isObstructed() then ok = false return end
+        if locked and not inRoom and not hasKey then ok = false return end
         if doorKind(object) == "double" then
             local blocked = true
             pcall(function() blocked = IsoDoor.isDoubleDoorObstructed(object) end)

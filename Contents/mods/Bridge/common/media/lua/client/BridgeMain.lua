@@ -1528,12 +1528,13 @@ local function watchOthers(red, body, around)
             list = BridgeZScan.near(red:getX(), red:getY(), SCARE_RADIUS, { tag = "watch.others", age = WATCH_SCAN_AGE })
         end
         if list == nil then list = getCell():getZombieList() end
+        local redZ = red:getZ()
         for i = 0, list:size() - 1 do
             local z = list:get(i)
 
 
-            if z ~= nil and z ~= body and z:isAlive() and not Bridge.isCompanion(z)
-                and math.abs(z:getZ() - red:getZ()) < 0.8 and not BridgeData.harmless(z) then
+            if z ~= nil and z ~= body and z:isAlive()
+                and math.abs(z:getZ() - redZ) < 0.8 and not Bridge.isCompanion(z) and not BridgeData.harmless(z) then
                 local d = dist2d(z, red)
                 if d < SCARE_RADIUS then
                     local sq = z:getCurrentSquare()
@@ -5896,6 +5897,14 @@ function Bridge.watchGuest(z, who, remote)
     end
 end
 
+local function onlineIdOf(z)
+    return z:getOnlineID()
+end
+
+local function sameBodyRecord(rec, pid, oid)
+    return rec ~= nil and rec.bodyId == pid and (rec.onlineId == nil or rec.onlineId == oid)
+end
+
 function Bridge.onZombieUpdate(zombie)
     if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(zombie) then return end
     local ok, isBody = pcall(zombieBodyVar, zombie)
@@ -5930,11 +5939,9 @@ function Bridge.onZombieUpdate(zombie)
 
 
         local oid = nil
-        pcall(function() oid = zombie:getOnlineID() end)
-        local function same(rec)
-            return rec ~= nil and rec.bodyId == pid and (rec.onlineId == nil or rec.onlineId == oid)
-        end
-        local mine = st ~= nil and st.bodyId ~= nil and same(st)
+        local okOid, gotOid = pcall(onlineIdOf, zombie)
+        if okOid then oid = gotOid end
+        local mine = st ~= nil and st.bodyId ~= nil and sameBodyRecord(st, pid, oid)
         local who, rec = nil, nil
         if mine then
             who, rec = BridgeData.me(), st
@@ -5950,7 +5957,7 @@ function Bridge.onZombieUpdate(zombie)
                 return
             end
             rec = Bridge.world.players[who]
-            if not same(rec) then
+            if not sameBodyRecord(rec, pid, oid) then
                 Bridge.strayCheck(zombie, pid, oid)
                 return
             end
