@@ -180,7 +180,11 @@ end
 
 
 
+local frameAt, frameCar, frameVal = nil, nil, nil
+
 function BridgeCar.frame(car)
+    local tick = Bridge.tick or 0
+    if frameAt == tick and frameCar == car then return frameVal end
     local cx, cy, fx, fy, w, l = nil, nil, nil, nil, nil, nil
     pcall(function()
         cx, cy = car:getX(), car:getY()
@@ -188,10 +192,18 @@ function BridgeCar.frame(car)
         w, l = e:x(), e:z()
     end)
     fx, fy = BridgeCar.forward(car)
-    if cx == nil or fx == nil or type(w) ~= "number" or type(l) ~= "number" then return nil end
+    if cx == nil or fx == nil or type(w) ~= "number" or type(l) ~= "number" then
+        frameAt, frameCar, frameVal = tick, car, nil
+        return nil
+    end
     local fl = math.sqrt(fx * fx + fy * fy)
-    if fl < 1e-3 then return nil end
-    return { cx = cx, cy = cy, fx = fx / fl, fy = fy / fl, hw = w / 2, hl = l / 2 }
+    if fl < 1e-3 then
+        frameAt, frameCar, frameVal = tick, car, nil
+        return nil
+    end
+    local result = { cx = cx, cy = cy, fx = fx / fl, fy = fy / fl, hw = w / 2, hl = l / 2 }
+    frameAt, frameCar, frameVal = tick, car, result
+    return result
 end
 
 
@@ -1699,10 +1711,17 @@ end
 
 
 function BridgeCar.tick(red)
-    local mult = 1
-    pcall(function() mult = getGameTime():getTrueMultiplier() end)
-    if type(mult) ~= "number" or mult ~= mult or mult < 1 then mult = 1 end
-    if mult > 60 then mult = 60 end
+    local now = Bridge.time or 0
+    local mult = BridgeCar.mult or 1
+    if BridgeCar.multAt == nil or now - BridgeCar.multAt >= 30 then
+        local m = 1
+        pcall(function() m = getGameTime():getTrueMultiplier() end)
+        if type(m) ~= "number" or m ~= m or m < 1 then m = 1 end
+        if m > 60 then m = 60 end
+        BridgeCar.mult = m
+        BridgeCar.multAt = now
+        mult = m
+    end
     BridgeCar.gt = (BridgeCar.gt or 0) + (Bridge.dt or 1) * mult
     if BridgeCar.closeAt ~= nil and Bridge.time >= BridgeCar.closeAt then BridgeCar.closeDoor("done") end
     red = red or BridgeData.owner()

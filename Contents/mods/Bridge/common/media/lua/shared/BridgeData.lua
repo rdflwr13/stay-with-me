@@ -356,12 +356,31 @@ function BridgeData.npcfwPeaceful(z)
     return false
 end
 
+local harmlessAt = setmetatable({}, { __mode = "k" })
+local harmlessVal = setmetatable({}, { __mode = "k" })
+
+local function harmlessTick()
+    if Bridge ~= nil and tonumber(Bridge.tick) ~= nil then return tonumber(Bridge.tick) end
+    if BridgeServer ~= nil and tonumber(BridgeServer.tick) ~= nil then return tonumber(BridgeServer.tick) end
+    return nil
+end
+
 function BridgeData.harmless(z)
+    if z == nil then return false end
+    local tick = harmlessTick()
+    if tick ~= nil and tick > 0 and harmlessAt[z] == tick then return harmlessVal[z] == true end
+    local yes = false
     if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(z) then
-        return true
+        yes = true
+    else
+        yes = BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.girlfriendPeaceful(z)
+            or BridgeData.foreignPeaceful(z) or BridgeData.npcfwPeaceful(z)
     end
-    return BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.girlfriendPeaceful(z)
-        or BridgeData.foreignPeaceful(z) or BridgeData.npcfwPeaceful(z)
+    if tick ~= nil and tick > 0 then
+        harmlessAt[z] = tick
+        harmlessVal[z] = yes
+    end
+    return yes
 end
 
 

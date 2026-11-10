@@ -96,24 +96,26 @@ function BridgeHorde.countCone(car, minD, maxD, half, seen, red)
     local n = 0
     pcall(function()
         if BridgeZScan ~= nil and type(BridgeZScan.cone) == "function"
-            and BridgeZScan.enabled ~= false and BridgeZScan.refresh() ~= nil then
+            and BridgeZScan.enabled ~= false
+            and (type(BridgeZScan.ready) ~= "function" or BridgeZScan.ready()) then
             local opts = { tag = "horde.cone", zTol = 1, filter = BridgeZScan.isThreat }
             if cz ~= nil then opts.z = cz end
             local list = BridgeZScan.cone(C.cx, C.cy, C.fx, C.fy, dmin, dmax, hw, opts)
-            if list == nil then return end
-            for i = 0, list:size() - 1 do
-                local z = list:get(i)
-                if z ~= nil then
-                    local ok = true
-                    if seen and red ~= nil then
-                        local vis = false
-                        pcall(function() vis = red:CanSee(z) end)
-                        ok = vis
+            if list ~= nil then
+                for i = 0, list:size() - 1 do
+                    local z = list:get(i)
+                    if z ~= nil then
+                        local ok = true
+                        if seen and red ~= nil then
+                            local vis = false
+                            pcall(function() vis = red:CanSee(z) end)
+                            ok = vis
+                        end
+                        if ok then n = n + 1 end
                     end
-                    if ok then n = n + 1 end
                 end
+                return
             end
-            return
         end
         local list = nil
         if BridgeZS ~= nil then

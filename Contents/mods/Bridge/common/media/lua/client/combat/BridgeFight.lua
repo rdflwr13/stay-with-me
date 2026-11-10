@@ -388,16 +388,58 @@ local function bodyVarImpl(z)
 end
 
 local function isBody(z)
+    if BridgeZScan ~= nil and type(BridgeZScan.cachedBodyVar) == "function" then
+        local v = BridgeZScan.cachedBodyVar(z)
+        if v ~= nil then return v == true end
+    end
     local ok, v = pcall(bodyVarImpl, z)
     return ok and v
+end
+
+local function zsAlive(z)
+    if z == nil then return false end
+    if BridgeZScan ~= nil and type(BridgeZScan.isAlive) == "function" then
+        return BridgeZScan.isAlive(z) == true
+    end
+    local ok, v = pcall(z.isAlive, z)
+    return ok and v == true
+end
+
+local function zsHealth(z)
+    if z == nil then return false end
+    if BridgeZScan ~= nil and type(BridgeZScan.healthUp) == "function" then
+        return BridgeZScan.healthUp(z) == true
+    end
+    local ok, v = pcall(z.getHealth, z)
+    return ok and type(v) == "number" and v > 0
+end
+
+local function zsRisen(z, red)
+    if z == nil or red == nil then return false end
+    if BridgeZScan ~= nil and type(BridgeZScan.isOwnerRisen) == "function" then
+        return BridgeZScan.isOwnerRisen(z, red) == true
+    end
+    return BridgeFight.ownerRisen(z, red)
+end
+
+local function zsHarmless(z)
+    if z == nil then return false end
+    if BridgeZScan ~= nil and type(BridgeZScan.isHarmless) == "function" then
+        return BridgeZScan.isHarmless(z) == true
+    end
+    return BridgeData.harmless(z) == true
 end
 
 
 
 local function remoteZombie(z)
+    if z == nil then return false end
+    if BridgeZScan ~= nil and type(BridgeZScan.isRemote) == "function" then
+        return BridgeZScan.isRemote(z) == true
+    end
     if not isClient() then return false end
-    local ok, v = pcall(function() return z:isRemoteZombie() end)
-    return ok and v
+    local ok, v = pcall(z.isRemoteZombie, z)
+    return ok and v == true
 end
 
 
@@ -451,7 +493,13 @@ local function proneImpl(z)
     return z:isProne()
 end
 
+local proneAt = setmetatable({}, { __mode = "k" })
+local proneVal = setmetatable({}, { __mode = "k" })
+
 local function isProne(z)
+    if z == nil then return false end
+    local tick = Bridge ~= nil and Bridge.tick or 0
+    if proneAt[z] == tick then return proneVal[z] == true end
     local asn = "?"
     local okAsn, vAsn = pcall(actionStateImpl, z)
     if okAsn then asn = vAsn end
@@ -461,8 +509,11 @@ local function isProne(z)
     local prone = false
     local okProne, vProne = pcall(proneImpl, z)
     if okProne then prone = vProne end
-    return prone or crawl or asn == "onground" or asn == "sitonground"
+    local value = prone or crawl or asn == "onground" or asn == "sitonground"
         or string.sub(asn, 1, 5) == "getup"
+    proneAt[z] = tick
+    proneVal[z] = value
+    return value
 end
 
 
@@ -977,10 +1028,15 @@ end
 
 local function visible(z, red)
     local seen = true
-
     local viewer = red
-    pcall(function() if red:isDead() and Bridge.body ~= nil then viewer = Bridge.body end end)
-    pcall(function() seen = viewer:CanSee(z) end)
+    if red ~= nil then
+        local okDead, dead = pcall(red.isDead, red)
+        if okDead and dead and Bridge.body ~= nil then viewer = Bridge.body end
+    end
+    if viewer ~= nil then
+        local okSee, v = pcall(viewer.CanSee, viewer, z)
+        if okSee then seen = v end
+    end
     return seen
 end
 BridgeFight.visible = visible
@@ -1132,6 +1188,7 @@ local function pickTarget(body, red, mode)
         anchor = body
     end
     local rx, ry, rz = red:getX(), red:getY(), anchor:getZ()
+    local az = rz
     local night = nightRange(1, body)
     local engageSelf = mode.engageSelf or math.huge
     local engageRed = mode.engageRed or math.huge
@@ -1324,7 +1381,7 @@ function BridgeFight.ownerRisen(z, red)
     return ok and risen == true
 end
 
-local function validTarget(z, body, red, mode)
+local function validTargetUncached(z, body, red, mode)
     mode = mode or BridgeFight.mode()
     if z == nil then return false end
     local meetDefense = false
@@ -1359,9 +1416,10 @@ local function validTarget(z, body, red, mode)
         end
         return dist(z, body) <= targetMax
     end
-    if BridgeFight.ownerRisen(z, red) then return false end
-    local ok, alive = pcall(function() return z:isAlive() and z:getHealth() > 0 and not z:isOnKillDone() end)
-    if not ok or not alive or BridgeData.harmless(z) then return false end
+    if zsRisen(z, red) then return false end
+    local okKill, killDone = pcall(z.isOnKillDone, z)
+    local alive = okKill and zsAlive(z) and zsHealth(z) and not (killDone == true)
+    if not alive or zsHarmless(z) then return false end
     if remoteZombie(z) then
         local reach = 1.0
         pcall(function() reach = weapon(body):getMaxRange() end)
@@ -1375,7 +1433,8 @@ local function validTarget(z, body, red, mode)
 
 
     local thumping = false
-    pcall(function() thumping = tostring(z:getActionStateName()) == "thump" end)
+    local okThump, thumpState = pcall(z.getActionStateName, z)
+    if okThump then thumping = tostring(thumpState) == "thump" end
     if thumping and barrierSide(z, body) then
         BridgeFight.info = "target behind a barrier (thump)"
         if not meetDefense then pcall(function() BridgeCallout.cantReach() end) end
@@ -1408,6 +1467,19 @@ local function validTarget(z, body, red, mode)
         end
     end
     return true
+end
+
+local validAt, validZ, validBody, validMode, validValue = nil, nil, nil, nil, false
+
+local function validTarget(z, body, red, mode)
+    mode = mode or BridgeFight.mode()
+    local tick = Bridge.time or 0
+    if validAt == tick and validZ == z and validBody == body and validMode == mode then
+        return validValue
+    end
+    local v = validTargetUncached(z, body, red, mode)
+    validAt, validZ, validBody, validMode, validValue = tick, z, body, mode, v
+    return v
 end
 
 
@@ -1598,12 +1670,12 @@ local function footPressImpl(z)
 end
 
 local function footBodyOk(z, body, bz, red)
-    if not (z:isAlive() and z:getHealth() > 0) then return false end
+    if not (zsAlive(z) and zsHealth(z)) then return false end
     if math.abs(z:getZ() - bz) >= 0.8 then return false end
     if instanceof(z, "IsoAnimal") then return false end
     if isBody(z) then return false end
-    if BridgeFight.ownerRisen(z, red) then return false end
-    if BridgeData.harmless(z) then return false end
+    if zsRisen(z, red) then return false end
+    if zsHarmless(z) then return false end
     return true, z:getX(), z:getY()
 end
 
@@ -2000,7 +2072,7 @@ local function footFinish(body, red, why)
     footEnd(body)
 end
 
-local function footStart(body, red, t, mode, range, opts)
+local function footStart(body, red, t, mode, range, opts, scan)
     local gun = opts ~= nil and opts.gun == true
     if BridgeFight.state == "swing" then return false end
     if Bridge.time < (BridgeFight.stepReadyAt or 0) then return false end
@@ -2010,7 +2082,7 @@ local function footStart(body, red, t, mode, range, opts)
         vlog("footwork stop: no crowd gain for 0.5 s")
         return false
     end
-    local S = footScan(body, red)
+    local S = scan or footScan(body, red)
     BridgeFight.stepScan, BridgeFight.stepScanBody, BridgeFight.stepScanAt = S, body, Bridge.time
     local d = (t ~= nil) and dist(body, t) or math.huge
     local tooClose = t ~= nil and d < (range - FOOT.REACH)
@@ -2151,7 +2223,7 @@ local function footStart(body, red, t, mode, range, opts)
     return true
 end
 
-local function footTick(body, red, t, mode, range, opts)
+local function footTick(body, red, t, mode, range, opts, scan)
     local gun = opts ~= nil and opts.gun == true
     if BridgeFight.FOOTWORK_ON ~= true and not BridgeFight.stepEscape and not gun then return false end
     if BridgeFight.state == "step" then
@@ -2230,7 +2302,7 @@ local function footTick(body, red, t, mode, range, opts)
         BridgeMove.walkType = "Walk"
         return true
     end
-    return footStart(body, red, t, mode, range, opts)
+    return footStart(body, red, t, mode, range, opts, scan)
 end
 
 
@@ -2238,7 +2310,7 @@ function BridgeFight.footStepGun(body, red, t, mode, opts)
     if BridgeFight.state == "swing" then return false end
     local use = opts or {}
     use.gun = true
-    return footTick(body, red, t, mode, 0, use) == true
+    return footTick(body, red, t, mode, 0, use, use.scan) == true
 end
 
 
@@ -2343,7 +2415,7 @@ local function escapeTick(body, red, t, mode, range, S)
     if BridgeFight.state == "swing" then return false end
 
     if BridgeFight.state == "step" and BridgeFight.stepEscape then
-        if footTick(body, red, t, mode, range) then return true end
+        if footTick(body, red, t, mode, range, nil, S) then return true end
     end
 
     BridgeFight.swingBack = false
@@ -3397,7 +3469,7 @@ function BridgeFight.update(body)
     if escapeTick(body, red, t, mode, range, S) then return true end
 
     if BridgeFight.state == "step" then
-        if footTick(body, red, t, mode, range) then return true end
+        if footTick(body, red, t, mode, range, nil, S) then return true end
     end
 
     if BridgeFight.escapeOn then
@@ -3520,7 +3592,7 @@ function BridgeFight.update(body)
     BridgeMove.stopPath(body)
 
     if not BridgeFight.escapeOn then
-        if footTick(body, red, t, mode, range) then return true end
+        if footTick(body, red, t, mode, range, nil, S) then return true end
     end
 
     if wantShove(body, t, item) then

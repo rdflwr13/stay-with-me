@@ -2893,6 +2893,8 @@ function BridgeMove.backTick(body, F, red)
     return true
 end
 
+local followStallOpts = nil
+
 local function followTrailStep(body)
     local red = BridgeData.owner()
     if red == nil or Bridge.target ~= nil then
@@ -3086,7 +3088,12 @@ local function followTrailStep(body)
     local d = dist2d(body:getX(), body:getY(), red:getX(), red:getY())
     local redGoes = BridgeMove.redMoving or BridgeMove.redSpeed > 0.012
     local running = false
-    pcall(function() running = red:isRunning() or red:isSprinting() end)
+    local okRun, rv = pcall(red.isRunning, red)
+    if okRun then running = rv == true end
+    if not running then
+        local okSprint, sv = pcall(red.isSprinting, red)
+        if okSprint then running = sv == true end
+    end
 
     local walk = (running or along > 4) and "Run" or "Walk"
     if BridgeMove.walkType == "Run" and not running and along > 2.5 then walk = "Run" end
@@ -3428,7 +3435,7 @@ local function followTrailStep(body)
 
 
 
-    if redGoes and sees and d < 0.75 then
+    if redGoes and sees and d < stopAt then
         quenchPath()
         BridgeMove.endFollowBump(body, "Stand")
         BridgeMove.setCollide(body, true)
@@ -3539,7 +3546,8 @@ local function followTrailStep(body)
     if nav ~= nil and pursuing and BridgeMove.moving
             and BridgeMove.cross == nil and BridgeMove.pendingClimb == nil
             and BridgeMove.doorAct == nil and BridgeMove.window == nil then
-        if BridgeNav.stall(body, nav, { ticks = NAV.STALL_TICKS, move = NAV.STALL_MOVE }) == "stalled" then
+        followStallOpts = followStallOpts or { ticks = NAV.STALL_TICKS, move = NAV.STALL_MOVE }
+        if BridgeNav.stall(body, nav, followStallOpts) == "stalled" then
             local point = BridgeNav.detour(body, math.floor(px), math.floor(py), tz, nav,
                 { step = NAV.DETOUR_STEP, ticks = NAV.DETOUR_TICKS })
             if point ~= nil then
@@ -3880,9 +3888,21 @@ local function lineClearImpl(body, gx, gy, gz)
     return true
 end
 
+local lcTick, lcBody, lcKX, lcKY, lcKZ, lcVal = nil, nil, nil, nil, nil, false
+
 function BridgeMove.lineClear(body, gx, gy, gz)
+    if body == nil or gx == nil or gy == nil then return false end
+    local tick = Bridge.tick or 0
+    local kx = math.floor(gx * 10 + 0.5)
+    local ky = math.floor(gy * 10 + 0.5)
+    local kz = math.floor((gz or 0) * 10 + 0.5)
+    if lcTick == tick and lcBody == body and lcKX == kx and lcKY == ky and lcKZ == kz then
+        return lcVal
+    end
     local ok, clear = pcall(lineClearImpl, body, gx, gy, gz)
-    return ok and clear == true
+    local v = ok and clear == true
+    lcTick, lcBody, lcKX, lcKY, lcKZ, lcVal = tick, body, kx, ky, kz, v
+    return v
 end
 
 function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
@@ -3932,8 +3952,10 @@ function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
 end
 
 
+local TRACE_EVERY = 2
+
 function BridgeMove.traceFrame(body, d, needPath, stalled)
-    if Bridge.tick < BridgeMove.traceUntil then
+    if Bridge.tick < BridgeMove.traceUntil and (Bridge.tick % TRACE_EVERY) == 0 then
         pcall(function()
             local red = BridgeData.owner()
             local bx, by, rx, ry = body:getX(), body:getY(), red:getX(), red:getY()

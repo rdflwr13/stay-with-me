@@ -671,9 +671,9 @@ local function findBody(seen, pid)
 end
 
 function BridgeHorse.renderTick()
-    local player = getSpecificPlayer(0)
-    if BridgeHorse.active and player ~= nil and BridgeHorse.body ~= nil and BridgeHorse.horse ~= nil then
-        rescueVisibility(player, BridgeHorse.body, BridgeHorse.horse)
+    if BridgeHorse.active and BridgeHorse.body ~= nil and BridgeHorse.horse ~= nil then
+        local player = getSpecificPlayer(0)
+        if player ~= nil then rescueVisibility(player, BridgeHorse.body, BridgeHorse.horse) end
     end
     if Bridge == nil or not Bridge.mp or Bridge.world == nil or Bridge.world.players == nil then
         if BridgeHorse.remotePinned ~= nil then

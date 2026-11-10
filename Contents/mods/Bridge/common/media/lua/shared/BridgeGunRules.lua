@@ -1953,12 +1953,16 @@ local function itemsTick()
     return 0
 end
 
+local ITEM_MEMO_TICKS = 6
+
 function BridgeGunRules.itemsOf(body)
     local out = {}
     if body == nil then return out end
     local now = itemsTick()
     local cached = itemsMemo[body]
-    if cached ~= nil and cached.tick == now and cached.epoch == itemsEpoch then return cached.list end
+    if cached ~= nil and cached.epoch == itemsEpoch and now - cached.tick < ITEM_MEMO_TICKS then
+        return cached.list
+    end
     local seen = {}
     local function scan(container)
         if container == nil or seen[container] then return end

@@ -131,17 +131,19 @@ end
 
 
 
-function BridgeWeapon.assigned(body)
-    local id = BridgeWeapon.assignedId
-    if id == nil then return nil end
+local assignedAt, assignedBody, assignedKey, assignedVal = nil, nil, nil, nil
+
+local function assignedImpl(body, id)
+    local item = BridgeWeapon.assignedItem
+    if item ~= nil then
+        local inHand = false
+        pcall(function()
+            inHand = body:getPrimaryHandItem() == item or body:getSecondaryHandItem() == item
+        end)
+        if inHand then return item end
+    end
     local found = nil
-    pcall(function()
-        local items = body:getInventory():getItems()
-        for i = 0, items:size() - 1 do
-            local item = items:get(i)
-            if item ~= nil and item:getID() == id then found = item break end
-        end
-    end)
+    pcall(function() found = body:getInventory():getItemWithID(id) end)
 
 
 
@@ -166,6 +168,16 @@ function BridgeWeapon.assigned(body)
     end
     BridgeWeapon.assignedItem = found
     return found
+end
+
+function BridgeWeapon.assigned(body)
+    local id = BridgeWeapon.assignedId
+    if id == nil then return nil end
+    local tick = Bridge.tick or 0
+    if assignedAt == tick and assignedBody == body and assignedKey == id then return assignedVal end
+    local val = assignedImpl(body, id)
+    assignedAt, assignedBody, assignedKey, assignedVal = tick, body, id, val
+    return val
 end
 
 
@@ -414,7 +426,11 @@ end
 
 
 
+local bestAt, bestBody, bestMain, bestVal = nil, nil, nil, nil
+
 function BridgeWeapon.bestOwn(body, mainOnly)
+    local tick = Bridge.tick or 0
+    if bestAt == tick and bestBody == body and bestMain == mainOnly then return bestVal end
     local best, bestS, bestC = nil, -1, -1
     pcall(function()
         local function walk(c, depth)
@@ -433,6 +449,7 @@ function BridgeWeapon.bestOwn(body, mainOnly)
         end
         walk(body:getInventory(), 0)
     end)
+    bestAt, bestBody, bestMain, bestVal = tick, body, mainOnly, best
     return best
 end
 

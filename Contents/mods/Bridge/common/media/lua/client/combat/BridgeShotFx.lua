@@ -52,6 +52,8 @@ local texture = nil
 local textureRetryAt = 0
 local textureWarned = false
 local rendererWarned = false
+local rendererCache = nil
+local rendererAt = 0
 local screenWarned = false
 local drawLogged = false
 local muzzleLogged = false
@@ -320,10 +322,16 @@ function M.render()
     if n == 0 then return end
     if type(isServer) == "function" and isServer() then return end
     if type(isIngameState) == "function" and not isIngameState() then return end
+    local now = nowMs()
     local tex = whiteTexture()
     if tex == nil then return end
-    local renderer = nil
-    pcall(function() renderer = getRenderer() end)
+    local renderer = rendererCache
+    if renderer == nil or now - rendererAt > 1000 then
+        renderer = nil
+        pcall(function() renderer = getRenderer() end)
+        rendererCache = renderer
+        rendererAt = now
+    end
     if renderer == nil or renderer.renderline == nil then
         if not rendererWarned then
             rendererWarned = true
@@ -345,7 +353,6 @@ function M.render()
     end
 
     local zoom, ox, oy = view()
-    local now = nowMs()
     for i = 1, n do
         local entry = live[i]
         if entry ~= nil then
@@ -355,34 +362,31 @@ function M.render()
             local progress = entry.dist > 0 and nose / entry.dist or 1
 
             local pathA = clamp((config.patha or 0) * (1 - progress * (config.pathfade or 0)), 0, 1)
-            if pathA > 0 then
-                local ax, ay = toScreen(entry.sx, entry.sy, entry.sz, zoom, ox, oy)
-                local bx, by = toScreen(entry.sx + entry.dirx * nose, entry.sy + entry.diry * nose,
-                    entry.sz + entry.dirz * nose, zoom, ox, oy)
-                drawLine(renderer, tex, ax, ay, bx, by,
-                    config.pathr, config.pathg, config.pathb, pathA, M.pathWidth)
-            end
-
             local streak = math.max(config.tlen or 0, M.streak)
             local tail = math.max(0, nose - streak)
             local trailA = clamp((config.ta or 0) * (1 - progress), 0, 1)
+            local tip = math.min(entry.dist, nose + entry.headLen)
+            local headA = clamp((config.pa or 0) * (1 - progress * (config.pfade or 0)), 0, 1)
+            local nax, nay = nil, nil
+            if pathA > 0 or (trailA > 0 and nose > tail) or (headA > 0 and tip > nose) then
+                nax, nay = toScreen(entry.sx + entry.dirx * nose, entry.sy + entry.diry * nose,
+                    entry.sz + entry.dirz * nose, zoom, ox, oy)
+            end
+            if pathA > 0 then
+                local ax, ay = toScreen(entry.sx, entry.sy, entry.sz, zoom, ox, oy)
+                drawLine(renderer, tex, ax, ay, nax, nay,
+                    config.pathr, config.pathg, config.pathb, pathA, M.pathWidth)
+            end
             if trailA > 0 and nose > tail then
                 local ax, ay = toScreen(entry.sx + entry.dirx * tail, entry.sy + entry.diry * tail,
                     entry.sz + entry.dirz * tail, zoom, ox, oy)
-                local bx, by = toScreen(entry.sx + entry.dirx * nose, entry.sy + entry.diry * nose,
-                    entry.sz + entry.dirz * nose, zoom, ox, oy)
-                drawLine(renderer, tex, ax, ay, bx, by,
+                drawLine(renderer, tex, ax, ay, nax, nay,
                     config.tr, config.tg, config.tb, trailA, M.trailWidth)
             end
-
-            local tip = math.min(entry.dist, nose + entry.headLen)
-            local headA = clamp((config.pa or 0) * (1 - progress * (config.pfade or 0)), 0, 1)
             if headA > 0 and tip > nose then
-                local ax, ay = toScreen(entry.sx + entry.dirx * nose, entry.sy + entry.diry * nose,
-                    entry.sz + entry.dirz * nose, zoom, ox, oy)
                 local bx, by = toScreen(entry.sx + entry.dirx * tip, entry.sy + entry.diry * tip,
                     entry.sz + entry.dirz * tip, zoom, ox, oy)
-                drawLine(renderer, tex, ax, ay, bx, by,
+                drawLine(renderer, tex, nax, nay, bx, by,
                     config.pr, config.pg, config.pb, headA, M.headWidth)
             end
         end

@@ -390,6 +390,7 @@ function BridgeLight.at(body)
     end
 
     local tick = nowTick()
+    if e.returnTick == tick then return e end
     local cell = nil
     pcall(function() cell = getCell() end)
     local x, y, z = nil, nil, nil
@@ -449,6 +450,7 @@ function BridgeLight.at(body)
     e.lvl = lvl
     e.dark = BridgeLight.decide(e)
     e.at = nowMs
+    e.returnTick = tick
     return e
 end
 

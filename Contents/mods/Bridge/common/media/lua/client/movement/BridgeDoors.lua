@@ -611,6 +611,22 @@ function BridgeDoors.invalidate()
     pendingGraphs = {}
 end
 
+local pruneAt = 0
+
+local function pruneCaches(now)
+    if now - pruneAt < 60000 then return end
+    pruneAt = now
+    for k, v in pairs(graphCache) do
+        if now - (v.at or 0) > BridgeDoors.REACH_CACHE_MS * 2 then graphCache[k] = nil end
+    end
+    for k, v in pairs(cache) do
+        if now - (v.at or 0) > BridgeDoors.CACHE_MS * 2 then cache[k] = nil end
+    end
+    for k, v in pairs(pendingGraphs) do
+        if now - (v.at or 0) > 120000 then pendingGraphs[k] = nil end
+    end
+end
+
 local function exteriorSides(obj, buildingId)
     local inside, outside = nil, nil
     pcall(function()
@@ -669,6 +685,7 @@ local function exteriorOpenings(building, z)
     if id == nil then return {} end
     local key = tostring(id) .. "@" .. z
     local now = nowMs()
+    pruneCaches(now)
     local c = cache[key]
     if c == nil or now - c.at > BridgeDoors.CACHE_MS then
         c = { at = now, list = scanBuilding(building, z) }
@@ -824,9 +841,11 @@ end
 
 local function stepGraph(p)
     local now = nowMs()
+    local startMs = now
     if now - sliceMs >= BridgeDoors.GRAPH_SLICE_MS then sliceMs, sliceLeft = now, BridgeDoors.GRAPH_STEP end
     local cell = getCell()
     while sliceLeft > 0 and p.x <= p.x2 do
+        if (sliceLeft % 20) == 0 and (nowMs() - startMs) >= 5 then break end
         local sq = cell:getGridSquare(p.x, p.y, p.z)
         if sq ~= nil then
             local a = roomNode(sq, p.building)
@@ -856,6 +875,7 @@ local function roomGraph(building, z)
     if id == nil then return UNKNOWN end
     local key = tostring(id) .. "@" .. z
     local now = nowMs()
+    pruneCaches(now)
     local g = graphCache[key]
     if g ~= nil and now - g.at < BridgeDoors.REACH_CACHE_MS then return g end
     local p = pendingGraphs[key]
@@ -870,7 +890,7 @@ local function roomGraph(building, z)
             return g
         end
         p = { links = {}, free = {}, rooms = {}, building = building, z = z,
-              x1 = x1, y1 = y1, x2 = x2, y2 = y2, x = x1, y = y1 }
+              x1 = x1, y1 = y1, x2 = x2, y2 = y2, x = x1, y = y1, at = now }
         pendingGraphs[key] = p
     end
     if not stepGraph(p) then return g or UNKNOWN end

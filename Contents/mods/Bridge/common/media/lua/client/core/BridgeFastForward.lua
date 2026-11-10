@@ -743,7 +743,7 @@ function BridgeFastForward.tick()
                 or BridgeTask.kind == "emptyFluid" or BridgeTask.kind == "pryDoor"
                 or BridgeTask.kind == "shower" or BridgeTask.kind == "deposit"
                 or BridgeTask.kind == "lootArea") then
-        pcall(function() BridgeTask.update(Bridge.body) end)
+        if BridgeTask.lastUpdateTick ~= Bridge.tick then pcall(BridgeTask.update, Bridge.body) end
         if Bridge.every(120) then
             log("ff drive: " .. tostring(BridgeTask.kind) .. " time=" .. string.format("%.1f", Bridge.time or 0))
         end

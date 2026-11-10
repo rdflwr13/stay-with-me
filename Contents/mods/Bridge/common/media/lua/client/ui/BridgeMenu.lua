@@ -932,7 +932,26 @@ end
 
 
 
+local menuMemo = setmetatable({}, { __mode = "k" })
+
+local function menuEntry(worldobjects)
+    if type(worldobjects) ~= "table" then return nil end
+    local tick = Bridge ~= nil and tonumber(Bridge.tick) or 0
+    local e = menuMemo[worldobjects]
+    if e == nil or e.tick ~= tick then
+        e = { tick = tick }
+        menuMemo[worldobjects] = e
+    end
+    return e
+end
+
 local function bodyNear(worldobjects, playerNum)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.bodyNear ~= nil then return e.bodyNear end
+    local function done(v)
+        if e ~= nil then e.bodyNear = v end
+        return v
+    end
     local pn = playerNum or 0
     local me = BridgeData.me()
     local mine, others = {}, {}
@@ -940,14 +959,14 @@ local function bodyNear(worldobjects, playerNum)
     for z, info in pairs(Bridge.bodiesSeen()) do
         if info.who == me then mine[z] = true else others[z] = true end
     end
-    for z in pairs(mine) do if underMouse(z, pn) then return true end end
-    for z in pairs(others) do if underMouse(z, pn) then return false end end
+    for z in pairs(mine) do if underMouse(z, pn) then return done(true) end end
+    for z in pairs(others) do if underMouse(z, pn) then return done(false) end end
     local sq = nil
     for _, o in ipairs(worldobjects or {}) do
         pcall(function() sq = o:getSquare() end)
         if sq ~= nil then break end
     end
-    if sq == nil then return false end
+    if sq == nil then return done(false) end
     local function dist2(z)
         local d = nil
         pcall(function()
@@ -967,7 +986,7 @@ local function bodyNear(worldobjects, playerNum)
         local d = dist2(z)
         if d ~= nil and d < best then best, bestMine, found = d, false, true end
     end
-    return found and bestMine
+    return done(found and bestMine)
 end
 
 function BridgeMenu.onWorldMenu(playerNum, context, worldobjects, test)
@@ -984,6 +1003,8 @@ function BridgeMenu.onWorldMenu(playerNum, context, worldobjects, test)
 end
 
 local function treeUnder(worldobjects)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.tree ~= nil then return e.tree or nil end
     local tree = nil
     for _, o in ipairs(worldobjects or {}) do
         pcall(function()
@@ -995,32 +1016,45 @@ local function treeUnder(worldobjects)
         end)
         if tree ~= nil then break end
     end
+    if e ~= nil then e.tree = tree or false end
     return tree
 end
 
 local function seatUnder(worldobjects)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.seat ~= nil then return e.seat or nil end
     for _, o in ipairs(worldobjects or {}) do
         if o ~= nil then
             local isSeat = false
             pcall(function()
                 isSeat = BridgeTask ~= nil and BridgeTask.seatIsSeat ~= nil and BridgeTask.seatIsSeat(o) == true
             end)
-            if isSeat then return o end
+            if isSeat then
+                if e ~= nil then e.seat = o end
+                return o
+            end
         end
     end
+    if e ~= nil then e.seat = false end
     return nil
 end
 
 local function bedUnder(worldobjects)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.bed ~= nil then return e.bed or nil end
     for _, o in ipairs(worldobjects or {}) do
         if o ~= nil then
             local isBed = false
             pcall(function()
                 isBed = BridgeTask ~= nil and BridgeTask.sitIsRealBed ~= nil and BridgeTask.sitIsRealBed(o) == true
             end)
-            if isBed then return o end
+            if isBed then
+                if e ~= nil then e.bed = o end
+                return o
+            end
         end
     end
+    if e ~= nil then e.bed = false end
     return nil
 end
 
@@ -1336,11 +1370,16 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
 end
 
 local function lootTargetsUnder(worldobjects)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.loot ~= nil then return e.loot or nil end
     for _, o in ipairs(worldobjects or {}) do
         if o ~= nil then
             local list = nil
             pcall(function() list = BridgeWorkSelect.lootTargetsForObject(o) end)
-            if list ~= nil and #list > 0 then return list end
+            if list ~= nil and #list > 0 then
+                if e ~= nil then e.loot = list end
+                return list
+            end
         end
     end
     local sq = nil
@@ -1348,14 +1387,32 @@ local function lootTargetsUnder(worldobjects)
         pcall(function() sq = o:getSquare() end)
         if sq ~= nil then break end
     end
-    if sq == nil then return nil end
+    if sq == nil then
+        if e ~= nil then e.loot = false end
+        return nil
+    end
     local list = nil
     pcall(function()
         local x, y, z = sq:getX(), sq:getY(), sq:getZ()
         list = BridgeWorkSelect.lootTargets({ x1 = x, y1 = y, x2 = x, y2 = y, z = z })
     end)
-    if list ~= nil and #list > 0 then return list end
+    if list ~= nil and #list > 0 then
+        if e ~= nil then e.loot = list end
+        return list
+    end
+    if e ~= nil then e.loot = false end
     return nil
+end
+
+local function depositTargetsUnder(worldobjects)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.deposit ~= nil then return e.deposit or nil end
+    local targets = nil
+    if BridgeDeposit ~= nil and type(BridgeDeposit.targetsUnder) == "function" then
+        targets = BridgeDeposit.targetsUnder(worldobjects)
+    end
+    if e ~= nil then e.deposit = targets or false end
+    return targets
 end
 
 function BridgeMenu.onLootThis(targets)
@@ -1525,7 +1582,7 @@ function BridgeMenu.onDepositMenu(playerNum, context, worldobjects, test)
     local isPresent = present()
     local markOk = BridgeDeposit.homeMarkHere() == true
     if not isPresent and not markOk then return end
-    local targets = BridgeDeposit.targetsUnder(worldobjects)
+    local targets = depositTargetsUnder(worldobjects)
     if targets == nil or #targets == 0 then return end
     local sub = rinTopMenu(context)
     if isPresent then

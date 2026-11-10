@@ -500,16 +500,17 @@ end
 
 local scanFacts = { near8 = 0, spot = false, anyThreatInSwing = false }
 
-local function scanWorld(body, red, wantClear)
+local function scanWorld(body, red, wantClear, wantPeak)
     local facts = scanFacts
     facts.near8 = 0
     facts.spot = false
     facts.anyThreatInSwing = false
+    facts.peak = wantPeak and 0 or nil
 
     local S = BridgeCallout.SAY
     local wantNear = S.EvLull ~= 0 or S.EvStillOnUs ~= 0
     local wantSpot = S.EvSpot ~= 0
-    local wantBody = wantNear
+    local wantBody = wantNear or wantPeak
     local wantRed = wantSpot
     if not (wantBody or wantRed or wantClear) then
         return facts
@@ -534,6 +535,9 @@ local function scanWorld(body, red, wantClear)
         for i = 1, #entries do
             local e = entries[i]
             if e.alive and not e.comp and not e.harm then
+                local peakRel = wantPeak and e.threat
+                    and ((e.dc <= 8 and math.abs(e.zc) < 1) or (e.dp <= 8 and math.abs(e.zp) < 1))
+                if peakRel then facts.peak = (facts.peak or 0) + 1 end
                 local relevant = false
                 if wantNear and math.abs(e.zp) < 0.8 and e.dp2 < near2 then relevant = true end
                 if not relevant and wantRed and math.abs(e.zc) < 1 and e.dc2 < spot2 then relevant = true end
@@ -557,6 +561,7 @@ local function scanWorld(body, red, wantClear)
         return facts
     end
 
+    facts.peak = nil
     pcall(function()
         local list = nil
         if BridgeZS ~= nil then list = BridgeZS.nearUnion(bodyx, bodyy, redx, redy, 15.5, { tag = "callout.scan" }) end
@@ -2054,14 +2059,19 @@ function BridgeCallout.update(body)
         BridgeCallout.lastCombatAt = Bridge.time
         if not BridgeCallout.recordOn then startFightRecord() end
         BridgeCallout.fightTime = BridgeCallout.fightTime + stepSec
-        local peak = peakThreats(body, red)
-        if peak > BridgeCallout.fightPeak then BridgeCallout.fightPeak = peak end
         local gunNow = false
         pcall(function() gunNow = BridgeFight ~= nil and BridgeFight.state == "gun" end)
         if gunNow then BridgeCallout.fightGun = true end
     end
     if not fighting then BridgeCallout.finisherTarget = nil end
     local engaged = fighting or (Bridge.time - BridgeCallout.fightingAt < BridgeCallout.COMBAT_GRACE * BridgeCallout.SEC)
+
+    local facts = scanWorld(body, red, not engaged, fighting)
+    if fighting then
+        local peak = facts.peak
+        if peak == nil then peak = peakThreats(body, red) end
+        if peak > BridgeCallout.fightPeak then BridgeCallout.fightPeak = peak end
+    end
 
     if flush() then return end
 
@@ -2115,8 +2125,6 @@ function BridgeCallout.update(body)
             end
         end
     end
-
-    local facts = scanWorld(body, red, not engaged)
 
     if fighting then
         local crowd, playerDist = 0, 99

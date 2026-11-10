@@ -334,7 +334,8 @@ end
 
 local function drawPops()
     local pops = BridgeSkills.pops
-    if #pops == 0 then return end
+    local count = #pops
+    if count == 0 then return end
     local z = Bridge.body
     if z == nil then return end
     local player = BridgeData.owner()
@@ -346,18 +347,17 @@ local function drawPops()
     local rowH = fontH + 2
     local zoom = getCore():getZoom(pn)
     local lift = 128 * Core.getTileScale() / 2 / zoom
-    local i = 1
-    while i <= #pops do
+    local zx, zy, zz = z:getX(), z:getY(), z:getZ()
+    local j = 1
+    for i = 1, count do
         local p = pops[i]
         local age = now - p.t0
-        if age >= POP_LIFE_MS then
-            table.remove(pops, i)
-        else
+        if age < POP_LIFE_MS then
             local frac = age / POP_LIFE_MS
             local alpha = 1 - frac
-            local x = isoToScreenX(pn, z:getX(), z:getY(), z:getZ())
-            local y = isoToScreenY(pn, z:getX(), z:getY(), z:getZ())
-                - lift - fontH - POP_BASE - POP_RISE * frac - (i - 1) * rowH
+            local x = isoToScreenX(pn, zx, zy, zz)
+            local y = isoToScreenY(pn, zx, zy, zz)
+                - lift - fontH - POP_BASE - POP_RISE * frac - (j - 1) * rowH
             local text = p.text
             local color = p.color or POP_COLOR
             tm:DrawStringCentre(UIFont.Small, x - 1, y, text, 0, 0, 0, alpha * 0.8)
@@ -365,9 +365,11 @@ local function drawPops()
             tm:DrawStringCentre(UIFont.Small, x, y - 1, text, 0, 0, 0, alpha * 0.8)
             tm:DrawStringCentre(UIFont.Small, x, y + 1, text, 0, 0, 0, alpha * 0.8)
             tm:DrawStringCentre(UIFont.Small, x, y, text, color[1], color[2], color[3], alpha)
-            i = i + 1
+            pops[j] = p
+            j = j + 1
         end
     end
+    for i = count, j, -1 do pops[i] = nil end
 end
 
 

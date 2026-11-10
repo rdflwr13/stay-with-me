@@ -122,7 +122,11 @@ local function helperFor(body, inv)
     return helper
 end
 
+local sigAt, sigBody, sigVal = nil, nil, nil
+
 function BridgeTransmog.wornSignature(body)
+    local tick = Bridge ~= nil and tonumber(Bridge.tick) or nil
+    if tick ~= nil and sigAt == tick and sigBody == body then return sigVal end
     local parts = {}
     local worn = body:getWornItems()
     local items, present = {}, {}
@@ -168,7 +172,9 @@ function BridgeTransmog.wornSignature(body)
         pcall(function() helperWorn = helper:isWorn() == true end)
     end
     parts[#parts + 1] = helperWorn and "H1" or "H0"
-    return table.concat(parts, ";")
+    local result = table.concat(parts, ";")
+    if tick ~= nil then sigAt, sigBody, sigVal = tick, body, result end
+    return result
 end
 
 local function createCarrier(item, body)

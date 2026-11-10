@@ -23,27 +23,39 @@ BridgeVoice.ZOMBIE_ALIASES = {
 
 local ALIASES = BridgeVoice.ZOMBIE_ALIASES
 
+local prefixAt = setmetatable({}, { __mode = "k" })
+local prefixOk = setmetatable({}, { __mode = "k" })
+
+local function voiceTick()
+    if Bridge ~= nil and tonumber(Bridge.tick) ~= nil then return tonumber(Bridge.tick) end
+    if BridgeServer ~= nil and tonumber(BridgeServer.tick) ~= nil then return tonumber(BridgeServer.tick) end
+    return nil
+end
+
 local function prefixOf(body)
-    local prefix = nil
-    pcall(function()
-        local d = body:getDescriptor()
-        if d ~= nil then prefix = d:getVoicePrefix() end
-    end)
-    return prefix
+    local okD, d = pcall(body.getDescriptor, body)
+    if not okD or d == nil then return nil end
+    local okP, prefix = pcall(d.getVoicePrefix, d)
+    if okP then return prefix end
+    return nil
 end
 
 function BridgeVoice.applyPrefix(body)
     if body == nil then return false end
+    local tick = voiceTick()
+    if tick ~= nil and prefixOk[body] == true and tick - (prefixAt[body] or 0) < 10 then return true end
     local prefix = prefixOf(body)
-    if prefix == BridgeVoice.SILENT_PREFIX then return true end
+    if prefix == BridgeVoice.SILENT_PREFIX then
+        if tick ~= nil then prefixAt[body], prefixOk[body] = tick, true end
+        return true
+    end
+    local okD, d = pcall(body.getDescriptor, body)
     local ok = false
-    pcall(function()
-        local d = body:getDescriptor()
-        if d ~= nil then
-            d:setVoicePrefix(BridgeVoice.SILENT_PREFIX)
-            ok = true
-        end
-    end)
+    if okD and d ~= nil then
+        local okSet = pcall(d.setVoicePrefix, d, BridgeVoice.SILENT_PREFIX)
+        ok = okSet
+    end
+    if tick ~= nil then prefixAt[body], prefixOk[body] = tick, ok end
     return ok
 end
 

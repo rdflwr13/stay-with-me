@@ -4632,7 +4632,13 @@ local function bodyNear(p, bodies)
     return false
 end
 
+local othersMemo = { tick = nil, p = nil, bodies = nil, value = false }
+
 local function othersNear(p, bodies)
+    local tick = BridgeServer.tick
+    if othersMemo.tick == tick and othersMemo.p == p and othersMemo.bodies == bodies then
+        return othersMemo.value
+    end
     local found = false
     pcall(function()
         local px, py, pz = p:getX(), p:getY(), p:getZ()
@@ -4651,6 +4657,7 @@ local function othersNear(p, bodies)
             end
         end
     end)
+    othersMemo.tick, othersMemo.p, othersMemo.bodies, othersMemo.value = tick, p, bodies, found
     return found
 end
 

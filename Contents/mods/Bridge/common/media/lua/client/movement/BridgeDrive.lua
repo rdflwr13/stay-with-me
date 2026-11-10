@@ -57,6 +57,7 @@ BridgeDrive.SCAN_MAX    = 22
 BridgeDrive.SCAN_HALF   = 2.5
 BridgeDrive.HORDE_COUNT = 4
 BridgeDrive.SCAN_EVERY  = 15
+BridgeDrive.HORDE_EVERY = 30
 
 
 
@@ -69,6 +70,7 @@ BridgeDrive.ANIMAL_MIN    = 8
 BridgeDrive.ANIMAL_MAX    = 30
 BridgeDrive.ANIMAL_HALF   = 15
 BridgeDrive.ANIMAL_EVERY  = 30
+BridgeDrive.ANIMAL_FULL_EVERY = 600
 BridgeDrive.ANIMAL_REPEAT = 600
 
 
@@ -534,7 +536,13 @@ end
 
 
 
+local corpseAt, corpseRed, corpseR, corpseVal = nil, nil, nil, 0
+
 local function corpsesNear(red, radius)
+    if red == nil then return 0 end
+    local tick = Bridge.time or 0
+    local r = tonumber(radius) or BridgeDrive.SMELL_RADIUS
+    if corpseAt == tick and corpseRed == red and corpseR == r then return corpseVal end
     local n = 0
     pcall(function()
         local cell = getCell()
@@ -550,6 +558,7 @@ local function corpsesNear(red, radius)
             end
         end
     end)
+    corpseAt, corpseRed, corpseR, corpseVal = tick, red, r, n
     return n
 end
 
@@ -762,9 +771,13 @@ local function scanAnimal(car, red)
         eachObj(list, consider)
     end
     if found == nil and cell.getObjectList ~= nil then
-        local list = nil
-        pcall(function() list = cell:getObjectList() end)
-        eachObj(list, consider)
+        local now = Bridge.time or 0
+        if BridgeDrive.animalFullAt == nil or now >= BridgeDrive.animalFullAt then
+            BridgeDrive.animalFullAt = now + BridgeDrive.ANIMAL_FULL_EVERY
+            local list = nil
+            pcall(function() list = cell:getObjectList() end)
+            eachObj(list, consider)
+        end
     end
     return found
 end
@@ -941,8 +954,9 @@ function BridgeDrive.tick(red)
 
 
     if Bridge.every(BridgeDrive.SCAN_EVERY) then
+        local hordeDue = Bridge.every(BridgeDrive.HORDE_EVERY)
         local hordeTier = nil
-        if BridgeHorde ~= nil then
+        if hordeDue and BridgeHorde ~= nil then
             local cx, cy, cz = nil, nil, nil
             pcall(function() cx, cy, cz = car:getX(), car:getY(), car:getZ() end)
             if cx ~= nil then
@@ -959,13 +973,13 @@ function BridgeDrive.tick(red)
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
-        if hordeTier == nil and BridgeHorde ~= nil
+        if hordeDue and hordeTier == nil and BridgeHorde ~= nil
             and BridgeHorde.countCone(car, 0, 6, nil, true, red) > 0
             and say("EvCarZombieClose") then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
         end
-        if hordeTier == nil and BridgeHorde ~= nil
+        if hordeDue and hordeTier == nil and BridgeHorde ~= nil
             and BridgeHorde.countCone(car, BridgeDrive.SCAN_MIN, BridgeDrive.SCAN_MAX, nil, true, red) > 0
             and say("EvCarZombie") then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase

@@ -52,20 +52,16 @@ function BridgeSight.factor(body)
     end
     if BridgeSight.testEntry == nil and BridgeTorchShared == nil then return 1.0 end
 
-    local tick = tickNow()
-    if BridgeSight.memo.tick ~= tick then
-        BridgeSight.memo.tick = tick
-        BridgeSight.memo.byBody = setmetatable({}, { __mode = "k" })
-    end
+    local tick = (Bridge ~= nil and tonumber(Bridge.tick)) or tickNow()
     local cached = BridgeSight.memo.byBody[body]
-    if cached ~= nil then return cached end
+    if cached ~= nil and cached.tick == tick then return cached.value end
 
     local entry = BridgeSight.testEntry
     if entry == nil then
         local ok, got = pcall(BridgeLight.at, body)
         BridgeSight.stats.lightCalls = BridgeSight.stats.lightCalls + 1
         if not ok or got == nil then
-            BridgeSight.memo.byBody[body] = 1.0
+            BridgeSight.memo.byBody[body] = { tick = tick, value = 1.0 }
             return 1.0
         end
         entry = got
@@ -110,7 +106,8 @@ function BridgeSight.factor(body)
     if f < scale then f = scale end
     if f > 1.0 then f = 1.0 end
 
-    BridgeSight.memo.byBody[body] = f
+    BridgeSight.memo.byBody[body] = { tick = tick, value = f }
+    BridgeSight.memo.tick = tick
     BridgeSight.lastFactor = f
     BridgeSight.lastLevel = entry.raw
     return f

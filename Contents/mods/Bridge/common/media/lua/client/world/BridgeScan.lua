@@ -5,6 +5,7 @@ BridgeScan.MAX_AGE = 15
 BridgeScan.SPEECH_AGE = 30
 
 local frame = nil
+local entryPool = {}
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeScan] " .. tostring(text)) end end
 
@@ -50,7 +51,8 @@ local function seenBy(viewer, z)
         return BridgeZScan.canSee(z, viewer, viewer) == true
     end
     local seen = false
-    pcall(function() seen = viewer:CanSee(z) == true end)
+    local ok, got = pcall(viewer.CanSee, viewer, z)
+    if ok then seen = got == true end
     return seen
 end
 
@@ -81,7 +83,13 @@ local function build(body, red)
             if z ~= nil then
                 local okPos, zx, zy, zz = pcall(readPos, z)
                 if okPos and zx ~= nil then
-                    local e = { z = z, zz = zz }
+                    local e = entryPool[#entries + 1]
+                    if e == nil then
+                        e = {}
+                        entryPool[#entries + 1] = e
+                    end
+                    entries[#entries + 1] = e
+                    e.z, e.zz = z, zz
                     e.dpx, e.dpy = zx - ox, zy - oy
                     e.dcx, e.dcy = zx - cx, zy - cy
                     e.dp2 = e.dpx * e.dpx + e.dpy * e.dpy
@@ -148,6 +156,10 @@ local function build(body, red)
             end
         end
     end)
+    for i = #entries + 1, #entryPool do
+        local e = entryPool[i]
+        if e ~= nil then e.z = nil end
+    end
     local f = {
         tick = (Bridge ~= nil and tonumber(Bridge.tick)) or 0,
         cell = cell,
@@ -226,29 +238,32 @@ local function build(body, red)
 end
 
 function BridgeScan.frame(body, red)
-    local cell = nil
-    pcall(function() cell = getCell() end)
-    if cell == nil then return nil end
+    local okCell, cell = pcall(getCell)
+    if not okCell or cell == nil then return nil end
     local tick = (Bridge ~= nil and tonumber(Bridge.tick)) or 0
     if frame ~= nil and frame.cell == cell and (tick - frame.tick) < maxAge() then
         local stale = false
-        if red ~= nil then
-            pcall(function()
-                if red:isDead() then stale = true end
-                if red:getVehicle() ~= nil then stale = true end
-            end)
+        if frame.checkTick ~= tick or frame.checkBody ~= body or frame.checkRed ~= red then
+            if red ~= nil then
+                local okDead, dead = pcall(red.isDead, red)
+                if okDead and dead then stale = true end
+                local okVeh, veh = pcall(red.getVehicle, red)
+                if okVeh and veh ~= nil then stale = true end
+            end
+            if body ~= nil then
+                local okZ, bz = pcall(body.getZ, body)
+                if okZ and bz ~= nil then
+                    if frame.bodyZ ~= nil and bz ~= frame.bodyZ then stale = true end
+                    frame.bodyZ = bz
+                end
+            end
+            frame.checkTick, frame.checkBody, frame.checkRed, frame.checkStale = tick, body, red, stale
+        else
+            stale = frame.checkStale
         end
         local target = BridgeFight ~= nil and BridgeFight.target or nil
         if frame.targetWasNil == true and target ~= nil then stale = true end
         frame.targetWasNil = target == nil
-        if body ~= nil then
-            local bz = nil
-            pcall(function() bz = body:getZ() end)
-            if bz ~= nil then
-                if frame.bodyZ ~= nil and bz ~= frame.bodyZ then stale = true end
-                frame.bodyZ = bz
-            end
-        end
         if not stale then return frame end
     end
     frame = nil

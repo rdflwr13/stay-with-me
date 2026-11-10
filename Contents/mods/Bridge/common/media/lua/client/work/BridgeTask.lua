@@ -435,12 +435,18 @@ function BridgeTask.findAxe(body)
         local hand = body:getPrimaryHandItem()
         if usableAxe(hand) then axe = hand return end
         local best, bestScore = nil, -1
-        local items = body:getInventory():getAllEvalRecurse(usableAxe)
+        local inv = body:getInventory()
+        if inv == nil or inv.getAllEvalRecurse == nil then return end
+        local items = inv:getAllEvalRecurse(usableAxe)
         if items ~= nil then
-            for i = 0, items:size() - 1 do
+            local n = items:size()
+            for i = 0, n - 1 do
                 local it = items:get(i)
                 local score = 0
-                pcall(function() score = it:getTreeDamage() end)
+                if it ~= nil and it.getTreeDamage ~= nil then
+                    local okScore, value = pcall(it.getTreeDamage, it)
+                    if okScore and type(value) == "number" then score = value end
+                end
                 if score > bestScore then best, bestScore = it, score end
             end
         end
@@ -471,7 +477,9 @@ function BridgeTask.findCrowbar(body)
     pcall(function()
         local hand = body:getPrimaryHandItem()
         if usableCrowbar(hand) then crowbar = hand return end
-        local items = body:getInventory():getAllEvalRecurse(usableCrowbar)
+        local inv = body:getInventory()
+        if inv == nil or inv.getAllEvalRecurse == nil then return end
+        local items = inv:getAllEvalRecurse(usableCrowbar)
         if items ~= nil and items:size() > 0 then crowbar = items:get(0) end
     end)
     return crowbar
@@ -2456,10 +2464,16 @@ function BridgeTask.needRestSay()
     return true
 end
 
+local dangerMemo = { tick = nil, body = nil, radius = nil, value = false }
+
 function BridgeTask.dangerNear(body, radius)
     local danger = false
     local red = BridgeData.owner()
     local dr = radius or BridgeTask.DANGER_RADIUS
+    local tick = Bridge ~= nil and Bridge.tick or 0
+    if dangerMemo.tick == tick and dangerMemo.body == body and dangerMemo.radius == dr then
+        return dangerMemo.value
+    end
     pcall(function()
         if body ~= nil and BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle") then danger = true return end
         local bx, by, bz
@@ -2500,6 +2514,7 @@ function BridgeTask.dangerNear(body, radius)
             end
         end
     end)
+    dangerMemo.tick, dangerMemo.body, dangerMemo.radius, dangerMemo.value = tick, body, dr, danger
     return danger
 end
 
@@ -3343,6 +3358,7 @@ function BridgeTask.watchdog(body, def)
 end
 
 function BridgeTask.update(body)
+    BridgeTask.lastUpdateTick = Bridge.tick
     if not BridgeTask.active then return false end
     if body == nil or Bridge.body ~= body or BridgeTask.body ~= body then
         BridgeTask.reset()
@@ -3355,10 +3371,7 @@ function BridgeTask.update(body)
         BridgeTask.cancel("error")
         return false
     end
-    local fighting = false
-    pcall(function()
-        fighting = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle")
-    end)
+    local fighting = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle")
     if fighting then
         BridgeTask.cancel("danger")
         return false
@@ -3373,7 +3386,7 @@ function BridgeTask.update(body)
         return false
     end
 
-    pcall(function() BridgeMove.closeBehind(body) end)
+    if BridgeMove ~= nil and BridgeMove.closeBehind ~= nil then pcall(BridgeMove.closeBehind, body) end
     local ok, res = pcall(def.update, body)
     if not ok then
         BridgeTask.info = "error " .. tostring(res)
@@ -3382,12 +3395,10 @@ function BridgeTask.update(body)
         return false
     end
 
-    pcall(function()
-        if BridgeProgress ~= nil and BridgeTask.progress ~= nil then
-            local p = BridgeTask.progress()
-            if p ~= nil then BridgeProgress.show(p) end
-        end
-    end)
+    if BridgeProgress ~= nil and BridgeTask.progress ~= nil then
+        local okP, p = pcall(BridgeTask.progress)
+        if okP and p ~= nil then pcall(BridgeProgress.show, p) end
+    end
     if BridgeTask.active then
         pcall(BridgeTask.diag)
         pcall(BridgeTask.watchdog, body, def)
@@ -3448,13 +3459,13 @@ BridgeTask.kinds.chopTree = {}
 
 function BridgeTask.kinds.chopTree.available(body)
     if BridgeTask.TREECUTTING_ENABLED ~= 1 then return false end
-    if BridgeTask.findAxe(body) == nil then return false end
+    if BridgeTask.cachedTool(body, "axe", BridgeTask.findAxe, BridgeTask.toolOk) == nil then return false end
     return true
 end
 
 
 function BridgeTask.kinds.chopTree.missing(body)
-    if BridgeTask.findAxe(body) == nil then return "axe" end
+    if BridgeTask.cachedTool(body, "axe", BridgeTask.findAxe, BridgeTask.toolOk) == nil then return "axe" end
     return nil
 end
 

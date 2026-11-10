@@ -180,7 +180,12 @@ local function tr(key, a, b)
 end
 
 
+local scanAt, scanRed, scanVal = nil, nil, nil
+
 function BridgeHeal.scan(red)
+    if red == nil then return {} end
+    local tick = Bridge.tick or 0
+    if scanRed == red and scanAt ~= nil and tick - scanAt < 15 then return scanVal end
     local out = {}
     local weOn = type(BridgeWoundExpCompat) == "table" and type(BridgeWoundExpCompat.issues) == "function"
         and BridgeWoundExpCompat.active() == true
@@ -216,6 +221,7 @@ function BridgeHeal.scan(red)
             if any then out[#out + 1] = w end
         end
     end)
+    scanAt, scanRed, scanVal = tick, red, out
     return out
 end
 
@@ -1721,7 +1727,7 @@ function BridgeHeal.update(body)
     if red == nil then return false end
 
 
-    local okFire, busyFire = pcall(function() return BridgeHeal.fireUpdate(body, red) end)
+    local okFire, busyFire = pcall(BridgeHeal.fireUpdate, body, red)
     if okFire and busyFire then
         if BridgeHeal.active then BridgeHeal.stop("fire") end
         return true
@@ -1729,7 +1735,8 @@ function BridgeHeal.update(body)
 
 
     local redInCar = false
-    pcall(function() redInCar = red:getVehicle() ~= nil end)
+    local okCar, vehicle = pcall(red.getVehicle, red)
+    if okCar then redInCar = vehicle ~= nil end
     if redInCar then
         if BridgeHeal.active then BridgeHeal.stop("player in car") end
         return false

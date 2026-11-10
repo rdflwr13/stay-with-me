@@ -314,6 +314,9 @@ local function buildingOk(h, x, y, z, cache)
 end
 
 
+local homeMemoAt, homeMemoKey, homeMemoOut = nil, nil, nil
+local HOME_TARGET_TTL = 120
+
 local function homeTargets(perFloorCap, totalCap)
     local h = nil
     pcall(function() h = BridgeHome ~= nil and BridgeHome.get() or nil end)
@@ -321,6 +324,13 @@ local function homeTargets(perFloorCap, totalCap)
     local floors = floorList(h)
     perFloorCap = tonumber(perFloorCap) or 80
     totalCap = tonumber(totalCap) or (perFloorCap * math.max(1, #floors))
+    local keyParts = { h.x, h.y, h.w, h.h, perFloorCap, totalCap }
+    for i = 1, #floors do keyParts[#keyParts + 1] = floors[i] end
+    local key = table.concat(keyParts, ":")
+    local now = Bridge.time or 0
+    if homeMemoKey == key and homeMemoAt ~= nil and now - homeMemoAt < HOME_TARGET_TTL then
+        return homeMemoOut
+    end
     local out, seen, bldCache = {}, {}, {}
     for index = 1, #floors do
         if #out >= totalCap then break end
@@ -344,6 +354,7 @@ local function homeTargets(perFloorCap, totalCap)
             end
         end
     end
+    homeMemoAt, homeMemoKey, homeMemoOut = now, key, out
     return out
 end
 
@@ -449,7 +460,8 @@ function BridgeFetch.findAmmo(gun, minRounds)
             local list = nil
             pcall(function() list = c:getItems() end)
             if list ~= nil then
-                for j = 0, list:size() - 1 do
+                local ln = list:size()
+                for j = 0, ln - 1 do
                     local it = list:get(j)
                     if it ~= nil then
                         local kind, value = nil, 0
@@ -544,7 +556,8 @@ local function homeLoose(gun, want)
         local list = nil
         pcall(function() list = order[i].cont:getItems() end)
         if list ~= nil then
-            for j = 0, list:size() - 1 do
+            local ln = list:size()
+            for j = 0, ln - 1 do
                 local it = list:get(j)
                 if it ~= nil then
                     local t = nil

@@ -339,6 +339,20 @@ function BridgeMood.flush(red)
 end
 
 
+local moodGtAt, moodGtMult, moodGtDmpd = nil, 0, 0
+
+local function moodGameTime()
+    local tick = (Bridge ~= nil and tonumber(Bridge.tick)) or 0
+    if moodGtAt ~= nil and tick - moodGtAt < 30 then return moodGtMult, moodGtDmpd end
+    local mult, dmpd = 0, 0
+    pcall(function()
+        mult = getGameTime():getMultiplier()
+        dmpd = getGameTime():getDeltaMinutesPerDay()
+    end)
+    moodGtAt, moodGtMult, moodGtDmpd = tick, mult, dmpd
+    return mult, dmpd
+end
+
 function BridgeMood.frame(red)
     if red == nil then return end
 
@@ -368,11 +382,7 @@ function BridgeMood.frame(red)
     local st = BridgeMood.state
     if st ~= nil and st.near and st.tier ~= nil then
         local k = BridgeMood.TIERS[st.tier]
-        local mult, dmpd = 0, 0
-        pcall(function()
-            mult = getGameTime():getMultiplier()
-            dmpd = getGameTime():getDeltaMinutesPerDay()
-        end)
+        local mult, dmpd = moodGameTime()
         if type(mult) == "number" and mult > 0 and mult == mult then
             local acc = BridgeMood.acc
             if st.room then acc.bored = acc.bored + mult * k.bored end
