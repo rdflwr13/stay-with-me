@@ -1645,6 +1645,7 @@ local function watchOthers(red, body, around)
     end)
     Bridge.seenIds = seen
     Bridge.othersNear = count
+    Bridge.othersScanAt = Bridge.time
     local quietFor = Bridge.time - (Bridge.othersSeenAt or -99999)
     if gameSeen > 0 then Bridge.othersSeenAt = Bridge.time end
     if body ~= nil then
@@ -1756,7 +1757,6 @@ Bridge.companionAround = companionAround
 
 function Bridge.onPlayerUpdate(red)
     if red == nil or red ~= BridgeData.owner() then return end
-    Bridge.protectBodies()
 
 
 
@@ -7754,6 +7754,14 @@ local noShootAt = setmetatable({}, { __mode = "k" })
 
 local function noShootTick()
     if Bridge == nil then return end
+    if type(Bridge.companionUpdateDue) == "function" then
+        local gap = 1
+        if type(Bridge.companionUpdateGap) == "function" then
+            gap = tonumber(Bridge.companionUpdateGap()) or 1
+        end
+        if gap < 1 then gap = 1 end
+        if not Bridge.companionUpdateDue(Bridge, "noShootNext", gap) then return end
+    end
     Bridge.preTicks = (Bridge.preTicks or 0) + 1
     local tick = Bridge.tick or 0
 

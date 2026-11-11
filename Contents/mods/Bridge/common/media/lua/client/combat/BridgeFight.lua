@@ -300,7 +300,7 @@ BridgeFight.lastHitHealth = nil
 
 
 
-BridgeFight.blacklist = {}
+BridgeFight.blacklist = setmetatable({}, { __mode = "k" })
 
 local function numberBan(z, b)
     if type(b) ~= "number" then return false end
@@ -1307,7 +1307,7 @@ local function pickTarget(body, red, mode)
                     candScore = score
                     if score < bestD and (NO_CLIMB_ON == 0 or BridgeFight.reachable(body, z)) then
                         best, bestD = z, score
-                    elseif NO_CLIMB_ON ~= 0 and not BridgeFight.reachable(body, z) then
+                    elseif NO_CLIMB_ON ~= 0 and Bridge.verbose and not BridgeFight.reachable(body, z) then
                         reason = "unreachable"
                     end
                 else
@@ -1693,8 +1693,8 @@ local function footBodyOk(z, body, bz, red)
     end
     if zx == nil then zx, zy, zz = z:getX(), z:getY(), z:getZ() end
     if math.abs(zz - bz) >= 0.8 then return false end
-    if instanceof(z, "IsoAnimal") then return false end
     if isBody(z) then return false end
+    if instanceof(z, "IsoAnimal") then return false end
     if zsRisen(z, red) then return false end
     if zsHarmless(z) then return false end
     return true, zx, zy
@@ -1805,12 +1805,13 @@ local function footScan(body, red)
 
     local list = nil
     if BridgeZS ~= nil then
-        local ok, l = pcall(function() return BridgeZS.near(bx, by, scanLimit, { tag = "fight.crowd" }) end)
+        local ok, l = pcall(BridgeZS.near, bx, by, scanLimit, { tag = "fight.crowd" })
         if ok then list = l end
     end
     if list == nil then list = getCell():getZombieList() end
     if list ~= nil then
-        for i = 0, list:size() - 1 do
+        local listSize = list:size()
+        for i = 0, listSize - 1 do
             local z = list:get(i)
             if z ~= nil and z ~= body then
                 local called, ok, zx, zy = pcall(footBodyOk, z, body, bz, red)
@@ -3285,7 +3286,7 @@ function BridgeFight.update(body)
     end
     local swinging = BridgeFight.state == "swing"
     if not swinging and BridgeGunfight ~= nil and BridgeGunfight.isAssigned ~= nil and BridgeGunfight.isAssigned(body) then
-        local ok, busy = pcall(function() return BridgeGunfight.update(body, S) end)
+        local ok, busy = pcall(BridgeGunfight.update, body, S)
         if not ok then
             BridgeFight.info = "gun error: " .. tostring(busy)
             Bridge.logError("gun", busy)
@@ -3436,7 +3437,7 @@ function BridgeFight.update(body)
     if BridgeFight.target ~= nil and (Bridge.time - BridgeFight.lastPick) >= PICK_EVERY
         and validTarget(BridgeFight.target, body, red, mode) then
         BridgeFight.lastPick = Bridge.time
-        local okP, z = pcall(function() return pickTarget(body, red, mode) end)
+        local okP, z = pcall(pickTarget, body, red, mode)
         local cur = BridgeFight.target
         if okP and z ~= nil and z ~= cur then
             local curScore = BridgeFight.threat(cur, body, red, mode)
@@ -3459,7 +3460,7 @@ function BridgeFight.update(body)
         BridgeFight.state = "idle"
         if (Bridge.time - BridgeFight.lastPick) < PICK_EVERY then return false end
         BridgeFight.lastPick = Bridge.time
-        local ok, z = pcall(function() return pickTarget(body, red, mode) end)
+        local ok, z = pcall(pickTarget, body, red, mode)
         if not ok then BridgeFight.info = "pick error: " .. tostring(z); return false end
         BridgeFight.target = z
         if z == nil then
@@ -3487,10 +3488,11 @@ function BridgeFight.update(body)
 
     local t = BridgeFight.target
 
-    pcall(function() BridgeWeapon.fight(body) end)
+    pcall(BridgeWeapon.fight, body)
 
     local drawing = false
-    pcall(function() drawing = BridgeWeapon.busy() end)
+    local okDraw, drawNow = pcall(BridgeWeapon.busy)
+    drawing = okDraw and drawNow == true
     if drawing then
         pcall(function() body:faceLocationF(t:getX(), t:getY()) end)
         BridgeFight.info = "drawing weapon"

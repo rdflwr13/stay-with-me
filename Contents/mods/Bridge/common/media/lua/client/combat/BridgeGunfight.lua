@@ -203,6 +203,7 @@ GUN.TO_MELEE = 30
 MELEE.RELEASE_RANGE = 3.5
 MELEE.RELEASE_HOLD = 60
 FIRE.TICKS = 24
+local FLASH_TICKS = 6
 local PENDING_TICKS = 180
 local FRIENDLY_TTL = 30
 FIRE.VAR = "BumpAnimFinished"
@@ -291,6 +292,11 @@ end
 local function dist(a, b)
     local dx, dy = a:getX() - b:getX(), a:getY() - b:getY()
     return math.sqrt(dx * dx + dy * dy)
+end
+
+local function lineClearFor(cell, body, z)
+    return BridgeGunRules.fireLineClear(cell, body:getX(), body:getY(), body:getZ(),
+        z:getX(), z:getY(), z:getZ())
 end
 
 local function clamp(v, lo, hi)
@@ -1472,7 +1478,8 @@ local function pickTarget(body, red)
         entry.score = dRed + dSelf * 0.01 + bonus
         cands[cn] = entry
     end
-    for i = 0, list:size() - 1 do
+    local listSize = list:size()
+    for i = 0, listSize - 1 do
         local z = list:get(i)
         if z ~= nil then
             local zz = z:getZ()
@@ -1495,7 +1502,8 @@ local function pickTarget(body, red)
         local animals = nil
         pcall(function() animals = cell:getAnimals() end)
         if animals ~= nil then
-            for i = 0, animals:size() - 1 do
+            local animalCount = animals:size()
+            for i = 0, animalCount - 1 do
                 local a = animals:get(i)
                 if a ~= nil and math.abs(a:getZ() - bz) < 0.8 then
                     local dx, dy = a:getX() - bx, a:getY() - by
@@ -1530,12 +1538,9 @@ local function pickTarget(body, red)
     pickState.n = cn
     if cn == 0 then return nil end
     local function usable(z)
-        local clear = false
-        pcall(function()
-            clear = BridgeGunRules.fireLineClear(cell, body:getX(), body:getY(), body:getZ(),
-                z:getX(), z:getY(), z:getZ()) == true
-        end)
-        return clear and BridgeGunRules.targetVisible(body, red, z)
+        if not BridgeGunRules.targetVisible(body, red, z) then return false end
+        local okClear, clearVal = pcall(lineClearFor, cell, body, z)
+        return okClear and clearVal == true
     end
     local function chosen(z, why)
         BridgeGunfight.lockSince = Bridge.time
@@ -1767,13 +1772,15 @@ local function friendlies(body)
     add(BridgeData.owner())
     add(Bridge.body)
     pcall(function()
+        local bxx, byy = body:getX(), body:getY()
         local zombies = nil
         if BridgeZS ~= nil then
-            zombies = BridgeZS.near(body:getX(), body:getY(), radius, { tag = "gun.friendlies" })
+            zombies = BridgeZS.near(bxx, byy, radius, { tag = "gun.friendlies" })
         end
         if zombies == nil then zombies = getCell():getZombieList() end
         if zombies == nil then return end
-        for i = 0, zombies:size() - 1 do
+        local zombieCount = zombies:size()
+        for i = 0, zombieCount - 1 do
             local z = zombies:get(i)
             if z ~= nil and z ~= body then
                 if companionBody(z) then
@@ -1984,6 +1991,11 @@ local function flash(body)
         local added = false
         pcall(function() cell:getLamppostPositions():add(src) added = true end)
         if not added then pcall(function() cell:addLamppost(src) end) end
+        local list = BridgeGunfight.flashes
+        if list ~= nil then
+            list[#list + 1] = { src = src, cell = cell,
+                untilT = ((Bridge ~= nil and Bridge.time) or 0) + FLASH_TICKS }
+        end
     end)
 end
 
@@ -2213,23 +2225,19 @@ local function gunCandidates(body, red, primary)
     local cell = getCell()
     if cell == nil then return out end
     local friends = friendlies(body)
-    local bx, by = body:getX(), body:getY()
+    local bz = body:getZ()
     local list = pickState.nearForGun(body, range + 1.0, "gun.candidates")
-    for i = 0, list:size() - 1 do
+    local listSize = list:size()
+    for i = 0, listSize - 1 do
         local z = list:get(i)
         if z ~= nil and z ~= primary and targetOk(z, body, red)
-            and math.abs(z:getZ() - body:getZ()) < 0.8 then
+            and math.abs(z:getZ() - bz) < 0.8 then
             local d = dist(body, z)
-            if d <= range + 0.9 then
-                local clear = false
-                pcall(function()
-                    clear = BridgeGunRules.fireLineClear(cell, body:getX(), body:getY(), body:getZ(),
-                        z:getX(), z:getY(), z:getZ()) == true
-                end)
-                if clear and BridgeGunRules.targetVisible(body, red, z)
-                    and BridgeGunRules.friendlyInLine(body, z, friends) == nil then
-                    out[#out + 1] = z
-                end
+            if d <= range + 0.9
+                and BridgeGunRules.targetVisible(body, red, z)
+                and BridgeGunRules.friendlyInLine(body, z, friends) == nil then
+                local okClear, clearVal = pcall(lineClearFor, cell, body, z)
+                if okClear and clearVal == true then out[#out + 1] = z end
             end
         end
     end

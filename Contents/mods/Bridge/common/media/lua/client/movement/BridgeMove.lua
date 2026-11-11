@@ -3905,6 +3905,9 @@ function BridgeMove.lineClear(body, gx, gy, gz)
     return v
 end
 
+local WALK_REACH_DIRS = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+local WALK_REACH_KEY = 2097152
+
 function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
     local ok = false
     pcall(function()
@@ -3917,8 +3920,8 @@ function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
         local start = cell:getGridSquare(bx, by, bz)
         if start == nil then return end
         local budget = maxNodes or 240
-        local dirs = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
-        local seen = { [bx .. "," .. by] = true }
+        local dirs = WALK_REACH_DIRS
+        local seen = { [bx * WALK_REACH_KEY + by] = true }
         local queue, head = { start }, 1
         local visited = 0
         while head <= #queue and visited < budget do
@@ -3928,15 +3931,14 @@ function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
             local cx, cy = cur:getX(), cur:getY()
             for i = 1, 4 do
                 local nx, ny = cx + dirs[i][1], cy + dirs[i][2]
-                local key = nx .. "," .. ny
+                local key = nx * WALK_REACH_KEY + ny
                 if not seen[key] then
                     local nb = cell:getGridSquare(nx, ny, bz)
                     if nb ~= nil then
 
 
-
-                        local hop = false
-                        pcall(function() hop = BridgeMove.edgeBetween(body, cur, nb) == "fence" end)
+                        local okHop, hopType = pcall(BridgeMove.edgeBetween, body, cur, nb)
+                        local hop = okHop and hopType == "fence"
                         local step = hop or (not cur:isBlockedTo(nb) and not stepNeedsClimb(cur, nb))
                         if step and not cur:isDoorTo(nb) and not underCar(nb) and nb:isFree(false) then
                             if nx == tx and ny == ty then ok = true return end

@@ -1995,7 +1995,8 @@ function BridgeGunRules.itemsOf(body)
         seen[container] = true
         local okItems, items = pcall(containerItems, container)
         if not okItems or items == nil then return end
-        for i = 0, items:size() - 1 do
+        local itemCount = items:size()
+        for i = 0, itemCount - 1 do
             local okItem, item = pcall(containerItemAt, items, i)
             if okItem and item ~= nil then
                 out[#out + 1] = item

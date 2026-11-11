@@ -968,7 +968,7 @@ function BridgeDrive.tick(red)
 
 
 
-    if BridgeDrive.greetDone and Bridge.every(BridgeDrive.STATE_EVERY) then
+    if BridgeDrive.greetDone and Bridge.every(BridgeDrive.STATE_EVERY, 37) then
         if sayState(red, "Drive", driving) then
             BridgeDrive.hpBase = hp or BridgeDrive.hpBase
             return
@@ -976,7 +976,7 @@ function BridgeDrive.tick(red)
     end
 
 
-    if BridgeDrive.greetDone and Bridge.every(BridgeDrive.STATE_EVERY) then
+    if BridgeDrive.greetDone and Bridge.every(BridgeDrive.STATE_EVERY, 74) then
         local ratio = nil
         pcall(function() ratio = fuelRatio(car) end)
         local econd = nil
@@ -1060,7 +1060,7 @@ function BridgeDrive.tick(red)
     end
 
 
-    if Bridge.every(BridgeDrive.WEATHER_CHECK) then
+    if Bridge.every(BridgeDrive.WEATHER_CHECK, 111) then
         local s = weatherSnapshot(red)
         local p = BridgeDrive.prevWeather
         BridgeDrive.prevWeather = s
@@ -1087,7 +1087,7 @@ function BridgeDrive.tick(red)
     end
 
 
-    if BridgeDrive.greetDone and Bridge.every(BridgeDrive.EAT_EVERY) then
+    if BridgeDrive.greetDone and Bridge.every(BridgeDrive.EAT_EVERY, 148) then
         local eating, drinking = false, false
         pcall(function()
             eating = eatingNow(red)
@@ -1121,7 +1121,7 @@ function BridgeDrive.tick(red)
 
 
 
-    if BridgeDrive.ON.ANIMAL == 1 and Bridge.every(BridgeDrive.ANIMAL_EVERY) then
+    if BridgeDrive.ON.ANIMAL == 1 and Bridge.every(BridgeDrive.ANIMAL_EVERY, 185) then
         local animal = nil
         pcall(function() animal = scanAnimal(car, red) end)
         if animal ~= nil and say("EvCarAnimal") then

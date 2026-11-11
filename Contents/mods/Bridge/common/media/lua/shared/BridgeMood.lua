@@ -212,6 +212,16 @@ local IDLE_SQUARE = 1800
 
 local function zombiesSeen(red, body)
     local near = false
+    local watched = nil
+    local watchedAt = nil
+    if Bridge ~= nil then
+        watched = tonumber(Bridge.othersNear)
+        watchedAt = tonumber(Bridge.othersScanAt)
+    end
+    local now = (Bridge ~= nil and tonumber(Bridge.time)) or 0
+    if watched ~= nil and watchedAt ~= nil and (now - watchedAt) <= 30 then
+        return watched > 0
+    end
     pcall(function()
         local list = nil
         if BridgeZScan ~= nil then
