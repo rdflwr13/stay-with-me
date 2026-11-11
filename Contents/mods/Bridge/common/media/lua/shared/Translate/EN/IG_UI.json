@@ -4480,6 +4480,7 @@
     "IGUI_NotAlone_Soc_EvMagLow_Close_2": "Half a mag. I'll need to reload.",
     "IGUI_NotAlone_Soc_EvMagLow_Close_3": "I'll need to reload. Cover me.",
     "IGUI_NotAlone_SidebarNewTip": "New: click to open the companion panel.",
+    "IGUI_NotAlone_SidebarOverlapWarn": "Another mod's sidebar icon is covering the companion button. Fix it in Sandbox > Stay With Me > Sidebar icon offset (slots): set it to 1 or higher, then reload the save. You can also open this menu with the Companion Menu key. This warning is shown only once.",
     "IGUI_NotAlone_MenuEjectMagazine": "Eject magazine",
     "IGUI_NotAlone_Soc_EvSleep_Far_1": "Get some sleep. I'll keep an eye on the door.",
     "IGUI_NotAlone_Soc_EvSleep_Far_2": "Rest. I'll stay up a while.",

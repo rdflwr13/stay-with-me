@@ -4092,6 +4092,7 @@
     "IGUI_NotAlone_Soc_EvGunKill_Near_3": "Objetivo abatido. A por el siguiente.",
     "IGUI_ContainerTitle_BridgeParked": "Acompañante",
     "IGUI_NotAlone_SidebarNewTip": "Nuevo: haz clic para abrir el panel de la compañera.",
+    "IGUI_NotAlone_SidebarOverlapWarn": "El icono de la barra lateral de otro mod está tapando el botón de la compañera. Corrígelo en Sandbox > Stay With Me > Desplazamiento del icono de la barra lateral (ranuras): ponlo en 1 o más y recarga la partida. También puedes abrir este menú con la tecla del menú de la compañera. Esta advertencia solo se muestra una vez.",
     "IGUI_NotAlone_MenuEjectMagazine": "Expulsar cargador",
     "IGUI_NotAlone_PregameMeetTitle": "como nos encontramos",
     "IGUI_NotAlone_PregameMeetWhen": "Cuando",

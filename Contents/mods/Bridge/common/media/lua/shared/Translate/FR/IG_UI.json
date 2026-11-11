@@ -4408,6 +4408,7 @@
     "IGUI_NotAlone_Soc_EvMagLow_Close_2": "Un demi-magazine. Il va falloir que je recharge.",
     "IGUI_NotAlone_Soc_EvMagLow_Close_3": "Il va falloir que je recharge. Couvre-moi.",
     "IGUI_NotAlone_SidebarNewTip": "Nouveau : cliquez pour ouvrir le panneau de la compagne.",
+    "IGUI_NotAlone_SidebarOverlapWarn": "L’icône de barre latérale d’un autre mod recouvre le bouton de la compagne. Corrigez-le dans Sandbox > Stay With Me > Décalage de l'icône de la barre latérale (emplacements) : réglez-le sur 1 ou plus, puis rechargez la sauvegarde. Vous pouvez aussi ouvrir ce menu avec la touche du menu de la compagne. Cet avertissement ne s’affiche qu’une fois.",
     "IGUI_NotAlone_MenuEjectMagazine": "Éjecter le chargeur",
     "IGUI_NotAlone_Soc_EvSleep_Far_1": "Dormez un peu. Je garderai un oeil sur la porte.",
     "IGUI_NotAlone_Soc_EvSleep_Far_2": "Repos. Je vais rester debout un moment.",

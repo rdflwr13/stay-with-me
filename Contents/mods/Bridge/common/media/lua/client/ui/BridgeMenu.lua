@@ -754,6 +754,9 @@ BridgeMenu.VANILLA_BTNS = { "invBtn", "healthBtn", "craftingBtn", "buildBtn", "m
     "zoneBtn", "mapBtn", "searchBtn", "safetyBtn", "adminBtn", "debugBtn", "clientBtn",
     "arfBtn", "warManagerBtn" }
 
+local WINDOW_KEY_NAME = "Companion Menu"
+local WINDOW_KEY_SECTION = "[Companion Menu]"
+
 
 
 
@@ -841,6 +844,119 @@ function BridgeMenu.onButtonMenu(panel, button)
 end
 
 
+function BridgeMenu.installWindowKeybind()
+    if BridgeMenu.windowKeybindDone then return end
+    if type(keyBinding) ~= "table" then return end
+    for _, bind in ipairs(keyBinding) do
+        if type(bind) == "table" and bind.value == WINDOW_KEY_NAME then
+            BridgeMenu.windowKeybindDone = true
+            return
+        end
+    end
+    local section = false
+    for _, bind in ipairs(keyBinding) do
+        if type(bind) == "table" and bind.value == WINDOW_KEY_SECTION then section = true break end
+    end
+    if not section then table.insert(keyBinding, { value = WINDOW_KEY_SECTION }) end
+    local key = nil
+    if Keyboard ~= nil then key = Keyboard.KEY_F8 end
+    if key == nil then return end
+    table.insert(keyBinding, { value = WINDOW_KEY_NAME, key = key })
+    BridgeMenu.windowKeybindDone = true
+    log("window keybind registered")
+end
+
+
+function BridgeMenu.applySandboxWindowKey()
+    if type(keyBinding) ~= "table" then return false end
+    if BridgeRadial == nil or type(BridgeRadial.sandboxKeyCode) ~= "function" then return false end
+    local t = nil
+    pcall(function() t = (SandboxVars ~= nil) and SandboxVars.StayWithMe or nil end)
+    if t == nil then return false end
+    local code = BridgeRadial.sandboxKeyCode(t.CompanionMenuKey)
+    if code == nil then return false end
+    local found = false
+    for _, bind in ipairs(keyBinding) do
+        if type(bind) == "table" and bind.value == WINDOW_KEY_NAME then
+            bind.key = code
+            found = true
+            pcall(function() getCore():addKeyBinding(WINDOW_KEY_NAME, code, 0, false, false, false) end)
+            break
+        end
+    end
+    if not found then return false end
+    if MainOptions ~= nil and type(MainOptions.keys) == "table" then
+        for _, bind in ipairs(MainOptions.keys) do
+            if type(bind) == "table" and bind.value == WINDOW_KEY_NAME then bind.key = code end
+        end
+    end
+    BridgeMenu.windowKeyApplied = true
+    return true
+end
+
+
+function BridgeMenu.onWindowKey(key)
+    if Bridge == nil or Bridge.store == nil then return end
+    if BridgeWindow == nil then return end
+    if getSpecificPlayer(0) == nil then return end
+    if MainScreen == nil or MainScreen.instance == nil or MainScreen.instance.inGame ~= true then return end
+    local hit = false
+    pcall(function() hit = getCore():isKey(WINDOW_KEY_NAME, key) == true end)
+    if not hit then return end
+    local x, y = nil, nil
+    pcall(function()
+        local panel = ISEquippedItem ~= nil and ISEquippedItem.instance or nil
+        if panel == nil then return end
+        local btn = panel.notAloneBtn
+        if btn == nil or not btn:isVisible() then return end
+        x = panel:getAbsoluteX() + btn:getRight() + 4
+        y = panel:getAbsoluteY() + btn:getY()
+    end)
+    BridgeWindow.toggle(x, y)
+end
+
+
+function BridgeMenu.sidebarOverlap(panel)
+    if panel == nil then return nil end
+    local btn = panel.notAloneBtn
+    if btn == nil or not btn:isVisible() then return nil end
+    local order = nil
+    pcall(function() order = panel:getChildrenInOrder() end)
+    if type(order) ~= "table" then return nil end
+    local ignored = {}
+    for _, name in ipairs(BridgeMenu.VANILLA_BTNS) do
+        local child = panel[name]
+        if child ~= nil then ignored[child] = true end
+    end
+    if panel.mainHand ~= nil then ignored[panel.mainHand] = true end
+    if panel.offHand ~= nil then ignored[panel.offHand] = true end
+    ignored[btn] = true
+    local mine = nil
+    for i = 1, #order do
+        if order[i] == btn then mine = i break end
+    end
+    if mine == nil then return nil end
+    local left, top = btn:getX(), btn:getY()
+    local right, bottom = btn:getRight(), btn:getBottom()
+    for i = mine + 1, #order do
+        local other = order[i]
+        if other ~= nil and ignored[other] ~= true then
+            local visible = false
+            pcall(function() visible = other:isVisible() == true end)
+            if visible then
+                local w, h = other:getWidth(), other:getHeight()
+                if w > 0 and h > 0
+                        and other:getX() < right and other:getRight() > left
+                        and other:getY() < bottom and other:getBottom() > top then
+                    return other
+                end
+            end
+        end
+    end
+    return nil
+end
+
+
 if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
     local originalInit = ISEquippedItem.initialise
     ISEquippedItem.initialise = function(self, ...)
@@ -899,6 +1015,25 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
             pcall(function() screenH = getCore():getScreenHeight() end)
             BridgeMenu.sidebarStep(self, btn, screenH)
 
+            if not BridgeMenu.windowKeyApplied and Bridge.every(60) then
+                pcall(BridgeMenu.applySandboxWindowKey)
+            end
+            if self.notAlonePlace ~= nil and self.notAlonePlace.shown == true
+                    and Bridge.time >= 600 and Bridge.alive() == true
+                    and Bridge.every(60) then
+                local other = BridgeMenu.sidebarOverlap(self)
+                if other ~= nil then
+                    local tag = tostring(other.internal or "?")
+                    if BridgeMenu.sidebarOverlapSeen ~= tag then
+                        BridgeMenu.sidebarOverlapSeen = tag
+                        log("sidebar overlap: " .. tag)
+                    end
+                    if BridgeWarn ~= nil and type(BridgeWarn.checkSidebarOverlap) == "function" then
+                        pcall(BridgeWarn.checkSidebarOverlap, other.internal)
+                    end
+                end
+            end
+
             if Bridge.every(30) then
                 for _, item in ipairs(self.mouseOverList or {}) do
                     if item.object == btn then item.displayString = BridgeMenu.newHintOn() and tr("SidebarNewTip") or BridgeMenu.status() end
@@ -908,6 +1043,19 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
     end
     ISEquippedItem.notAloneWrapped = true
     log("sidebar button wrapped")
+end
+
+BridgeMenu.installWindowKeybind()
+if Events ~= nil then
+    if Events.OnKeyStartPressed ~= nil then
+        Events.OnKeyStartPressed.Add(function(key) pcall(BridgeMenu.onWindowKey, key) end)
+    end
+    if Events.OnGameStart ~= nil then
+        Events.OnGameStart.Add(function()
+            pcall(BridgeMenu.installWindowKeybind)
+            BridgeMenu.windowKeyApplied = BridgeMenu.applySandboxWindowKey() == true
+        end)
+    end
 end
 
 

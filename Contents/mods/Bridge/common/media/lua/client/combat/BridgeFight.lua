@@ -3298,6 +3298,7 @@ function BridgeFight.update(body)
         end
         if BridgeGunfight.canMelee ~= true and BridgeFight.state ~= "swing" then
             BridgeFight.state = "idle"
+            if BridgeFight.target == nil then rest(false) end
             return false
         end
         if BridgeFight.state == "gun" then BridgeFight.state = "idle" end

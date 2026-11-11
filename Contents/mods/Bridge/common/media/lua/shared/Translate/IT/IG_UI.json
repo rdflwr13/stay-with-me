@@ -4071,6 +4071,7 @@
     "IGUI_NotAlone_RadialStayCloser": "Resta più vicino",
     "IGUI_NotAlone_RadialStayFurther": "Resta più lontano",
     "IGUI_NotAlone_SidebarNewTip": "Novità: clicca per aprire il pannello del compagno.",
+    "IGUI_NotAlone_SidebarOverlapWarn": "L'icona della barra laterale di un'altra mod copre il pulsante della compagna. Risolvi in Sandbox > Stay With Me > Scostamento icona barra laterale (slot): impostalo su 1 o più, poi ricarica il salvataggio. Puoi anche aprire questo menu con il tasto del menu della compagna. Questo avviso viene mostrato una sola volta.",
     "IGUI_NotAlone_MenuEjectMagazine": "Espelli il caricatore",
     "IGUI_NotAlone_PregameMeetTitle": "Come ci incontriamo",
     "IGUI_NotAlone_PregameMeetWhen": "Quando",

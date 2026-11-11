@@ -911,11 +911,11 @@ local CONTROLLER_BUTTONS = {
 
 local function configuredControllerButton()
     local t = sandboxWheel()
-    local index = 1
+    local index = 3
     if t ~= nil and t.CompanionWheelControllerButton ~= nil then
-        index = tonumber(t.CompanionWheelControllerButton) or 1
+        index = tonumber(t.CompanionWheelControllerButton) or 3
     end
-    if index < 1 or index > #CONTROLLER_BUTTONS then index = 1 end
+    if index < 1 or index > #CONTROLLER_BUTTONS then index = 3 end
     return CONTROLLER_BUTTONS[index], index
 end
 
@@ -1230,6 +1230,14 @@ local SANDBOX_KEY_CODES = {
     (Keyboard and Keyboard.KEY_POWER) or 0,
     (Keyboard and Keyboard.KEY_SLEEP) or 0,
 }
+
+function BridgeRadial.sandboxKeyCode(index)
+    local i = tonumber(index)
+    local code = nil
+    if i ~= nil then code = SANDBOX_KEY_CODES[i] end
+    if type(code) ~= "number" then code = SANDBOX_KEY_CODES[1] or 0 end
+    return code
+end
 
 local function sandboxWheelKeyCode()
     local t = sandboxWheel()

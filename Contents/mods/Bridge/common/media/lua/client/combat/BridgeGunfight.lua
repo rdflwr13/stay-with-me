@@ -527,6 +527,7 @@ BridgeGunfight.reserveN = 0
     BridgeGunfight.ammoStageAt = nil
     BridgeGunfight.ammoStageTicks = 0
     BridgeGunfight.ammoCooldown = nil
+    BridgeGunfight.reloadThreatUntil = nil
     BridgeGunfight.peek = nil
     BridgeGunfight.peekCooldown = nil
     BridgeGunfight.homeAmmoAt = nil
@@ -2564,6 +2565,12 @@ local function meleeThreat(body)
 end
 
 
+local function reloadBlocked(body)
+    if (Bridge.time or 0) < (BridgeGunfight.reloadThreatUntil or 0) then return true end
+    return meleeThreat(body) ~= nil
+end
+
+
 local function meleeReleaseReady(body)
     if not BridgeData.optionOf(Bridge.store, "gunMelee") or not meleeReady(body) then return true end
     if liveThreat(body, BridgeFight.target, MELEE.RELEASE_RANGE) ~= nil
@@ -3734,6 +3741,7 @@ local function startReload(body, t, idle)
     if BridgeGunfight.reloadStage ~= nil then return true end
     if idle == true and BridgeGunfight.manualEjectHoldActive(BridgeGunfight.gunItem) then return false end
     if transferHoldsReload(body) then return false end
+    if reloadBlocked(body) then return false end
     if BridgeGunfight.reloadDoneAt ~= nil and (Bridge.time or 0) - BridgeGunfight.reloadDoneAt < 30 then
         return false
     end
@@ -5233,6 +5241,7 @@ function BridgeGunfight.update(body, S)
         end
         if meleeThreat(body) ~= nil then
             cancelReload(body, "melee threat")
+            BridgeGunfight.reloadThreatUntil = (Bridge.time or 0) + 60
             BridgeGunfight.stow(body)
             BridgeGunfight.stance = "melee"
             BridgeGunfight.meleeClearAt = nil
@@ -5422,7 +5431,7 @@ BridgeGunfight.lastShotTarget = nil
             if hasMagProfile(BridgeGunfight.gun)
                 and startAmmoOpen(body) then return false end
 
-            if idleReloadWanted(body, BridgeGunfight.gun) then
+            if idleReloadWanted(body, BridgeGunfight.gun) and not reloadBlocked(body) then
                 if not BridgeGunfight.drawn then BridgeGunfight.draw(body) end
                 if BridgeGunfight.drawn and startReload(body, nil, true) then return true end
             end
@@ -5460,6 +5469,7 @@ BridgeGunfight.lastShotTarget = nil
     end
     if (BridgeGunfight.rounds or 0) <= 0 and BridgeGunfight.hasAmmo(body)
         and BridgeGunfight.reloadSourceReady(body)
+        and not reloadBlocked(body)
         and BridgeFight.state ~= "swing" then
         BridgeGunfight.stance = nil
         BridgeGunfight.meleeClearAt = nil
@@ -5642,7 +5652,7 @@ BridgeGunfight.lastShotTarget = nil
             and startAmmoOpen(body, BridgeGunfight.reloadFlee == true)
             then return BridgeGunfight.reloadFlee == true end
 
-        if idleScan and idleReloadWanted(body, BridgeGunfight.gun) then
+        if idleScan and idleReloadWanted(body, BridgeGunfight.gun) and not reloadBlocked(body) then
             if not BridgeGunfight.drawn then BridgeGunfight.draw(body) end
             if BridgeGunfight.drawn and startReload(body, nil, true) then return true end
         end
@@ -5677,7 +5687,8 @@ BridgeGunfight.lastShotTarget = nil
 
     if (BridgeGunfight.rounds or 0) <= 0 then
         if BridgeGunfight.reloadFlee then return true end
-        if BridgeGunfight.hasAmmo(body) and BridgeGunfight.reloadSourceReady(body) then
+        if BridgeGunfight.hasAmmo(body) and BridgeGunfight.reloadSourceReady(body)
+                and not reloadBlocked(body) then
             if not BridgeGunfight.drawn then BridgeGunfight.draw(body) end
             if BridgeGunfight.drawn and startReload(body, t, false) then return true end
             if noMeleeFree() then return true end
@@ -6416,6 +6427,7 @@ BridgeGunfight.reserveN = 0
     BridgeGunfight.ammoStageAt = nil
     BridgeGunfight.ammoStageTicks = 0
     BridgeGunfight.ammoCooldown = nil
+    BridgeGunfight.reloadThreatUntil = nil
     BridgeGunfight.peek = nil
     BridgeGunfight.peekCooldown = nil
     BridgeGunfight.homeAmmoAt = nil

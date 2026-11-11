@@ -4276,6 +4276,7 @@
       "IGUI_NotAlone_RadialStayCloser": "Держись ближе",
       "IGUI_NotAlone_RadialStayFurther": "Держись дальше",
     "IGUI_NotAlone_SidebarNewTip": "Новое: нажмите, чтобы открыть панель спутницы.",
+    "IGUI_NotAlone_SidebarOverlapWarn": "Значок боковой панели другого мода перекрывает кнопку спутницы. Исправьте это в Sandbox > Stay With Me > Смещение значка боковой панели (слоты): установите 1 или больше и перезагрузите сохранение. Это меню также можно открыть клавишей меню компаньона. Это предупреждение показывается только один раз.",
     "IGUI_NotAlone_MenuEjectMagazine": "Извлечь магазин",
     "IGUI_NotAlone_PregameMeetTitle": "Как мы встречаемся",
     "IGUI_NotAlone_PregameMeetWhen": "Когда",

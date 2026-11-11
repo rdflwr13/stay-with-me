@@ -4099,6 +4099,7 @@
       "IGUI_NotAlone_RadialStayCloser": "Näher bleiben",
       "IGUI_NotAlone_RadialStayFurther": "Weiter weg bleiben",
     "IGUI_NotAlone_SidebarNewTip": "Neu: Klicke hier, um das Begleiterfenster zu öffnen.",
+    "IGUI_NotAlone_SidebarOverlapWarn": "Das Seitenleisten-Symbol eines anderen Mods verdeckt die Begleiter-Schaltfläche. Behebe das unter Sandbox > Stay With Me > Seitenleisten-Symbol-Versatz (Slots): stelle ihn auf 1 oder höher und lade den Spielstand neu. Du kannst dieses Menü auch mit der Taste für das Begleitermenü öffnen. Diese Warnung wird nur einmal angezeigt.",
     "IGUI_NotAlone_MenuEjectMagazine": "Magazin auswerfen",
     "IGUI_NotAlone_PregameMeetTitle": "Wie wir uns treffen",
     "IGUI_NotAlone_PregameMeetWhen": "Wann",

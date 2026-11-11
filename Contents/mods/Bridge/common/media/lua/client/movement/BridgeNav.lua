@@ -146,7 +146,7 @@ function BridgeNav.detour(body, x, y, z, state, opts)
         local cand = cell:getGridSquare(px, py, gz)
         local free = false
         if cand ~= nil then pcall(function() free = cand:isFree(false) == true end) end
-        if free then
+        if free and (opts.passable == nil or opts.passable(px, py, gz) ~= false) then
             local point = { x = px + 0.5, y = py + 0.5, z = z,
                 expires = Bridge.time + (opts.ticks or 150) }
             state.detour = point

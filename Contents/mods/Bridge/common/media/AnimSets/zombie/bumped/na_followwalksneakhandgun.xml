@@ -4,7 +4,7 @@
 	<m_AnimName>Bob_WalkSneak_Handgun</m_AnimName>
 	<m_ConditionPriority>6</m_ConditionPriority>
 	<m_Looped>true</m_Looped>
-	<m_SpeedScale>0.80</m_SpeedScale>
+	<m_SpeedScale>0.78</m_SpeedScale>
 	<m_BlendTime>0.50</m_BlendTime>
 	<m_Conditions>
 		<m_Name>NotAloneBody</m_Name>

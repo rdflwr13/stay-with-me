@@ -192,6 +192,14 @@ option StayWithMe.CompanionWheelKey
     valueTranslation = StayWithMe_CompanionWheelKey_Values,
 }
 
+option StayWithMe.CompanionMenuKey
+{
+    type = enum, numValues = 139, default = 18,
+    page = StayWithMe,
+    translation = StayWithMe_CompanionMenuKey,
+    valueTranslation = StayWithMe_CompanionWheelKey_Values,
+}
+
 option StayWithMe.CompanionWheelController
 {
     type = boolean, default = true,
@@ -201,7 +209,7 @@ option StayWithMe.CompanionWheelController
 
 option StayWithMe.CompanionWheelControllerButton
 {
-    type = enum, numValues = 6, default = 1,
+    type = enum, numValues = 6, default = 3,
     page = StayWithMe,
     translation = StayWithMe_CompanionWheelControllerButton,
     valueTranslation = StayWithMe_CompanionWheelControllerButton_Values,

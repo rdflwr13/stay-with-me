@@ -3056,7 +3056,10 @@ local function followTrailStep(body)
             local p = nil
             if dnav ~= nil and BridgeNav ~= nil and BridgeNav.detour ~= nil then
                 p = BridgeNav.detour(body, red:getX(), red:getY(), body:getZ(), dnav,
-                    { step = NAV.DETOUR_STEP, ticks = NAV.DETOUR_TICKS })
+                    { step = NAV.DETOUR_STEP, ticks = NAV.DETOUR_TICKS,
+                      passable = function(px, py, pz)
+                          return BridgeMove.edgeOnLine(body, px + 0.5, py + 0.5, pz, 8) == nil
+                      end })
             end
             if p ~= nil then
                 dnav.status = "detour"
@@ -3549,7 +3552,10 @@ local function followTrailStep(body)
         followStallOpts = followStallOpts or { ticks = NAV.STALL_TICKS, move = NAV.STALL_MOVE }
         if BridgeNav.stall(body, nav, followStallOpts) == "stalled" then
             local point = BridgeNav.detour(body, math.floor(px), math.floor(py), tz, nav,
-                { step = NAV.DETOUR_STEP, ticks = NAV.DETOUR_TICKS })
+                { step = NAV.DETOUR_STEP, ticks = NAV.DETOUR_TICKS,
+                  passable = function(dx, dy, dz)
+                      return BridgeMove.edgeOnLine(body, dx + 0.5, dy + 0.5, dz, 8) == nil
+                  end })
             if point ~= nil then
                 px, py = point.x, point.y
                 kind = "detour"
@@ -5081,9 +5087,35 @@ local function cardinal(body)
 end
 
 function BridgeMove.askClimb(body, kind, object)
+    local goal = BridgeMove.goal
+    if goal == nil and Bridge ~= nil and Bridge.follow == true then
+        local red = BridgeData.owner()
+        if red ~= nil then goal = { x = red:getX(), y = red:getY() } end
+    end
+    if kind == "fence" and goal ~= nil and goal.x ~= nil and goal.y ~= nil and object ~= nil then
+        local cur, sq = nil, nil
+        pcall(function() cur = body:getCurrentSquare() end)
+        pcall(function() sq = object:getSquare() end)
+        if cur ~= nil and sq ~= nil
+                and not BridgeMove.beyondEdge(cur, sq, goal.x, goal.y, 0) then
+            return false
+        end
+    end
     BridgeMove.pendingClimb = { kind = kind, object = object, tick = Bridge.time, asked = -9999 }
-    if kind == "fence" then pcall(function() BridgeMove.pendingClimb.dir = cardinal(body) end) end
+    if kind == "fence" then
+        pcall(function()
+            local cur, sq = nil, nil
+            cur = body:getCurrentSquare()
+            sq = object ~= nil and object:getSquare() or nil
+            if cur ~= nil and sq ~= nil and BridgeMove.stepDir ~= nil then
+                BridgeMove.pendingClimb.dir = BridgeMove.stepDir(cur, sq)
+            else
+                BridgeMove.pendingClimb.dir = cardinal(body)
+            end
+        end)
+    end
     BridgeMove.climbUntil = Bridge.time + 60
+    return true
 end
 
 
@@ -5209,6 +5241,7 @@ local function stepDir(a, b)
     if b:getY() > a:getY() then return IsoDirections.S end
     return IsoDirections.N
 end
+BridgeMove.stepDir = stepDir
 
 
 local function edgeDist(body, a, b)
@@ -6438,8 +6471,12 @@ function BridgeMove.handleObstacle(body)
                         BridgeMove.obstacle = "low fence: " .. pass
                         return pass == "new"
                     end
-                    BridgeMove.askClimb(body, "fence", object)
-                    BridgeMove.obstacle = "low fence"
+                    if BridgeMove.askClimb(body, "fence", object) then
+                        BridgeMove.obstacle = "low fence"
+                        return true
+                    end
+                    BridgeMove.obstacle = "low fence: goal on this side"
+                    return false
                 else
                     body:faceThisObject(object)
                 end
