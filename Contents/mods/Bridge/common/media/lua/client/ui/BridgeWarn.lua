@@ -4,7 +4,7 @@ BridgeWarn = BridgeWarn or {}
 
 BridgeWarn.VERSION = 1
 BridgeWarn.WARN_RATIO = 0.83
-BridgeWarn.shown = { zombie = false, inventory = false, compat = false, sidebar = false }
+BridgeWarn.shown = { zombie = false, inventory = false, compat = false }
 BridgeWarn.queue = {}
 BridgeWarn.active = nil
 BridgeWarn.wrapped = false
@@ -184,20 +184,6 @@ function BridgeWarn.checkCompat()
     end
 end
 
-function BridgeWarn.checkSidebarOverlap(owner)
-    if BridgeWarn.shown.sidebar then return end
-    if Bridge == nil then return end
-    if Bridge.store == nil and type(Bridge.initStore) == "function" then pcall(Bridge.initStore) end
-    if type(Bridge.store) ~= "table" then return end
-    if Bridge.store.sidebarWarned == true then return end
-    BridgeWarn.shown.sidebar = true
-    Bridge.store.sidebarWarned = true
-    BridgeWarn.show(tr("SidebarOverlapWarn"))
-    if BridgeLog ~= nil and BridgeLog.on() then
-        print("[Bridge] warning shown: sidebar icon overlap")
-    end
-end
-
 function BridgeWarn.install()
     if Bridge == nil or type(Bridge.spawnZombie) ~= "function" then return end
     if BridgeWarn.wrapped then return end
@@ -215,7 +201,6 @@ if Events ~= nil and Events.OnGameStart ~= nil then
     Events.OnGameStart.Add(function()
         BridgeWarn.shown.inventory = false
         BridgeWarn.shown.compat = false
-        BridgeWarn.shown.sidebar = false
         BridgeWarn.queue = {}
         pcall(BridgeWarn.install)
         pcall(BridgeWarn.checkCompat)

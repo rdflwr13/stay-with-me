@@ -754,6 +754,30 @@ BridgeMenu.VANILLA_BTNS = { "invBtn", "healthBtn", "craftingBtn", "buildBtn", "m
     "zoneBtn", "mapBtn", "searchBtn", "safetyBtn", "adminBtn", "debugBtn", "clientBtn",
     "arfBtn", "warManagerBtn" }
 
+
+BridgeMenu.sidebarAuto = 0
+
+
+function BridgeMenu.sidebarAutoSlots()
+    local n = tonumber(BridgeMenu.sidebarAuto) or 0
+    if n < 0 then n = 0 end
+    if n > 12 then n = 12 end
+    return math.floor(n)
+end
+
+
+function BridgeMenu.sidebarShift()
+    local base = 0
+    pcall(function()
+        base = BridgeData.sandboxNumber("SidebarOffsetSlots", 0, 0, 12)
+    end)
+    base = math.floor(base) + BridgeMenu.sidebarAutoSlots()
+    if base >= 12 then return false end
+    BridgeMenu.sidebarAuto = BridgeMenu.sidebarAutoSlots() + 1
+    return true
+end
+
+
 local WINDOW_KEY_NAME = "Companion Menu"
 local WINDOW_KEY_SECTION = "[Companion Menu]"
 
@@ -776,6 +800,8 @@ function BridgeMenu.sidebarTarget(panel, btn, screenH)
     pcall(function()
         slots = BridgeData.sandboxNumber("SidebarOffsetSlots", 0, 0, 12)
     end)
+    slots = math.floor(slots) + BridgeMenu.sidebarAutoSlots()
+    if slots > 12 then slots = 12 end
     local gap = UI_BORDER_SPACING + 5
     local h = btn:getHeight()
     local x, y = 0, bottom + gap + math.floor(slots) * (h + gap)
@@ -812,6 +838,9 @@ function BridgeMenu.sidebarStep(panel, btn, screenH)
     if not S.shown then
         S.shown = true
         btn:setVisible(true)
+        if Bridge ~= nil then
+            log(string.format("sidebar diag icon shown t=%.1f tick=%d x=%d y=%d", Bridge.time, Bridge.tick, x, y))
+        end
         moved = true
     end
     return moved
@@ -957,6 +986,53 @@ function BridgeMenu.sidebarOverlap(panel)
 end
 
 
+function BridgeMenu.sidebarDiag(panel, other)
+    local btn = panel.notAloneBtn
+    if btn == nil then return "no-btn" end
+    local order = nil
+    pcall(function() order = panel:getChildrenInOrder() end)
+    if type(order) ~= "table" then return "no-order" end
+    local mine = nil
+    for i = 1, #order do
+        if order[i] == btn then mine = i break end
+    end
+    if mine == nil then return "btn-not-listed" end
+    local x, y = 0, 0
+    local w, h = 0, 0
+    pcall(function() x, y = btn:getX(), btn:getY() end)
+    pcall(function() w, h = btn:getWidth(), btn:getHeight() end)
+    local left, top, right, bottom = x, y, x + w, y + h
+    local parts = {}
+    parts[#parts + 1] = string.format("mine=%d,%d,%d,%d", x, y, w, h)
+    parts[#parts + 1] = "shown=" .. tostring(panel.notAlonePlace ~= nil and panel.notAlonePlace.shown == true)
+    local alive = false
+    pcall(function() alive = Bridge ~= nil and Bridge.alive() == true end)
+    parts[#parts + 1] = "alive=" .. tostring(alive)
+    parts[#parts + 1] = "other=" .. tostring(other ~= nil and (other.internal or other.type or "?") or "nil")
+    for i = mine + 1, #order do
+        local c = order[i]
+        if c ~= nil then
+            local vis = false
+            pcall(function() vis = c:isVisible() == true end)
+            local cw, ch = 0, 0
+            pcall(function() cw, ch = c:getWidth(), c:getHeight() end)
+            if vis and cw > 0 and ch > 0 then
+                local cx, cy = 0, 0
+                local cr, cb = 0, 0
+                pcall(function()
+                    cx, cy = c:getX(), c:getY()
+                    cr, cb = c:getRight(), c:getBottom()
+                end)
+                local over = cx < right and cr > left and cy < bottom and cb > top
+                parts[#parts + 1] = string.format("%s[%d,%d,%d,%d,%s]",
+                    tostring(c.internal or c.type or "?"), cx, cy, cw, ch, over and "over" or "clear")
+            end
+        end
+    end
+    return table.concat(parts, " ")
+end
+
+
 if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
     local originalInit = ISEquippedItem.initialise
     ISEquippedItem.initialise = function(self, ...)
@@ -964,6 +1040,7 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
         pcall(function()
             if self.chr == nil or self.chr:getPlayerNum() ~= 0 or self.invBtn == nil then return end
             BridgeMenu.resetNewHintCache()
+            BridgeMenu.sidebarDiagSig = nil
             local w, h = self.invBtn:getWidth(), self.invBtn:getHeight()
             local size = iconSize(self.invBtn)
             self.notAloneOff = getTexture("media/ui/Sidebar/NotAlone_Off_" .. size .. ".png")
@@ -1019,17 +1096,21 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
                 pcall(BridgeMenu.applySandboxWindowKey)
             end
             if self.notAlonePlace ~= nil and self.notAlonePlace.shown == true
-                    and Bridge.time >= 600 and Bridge.alive() == true
                     and Bridge.every(60) then
                 local other = BridgeMenu.sidebarOverlap(self)
+                local sig = BridgeMenu.sidebarDiag(self, other)
+                if sig ~= BridgeMenu.sidebarDiagSig then
+                    BridgeMenu.sidebarDiagSig = sig
+                    log(string.format("sidebar diag t=%.1f tick=%d %s", Bridge.time, Bridge.tick, sig))
+                end
                 if other ~= nil then
                     local tag = tostring(other.internal or "?")
                     if BridgeMenu.sidebarOverlapSeen ~= tag then
                         BridgeMenu.sidebarOverlapSeen = tag
                         log("sidebar overlap: " .. tag)
                     end
-                    if BridgeWarn ~= nil and type(BridgeWarn.checkSidebarOverlap) == "function" then
-                        pcall(BridgeWarn.checkSidebarOverlap, other.internal)
+                    if BridgeMenu.sidebarShift() then
+                        log("sidebar auto shift: " .. tostring(BridgeMenu.sidebarAutoSlots()))
                     end
                 end
             end

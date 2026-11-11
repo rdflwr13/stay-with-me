@@ -4358,7 +4358,6 @@
       "IGUI_NotAlone_RadialStayCloser": "Держись ближе",
       "IGUI_NotAlone_RadialStayFurther": "Держись дальше",
     "IGUI_NotAlone_SidebarNewTip": "Новое: нажми, чтобы открыть панель компаньона.",
-    "IGUI_NotAlone_SidebarOverlapWarn": "Значок другого мода на боковой панели закрывает кнопку компаньона. Исправить можно в Песочница > Stay With Me > Смещение значка боковой панели (слоты): поставь 1 или больше и перезагрузи сохранение. Это меню открывается и клавишей меню компаньона. Это предупреждение показывается один раз.",
     "IGUI_NotAlone_MenuEjectMagazine": "Извлечь магазин",
     "IGUI_NotAlone_PregameMeetTitle": "Как мы встречаемся",
     "IGUI_NotAlone_PregameMeetWhen": "Когда",

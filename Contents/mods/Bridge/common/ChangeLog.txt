@@ -354,6 +354,7 @@ Optimizations:
 - Rewrote BridgeZScan for improved performance.
 
 Compatibility:
+- A-Life: Fixed home icon overlap.
 - Horse Mod: Rin can ride pillion on your horse (single-player only). It may get a bit desynced at times.
 - Wound Expansion: Added support for Rin to detect and treat wounds like standard injuries without using the more complex systems.
 
