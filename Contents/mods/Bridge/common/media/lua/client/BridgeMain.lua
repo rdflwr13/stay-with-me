@@ -191,24 +191,29 @@ local APPEAR_DELAY = 180
 
 
 local GONE_SOON = 600
-local BACKOFF_FIRST = 300
-local BACKOFF_MAX = 1800
-local BACKOFF_RESET = 1200
-local HOME_NEAR = 35
-local HOME_FAR = 45
+local BACKOFF = {}
+BACKOFF.FIRST = 300
+BACKOFF.MAX = 1800
+BACKOFF.RESET = 1200
+local HOME = {}
+HOME.NEAR = 35
+HOME.FAR = 45
 local READ_EVERY = 30
 local WRITE_EVERY = 30
 local DIAG_EVERY = 300
 local EVENT_FLUSH_EVERY = 60
 local PATH_EVERY = 30
 local OUTFIT_EVERY = 5
-local HEALTH_EVERY = 10
+local HEALTH = {}
+HEALTH.EVERY = 10
 local VOICE_EVERY = 10
 local FOLLOW_DIST = 2.5
-local BODY_VAR = "NotAloneBody"
-Bridge.BODY_VAR = BODY_VAR
+local BODY = {}
+BODY.VAR = "NotAloneBody"
+Bridge.BODY_VAR = BODY.VAR
 local ITEMS_DIRTY_DEBOUNCE = 20
-local STALE_SWEEP_FALLBACK = 3600
+local STALE = {}
+STALE.SWEEP_FALLBACK = 3600
 local MARKED_SCAN_EVERY = 15
 
 Bridge.bodyVarCache = Bridge.bodyVarCache or setmetatable({}, { __mode = "k" })
@@ -279,7 +284,7 @@ local function zombieBodyVar(z)
     local at = cacheOn and Bridge.bodyVarAt[z] or nil
     if at ~= nil and now - at < ttl then return Bridge.bodyVarCache[z] end
     local v = nil
-    local ok, got = pcall(z.getVariableBoolean, z, BODY_VAR)
+    local ok, got = pcall(z.getVariableBoolean, z, BODY.VAR)
     if ok then v = got == true end
     if v == nil then return nil end
     if cacheOn then
@@ -308,9 +313,9 @@ end
 
 
 
-local HEALTH_BUFFER_AT = 1000
+HEALTH.BUFFER_AT = 1000
 local function healthBuffer()
-    if BridgeGun ~= nil and BridgeGun.installed then return HEALTH_BUFFER_AT end
+    if BridgeGun ~= nil and BridgeGun.installed then return HEALTH.BUFFER_AT end
     return 1
 end
 Bridge.healthBuffer = healthBuffer
@@ -426,7 +431,7 @@ local function aliveUncached()
     end
     if not ok or dead then return false end
 
-    local okVar, marked = pcall(function() return Bridge.body:getVariableBoolean(BODY_VAR) end)
+    local okVar, marked = pcall(function() return Bridge.body:getVariableBoolean(BODY.VAR) end)
     if okVar and not marked and Bridge.kind == "zombie" then
 
 
@@ -680,7 +685,7 @@ local function humanize(body)
     Bridge.invalidateBodyCaches(body)
     Bridge.resetApplied()
     pcall(BridgeVoice.applyPrefix, body)
-    body:setVariable(BODY_VAR, true)
+    body:setVariable(BODY.VAR, true)
 
     pcall(function() BridgeInventory.bodyArrived(body) end)
 
@@ -769,7 +774,7 @@ function Bridge.unhumanize(z, pooled)
                             "NotAloneStride", "WalkInjury", "NotAloneAnimOld", "NotAloneSneak", "SurvivorNPC" }) do
         pcall(function() z:clearVariable(name) end)
     end
-    pcall(function() z:setVariable(BODY_VAR, false) end)
+    pcall(function() z:setVariable(BODY.VAR, false) end)
     pcall(function() if z:hasModData() then z:getModData().ST_Ignore = nil end end)
     pcall(function() if z:hasModData() then z:getModData().RandomZedsExcluded = nil end end)
     pcall(function() if z:hasModData() then z:getModData().notAloneBody = nil end end)
@@ -842,7 +847,7 @@ function Bridge.releaseForeign(z)
             pcall(Bandit.UpdateItemsToSpawnAtDeath, z, brain)
         end
     end
-    pcall(function() z:setVariable(BODY_VAR, false) end)
+    pcall(function() z:setVariable(BODY.VAR, false) end)
 
     pcall(function()
         if z:hasModData() then
@@ -1513,16 +1518,17 @@ end
 
 
 
-local SCARE_RADIUS = 10
+local SCARE = {}
+SCARE.RADIUS = 10
 
 
 
 
 
-local SCARE_CLOSE = 5
-local SCARE_SEE = 7
-local SCARE_QUIET = 600
-local SCARE_EVERY = 600
+SCARE.CLOSE = 5
+SCARE.SEE = 7
+SCARE.QUIET = 600
+SCARE.EVERY = 600
 local SEEN_EVERY = 15
 local WATCH_SCAN_AGE = 15
 
@@ -1579,7 +1585,7 @@ function Bridge.isCompanion(z)
     end
     local yes = false
     pcall(function()
-        if z:getVariableBoolean(BODY_VAR) then yes = true return end
+        if z:getVariableBoolean(BODY.VAR) then yes = true return end
         if not Bridge.mp then return end
         local pid = z:getPersistentOutfitID()
         if Bridge.bodyIndex[pid] ~= nil or (Bridge.store ~= nil and Bridge.store.bodyId == pid) then yes = true return end
@@ -1604,7 +1610,7 @@ local function watchOthers(red, body, around)
     pcall(function()
         local list = nil
         if BridgeZScan ~= nil then
-            list = BridgeZScan.near(red:getX(), red:getY(), SCARE_RADIUS, { tag = "watch.others", age = WATCH_SCAN_AGE })
+            list = BridgeZScan.near(red:getX(), red:getY(), SCARE.RADIUS, { tag = "watch.others", age = WATCH_SCAN_AGE })
         end
         if list == nil then list = getCell():getZombieList() end
         local redZ = red:getZ()
@@ -1630,14 +1636,14 @@ local function watchOthers(red, body, around)
             end
             if not skip then
                 local d = dist2d(z, red)
-                if d < SCARE_RADIUS then
+                if d < SCARE.RADIUS then
                     local sq = z:getCurrentSquare()
                     if sq ~= nil and sq:isCanSee(pn) then
 
                         seen[z] = true
                         count = count + 1
-                        if d < SCARE_SEE and sq:getRoom() == redRoom then gameSeen = gameSeen + 1 end
-                        if not Bridge.seenIds[z] and d < SCARE_CLOSE then newClose = z end
+                        if d < SCARE.SEE and sq:getRoom() == redRoom then gameSeen = gameSeen + 1 end
+                        if not Bridge.seenIds[z] and d < SCARE.CLOSE then newClose = z end
                     end
                 end
             end
@@ -1664,8 +1670,8 @@ local function watchOthers(red, body, around)
     local asleep = false
     pcall(function() asleep = red:isAsleep() == true end)
     if BridgeSleep ~= nil and BridgeSleep.pending ~= nil then asleep = true end
-    local play = around == true and not asleep and newClose ~= nil and quietFor >= SCARE_QUIET
-        and (Bridge.time - Bridge.lastScare) > SCARE_EVERY and vol > 0
+    local play = around == true and not asleep and newClose ~= nil and quietFor >= SCARE.QUIET
+        and (Bridge.time - Bridge.lastScare) > SCARE.EVERY and vol > 0
     if around == true and newClose ~= nil and not play and Bridge.verbose then
 
         pcall(function()
@@ -1723,7 +1729,7 @@ function Bridge.bodiesSeen()
             local marked = false
             if rec == nil or rec.onlineId == nil then
                 marked = true
-            elseif z:getOnlineID() == rec.onlineId or z:getVariableBoolean(BODY_VAR) == true then
+            elseif z:getOnlineID() == rec.onlineId or z:getVariableBoolean(BODY.VAR) == true then
                 marked = true
             end
             live = marked and (Bridge.time - info.tick) <= 60 and not z:isDead()
@@ -1997,7 +2003,7 @@ function Bridge.spawnZombie(px, py, pz)
         Bridge.kind = "zombie"
         Bridge.clearSpeechOverlay()
         Bridge.noteSpawned()
-        pcall(function() body:setVariable(BODY_VAR, true) end)
+        pcall(function() body:setVariable(BODY.VAR, true) end)
         Bridge.hideBody(body, true)
         Bridge.hiddenSince = Bridge.tick
         Bridge.hiddenTicks = Bridge.zombieTicks
@@ -2165,7 +2171,7 @@ function Bridge.despawn(skipSave)
 
     if taken then
         local still = false
-        pcall(function() still = dying:getVariableBoolean(BODY_VAR) == true end)
+        pcall(function() still = dying:getVariableBoolean(BODY.VAR) == true end)
         if still then
             taken = false
             log("despawn: outfit id changed by someone else, the object is still hers: removed as usual")
@@ -2234,7 +2240,7 @@ function Bridge.goneCheck()
         Bridge.goneChecks = nil
         if square == nil then log("body in cell list without a square") end
 
-        if Bridge.spawnBackoff ~= nil and Bridge.createdTime ~= nil and Bridge.time - Bridge.createdTime > BACKOFF_RESET then
+        if Bridge.spawnBackoff ~= nil and Bridge.createdTime ~= nil and Bridge.time - Bridge.createdTime > BACKOFF.RESET then
             Bridge.spawnBackoff = nil
         end
         return "in world"
@@ -2310,7 +2316,7 @@ function Bridge.bodyGone()
     local age = Bridge.createdTime ~= nil and (Bridge.time - Bridge.createdTime) or nil
     Bridge.createdTime = nil
     if age ~= nil and age < GONE_SOON then
-        Bridge.spawnBackoff = math.min((Bridge.spawnBackoff or (BACKOFF_FIRST / 2)) * 2, BACKOFF_MAX)
+        Bridge.spawnBackoff = math.min((Bridge.spawnBackoff or (BACKOFF.FIRST / 2)) * 2, BACKOFF.MAX)
         Bridge.startTick = Bridge.time
         log(string.format("body removed %.1f s after creation: something clears zombies here, next attempt in %d s",
             age / 60, math.floor((APPEAR_DELAY + Bridge.spawnBackoff) / 60)))
@@ -2785,12 +2791,13 @@ function Bridge.speechShadow()
 end
 
 
-local SPEECH_FONT_NAMES = { "Normal", "Large", "Huge" }
-local SPEECH_SECONDS = { 5.25, 7, 9 }
+local SPEECH = {}
+SPEECH.FONT_NAMES = { "Normal", "Large", "Huge" }
+SPEECH.SECONDS = { 5.25, 7, 9 }
 
 
 function Bridge.speechSeconds()
-    return SPEECH_SECONDS[speechOpts().seconds] or 5.25
+    return SPEECH.SECONDS[speechOpts().seconds] or 5.25
 end
 
 
@@ -2893,9 +2900,9 @@ function Bridge.speechOverlayPrune()
 end
 
 
-local SPEECH_MAX_CHARS = 75
-local SPEECH_FADE_MS = 500
-local SPEECH_ANCHOR_Z = 0.6667
+SPEECH.MAX_CHARS = 75
+SPEECH.FADE_MS = 500
+SPEECH.ANCHOR_Z = 0.6667
 
 
 local function speechWrap(text)
@@ -2908,15 +2915,15 @@ local function speechWrap(text)
             local line = ""
             for word in paragraph:gmatch("%S+") do
                 local attempt = line == "" and word or (line .. " " .. word)
-                if line ~= "" and #attempt > SPEECH_MAX_CHARS then
+                if line ~= "" and #attempt > SPEECH.MAX_CHARS then
                     rows[#rows + 1] = line
                     line = word
                 else
                     line = attempt
                 end
-                while #line > SPEECH_MAX_CHARS do
-                    rows[#rows + 1] = string.sub(line, 1, SPEECH_MAX_CHARS)
-                    line = string.sub(line, SPEECH_MAX_CHARS + 1)
+                while #line > SPEECH.MAX_CHARS do
+                    rows[#rows + 1] = string.sub(line, 1, SPEECH.MAX_CHARS)
+                    line = string.sub(line, SPEECH.MAX_CHARS + 1)
                 end
             end
             if line ~= "" then rows[#rows + 1] = line end
@@ -3015,7 +3022,7 @@ function Bridge.speechOverlayDraw()
     local ok, err = pcall(function()
         local bx = body:getX()
         local by = body:getY()
-        local bz = body:getZ() + SPEECH_ANCHOR_Z
+        local bz = body:getZ() + SPEECH.ANCHOR_Z
         local sx = isoToScreenX(0, bx, by, bz)
         local anchorY = isoToScreenY(0, bx, by, bz)
         if sx == nil or anchorY == nil then return end
@@ -3037,8 +3044,8 @@ function Bridge.speechOverlayDraw()
             local line = Bridge.speechLines[i]
             local alpha = 1
             local remaining = (line.untilMs or 0) - now
-            if remaining < SPEECH_FADE_MS then
-                alpha = remaining / SPEECH_FADE_MS
+            if remaining < SPEECH.FADE_MS then
+                alpha = remaining / SPEECH.FADE_MS
                 if alpha < 0 then alpha = 0 end
             end
             local rows = typed and speechWrapMeasured(font, line.text) or speechWrap(line.text)
@@ -3149,8 +3156,8 @@ function Bridge.subtitleDraw()
             local line = Bridge.subtitleLines[i]
             local alpha = 1
             local remaining = (line.untilMs or 0) - now
-            if remaining < SPEECH_FADE_MS then
-                alpha = remaining / SPEECH_FADE_MS
+            if remaining < SPEECH.FADE_MS then
+                alpha = remaining / SPEECH.FADE_MS
                 if alpha < 0 then alpha = 0 end
             end
             if alpha > 0 then
@@ -3231,7 +3238,7 @@ function Bridge.speechLineFor(z, text, expectId)
         Bridge.speechLoggedType, Bridge.speechLoggedColor = typeIndex, rawColor
         local cr, cg, cb = Bridge.speechColor()
         log(string.format("speech settings font=%s type=%s color=%d,%d,%d duration=%s s",
-            tostring(SPEECH_FONT_NAMES[fontIndex] or "Dialogue"), tostring(typeName),
+            tostring(SPEECH.FONT_NAMES[fontIndex] or "Dialogue"), tostring(typeName),
             math.floor(cr * 255 + 0.5), math.floor(cg * 255 + 0.5), math.floor(cb * 255 + 0.5),
             tostring(seconds)))
     end
@@ -3275,7 +3282,7 @@ function Bridge.speechInfo()
     local cr, cg, cb = Bridge.speechColor()
     if Bridge.subtitlesOn() then Bridge.subtitlePrune() end
     return string.format("font=%s type=%s color=%d,%d,%d seconds=%s remaining=%dms mode=%d subtitles=%d",
-        tostring(SPEECH_FONT_NAMES[Bridge.speechFontIndex()] or "Dialogue"),
+        tostring(SPEECH.FONT_NAMES[Bridge.speechFontIndex()] or "Dialogue"),
         tostring(typeName),
         math.floor(cr * 255 + 0.5), math.floor(cg * 255 + 0.5), math.floor(cb * 255 + 0.5),
         tostring(Bridge.speechSeconds()), remaining,
@@ -3286,10 +3293,10 @@ end
 -- bridge-speech-gap begin
 Bridge.speechGapAt = Bridge.speechGapAt or {}
 
-local SPEECH_GAP_FOOT = 8 * 60
-local SPEECH_GAP_CAR = 12 * 60
+SPEECH.GAP_FOOT = 8 * 60
+SPEECH.GAP_CAR = 12 * 60
 
-local SPEECH_HEALTH_EVENTS = {
+SPEECH.HEALTH_EVENTS = {
     EvHealthHalf = true, EvDying = true, EvDyingLast = true,
     EvBite = true, EvBullet = true, EvBulletNoTools = true,
     EvGlass = true, EvGlassNoTweezers = true, EvDeep = true, EvDeepNoSuture = true,
@@ -3321,7 +3328,7 @@ function Bridge.markSpeech(ctx)
 end
 
 local function speechGapFor(ctx)
-    return ctx == "car" and SPEECH_GAP_CAR or SPEECH_GAP_FOOT
+    return ctx == "car" and SPEECH.GAP_CAR or SPEECH.GAP_FOOT
 end
 
 function Bridge.speechGapActive(ctx)
@@ -3347,7 +3354,7 @@ function Bridge.isHealthSpeech(event)
     if name:sub(1, 5) == "Heal_" or name:sub(1, 5) == "Fire_" or name:sub(1, 3) == "We_" then
         return true
     end
-    return SPEECH_HEALTH_EVENTS[name] == true
+    return SPEECH.HEALTH_EVENTS[name] == true
 end
 
 function Bridge.speechInCombat()
@@ -4359,7 +4366,7 @@ function Bridge.onHitZombie(zombie, attacker, bodyPart, weapon)
     if instanceof(attacker, "IsoPlayer") then
         pcall(function() if BridgeKills ~= nil then BridgeKills.clear(zombie) end end)
     end
-    local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY_VAR) end)
+    local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY.VAR) end)
     if ok then pcall(function() Bridge.spyHit(zombie, attacker, isBody and not reusedBody(zombie)) end) end
     if not ok or not isBody or reusedBody(zombie) then return end
     pcall(function() zombie:setAvoidDamage(true) end)
@@ -4474,7 +4481,7 @@ end
 
 function Bridge.onZombieDead(zombie)
     if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(zombie) then return end
-    local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY_VAR) end)
+    local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY.VAR) end)
     if not ok or not isBody or reusedBody(zombie) then return end
 
 
@@ -4573,7 +4580,8 @@ function Bridge.onZombieDead(zombie)
 end
 
 
-local FAILSAFE_LIMIT, FAILSAFE_WINDOW, FAILSAFE_COOLDOWN = 3, 3600, 600
+local FAILSAFE = {}
+FAILSAFE.LIMIT, FAILSAFE.WINDOW, FAILSAFE.COOLDOWN = 3, 3600, 600
 
 function Bridge.notePoseFail(why)
     if Bridge.mp then return false end
@@ -4582,19 +4590,19 @@ function Bridge.notePoseFail(why)
         fs = { count = 0, at = nil, tripAt = nil }
         Bridge.failSafe = fs
     end
-    if Bridge.time - (fs.at or -1e18) > FAILSAFE_WINDOW then fs.count = 0 end
+    if Bridge.time - (fs.at or -1e18) > FAILSAFE.WINDOW then fs.count = 0 end
     fs.at = Bridge.time
     fs.count = fs.count + 1
-    if fs.count < FAILSAFE_LIMIT then return false end
+    if fs.count < FAILSAFE.LIMIT then return false end
     fs.count = 0
-    if fs.tripAt ~= nil and Bridge.time - fs.tripAt < FAILSAFE_COOLDOWN then return false end
+    if fs.tripAt ~= nil and Bridge.time - fs.tripAt < FAILSAFE.COOLDOWN then return false end
     fs.tripAt = Bridge.time
     Bridge.failSafeRespawn(why)
     return true
 end
 
 function Bridge.failSafeRespawn(why)
-    log("fail-safe: " .. tostring(why) .. " " .. tostring(FAILSAFE_LIMIT) .. "x, putting her back at the player")
+    log("fail-safe: " .. tostring(why) .. " " .. tostring(FAILSAFE.LIMIT) .. "x, putting her back at the player")
     Bridge.result = "fail-safe respawn: " .. tostring(why)
     local body = Bridge.body
     pcall(function() if BridgeTask ~= nil then BridgeTask.cancel("fail-safe") end end)
@@ -4702,7 +4710,8 @@ end
 
 
 
-local LOOK_ONCE = {}
+local LOOK = {}
+LOOK.ONCE = {}
 for _, n in ipairs({ "BandageHead", "BandageLeftArm", "BandageLeftLeg", "BandageLowerBody", "BandageRightArm",
     "BandageRightLeg", "BandageUpperBody", "ChewNails", "EmoteClap", "EmoteComeHere", "EmoteNo", "EmoteNoThankYou",
     "EmoteShrug", "EmoteThankYou", "EmoteUndecided", "EmoteWaveHi", "EmoteYes", "PainHead", "PullAtCollar",
@@ -4712,8 +4721,8 @@ for _, n in ipairs({ "BandageHead", "BandageLeftArm", "BandageLeftLeg", "Bandage
     "IdleExt03_2H", "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun", "IdleExt01_Rifle",
     "IdleExt02_Rifle", "IdleExt03_Rifle", "NAPghugHigh2", "NAPghugLow2", "NAPghugHigh1", "NAPghugHigh3",
     "NAPGDance2Lead", "NAPGDance2Follow", "NAPGMassageL", "NAPGMassageF", "NAPGKissL", "NAPGDanceLead",
-    "NAPGbump1", "NAPGbump2", "NAPGbump3", "NAPGshake1", "NAPGshake2", "NAPGshake3", "NAPGKissF" }) do LOOK_ONCE[n] = true end
-function Bridge.isLookOnce(name) return type(name) == "string" and LOOK_ONCE[name] == true end
+    "NAPGbump1", "NAPGbump2", "NAPGbump3", "NAPGshake1", "NAPGshake2", "NAPGshake3", "NAPGKissF" }) do LOOK.ONCE[n] = true end
+function Bridge.isLookOnce(name) return type(name) == "string" and LOOK.ONCE[name] == true end
 
 
 local function lookShare(body)
@@ -4722,7 +4731,7 @@ local function lookShare(body)
     pcall(function() b = tostring(body:getBumpType()) end)
     if b == Bridge.lookSent then return end
     Bridge.lookSent = b
-    if LOOK_ONCE[b] then pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "look", { a = b }) end) end
+    if LOOK.ONCE[b] then pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "look", { a = b }) end) end
 end
 Bridge.lookShare = lookShare
 
@@ -4800,12 +4809,13 @@ local function snapshotBody(body)
 end
 Bridge.snapshotBodyFor = snapshotBody
 
-local ARMED_STILL = 1500
-local ARMED_CALM = 1800
-local ARMED_COOLDOWN = 3600
-local ARMED_COOLDOWN_RAND = 3600
+local ARMED = {}
+ARMED.STILL = 1500
+ARMED.CALM = 1800
+ARMED.COOLDOWN = 3600
+ARMED.COOLDOWN_RAND = 3600
 
-local ARMED_IDLE = {
+ARMED.IDLE = {
     ["1h"] = { "IdleExt01_1H", "IdleExt02_1H", "IdleExt03_1H" },
     ["2h"] = { "IdleExt01_2H", "IdleExt02_2H", "IdleExt03_2H" },
     handgun = { "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun" },
@@ -4848,7 +4858,7 @@ local function armedIdleReady(body, kind)
     local now = Bridge.time
     local lastCombat = math.max(BridgeWeapon.lastFight or -1e9,
         BridgeFight ~= nil and BridgeFight.playerFightUntil or 0)
-    if now - lastCombat < ARMED_CALM then
+    if now - lastCombat < ARMED.CALM then
         Bridge.armedIdleSince = now
         return false
     end
@@ -4856,7 +4866,7 @@ local function armedIdleReady(body, kind)
         Bridge.armedIdleSince = now
         return false
     end
-    if now - (Bridge.armedIdleSince or now) < ARMED_STILL then return false end
+    if now - (Bridge.armedIdleSince or now) < ARMED.STILL then return false end
     if now < (Bridge.nextArmedIdleAnim or 0) then return false end
     return true
 end
@@ -4875,7 +4885,7 @@ local function updateZombieBody(body)
     if not okGuard then warn("guardOutfit failed: " .. tostring(errGuard)) end
 
 
-    if not Bridge.mp and not Bridge.mortal and Bridge.zombieTicks % HEALTH_EVERY == 5 then
+    if not Bridge.mp and not Bridge.mortal and Bridge.zombieTicks % HEALTH.EVERY == 5 then
         pcall(Bridge.keepHealth, body)
     end
     lookShare(body)
@@ -5641,12 +5651,12 @@ local function updateZombieBody(body)
         if kind == "none" then
             Bridge.armedIdleSince = Bridge.time
         elseif armedIdleReady(body, kind) then
-            local pool = ARMED_IDLE[kind]
+            local pool = ARMED.IDLE[kind]
             if pool ~= nil then
                 local pick = pool[1 + ZombRand(#pool)]
                 pcall(function() body:setBumpType(pick) end)
                 log(string.format("idle start %s kind=%s t=%d", pick, tostring(kind), Bridge.tick))
-                Bridge.nextArmedIdleAnim = Bridge.time + ARMED_COOLDOWN + ZombRand(ARMED_COOLDOWN_RAND)
+                Bridge.nextArmedIdleAnim = Bridge.time + ARMED.COOLDOWN + ZombRand(ARMED.COOLDOWN_RAND)
             end
         end
     elseif not moving then
@@ -5708,21 +5718,22 @@ end
 
 
 
-local LOOK_RUN_ON, LOOK_RUN_OFF = 0.046, 0.041
-local LOOK_GAP_RUN, LOOK_GAP_WALK = 3.5, 2.5
-local LOOK_GAIT_HOLD = 24
+LOOK.RUN_ON, LOOK.RUN_OFF = 0.046, 0.041
+LOOK.GAP_RUN, LOOK.GAP_WALK = 3.5, 2.5
+LOOK.GAIT_HOLD = 24
 
 
-local COPY_FALL = { "hitreaction", "staggerback", "falldown", "knockeddown", "onground", "getup" }
-local COPY_AGGRO = { ["lunge-network"] = true, ["attack-network"] = true, ["face-target"] = true, lunge = true,
+local COPY = {}
+COPY.FALL = { "hitreaction", "staggerback", "falldown", "knockeddown", "onground", "getup" }
+COPY.AGGRO = { ["lunge-network"] = true, ["attack-network"] = true, ["face-target"] = true, lunge = true,
     attack = true, turnalerted = true }
 local function copyFallen(st)
-    for _, p in ipairs(COPY_FALL) do if string.sub(st, 1, #p) == p then return true end end
+    for _, p in ipairs(COPY.FALL) do if string.sub(st, 1, #p) == p then return true end end
     return false
 end
 
 local function applyLook(z, visuals, rec, who)
-    z:setVariable(BODY_VAR, true)
+    z:setVariable(BODY.VAR, true)
     if BridgeSizeMatterCompat ~= nil then pcall(BridgeSizeMatterCompat.neutralize, z, rec) end
 
     pcall(function()
@@ -5772,7 +5783,7 @@ local function applyLook(z, visuals, rec, who)
     pcall(function()
         if z:isRemoteZombie() then
             if z:getTarget() ~= nil then z:setTarget(nil) end
-            if COPY_AGGRO[tostring(z:getActionStateName())] then z:changeState(ZombieIdleState.instance()) end
+            if COPY.AGGRO[tostring(z:getActionStateName())] then z:changeState(ZombieIdleState.instance()) end
         end
     end)
     pcall(z.setDressInRandomOutfit, z, false)
@@ -5841,8 +5852,8 @@ local function applyLook(z, visuals, rec, who)
         local okWs, wsVal = pcall(owner.getVariableFloat, owner, "WalkSpeed", 1.0)
         if okWs then ownerWs = wsVal end
         local gap = dist2d(z, owner)
-        local want = ownerRuns or gap > LOOK_GAP_RUN or (l.run == true and gap > LOOK_GAP_WALK)
-        if want ~= (l.run == true) and Bridge.time - (l.gaitAt or -9999) >= LOOK_GAIT_HOLD then
+        local want = ownerRuns or gap > LOOK.GAP_RUN or (l.run == true and gap > LOOK.GAP_WALK)
+        if want ~= (l.run == true) and Bridge.time - (l.gaitAt or -9999) >= LOOK.GAIT_HOLD then
             l.run, l.gaitAt = want, Bridge.time
         end
 
@@ -5854,7 +5865,7 @@ local function applyLook(z, visuals, rec, who)
         end
         if type(ws) ~= "number" or ws < 0.3 then ws = 1.0 end
     else
-        if l.speed > LOOK_RUN_ON then l.run = true elseif l.speed < LOOK_RUN_OFF then l.run = false end
+        if l.speed > LOOK.RUN_ON then l.run = true elseif l.speed < LOOK.RUN_OFF then l.run = false end
     end
     pcall(z.setVariable, z, "WalkSpeed", ws)
     pcall(z.setWalkType, z, l.run and "Run" or "Walk")
@@ -6174,7 +6185,7 @@ function Bridge.watchGuest(z, who, remote)
     end
 end
 
-local BODY_AI_GAP = 1
+BODY.AI_GAP = 1
 
 function Bridge.companionUpdateGap()
     local idx = 1
@@ -6187,7 +6198,7 @@ function Bridge.companionUpdateGap()
     if idx == 4 then return 2 end
     if idx == 3 then return 1.5 end
     if idx == 2 then return 1.2 end
-    return BODY_AI_GAP
+    return BODY.AI_GAP
 end
 
 function Bridge.companionUpdateDue(state, key, gap)
@@ -8064,7 +8075,7 @@ function Bridge.diagLines()
                     local dx, dy = z:getX() - red:getX(), z:getY() - red:getY()
                     if math.sqrt(dx * dx + dy * dy) < 15 then
                         near = near + 1
-                        if z:getVariableBoolean(BODY_VAR) then mine = mine + 1 end
+                        if z:getVariableBoolean(BODY.VAR) then mine = mine + 1 end
                     end
                 end
             end
@@ -8086,7 +8097,7 @@ function Bridge.diagLines()
                         if z ~= nil and z:getPersistentOutfitID() == md.bodyId then
                             local d = red and dist2d(z, red) or -1
                             info = string.format("found d=%.1f remote=%s marked=%s alive=%s", d,
-                                tostring(z:isRemoteZombie()), tostring(z:getVariableBoolean(BODY_VAR)), tostring(z:isAlive()))
+                                tostring(z:isRemoteZombie()), tostring(z:getVariableBoolean(BODY.VAR)), tostring(z:isAlive()))
                             break
                         end
                     end
@@ -8227,7 +8238,7 @@ function Bridge.dropLostBody()
     local old = Bridge.body
     if old == nil or Bridge.mp then return false end
     local ours, inWorld = false, false
-    pcall(function() ours = old:getVariableBoolean(BODY_VAR) end)
+    pcall(function() ours = old:getVariableBoolean(BODY.VAR) end)
     pcall(function() inWorld = old:isExistInTheWorld() end)
     if not ours or not inWorld then return false end
     pcall(function() old:setPrimaryHandItem(nil) end)
@@ -8369,7 +8380,7 @@ function Bridge.ensurePresent()
 
     if BridgeData.modeOf(st) ~= "follow" and st.waitX ~= nil then
         local dx, dy = red:getX() - st.waitX, red:getY() - st.waitY
-        if math.sqrt(dx * dx + dy * dy) > HOME_NEAR or math.abs(red:getZ() - (st.waitZ or 0)) > 3 then return end
+        if math.sqrt(dx * dx + dy * dy) > HOME.NEAR or math.abs(red:getZ() - (st.waitZ or 0)) > 3 then return end
         Bridge.homeParked = false
         pcall(Bridge.dropLostBody)
         local res = Bridge.spawnZombie(st.waitX, st.waitY, st.waitZ)
@@ -8394,9 +8405,10 @@ end
 
 
 
-local LOST_AFTER = 180
-local LOST_EXISTED = 600
-local LOST_RETRY = { 180, 300, 600 }
+local LOST = {}
+LOST.AFTER = 180
+LOST.EXISTED = 600
+LOST.RETRY = { 180, 300, 600 }
 
 
 
@@ -8484,14 +8496,14 @@ function Bridge.sweepStaleBodies(reason)
     return n
 end
 
-local STALE_ID_CAP = 256
+STALE.ID_CAP = 256
 
 local function pruneStaleIds()
     local ids = Bridge.staleIds
     if ids == nil then return end
     local n = 0
     for _ in pairs(ids) do n = n + 1 end
-    if n <= STALE_ID_CAP then return end
+    if n <= STALE.ID_CAP then return end
     local cutoff = (Bridge.time or 0) - 3600
     for id, at in pairs(ids) do
         if (tonumber(at) or 0) < cutoff then
@@ -8499,7 +8511,7 @@ local function pruneStaleIds()
             n = n - 1
         end
     end
-    while n > STALE_ID_CAP do
+    while n > STALE.ID_CAP do
         local oldestId, oldestAt = nil, nil
         for id, at in pairs(ids) do
             local t = tonumber(at) or 0
@@ -8684,7 +8696,7 @@ function Bridge.lostBodyCheck()
     if waiting then
 
         local dx, dy = red:getX() - st.waitX, red:getY() - st.waitY
-        if math.sqrt(dx * dx + dy * dy) > HOME_NEAR or math.abs(red:getZ() - (st.waitZ or 0)) > 3 then lostReset() return end
+        if math.sqrt(dx * dx + dy * dy) > HOME.NEAR or math.abs(red:getZ() - (st.waitZ or 0)) > 3 then lostReset() return end
     end
     if Bridge.bodyInClientList(st.bodyId) then lostReset() return end
     if Bridge.lostId ~= st.bodyId then
@@ -8696,7 +8708,7 @@ function Bridge.lostBodyCheck()
 
 
         local asked = Bridge.askedId ~= nil and Bridge.askedId == st.bodyId
-        local after = (asked or Bridge.newLifePending == true) and LOST_AFTER or LOST_EXISTED
+        local after = (asked or Bridge.newLifePending == true) and LOST.AFTER or LOST.EXISTED
         Bridge.lostNext = math.max(Bridge.lostNext or 0, Bridge.time + after)
     end
 
@@ -8704,11 +8716,11 @@ function Bridge.lostBodyCheck()
 
     if Bridge.lostCall then
         Bridge.lostCall = nil
-        Bridge.lostNext = math.max(Bridge.time, (Bridge.lostSince or Bridge.time) + LOST_AFTER)
+        Bridge.lostNext = math.max(Bridge.time, (Bridge.lostSince or Bridge.time) + LOST.AFTER)
     end
     if Bridge.time < Bridge.lostNext then return end
     Bridge.lostTries = (Bridge.lostTries or 0) + 1
-    Bridge.lostNext = Bridge.time + LOST_RETRY[math.min(Bridge.lostTries, #LOST_RETRY)]
+    Bridge.lostNext = Bridge.time + LOST.RETRY[math.min(Bridge.lostTries, #LOST.RETRY)]
     local x, y, z
     if waiting then
         x, y, z = math.floor(st.waitX), math.floor(st.waitY), math.floor(st.waitZ or 0)
@@ -8739,14 +8751,18 @@ end
 
 
 
-local TELEPORT_JUMP = 100
-local TELEPORT_FAR = 150
+local TELEPORT = {}
+TELEPORT.JUMP = 100
+TELEPORT.FAR = 150
 
-local CLIMB_GRACE = 15
+local CLIMB = {}
+CLIMB.GRACE = 15
 local MAX_PENDING = 600
-local MISMATCH_TICKS = 300
-local MISMATCH_STILL = 0.3
-local LADDER_RADIUS = 1
+local MISMATCH = {}
+MISMATCH.TICKS = 300
+MISMATCH.STILL = 0.3
+local LADDER = {}
+LADDER.RADIUS = 1
 local PULL_RETRY = 30
 
 Bridge.floorPull = nil
@@ -8774,7 +8790,7 @@ function Bridge.pullOnTeleport(red)
     local dx, dy = x - px, y - py
     local d2 = dx * dx + dy * dy
 
-    if d2 >= TELEPORT_JUMP * TELEPORT_JUMP and Bridge.spawnSelectorStagingAt(px, py) then
+    if d2 >= TELEPORT.JUMP * TELEPORT.JUMP and Bridge.spawnSelectorStagingAt(px, py) then
         Bridge.arrivalHoldStart("teleport from the Spawn Selector staging area")
     end
     if BridgeHorse ~= nil and type(BridgeHorse.blocksFollow) == "function" and BridgeHorse.blocksFollow() then return end
@@ -8784,9 +8800,9 @@ function Bridge.pullOnTeleport(red)
     local far = false
     pcall(function()
         local bx, by = Bridge.body:getX() - x, Bridge.body:getY() - y
-        far = bx * bx + by * by > TELEPORT_FAR * TELEPORT_FAR
+        far = bx * bx + by * by > TELEPORT.FAR * TELEPORT.FAR
     end)
-    if d2 < TELEPORT_JUMP * TELEPORT_JUMP and not far then return end
+    if d2 < TELEPORT.JUMP * TELEPORT.JUMP and not far then return end
 
 
     if Bridge.mode ~= "follow" then
@@ -8801,13 +8817,13 @@ function Bridge.pullOnTeleport(red)
 end
 
 
-local LADDER_FLAGS = {
+LADDER.FLAGS = {
     "ladderN", "ladderS", "ladderE", "ladderW",
     "climbSheetN", "climbSheetS", "climbSheetE", "climbSheetW",
     "climbSheetTopN", "climbSheetTopS", "climbSheetTopE", "climbSheetTopW",
 }
 
-local LADDER_SPRITES = {
+LADDER.SPRITES = {
     "industry_railroad_05_20", "industry_railroad_05_21", "industry_railroad_05_36",
     "industry_railroad_05_37", "industry_railroad_05_56", "industry_railroad_05_57",
     "industry_railroad_05_58", "industry_railroad_05_59",
@@ -8824,17 +8840,17 @@ local function spriteIsLadder(name)
     if name == nil then return false end
     local lower = string.lower(tostring(name))
     if string.find(lower, "ladder", 1, true) ~= nil then return true end
-    for i = 1, #LADDER_SPRITES do
-        if string.find(lower, LADDER_SPRITES[i], 1, true) ~= nil then return true end
+    for i = 1, #LADDER.SPRITES do
+        if string.find(lower, LADDER.SPRITES[i], 1, true) ~= nil then return true end
     end
     return false
 end
 
 local function squareHasLadderFlag(square)
     if square == nil then return false end
-    for i = 1, #LADDER_FLAGS do
+    for i = 1, #LADDER.FLAGS do
         local found = false
-        pcall(function() found = square:has(LADDER_FLAGS[i]) == true end)
+        pcall(function() found = square:has(LADDER.FLAGS[i]) == true end)
         if found then return true end
     end
     return false
@@ -8846,8 +8862,8 @@ local function objectHasLadderFlag(obj)
     pcall(function()
         local props = obj:getProperties()
         if props == nil then return end
-        for i = 1, #LADDER_FLAGS do
-            if props:has(LADDER_FLAGS[i]) then
+        for i = 1, #LADDER.FLAGS do
+            if props:has(LADDER.FLAGS[i]) then
                 found = true
                 return
             end
@@ -8856,7 +8872,7 @@ local function objectHasLadderFlag(obj)
     return found
 end
 
-local CLIMB_FLAGS = { "ClimbRope", "ClimbLadder", "AparosaLadder" }
+CLIMB.FLAGS = { "ClimbRope", "ClimbLadder", "AparosaLadder" }
 
 local function playerIsClimbingRope(red)
     return red:isClimbingRope() == true
@@ -8891,8 +8907,8 @@ function Bridge.climbSignal(red)
         if okClimb and climbing == true then
             value = "ladder"
         else
-            for i = 1, #CLIMB_FLAGS do
-                local okVar, on = pcall(playerHasVar, red, CLIMB_FLAGS[i])
+            for i = 1, #CLIMB.FLAGS do
+                local okVar, on = pcall(playerHasVar, red, CLIMB.FLAGS[i])
                 if okVar and on == true then value = "ladder" break end
             end
             if value == nil then
@@ -8925,8 +8941,8 @@ function Bridge.ladderNear(x, y, zFrom, zTo)
     for c = 1, #centres do
         local bx = math.floor(centres[c][1])
         local by = math.floor(centres[c][2])
-        for dx = -LADDER_RADIUS, LADDER_RADIUS do
-            for dy = -LADDER_RADIUS, LADDER_RADIUS do
+        for dx = -LADDER.RADIUS, LADDER.RADIUS do
+            for dy = -LADDER.RADIUS, LADDER.RADIUS do
                 for z = zmin, zmax do
                     local square = cell:getGridSquare(bx + dx, by + dy, z)
                     if square ~= nil then
@@ -9050,9 +9066,9 @@ function Bridge.floorPullTick(red)
                     or Bridge.onStairs(body:getCurrentSquare())
             end)
         end
-        if mismatch and not stairs and (Bridge.walk60 or 0) < MISMATCH_STILL then
+        if mismatch and not stairs and (Bridge.walk60 or 0) < MISMATCH.STILL then
             if Bridge.floorMismatchSince == nil then Bridge.floorMismatchSince = now end
-            if now - Bridge.floorMismatchSince >= MISMATCH_TICKS then
+            if now - Bridge.floorMismatchSince >= MISMATCH.TICKS then
                 Bridge.floorPull = {
                     fromZ = body:getZ(),
                     fromX = body:getX(),
@@ -9064,7 +9080,7 @@ function Bridge.floorPullTick(red)
                     failedLogged = nil,
                 }
                 Bridge.floorMismatchSince = nil
-                log(string.format("vertical: floor mismatch for %d ticks, pulling her", MISMATCH_TICKS))
+                log(string.format("vertical: floor mismatch for %d ticks, pulling her", MISMATCH.TICKS))
             end
         else
             Bridge.floorMismatchSince = nil
@@ -9076,7 +9092,7 @@ function Bridge.floorPullTick(red)
     pull = Bridge.floorPull
     if pull ~= nil then
         if pull.endedAt == nil then pull.endedAt = now end
-        if now - pull.endedAt >= CLIMB_GRACE then
+        if now - pull.endedAt >= CLIMB.GRACE then
             if math.abs(z - pull.fromZ) < 0.9 then
                 Bridge.floorPull = nil
             elseif now - pull.seenAt > MAX_PENDING then
@@ -9138,7 +9154,7 @@ function Bridge.parkAtHome()
     if BridgeHorse ~= nil and type(BridgeHorse.blocksFollow) == "function" and BridgeHorse.blocksFollow() then return end
     if not Bridge.alive() or Bridge.kind ~= "zombie" or Bridge.mode == "follow" then return end
     local red = BridgeData.owner()
-    if red == nil or dist2d(Bridge.body, red) <= HOME_FAR then return end
+    if red == nil or dist2d(Bridge.body, red) <= HOME.FAR then return end
     local st = Bridge.store
     if st ~= nil and st.waitX == nil then
         st.waitX, st.waitY, st.waitZ = Bridge.body:getX(), Bridge.body:getY(), Bridge.body:getZ()
@@ -9751,7 +9767,7 @@ function Bridge.onTick()
         end
         if Bridge.staleSweepWanted == true or Bridge.time >= (Bridge.staleSweepAt or 0) then
             Bridge.staleSweepWanted = nil
-            Bridge.staleSweepAt = Bridge.time + STALE_SWEEP_FALLBACK
+            Bridge.staleSweepAt = Bridge.time + STALE.SWEEP_FALLBACK
             pcall(Bridge.sweepStaleBodies, "tick")
         end
         if Bridge.time >= (Bridge.staleRestartAt or 0) then
@@ -10287,7 +10303,7 @@ function Bridge.mournThreat(body, red)
         local list = getCell():getZombieList()
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and z ~= body and z:isAlive() and not z:getVariableBoolean(BODY_VAR)
+            if z ~= nil and z ~= body and z:isAlive() and not z:getVariableBoolean(BODY.VAR)
                 and not BridgeData.harmless(z) and math.abs(z:getZ() - bz) < 1 then
                 local zx, zy = z:getX(), z:getY()
                 local dHer = math.sqrt((zx - bx) ^ 2 + (zy - by) ^ 2)
@@ -10341,8 +10357,9 @@ end
 
 
 
-local LEAVE_DIST = { 1.5, 2, 2.5, 3, 4, 5, 6, 8 }
-local LEAVE_RING = { 2, 3, 4, 5, 6, 8 }
+local LEAVE = {}
+LEAVE.DIST = { 1.5, 2, 2.5, 3, 4, 5, 6, 8 }
+LEAVE.RING = { 2, 3, 4, 5, 6, 8 }
 local function leavePoint(body, red, m, fx, fy, bad)
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
     local ax, ay = bx - fx, by - fy
@@ -10393,7 +10410,7 @@ local function leavePoint(body, red, m, fx, fy, bad)
         end
         return best
     end
-    return pick(LEAVE_DIST, true) or pick(LEAVE_RING, false)
+    return pick(LEAVE.DIST, true) or pick(LEAVE.RING, false)
 end
 
 function Bridge.mournStart(body, red, opts)
@@ -10898,7 +10915,7 @@ Bridge.checked = setmetatable({}, { __mode = "k" })
     if Bridge.mourning ~= nil then pcall(function() Bridge.mournEnd("new player") end) end
     Bridge.mourning = nil
     if Bridge.body ~= nil then
-        pcall(function() Bridge.body:setVariable(BODY_VAR, false) end)
+        pcall(function() Bridge.body:setVariable(BODY.VAR, false) end)
         Bridge.body = nil
         Bridge.kind = nil
         if Bridge.store ~= nil and not Bridge.mp then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end
