@@ -31,7 +31,13 @@ local ICONS = {
     thanks = "media/textures/RadialMenu/TalkThanks.png",
     comfort = "media/textures/RadialMenu/TalkComfort.png",
     flirt = "media/textures/RadialMenu/TalkFlirt.png",
-    hug = "media/ui/emotes/group.png",
+    hug = "media/textures/RadialMenu/InteractionHug.png",
+    interactionHandshake = "media/textures/RadialMenu/InteractionHandShake.png",
+    interactionFistBump = "media/textures/RadialMenu/InteractionFistBump.png",
+    interactionKiss = "media/textures/RadialMenu/InteractionKiss.png",
+    interactionDance = "media/textures/RadialMenu/InteractionDance.png",
+    interactionMassage = "media/textures/RadialMenu/InteractionShoulderMassage.png",
+    interactionSubMenu = "media/textures/RadialMenu/InteractionSubMenu.png",
     ask = "media/textures/RadialMenu/TalkAsk.png",
     bodyguard = "media/textures/RadialMenu/FightCoverMe.png",
     escort = "media/textures/RadialMenu/FightClearAroundUs.png",
@@ -80,6 +86,15 @@ local TALK_ICONS = {
     Flirt = "flirt",
     Hug = "hug",
     Ask = "ask",
+}
+
+local AFFECTION_ICONS = {
+    Handshake = "interactionHandshake",
+    FistBump = "interactionFistBump",
+    Hug = "hug",
+    Kiss = "interactionKiss",
+    SlowDance = "interactionDance",
+    ShoulderMassage = "interactionMassage",
 }
 
 local DEFAULT_ORDER = { "wait", "talk", "heal", "fight", "guns", "keep", "jobs", "actions", "equip" }
@@ -212,12 +227,41 @@ local function backLabel()
     return text
 end
 
-local function talkEntries()
+local function socialEntries(builder, icons)
+    local out = {}
+    if BridgeSocial == nil or type(BridgeSocial[builder]) ~= "function" then return out end
+    local opts = nil
+    pcall(function() opts = BridgeSocial[builder]() end)
+    if opts == nil then return out end
+    for _, option in ipairs(opts) do
+        if option.blocked == nil then
+            local id = option.id
+            out[#out + 1] = make(tr(option.label), ICONS[icons[id] or "hug"], function() BridgeSocial.talk(id) end)
+        end
+    end
+    return out
+end
+
+local function affectionEntries()
+    return socialEntries("menuAffectionOptions", AFFECTION_ICONS)
+end
+
+local function greetingEntries()
+    return socialEntries("menuGreetingOptions", AFFECTION_ICONS)
+end
+
+local function talkEntries(playerNum)
     local out = {}
     if BridgeSocial == nil or type(BridgeSocial.menuTalkOptions) ~= "function" then return out end
     local opts = nil
     pcall(function() opts = BridgeSocial.menuTalkOptions() end)
     if opts == nil then return out end
+    if #greetingEntries() > 0 then
+        local target = playerNum
+        out[#out + 1] = make(tr("Talk_Greetings"), ICONS.talk, function()
+            BridgeRadial.showRing("greetings", target)
+        end)
+    end
     for _, option in ipairs(opts) do
         if option.blocked == nil then
             local id = option.id
@@ -296,7 +340,7 @@ end
 local JOB_KINDS = {
     lootArea = true, depositArea = true, deposit = true, cleanUp = true, clearPlants = true, chopTree = true,
     moveCorpses = true, pryDoor = true, fillWater = true, emptyFluid = true,
-    washSink = true,
+    washSink = true, openDoors = true, closeDoors = true,
 }
 
 local function doingJob()
@@ -305,7 +349,7 @@ local function doingJob()
     return false
 end
 
-local function workEntries()
+local function workEntries(playerNum)
     local out = {}
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return out end
     if jobsBusy() then
@@ -341,6 +385,20 @@ local function workEntries()
             end
         end
     end
+    if BridgeTask.DOORS_ENABLED == 1 then
+        out[#out + 1] = make(tr("Doors"), ICONS.work, function()
+            BridgeRadial.showRing("doors", playerNum)
+        end)
+    end
+    return out
+end
+
+local function doorEntries()
+    local out = {}
+    if BridgeTask == nil or BridgeTask.DOORS_ENABLED ~= 1 then return out end
+    if BridgeTask.active then return out end
+    out[#out + 1] = make(tr("JobOpenDoors"), ICONS.work, BridgeMenu.onJobOpenDoors)
+    out[#out + 1] = make(tr("JobCloseDoors"), ICONS.work, BridgeMenu.onJobCloseDoors)
     return out
 end
 
@@ -452,10 +510,13 @@ local function gunEntries()
 end
 
 function BridgeRadial.ringEntries(ring, playerNum)
-    if ring == "talk" then return talkEntries() end
+    if ring == "talk" then return talkEntries(playerNum) end
+    if ring == "affection" then return affectionEntries() end
+    if ring == "greetings" then return greetingEntries() end
     if ring == "fight" then return fightEntries() end
     if ring == "stay" then return stayEntries() end
-    if ring == "work" then return workEntries() end
+    if ring == "work" then return workEntries(playerNum) end
+    if ring == "doors" then return doorEntries() end
     if ring == "self" then return selfEntries(playerNum) end
     if ring == "gear" then return gearEntries(playerNum) end
     if ring == "guns" then return gunEntries() end
@@ -463,14 +524,25 @@ function BridgeRadial.ringEntries(ring, playerNum)
 end
 
 function BridgeRadial.order(st)
+    local out = {}
     if st ~= nil and type(st.menuOrder) == "table" and BridgeData ~= nil then
-        local out = {}
         for _, id in ipairs(BridgeData.menuOrder(st)) do
             if RADIAL_ONLY[id] then out[#out + 1] = id end
         end
-        if #out > 0 then return out end
     end
-    return DEFAULT_ORDER
+    if #out == 0 then
+        for _, id in ipairs(DEFAULT_ORDER) do out[#out + 1] = id end
+    end
+    if BridgeData ~= nil and BridgeData.KEEP_ON == true then
+        local has = false
+        for _, id in ipairs(out) do if id == "keep" then has = true break end end
+        if not has then
+            local at = #out + 1
+            for i, id in ipairs(out) do if id == "guns" then at = i + 1 break end end
+            table.insert(out, at, "keep")
+        end
+    end
+    return out
 end
 
 local function waitSlice(st)
@@ -490,6 +562,7 @@ function BridgeRadial.topEntries(playerNum)
     end
     local order = BridgeRadial.order(st)
     local gearDone = false
+    local affectionShown = false
     for _, id in ipairs(order) do
         local shown = BridgeData.menuShown(st, id)
         if id == "equip" or id == "torch" then
@@ -508,6 +581,10 @@ function BridgeRadial.topEntries(playerNum)
         elseif shown and id == "talk" then
             if #BridgeRadial.ringEntries("talk", playerNum) > 0 then
                 out[#out + 1] = make(tr("Talk"), ICONS.talk, function() BridgeRadial.showRing("talk", playerNum) end)
+            end
+            if #BridgeRadial.ringEntries("affection", playerNum) > 0 then
+                affectionShown = true
+                out[#out + 1] = make(tr("Affection"), ICONS.interactionSubMenu, function() BridgeRadial.showRing("affection", playerNum) end)
             end
         elseif shown and id == "heal" then
             local alive = Bridge.alive() == true
@@ -548,6 +625,9 @@ function BridgeRadial.topEntries(playerNum)
     end
     if #out == 0 then
         out[1] = make(tr("Call", companionName()), ICONS.call, BridgeMenu.onCall)
+    end
+    if not affectionShown and #BridgeRadial.ringEntries("affection", playerNum) > 0 then
+        out[#out + 1] = make(tr("Affection"), ICONS.interactionSubMenu, function() BridgeRadial.showRing("affection", playerNum) end)
     end
     return out
 end
@@ -831,11 +911,11 @@ local CONTROLLER_BUTTONS = {
 
 local function configuredControllerButton()
     local t = sandboxWheel()
-    local index = 1
+    local index = 3
     if t ~= nil and t.CompanionWheelControllerButton ~= nil then
-        index = tonumber(t.CompanionWheelControllerButton) or 1
+        index = tonumber(t.CompanionWheelControllerButton) or 3
     end
-    if index < 1 or index > #CONTROLLER_BUTTONS then index = 1 end
+    if index < 1 or index > #CONTROLLER_BUTTONS then index = 3 end
     return CONTROLLER_BUTTONS[index], index
 end
 
@@ -1150,6 +1230,14 @@ local SANDBOX_KEY_CODES = {
     (Keyboard and Keyboard.KEY_POWER) or 0,
     (Keyboard and Keyboard.KEY_SLEEP) or 0,
 }
+
+function BridgeRadial.sandboxKeyCode(index)
+    local i = tonumber(index)
+    local code = nil
+    if i ~= nil then code = SANDBOX_KEY_CODES[i] end
+    if type(code) ~= "number" then code = SANDBOX_KEY_CODES[1] or 0 end
+    return code
+end
 
 local function sandboxWheelKeyCode()
     local t = sandboxWheel()

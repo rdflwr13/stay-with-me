@@ -54,8 +54,12 @@ applyPass()
 
 Events.OnGameBoot.Add(applyPass)
 
+if Events.OnLoadedTileDefinitions ~= nil then
+    Events.OnLoadedTileDefinitions.Add(applyPass)
+end
+
 Events.OnGameStart.Add(function()
-    if BridgeLog == nil or BridgeLog.on == nil or not BridgeLog.on() then return end
+    pcall(BridgeAnimalsNoFear.apply)
     local defs = AnimalDefinitions and AnimalDefinitions.animals
     local n, wild = 0, 0
     if type(defs) == "table" then
@@ -72,3 +76,7 @@ Events.OnGameStart.Add(function()
     print("[BridgeAnimalsNoFear] fleeZombies=false species=" .. tostring(n)
         .. " wild skipped=" .. tostring(wild))
 end)
+
+if Events.OnServerStarted ~= nil then
+    Events.OnServerStarted.Add(function() pcall(BridgeAnimalsNoFear.apply) end)
+end

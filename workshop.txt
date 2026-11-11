@@ -107,6 +107,6 @@ description=4. Upload that report plus console.txt to https://pastebin.com/
 description=5. Post both links plus a description of the issue [url=https://steamcommunity.com/workshop/filedetails/discussion/3800989007/500617547938336972/]in the bug reports thread[/url].
 description=[/quote]
 description= 
-description=Do not reupload or reuse code or assets without permission
+description=Do not reupload or reuse code or assets without permission.
 tags=Build 42;Misc;Multiplayer;WIP
 visibility=public

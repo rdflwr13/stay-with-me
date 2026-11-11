@@ -1404,6 +1404,10 @@ do
             gripOff()
             return
         end
+        if BridgeGunfight == nil or BridgeGunfight.drawn ~= true then
+            gripOff()
+            return
+        end
         local zombie = false
         pcall(function() zombie = instanceof(body, "IsoZombie") == true end)
         if not zombie then gripOff() return end

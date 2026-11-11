@@ -22,6 +22,23 @@ local LIFT_EXTRA = -15
 local COL_FILL   = { r = 0.16, g = 0.82, b = 0.74 }
 local COL_BG     = { r = 0.05, g = 0.08, b = 0.09, a = 0.75 }
 local COL_BORDER = { r = 0.02, g = 0.02, b = 0.02, a = 0.90 }
+local COL_LEVEL  = {
+    { r = 0.16, g = 0.82, b = 0.74 },
+    { r = 0.85, g = 0.72, b = 0.20 },
+    { r = 0.90, g = 0.52, b = 0.15 },
+    { r = 0.88, g = 0.30, b = 0.12 },
+    { r = 0.80, g = 0.12, b = 0.10 },
+}
+
+local function fillColor()
+    local level = 0
+    local bf = rawget(_G, "BridgeFight")
+    if bf ~= nil and type(bf.exhaustionLevel) == "function" then
+        local ok, value = pcall(bf.exhaustionLevel)
+        if ok then level = tonumber(value) or 0 end
+    end
+    return COL_LEVEL[level + 1] or COL_FILL
+end
 
 local surface = nil
 
@@ -77,12 +94,13 @@ local function drawBar(self)
     local left = math.floor(x - BAR_W / 2)
     local top = math.floor(y)
     local v = stamina()
+    local fill = fillColor()
 
     self:drawRect(left - BAR_PAD, top - BAR_PAD, BAR_W + BAR_PAD * 2, BAR_H + BAR_PAD * 2,
         COL_BG.a, COL_BG.r, COL_BG.g, COL_BG.b)
     if v > 0 then
         self:drawRect(left, top, math.max(1, math.floor(BAR_W * v)), BAR_H, 1,
-            COL_FILL.r, COL_FILL.g, COL_FILL.b)
+            fill.r, fill.g, fill.b)
     end
     self:drawRectBorder(left, top, BAR_W, BAR_H, COL_BORDER.a, COL_BORDER.r, COL_BORDER.g, COL_BORDER.b)
 end

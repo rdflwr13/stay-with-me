@@ -62,6 +62,12 @@ BridgeMood.TALK = {
     Comfort = { unhappy = { 10, 20 }, stress = { 0.05, 0.15 } },
     Flirt = { unhappy = { 5, 15 }, bored = { 5, 10 } },
     Hug = { stress = { 0.15, 0.35 }, unhappy = { 15, 35 }, pain = { 15, 35 }, bored = { 15, 35 } },
+    Handshake = { bored = { 5, 5 }, unhappy = { 3, 3 } },
+    FistBump = { bored = { 8, 8 }, unhappy = { 3, 3 } },
+    ShoulderMassage = { stress = { 0.04, 0.08 }, unhappy = { 2, 5 }, bored = { 1, 3 }, pain = { 5, 10 } },
+    SlowDance = { stress = { 0.08, 0.15 }, unhappy = { 8, 15 }, bored = { 10, 20 } },
+    SlowDance2 = { stress = { 0.10, 0.18 }, unhappy = { 10, 18 }, bored = { 8, 15 } },
+    Kiss = { stress = { 0.15, 0.30 }, unhappy = { 15, 25 }, bored = { 5, 10 } },
 }
 BridgeMood.TALK_HOURS = 1
 
@@ -204,13 +210,18 @@ local IDLE_SQUARE = 1800
 
 
 
-local function companion(z)
-    if Bridge.isCompanion ~= nil then return Bridge.isCompanion(z) end
-    return z:getVariableBoolean(Bridge.BODY_VAR)
-end
-
 local function zombiesSeen(red, body)
     local near = false
+    local watched = nil
+    local watchedAt = nil
+    if Bridge ~= nil then
+        watched = tonumber(Bridge.othersNear)
+        watchedAt = tonumber(Bridge.othersScanAt)
+    end
+    local now = (Bridge ~= nil and tonumber(Bridge.time)) or 0
+    if watched ~= nil and watchedAt ~= nil and (now - watchedAt) <= 30 then
+        return watched > 0
+    end
     pcall(function()
         local list = nil
         if BridgeZScan ~= nil then
@@ -220,11 +231,16 @@ local function zombiesSeen(red, body)
         local rx, ry, rz = red:getX(), red:getY(), red:getZ()
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-
             if z ~= nil and z ~= body then
-                local dx, dy = z:getX() - rx, z:getY() - ry
-                if dx * dx + dy * dy < DANGER * DANGER and math.abs(z:getZ() - rz) < 1 and z:isAlive()
-                    and not companion(z) and not BridgeData.harmless(z) and red:CanSee(z) then
+                local zx, zy, zz = nil, nil, nil
+                if BridgeZScan ~= nil and type(BridgeZScan.pos) == "function" then
+                    zx, zy, zz = BridgeZScan.pos(z)
+                end
+                if zx == nil then zx, zy, zz = z:getX(), z:getY(), z:getZ() end
+                local dx, dy = zx - rx, zy - ry
+                if dx * dx + dy * dy < DANGER * DANGER and math.abs(zz - rz) < 1
+                    and BridgeZScan.isAlive(z) and not BridgeZScan.isCompanion(z)
+                    and not BridgeZScan.isHarmless(z) and BridgeZScan.canSee(z, red, nil) then
                     near = true
                     break
                 end
@@ -333,6 +349,20 @@ function BridgeMood.flush(red)
 end
 
 
+local moodGtAt, moodGtMult, moodGtDmpd = nil, 0, 0
+
+local function moodGameTime()
+    local tick = (Bridge ~= nil and tonumber(Bridge.tick)) or 0
+    if moodGtAt ~= nil and tick - moodGtAt < 30 then return moodGtMult, moodGtDmpd end
+    local mult, dmpd = 0, 0
+    pcall(function()
+        mult = getGameTime():getMultiplier()
+        dmpd = getGameTime():getDeltaMinutesPerDay()
+    end)
+    moodGtAt, moodGtMult, moodGtDmpd = tick, mult, dmpd
+    return mult, dmpd
+end
+
 function BridgeMood.frame(red)
     if red == nil then return end
 
@@ -362,11 +392,7 @@ function BridgeMood.frame(red)
     local st = BridgeMood.state
     if st ~= nil and st.near and st.tier ~= nil then
         local k = BridgeMood.TIERS[st.tier]
-        local mult, dmpd = 0, 0
-        pcall(function()
-            mult = getGameTime():getMultiplier()
-            dmpd = getGameTime():getDeltaMinutesPerDay()
-        end)
+        local mult, dmpd = moodGameTime()
         if type(mult) == "number" and mult > 0 and mult == mult then
             local acc = BridgeMood.acc
             if st.room then acc.bored = acc.bored + mult * k.bored end

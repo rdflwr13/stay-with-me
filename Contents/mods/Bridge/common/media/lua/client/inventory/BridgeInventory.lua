@@ -966,6 +966,7 @@ end
 
 function BridgeInventory.afterChange(b, item, pre, kind)
     if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+    if type(BridgeInventory.resetWornBags) == "function" then pcall(BridgeInventory.resetWornBags, b) end
     local can, why, wait = BridgeInventory.canGesture(b)
     if not can and not wait then
         if #BridgeInventory.gestures > 0 then BridgeInventory.gestureFlush(b, "cannot gesture now") end
@@ -1025,7 +1026,11 @@ function BridgeInventory.actionQueued(act)
 end
 
 
+local htbAt, htbVal = nil, false
+
 function BridgeInventory.herTransferBusy()
+    local tick = Bridge.tick or 0
+    if htbAt == tick then return htbVal end
     local busy = false
     pcall(function()
         local b = body()
@@ -1049,6 +1054,7 @@ function BridgeInventory.herTransferBusy()
             end
         end
     end)
+    htbAt, htbVal = tick, busy
     return busy
 end
 
@@ -1491,7 +1497,9 @@ end
 function BridgeInventory.wornBags(b)
     local now = Bridge ~= nil and tonumber(Bridge.time) or nil
     now = now or 0
-    if b ~= nil and wornBagBody == b and wornBagList ~= nil and now - wornBagAt < 30 then
+    local ttl = 30
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then ttl = BridgePerf.age("wornBags", 30) end
+    if b ~= nil and wornBagBody == b and wornBagList ~= nil and now - wornBagAt < ttl then
         return wornBagList
     end
     local bags = {}
@@ -3591,12 +3599,20 @@ function BridgeInventory.splitOne(item)
     local count = 1
     pcall(function() count = tonumber(item:getCount()) or 1 end)
     if count <= 1 then return item end
+
+    local src = nil
+    pcall(function() src = item:getContainer() end)
+    if src == nil then return nil end
+
+    local rec = nil
+    pcall(function() rec = BridgeItems.record(item, false) end)
+    if rec ~= nil then rec.k = nil end
+
     local one = nil
     pcall(function()
-        local src = item:getContainer()
-        if src == nil then return end
         one = src:AddItem(item:getFullType())
         if one ~= nil then
+            if rec ~= nil then pcall(function() BridgeItems.apply(one, rec) end) end
             one:setCount(1)
             item:setCount(count - 1)
         end
@@ -3996,11 +4012,19 @@ function BridgeInventory.bodyArrived(b)
     BridgeInventory.goneContainers = keep
 end
 
+local function skippedItem(item)
+    return hasTag(item, "Face") or hasTag(item, "BodyDetail") or hasTag(item, "Muscle")
+        or isMuscleItem(item) or isMakeupItem(item)
+end
+
 function BridgeInventory.snapshot(b, withItems)
     BridgeInventory.herContainers = containersOf(b)
     BridgeInventory.herContainersOf = b
     local out = {}
     local refs = withItems and {} or nil
+    local transmog = BridgeTransmog
+    local gear = BridgeGear
+    local weapon = BridgeWeapon
     pcall(function()
         local primary, secondary = b:getPrimaryHandItem(), b:getSecondaryHandItem()
         local function walk(container, parent)
@@ -4010,16 +4034,19 @@ function BridgeInventory.snapshot(b, withItems)
                 if item ~= nil then
                     local rec = BridgeItems.record(item, false)
                     local skip = false
-                    if BridgeTransmog ~= nil then
-                        pcall(function() skip = BridgeTransmog.filterRecord(item, rec) == false end)
+                    if transmog ~= nil then
+                        local okFilter, allowed = pcall(transmog.filterRecord, item, rec)
+                        if okFilter and allowed == false then skip = true end
                     end
-                    pcall(function()
-                        skip = skip or hasTag(item, "Face") or hasTag(item, "BodyDetail") or hasTag(item, "Muscle") or isMuscleItem(item) or isMakeupItem(item)
-                    end)
+                    if not skip then
+                        local okSkip, skipped = pcall(skippedItem, item)
+                        if okSkip and skipped then skip = true end
+                    end
                     if not skip then
                         if parent == nil then
-                            pcall(function() rec.w = b:isEquippedClothing(item) end)
-                            if BridgeWeapon.isAssigned(b, item) then rec.as = true end
+                            local okWorn, wornNow = pcall(b.isEquippedClothing, b, item)
+                            if okWorn then rec.w = wornNow end
+                            if weapon ~= nil and weapon.isAssigned(b, item) then rec.as = true end
                             local h = 0
                             if primary ~= nil and item == primary then h = h + 1 end
                             if secondary ~= nil and item == secondary then h = h + 2 end
@@ -4027,11 +4054,11 @@ function BridgeInventory.snapshot(b, withItems)
                         else
                             rec.p = parent
                         end
-                        if BridgeGear ~= nil then
-                            local loc = BridgeGear.locationOf(b, item)
+                        if gear ~= nil then
+                            local loc = gear.locationOf(b, item)
                             if loc ~= nil then
                                 rec.ga = loc
-                                local info = BridgeGear.attached[item]
+                                local info = gear.attached[item]
                                 if info ~= nil and info.type ~= nil and info.type ~= "" then rec.gt = info.type end
                                 if info ~= nil and info.providerType ~= nil and info.providerType ~= "" then rec.gp = info.providerType end
                             end
@@ -4039,9 +4066,8 @@ function BridgeInventory.snapshot(b, withItems)
                         out[#out + 1] = rec
                         if refs ~= nil then refs[#out + 1] = item end
                         local index = #out
-                        local isBag = false
-                        pcall(function() isBag = item:IsInventoryContainer() end)
-                        if isBag then walk(item:getInventory(), index) end
+                        local okBag, isBag = pcall(item.IsInventoryContainer, item)
+                        if okBag and isBag == true then walk(item:getInventory(), index) end
                     end
                 end
             end
@@ -4322,6 +4348,7 @@ function BridgeInventory.receive(args)
         return "receive failed, returned: " .. tostring(err)
     end
     answer(true)
+    if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
 
     if BridgeHeal ~= nil then BridgeHeal.emptySig = nil end
     refreshPanels()
@@ -4454,6 +4481,7 @@ function BridgeInventory.took(args)
             end
         end)
         if b ~= nil then redress(b) end
+        if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
         refreshPanels()
         pcall(function() Bridge.saveOutfit() end)
     end
@@ -5360,10 +5388,14 @@ function BridgeInventory.transferPending(b)
                 n = q ~= nil and q.queue ~= nil and #q.queue or 0
             end
             if a == nil then why = "queue empty" return end
-            local anim = BridgeInventory.herAnimFor(a)
-            why = string.format("first %s own=%s stays=%s hers=%s anim=%s n=%d", tostring(a.Type), tostring(a.bridgeOwn),
-                tostring(a.bridgeStays), tostring(a.bridgeHers), tostring(anim), n)
-            if a.bridgeStays and a.bridgeHers ~= false and anim ~= nil then pending = true end
+            if a.bridgeStays and a.bridgeHers ~= false then
+                local anim = BridgeInventory.herAnimFor(a)
+                why = string.format("first %s own=%s stays=%s hers=%s anim=%s n=%d", tostring(a.Type), tostring(a.bridgeOwn),
+                    tostring(a.bridgeStays), tostring(a.bridgeHers), tostring(anim), n)
+                if anim ~= nil then pending = true end
+            else
+                why = "not hers"
+            end
         end)
     end
 

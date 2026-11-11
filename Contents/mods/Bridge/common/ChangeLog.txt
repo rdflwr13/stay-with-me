@@ -292,3 +292,70 @@ Compatibility:
 - Voidring: added a shim to support it.
 
 [ ------ ]
+
+[ v0.6.5 ]
+
+New Features:
+
+New Animations:
+- Added a hug, a kiss, a shoulder massage, a fist bump, and a handshake. Access them from the Talk menu. New interactions are gated behind relationship progress.
+- Requires the PZ Relationship (Build 42) mod: https://steamcommunity.com/sharedfiles/filedetails/?id=3820590495
+- Note: More animations and interactions will be added in future updates.
+
+Health Care Updates:
+- Added the First Aid skill to Rin.
+- Rin can now treat your wounds while in a vehicle.
+
+New Jobs:
+- Close/Open Door. Works on foot and in cars.
+
+New Sandbox Settings:
+
+General:
+- Companion Update Rate (Sets how often the companion updates, which lowers CPU usage but may negatively impact the companion's capabilities at lower levels). Options are 60 Hz (default), 50, 40, and 30. This applies to non-combat systems only, as capping the Hz on combat makes her move in slow motion at higher fps.
+- Sidebar Icon Offset (Manually moves Rin's home icon on the left side of the screen down in case another mod blocks it). Default is 0.
+- Companion Menu Key (Opens the left-side menu). Default key is F8.
+
+Dialogue:
+- Dialogue Font (Changes the font used for Rin's dialogue).
+- Dialogue Color (Changes the color of Rin's text).
+- Companion Speech (Chooses between speech bubbles, subtitles, or both). Default is speech bubbles.
+- Companion Speech Language (Chooses what language Rin speaks; requires a restart). Default is your game language.
+- Max Speech Lines (Sets how many dialogue lines appear over Rin's head at a time). Default is 5.
+
+Stamina:
+- Stamina Exhaustion Impact (Determines how stamina affects the companion's movement, attack speed, etc.). Options are Default (current behavior, limited impact), Player-like, and Harsh.
+- Breathing Volume (Rin now audibly breathes at low stamina levels). Options are Off, Quiet, Normal (default), and Loud.
+
+Changes:
+- Added more Rin callouts (TV/radio on, TV show playing, and Mechanics).
+- Added 4 more reactions to the player dying, gated by relationship score.
+- Rin can now use keys in her inventory to open doors.
+- Rin can now perform more exercise animations. She will either randomize her routine or copy the player's (squat, push-up, sit-up, and burpee).
+- Synced the IT/FR translations.
+- Rin's stamina bar now changes color based on stamina level.
+- Overhauled the Appearance window.
+- Rewrote the dialogue system to handle queued messages so they are no longer overwritten by the last spoken line.
+- Rin no longer highlights when "Highlight Melee Targets" is enabled.
+- Added sleep-gate detection fallback for NPCCrew, TrueCompanions, TrueSleepEverywhere, justsleep, tsarslib, and a few other mods.
+- Added a watchdog to monitor her movement while she performs jobs to clear detected lock-ups.
+
+Bug Fixes:
+- Fixed Rin not regenerating stamina with a gun in her hand.
+- Rin's stamina bar now progresses with Fast Forward.
+- Fixed Rin running faster than the player with a pistol in hand.
+
+Optimizations:
+- Capped several systems to 15 Hz (beyond the Companion Update Rate).
+- Callouts no longer perform scans while on cooldown.
+- Inventory/ammo system now uses a shared cache.
+- Cached skill tooltips in the Skills window.
+- Reduced hot-path overhead: split body/outfit caches into tick and value tables.
+- Rewrote BridgeZScan for improved performance.
+
+Compatibility:
+- A-Life: Fixed home icon overlap.
+- Horse Mod: Rin can ride pillion on your horse (single-player only). It may get a bit desynced at times.
+- Wound Expansion: Added support for Rin to detect and treat wounds like standard injuries without using the more complex systems.
+
+[ ------ ]

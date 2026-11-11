@@ -26,9 +26,9 @@ BridgeCallout.WEAPON_LOW = 0.15
 BridgeCallout.LASTFIGHT_MIN_HOURS = 1
 BridgeCallout.LASTFIGHT_MAX_HOURS = 24
 BridgeCallout.AMMO_NEAR = 12
-BridgeCallout.SCAN_FIGHT = 15
-BridgeCallout.SCAN_IDLE = 30
-BridgeCallout.SCAN_QUIET = 60
+BridgeCallout.SCAN_FIGHT = 60
+BridgeCallout.SCAN_IDLE = 120
+BridgeCallout.SCAN_QUIET = 120
 
 BridgeCallout.PLACE_GAP = 60 * 60
 BridgeCallout.PLACE_DWELL = 3 * 60
@@ -180,7 +180,7 @@ BridgeCallout.SAY = {
 
 BridgeCallout.REPEAT_GAP = 8
 BridgeCallout.HORDE_CD = 60
-BridgeCallout.HORDE_SCAN_EVERY = 60
+BridgeCallout.HORDE_SCAN_EVERY = 300
 
 BridgeCallout.MILESTONES = { [1] = true, [5] = true, [10] = true, [25] = true, [50] = true,
     [100] = true, [250] = true, [500] = true, [1000] = true }
@@ -300,6 +300,9 @@ local function gunThreat()
     local active = false
     pcall(function() active = BridgeFight ~= nil and BridgeFight.state == "gun" end)
     if active then return true end
+    if Bridge ~= nil and type(Bridge.speechGapActive) == "function" and Bridge.speechGapActive("foot") then
+        return false
+    end
     local now = Bridge.time or 0
     if BridgeCallout.gunThreatAt == now then return BridgeCallout.gunThreatValue == true end
     local body, red = Bridge.body, nil
@@ -329,7 +332,7 @@ local function gunThreat()
             local wx, wy = bx or rx, by or ry
             local list = nil
             if BridgeZS ~= nil and wx ~= nil and wy ~= nil then
-                list = BridgeZS.nearUnion(wx, wy, rx or wx, ry or wy, 15.1)
+                list = BridgeZS.nearUnion(wx, wy, rx or wx, ry or wy, 15.1, { tag = "callout.scan" })
             end
             if list == nil then list = getCell():getZombieList() end
             for i = 0, list:size() - 1 do
@@ -375,7 +378,7 @@ function BridgeCallout.defer(event)
     for _, item in ipairs(q) do if item == event then return false end end
     if #q >= 4 then table.remove(q, 1) end
     q[#q + 1] = event
-    dlog("deferred " .. event)
+    if BridgeCallout.DEBUG == 1 then dlog("deferred " .. event) end
     return true
 end
 
@@ -445,25 +448,27 @@ attempt = function(event, priority)
     local e = BridgeCallout.EVENTS[event]
     if e == nil then return false end
     if BridgeCallout.SAY[event] == 0 then return false end
-    local gap = BridgeCallout.REPEAT_GAP * BridgeCallout.SEC
-    if Bridge.time - BridgeCallout.lastAny < gap then
+    if Bridge ~= nil and type(Bridge.speechAllowed) == "function"
+            and not Bridge.speechAllowed(event, "combat") then
         if priority then BridgeCallout.info = "blocked " .. event end
         return false
     end
     local said = false
-    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeCallout.SEC, true, e.slot) == true end)
+    pcall(function() said = BridgeMoments.say(event, e.cooldown * BridgeCallout.SEC, true, e.slot, "combat") == true end)
     if said then
         BridgeCallout.lastAny = Bridge.time
         if priority then BridgeCallout.deferred = {} end
         BridgeCallout.info = event
         log(event)
-        if priority then
-            dlog("said priority " .. event .. " (slot " .. tostring(e.slot) .. ")")
-        else
-            local grp = "?"
-            pcall(function() grp = BridgeMoments.group() end)
-            dlog("said " .. event .. " (slot " .. tostring(e.slot) .. ", " .. tostring(grp)
-                .. ", cd " .. tostring(e.cooldown) .. "s)")
+        if BridgeCallout.DEBUG == 1 then
+            if priority then
+                dlog("said priority " .. event .. " (slot " .. tostring(e.slot) .. ")")
+            else
+                local grp = "?"
+                pcall(function() grp = BridgeMoments.group() end)
+                dlog("said " .. event .. " (slot " .. tostring(e.slot) .. ", " .. tostring(grp)
+                    .. ", cd " .. tostring(e.cooldown) .. "s)")
+            end
         end
     else
         BridgeCallout.info = "blocked " .. event
@@ -488,7 +493,7 @@ local function flush()
         local ev = q[i]
         if trySay(ev) then
             table.remove(q, i)
-            dlog("said deferred " .. ev)
+            if BridgeCallout.DEBUG == 1 then dlog("said deferred " .. ev) end
             return true
         end
         i = i + 1
@@ -498,16 +503,17 @@ end
 
 local scanFacts = { near8 = 0, spot = false, anyThreatInSwing = false }
 
-local function scanWorld(body, red, wantClear)
+local function scanWorld(body, red, wantClear, wantPeak)
     local facts = scanFacts
     facts.near8 = 0
     facts.spot = false
     facts.anyThreatInSwing = false
+    facts.peak = wantPeak and 0 or nil
 
     local S = BridgeCallout.SAY
     local wantNear = S.EvLull ~= 0 or S.EvStillOnUs ~= 0
     local wantSpot = S.EvSpot ~= 0
-    local wantBody = wantNear
+    local wantBody = wantNear or wantPeak
     local wantRed = wantSpot
     if not (wantBody or wantRed or wantClear) then
         return facts
@@ -532,6 +538,9 @@ local function scanWorld(body, red, wantClear)
         for i = 1, #entries do
             local e = entries[i]
             if e.alive and not e.comp and not e.harm then
+                local peakRel = wantPeak and e.threat
+                    and ((e.dc <= 8 and math.abs(e.zc) < 1) or (e.dp <= 8 and math.abs(e.zp) < 1))
+                if peakRel then facts.peak = (facts.peak or 0) + 1 end
                 local relevant = false
                 if wantNear and math.abs(e.zp) < 0.8 and e.dp2 < near2 then relevant = true end
                 if not relevant and wantRed and math.abs(e.zc) < 1 and e.dc2 < spot2 then relevant = true end
@@ -555,6 +564,7 @@ local function scanWorld(body, red, wantClear)
         return facts
     end
 
+    facts.peak = nil
     pcall(function()
         local list = nil
         if BridgeZS ~= nil then list = BridgeZS.nearUnion(bodyx, bodyy, redx, redy, 15.5, { tag = "callout.scan" }) end
@@ -701,9 +711,20 @@ function BridgeCallout.forceMilestone(n)
     n = math.floor(n)
     local key = "IGUI_NotAlone_KillMilestone_" .. n
     local text = nil
-    pcall(function() text = getTextOrNull(key) end)
+    pcall(function() text = BridgeSpeech.getOrNull(key) end)
     if type(text) ~= "string" or text == "" or text == key then return false end
+    if Bridge ~= nil and type(Bridge.speechAllowed) == "function" then
+        local ctx = Bridge.speechContext()
+        if not Bridge.speechAllowed("KillMilestone" .. n, "combat", ctx) then
+            local left = 0
+            if type(Bridge.speechGapRemaining) == "function" then left = Bridge.speechGapRemaining(ctx) end
+            BridgeCallout.milestoneDue = { n = n, at = Bridge.time + math.max(1, math.ceil((tonumber(left) or 0) * 60)) }
+            BridgeCallout.info = "milestone held"
+            return false
+        end
+    end
     if Bridge.quiet() then
+        if type(Bridge.markSpeech) == "function" then Bridge.markSpeech() end
         pcall(function() Bridge.bridgeEvent("KillMilestone" .. n, text) end)
     else
         Bridge.speakText(text)
@@ -1031,6 +1052,7 @@ end
 
 local function placeCanSpeak()
     if Bridge.time - BridgeCallout.placeLastAt < BridgeCallout.PLACE_GAP then return false end
+    if Bridge.time < (BridgeMoments.cool["Place"] or 0) then return false end
     local fighting = false
     pcall(function()
         fighting = BridgeFight ~= nil and (BridgeFight.state ~= "idle" or BridgeFight.target ~= nil)
@@ -1179,7 +1201,7 @@ end
 local function homeFire()
     if BridgeMoments == nil or type(BridgeMoments.say) ~= "function" then return false end
     local said = false
-    pcall(function() said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn") == true end)
+    pcall(function() said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn", "home") == true end)
     return said
 end
 
@@ -1306,9 +1328,9 @@ local function homePoolCount(pool)
     local n = 0
     for i = 1, 20 do
         local key = "IGUI_NotAlone_Soc_" .. pool .. "_" .. i
-        local text = nil
-        pcall(function() text = getTextOrNull(key, "", "") end)
-        if text == nil or text == key or text == "" then break end
+        local found = false
+        pcall(function() found = BridgeSpeech.exists(key) end)
+        if not found then break end
         n = i
     end
     return n
@@ -1454,7 +1476,7 @@ function BridgeCallout.homeCommand(parts)
         BridgeMoments.cool["HomeReturn"] = -99999
         local said = false
         pcall(function()
-            said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn") == true
+            said = BridgeMoments.say(BridgeCallout.HOME_EVENT, BridgeCallout.HOME_GAP, true, "HomeReturn", "home") == true
         end)
         if said then
             BridgeCallout.homeFired = true
@@ -1684,7 +1706,7 @@ function BridgeCallout.cityTick(body)
 
     if pool ~= nil and BridgeMoments ~= nil and type(BridgeMoments.say) == "function" then
         local said = false
-        pcall(function() said = BridgeMoments.say(pool, BridgeCallout.CITY_GAP, true, "City") == true end)
+        pcall(function() said = BridgeMoments.say(pool, BridgeCallout.CITY_GAP, true, "City", "city") == true end)
         if said then
             BridgeCallout.cityLastAt = Bridge.time
             vlog("city " .. box.id .. " -> " .. pool)
@@ -1733,7 +1755,7 @@ function BridgeCallout.citiesCommand(sub, a)
         local pool = (sub == "fire") and ("City_" .. box.id) or ("City_" .. box.id .. "Again")
         local said = false
         if BridgeMoments ~= nil and type(BridgeMoments.say) == "function" then
-            pcall(function() said = BridgeMoments.say(pool, 0, true, "City") == true end)
+            pcall(function() said = BridgeMoments.say(pool, 0, true, "City", "city") == true end)
         end
         BridgeCallout.cityLastAt = Bridge.time
         return string.format("cities %s %s -> %s (%s)", tostring(sub), tostring(box.id), pool, said and "spoke" or "no line")
@@ -1998,7 +2020,17 @@ end
 
 function BridgeCallout.update(body)
     if body == nil then return end
-    local scanDue = Bridge.every(15)
+    local redOwner = nil
+    pcall(function() redOwner = BridgeData.owner() end)
+    local asleepNow = false
+    pcall(function() asleepNow = redOwner ~= nil and redOwner:isAsleep() == true end)
+    if Bridge.mode == "rest"
+        or (BridgeFastForward ~= nil and BridgeFastForward.active())
+        or asleepNow then
+        BridgeCallout.dueAt = Bridge.time + BridgeCallout.SCAN_QUIET
+        return
+    end
+    local scanDue = Bridge.every(300)
     if scanDue and type(BridgeCallout.homeTrack) == "function" then
         pcall(function() BridgeCallout.homeTrack(body, BridgeData.owner()) end)
     end
@@ -2052,14 +2084,19 @@ function BridgeCallout.update(body)
         BridgeCallout.lastCombatAt = Bridge.time
         if not BridgeCallout.recordOn then startFightRecord() end
         BridgeCallout.fightTime = BridgeCallout.fightTime + stepSec
-        local peak = peakThreats(body, red)
-        if peak > BridgeCallout.fightPeak then BridgeCallout.fightPeak = peak end
         local gunNow = false
         pcall(function() gunNow = BridgeFight ~= nil and BridgeFight.state == "gun" end)
         if gunNow then BridgeCallout.fightGun = true end
     end
     if not fighting then BridgeCallout.finisherTarget = nil end
     local engaged = fighting or (Bridge.time - BridgeCallout.fightingAt < BridgeCallout.COMBAT_GRACE * BridgeCallout.SEC)
+
+    local facts = scanWorld(body, red, not engaged, fighting)
+    if fighting then
+        local peak = facts.peak
+        if peak == nil then peak = peakThreats(body, red) end
+        if peak > BridgeCallout.fightPeak then BridgeCallout.fightPeak = peak end
+    end
 
     if flush() then return end
 
@@ -2085,7 +2122,13 @@ function BridgeCallout.update(body)
         BridgeCallout.lastHealth = health
     end
 
-    if BridgeHorde ~= nil then
+    local hordeAllowed = true
+    if Bridge ~= nil then
+        if type(Bridge.speechGapActive) == "function" and Bridge.speechGapActive("foot") then hordeAllowed = false end
+        if type(Bridge.speechInCombat) == "function" and Bridge.speechInCombat() then hordeAllowed = false end
+    end
+    if Bridge.time < (BridgeMoments.cool["Horde"] or 0) then hordeAllowed = false end
+    if hordeAllowed and BridgeHorde ~= nil then
         local SAY = BridgeCallout.SAY
         if SAY.EvHorde32 ~= 0 or SAY.EvHorde16 ~= 0 or SAY.EvHorde8 ~= 0 or SAY.EvHorde4 ~= 0 then
             local raw, n = BridgeCallout.hordeRaw, BridgeCallout.hordeSeen
@@ -2097,7 +2140,7 @@ function BridgeCallout.update(body)
                     n = 0
                     if raw >= BridgeHorde.TIERS[1] then
                         n = BridgeHorde.countSeen(hx, hy, hz, BridgeHorde.RADIUS, body, red, raw)
-                        vlog(string.format("horde: raw=%d seen=%d at %.1f,%.1f", raw, n, hx, hy))
+                        if Bridge.verbose then vlog(string.format("horde: raw=%d seen=%d at %.1f,%.1f", raw, n, hx, hy)) end
                     end
                     BridgeCallout.hordeAt = Bridge.time
                     BridgeCallout.hordeRaw, BridgeCallout.hordeSeen = raw, n
@@ -2113,8 +2156,6 @@ function BridgeCallout.update(body)
             end
         end
     end
-
-    local facts = scanWorld(body, red, not engaged)
 
     if fighting then
         local crowd, playerDist = 0, 99

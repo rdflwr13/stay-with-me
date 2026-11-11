@@ -16,6 +16,12 @@ local AIM_Z_TOL          = 0.5
 local AIM_QUIET          = 90
 local AIM_TARGET_PENALTY = 30
 
+local AIM_BEHIND_CANDS = {
+    { 2.0, 1.8 }, { 2.0, 0.0 }, { 2.0, -1.8 },
+    { 3.0, 1.8 }, { 3.0, 0.0 },
+    { 1.6, 1.4 }, { 1.6, 0.0 },
+}
+
 local function sensitivity()
     if BridgeData ~= nil and type(BridgeData.aimSense) == "function" then
         return BridgeData.aimSense(Bridge ~= nil and Bridge.store or nil)
@@ -138,7 +144,7 @@ function BridgeAim.beyond(body)
         local list = nil
         if BridgeZS ~= nil then
             local nearR = math.sqrt((Z.range or 0) * (Z.range or 0) + (Z.half or 0) * (Z.half or 0)) + 0.5
-            list = BridgeZS.near(Z.px, Z.py, nearR)
+            list = BridgeZS.near(Z.px, Z.py, nearR, { tag = "aim.beyond" })
         end
         if list == nil then list = getCell():getZombieList() end
         for i = 0, list:size() - 1 do
@@ -162,22 +168,18 @@ function BridgeAim.beyond(body)
 end
 
 function BridgeAim.pointClear(body, x, y, z)
-    local ok = false
-    pcall(function()
-        local sq = getCell():getGridSquare(math.floor(x), math.floor(y), math.floor(z))
-        ok = sq ~= nil and sq:isFree(false)
-    end)
-    return ok
+    local okCell, cell = pcall(getCell)
+    if not okCell or cell == nil then return false end
+    local okSq, sq = pcall(cell.getGridSquare, cell, math.floor(x), math.floor(y), math.floor(z))
+    if not okSq or sq == nil then return false end
+    local okFree, free = pcall(sq.isFree, sq, false)
+    return okFree and free == true
 end
 
 local function findBehind(body, Z, bz, sgn)
-    local cands = {
-        { 2.0, 1.8 * sgn }, { 2.0, 0.0 }, { 2.0, -1.8 * sgn },
-        { 3.0, 1.8 * sgn }, { 3.0, 0.0 },
-        { 1.6, 1.4 * sgn }, { 1.6, 0.0 },
-    }
-    for i = 1, #cands do
-        local d, s = cands[i][1], cands[i][2]
+    for i = 1, #AIM_BEHIND_CANDS do
+        local c = AIM_BEHIND_CANDS[i]
+        local d, s = c[1], c[2] * sgn
         local tx = Z.px - Z.vx * d - Z.vy * s
         local ty = Z.py - Z.vy * d + Z.vx * s
         if BridgeAim.pointClear(body, tx, ty, bz) then return tx, ty end

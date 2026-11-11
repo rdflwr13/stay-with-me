@@ -357,7 +357,11 @@ local function sortedWho(players)
     return out
 end
 
+local signatureAt, signatureMd, signatureVal = nil, nil, nil
+
 local function signature(md)
+    local tick = Bridge.tick or 0
+    if signatureAt == tick and signatureMd == md then return signatureVal end
     local parts = {}
     for _, who in ipairs(sortedWho(md.players)) do
         local rec = md.players[who]
@@ -372,7 +376,8 @@ local function signature(md)
         end
     end
     parts[#parts + 1] = "q" .. issuedSig(issuedStore())
-    return table.concat(parts, "\n")
+    signatureAt, signatureMd, signatureVal = tick, md, table.concat(parts, "\n")
+    return signatureVal
 end
 
 

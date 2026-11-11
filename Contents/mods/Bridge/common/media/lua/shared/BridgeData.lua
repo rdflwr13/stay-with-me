@@ -60,6 +60,28 @@ function BridgeData.sandboxFlag(key, default)
 end
 
 
+BridgeData.HORSE_ACTIVE = nil
+
+function BridgeData.horseModActive()
+    local cached = BridgeData.HORSE_ACTIVE
+    if cached ~= nil then return cached end
+    if getActivatedMods == nil then return false end
+    local ok, active = pcall(function()
+        local mods = getActivatedMods()
+        if mods == nil then return nil end
+        return mods:contains("Horse") or mods:contains("\\Horse")
+    end)
+    if not ok or active == nil then return false end
+    BridgeData.HORSE_ACTIVE = active == true
+    return BridgeData.HORSE_ACTIVE
+end
+
+
+function BridgeData.horseRidingEnabled()
+    return BridgeData.horseModActive()
+end
+
+
 
 
 
@@ -84,9 +106,17 @@ end
 
 
 
+function BridgeData.isZombie(z)
+    if z == nil then return false end
+    local ok, yes = pcall(instanceof, z, "IsoZombie")
+    return ok and yes == true
+end
+
 function BridgeData.dragged(z)
     local yes = false
-    pcall(function() yes = z:isReanimatedForGrappleOnly() == true end)
+    if BridgeData.isZombie(z) then
+        pcall(function() yes = z:isReanimatedForGrappleOnly() == true end)
+    end
     return yes
 end
 
@@ -326,12 +356,31 @@ function BridgeData.npcfwPeaceful(z)
     return false
 end
 
+local harmlessAt = setmetatable({}, { __mode = "k" })
+local harmlessVal = setmetatable({}, { __mode = "k" })
+
+local function harmlessTick()
+    if Bridge ~= nil and tonumber(Bridge.tick) ~= nil then return tonumber(Bridge.tick) end
+    if BridgeServer ~= nil and tonumber(BridgeServer.tick) ~= nil then return tonumber(BridgeServer.tick) end
+    return nil
+end
+
 function BridgeData.harmless(z)
+    if z == nil then return false end
+    local tick = harmlessTick()
+    if tick ~= nil and tick > 0 and harmlessAt[z] == tick then return harmlessVal[z] == true end
+    local yes = false
     if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(z) then
-        return true
+        yes = true
+    else
+        yes = BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.girlfriendPeaceful(z)
+            or BridgeData.foreignPeaceful(z) or BridgeData.npcfwPeaceful(z)
     end
-    return BridgeData.dragged(z) or BridgeData.friendlyNpc(z) or BridgeData.girlfriendPeaceful(z)
-        or BridgeData.foreignPeaceful(z) or BridgeData.npcfwPeaceful(z)
+    if tick ~= nil and tick > 0 then
+        harmlessAt[z] = tick
+        harmlessVal[z] = yes
+    end
+    return yes
 end
 
 
@@ -413,7 +462,9 @@ function BridgeData.keepOf(rec)
 end
 
 function BridgeData.farOf(rec)
-    return BridgeData.KEEP_ON == true and rec ~= nil and rec.far == true
+    if BridgeData.KEEP_ON ~= true then return false end
+    if rec == nil then return true end
+    return rec.far ~= false
 end
 
 
@@ -796,9 +847,33 @@ function BridgeData.lootMaxWeight(rec)
 end
 
 
-BridgeData.MENU_ORDER_IDS = { "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs", "keep", "cancel" }
+BridgeData.MENU_ORDER_IDS = { "cancel", "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs" }
 BridgeData.MENU_ORDER_SET = {}
 for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do BridgeData.MENU_ORDER_SET[id] = true end
+
+BridgeData.LEGACY_MENU_ORDERS = {
+    { "talk", "heal", "equip", "wait", "actions", "affection", "fight", "guns", "torch", "jobs", "cancel" },
+    { "cancel", "talk", "heal", "equip", "wait", "actions", "affection", "fight", "guns", "torch", "jobs" },
+    { "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs", "cancel" },
+}
+
+function BridgeData.isLegacyMenuOrder(clean)
+    if type(clean) ~= "table" then return false end
+    for i = 1, #BridgeData.LEGACY_MENU_ORDERS do
+        local legacy = {}
+        for _, id in ipairs(BridgeData.LEGACY_MENU_ORDERS[i]) do
+            if BridgeData.MENU_ORDER_SET[id] then legacy[#legacy + 1] = id end
+        end
+        if #legacy == #clean then
+            local same = true
+            for j = 1, #legacy do
+                if legacy[j] ~= clean[j] then same = false break end
+            end
+            if same then return true end
+        end
+    end
+    return false
+end
 
 function BridgeData.cleanMenuOrder(value)
     if type(value) ~= "table" then return nil end
@@ -849,6 +924,7 @@ function BridgeData.menuOrder(rec)
     local out, seen = {}, {}
     local clean = nil
     if rec ~= nil then clean = BridgeData.cleanMenuOrder(rec.menuOrder) end
+    if clean ~= nil and BridgeData.isLegacyMenuOrder(clean) then clean = nil end
     if clean ~= nil then
         for _, id in ipairs(clean) do
             if not seen[id] then seen[id] = true out[#out + 1] = id end
@@ -1073,6 +1149,7 @@ BridgeData.GENDERED_KEYS = {
     Need_Axe = true, Need_CleanImplement = true, Need_Cleaner = true, Need_CleanSupplies = true,
     Talk_Thanks = true, Talk_Comfort = true, Rel_Crush = true, InvAssign = true, LookDefault = true,
     TalkCantBusy = true, TalkCantRepeat = true, TalkCantFull = true, TalkCantAfterFight = true,
+    TalkCantPhysicalFull = true,
     CombatAggressive = true, CombatAggressiveTip = true, CombatGuardTip = true,
     OptAutoHeal = true, OptAutoHealTip = true, OptGifts = true,
     OptGiftsTip = true, OptRedKitTip = true, OptMoodTip = true, OptXpPopupsTip = true, OptRelPopupsTip = true, OptRomanceTip = true,
@@ -1852,7 +1929,7 @@ if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeData] loaded") end
 
 
 
-BridgeData.SKILL_KEYS = { "Strength", "Axe", "Blunt", "SmallBlunt", "LongBlade", "SmallBlade", "Spear", "Maintenance", "Fitness", "Aiming", "Reloading" }
+BridgeData.SKILL_KEYS = { "Strength", "Axe", "Blunt", "SmallBlunt", "LongBlade", "SmallBlade", "Spear", "Maintenance", "Fitness", "Aiming", "Reloading", "Doctor" }
 
 
 

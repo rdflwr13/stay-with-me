@@ -1161,6 +1161,9 @@ BridgeWindow.SKILLS = {
         { perk = "Aiming" },
         { perk = "Reloading" },
     }},
+    { category = "IGUI_perks_Survivalist", rows = {
+        { perk = "Doctor" },
+    }},
     { category = "IGUI_perks_PhysicalCategory", rows = {
         { perk = "Strength" },
         { perk = "Fitness" },
@@ -1233,6 +1236,13 @@ function BridgeWindow.skillsHeight(width)
     return h
 end
 
+function BridgeWindow.skillsPageHeight(width)
+    if BridgeHomeTab ~= nil and type(BridgeHomeTab.heightFor) == "function" then
+        return BridgeHomeTab.heightFor(width)
+    end
+    return BridgeWindow.HEIGHT
+end
+
 function BridgeWindow.skillsWidth()
     local labelW = 0
     for _, group in ipairs(BridgeWindow.SKILLS) do
@@ -1240,9 +1250,86 @@ function BridgeWindow.skillsWidth()
             labelW = math.max(labelW, textW(UIFont.Small, BridgeWindow.skillLabel(row.perk)))
         end
     end
-    return PAD * 3 + labelW + (10 * skillUnit() + 9 * SKILL_GAP)
+    return PAD * 3 + labelW + (10 * skillUnit() + 9 * SKILL_GAP) + 32
 end
 
+
+BridgeSkillList = ISScrollingListBox:derive("BridgeSkillList")
+
+function BridgeSkillList:new(x, y, width, height)
+    local o = ISScrollingListBox:new(x, y, width, height)
+    setmetatable(o, self)
+    self.__index = self
+    o.backgroundColor = { r = 0, g = 0, b = 0, a = 0.3 }
+    o.borderColor = { r = 1, g = 1, b = 1, a = 0.2 }
+    o.drawBorder = true
+    o.font = UIFont.Small
+    o.fontHgt = getTextManager():getFontHeight(UIFont.Small)
+    o.itemheight = skillRowH()
+    o.selected = -1
+    o.unit = skillUnit()
+    o.barX = PAD
+    o.barW = 10 * o.unit + 9 * SKILL_GAP
+    return o
+end
+
+function BridgeSkillList:onMouseDown(x, y)
+    return
+end
+
+function BridgeSkillList:onMouseMove(dx, dy)
+    if self:isMouseOverScrollBar() then
+        if self.page ~= nil then self.page:removeTooltip() end
+        return
+    end
+    self.mouseoverselected = self:rowAt(self:getMouseX(), self:getMouseY())
+    if self.page ~= nil then self.page:onHoverItem(self.items[self.mouseoverselected]) end
+end
+
+function BridgeSkillList:onMouseMoveOutside(x, y)
+    self.mouseoverselected = -1
+    if self.page ~= nil then self.page:removeTooltip() end
+end
+
+function BridgeSkillList:drawBar(x, y, level, xp)
+    for i = 1, 10 do
+        local ux = x + (i - 1) * (self.unit + SKILL_GAP)
+        if i <= level then
+            self:drawRect(ux, y, self.unit, self.unit, 1, 1, 0.89, 0.38)
+            self:drawRectBorder(ux, y, self.unit, self.unit, 1, 1, 0.89, 0.38)
+        elseif i == level + 1 then
+            self:drawRectBorder(ux, y, self.unit, self.unit, 1, 0.4, 0.4, 0.4)
+            local w = math.floor(self.unit * math.max(0, math.min(1, xp or 0)))
+            if w > 0 then self:drawRect(ux, y, w, self.unit, 0.35, 1, 0.89, 0.38) end
+        else
+            self:drawRectBorder(ux, y, self.unit, self.unit, 1, 0.2, 0.2, 0.2)
+        end
+    end
+end
+
+function BridgeSkillList:doDrawItem(y, item, alt)
+    if not item.height then item.height = self.itemheight end
+    if item.height <= 0 then return y + item.height end
+    if (y + self:getYScroll() + item.height < 0) or (y + self:getYScroll() >= self.height) then
+        return y + item.height
+    end
+    if item.kind == "header" then
+        self:drawText(item.text, PAD, y, 1, 1, 1, 1, UIFont.Medium)
+        self:drawRect(PAD, y + FONT_M + 2, self.width - PAD * 2, 1, 1, 0.4, 0.4, 0.4)
+        return y + item.height
+    end
+    if item.kind == "row" then
+        local glow = skillGlow(item.perk)
+        if glow > 0 then
+            self:drawRect(PAD - 2, y, self.width - PAD * 2 + 4, item.height, glow * 0.45, 1, 0.89, 0.38)
+        end
+        local ty = y + (item.height - FONT_S) / 2
+        self:drawText(item.label, PAD, ty, 1, 1, 1, 1, UIFont.Small)
+        self:drawBar(self.barX, y + (item.height - self.unit) / 2, item.level or 0, item.prog or 0)
+        return y + item.height
+    end
+    return y + item.height
+end
 
 BridgeWindowSkills = ISPanel:derive("BridgeWindowSkills")
 
@@ -1264,93 +1351,119 @@ function BridgeWindowSkills:createChildren()
     self.barW = 10 * self.unit + 9 * SKILL_GAP
     self.skillSrc = nil
     self.skillAt = 0
-    self.skillLevels = {}
-    self.skillProg = {}
-    self.hitRows = nil
-    self.hitRowH = nil
-    self.hitHintH = nil
+    self.rowItems = {}
+    self.list = BridgeSkillList:new(0, 0, self.width, self.height)
+    self.list:initialise()
+    self.list:instantiate()
+    self.list.page = self
+    self.list.unit = self.unit
+    self.list.barX = self.barX
+    self.list.barW = self.barW
+    self.list.itemheight = self.rowH
+    self.list.selected = -1
+    self:addChild(self.list)
+    self:rebuildList()
+    self:applyHeight(self.height)
+end
+
+function BridgeWindowSkills:rebuildList()
+    local list = self.list
+    if list == nil then return end
+    list.items = {}
+    list.count = 0
+    list.selected = -1
+    self.rowItems = {}
+    local headerH = FONT_M + 2 + PAD
+    local rowH = self.rowH or skillRowH()
+    local groups = BridgeWindow.SKILLS
+    for gi, group in ipairs(groups) do
+        local header = list:addItem(gameText(group.category, group.category), nil)
+        header.kind = "header"
+        header.height = headerH
+        header.index = #list.items
+        for _, row in ipairs(group.rows) do
+            local item = list:addItem(self.labels[row.perk] or BridgeWindow.skillLabel(row.perk), nil)
+            item.kind = "row"
+            item.perk = row.perk
+            item.label = item.text
+            item.height = rowH
+            item.level = skillLevel(row.perk)
+            item.prog = skillProgress(row.perk)
+            item.index = #list.items
+            self.rowItems[row.perk] = item
+        end
+        if gi < #groups then
+            local space = list:addItem("", nil)
+            space.kind = "space"
+            space.height = PAD
+            space.index = #list.items
+        end
+    end
+    list:setScrollHeight(0)
 end
 
 function BridgeWindowSkills:refreshValues()
     local store = Bridge ~= nil and Bridge.store or nil
     local now = Bridge ~= nil and (Bridge.time or 0) or 0
     if store == self.skillSrc and now < self.skillAt then return end
-    for _, group in ipairs(BridgeWindow.SKILLS) do
-        for _, row in ipairs(group.rows) do
-            self.skillLevels[row.perk] = skillLevel(row.perk)
-            self.skillProg[row.perk] = skillProgress(row.perk)
-        end
+    for perk, item in pairs(self.rowItems or {}) do
+        item.level = skillLevel(perk)
+        item.prog = skillProgress(perk)
     end
     self.skillSrc = store
     self.skillAt = now + SKILL_TICKS
 end
 
-function BridgeWindowSkills:refreshHitRows()
-    if self.hitRows ~= nil and self.hitRowH == self.rowH and self.hitHintH == self.hintH then return end
-    local rows = {}
-    local ry = PAD + (self.hintH or 0)
-    for _, group in ipairs(BridgeWindow.SKILLS) do
-        ry = ry + FONT_M + 2 + PAD
-        for _, row in ipairs(group.rows) do
-            rows[#rows + 1] = { row = row, y = ry, h = self.rowH }
-            ry = ry + self.rowH
-        end
-        ry = ry + PAD
+function BridgeWindowSkills:applyHeight(h)
+    self:setHeight(h)
+    self.hintLines, self.hintH = BridgeWindow.hintLines(self.width, "SkillsHint", name())
+    local listY = PAD + (self.hintH or 0)
+    local listH = h - listY - PAD
+    if listH < 0 then listH = 0 end
+    if self.list ~= nil then
+        self.list:setX(0)
+        self.list:setY(listY)
+        self.list:setWidth(self.width)
+        self.list:setHeight(listH)
     end
-    self.hitRows = rows
-    self.hitRowH = self.rowH
-    self.hitHintH = self.hintH
 end
 
-function BridgeWindowSkills:drawBar(x, y, level, xp)
-    for i = 1, 10 do
-        local ux = x + (i - 1) * (self.unit + SKILL_GAP)
-        if i <= level then
-            self:drawRect(ux, y, self.unit, self.unit, 1, 1, 0.89, 0.38)
-            self:drawRectBorder(ux, y, self.unit, self.unit, 1, 1, 0.89, 0.38)
-        elseif i == level + 1 then
-            self:drawRectBorder(ux, y, self.unit, self.unit, 1, 0.4, 0.4, 0.4)
-            local w = math.floor(self.unit * math.max(0, math.min(1, xp or 0)))
-
-            if w > 0 then self:drawRect(ux, y, w, self.unit, 0.35, 1, 0.89, 0.38) end
-        else
-            self:drawRectBorder(ux, y, self.unit, self.unit, 1, 0.2, 0.2, 0.2)
+function BridgeWindowSkills:prerender()
+    local unit = skillUnit()
+    local rowH = skillRowH()
+    if unit ~= self.unit or rowH ~= self.rowH then
+        self.unit = unit
+        self.rowH = rowH
+        self.barW = 10 * unit + 9 * SKILL_GAP
+        if self.list ~= nil then
+            self.list.unit = unit
+            self.list.barW = self.barW
+            self.list.itemheight = rowH
+            for _, item in ipairs(self.list.items) do
+                if item.kind == "row" then
+                    item.height = rowH
+                elseif item.kind == "header" then
+                    item.height = FONT_M + 2 + PAD
+                elseif item.kind == "space" then
+                    item.height = PAD
+                end
+            end
         end
     end
+    self:refreshValues()
+    ISPanel.prerender(self)
 end
 
 function BridgeWindowSkills:render()
-    self.unit = skillUnit()
-    self.rowH = skillRowH()
-    self:refreshValues()
-    self:refreshHitRows()
-    local x, y = PAD, PAD
+    local y = PAD
     for _, line in ipairs(self.hintLines or {}) do
         self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
         y = y + getTextManager():getFontHeight(UIFont.Small) + 2
     end
-    y = PAD + (self.hintH or 0)
-    for _, group in ipairs(BridgeWindow.SKILLS) do
-        self:drawText(gameText(group.category, group.category), x, y, 1, 1, 1, 1, UIFont.Medium)
-        y = y + FONT_M + 2
-        self:drawRect(x, y, self.width - PAD * 2, 1, 1, 0.4, 0.4, 0.4)
-        y = y + PAD
-        for _, row in ipairs(group.rows) do
-            local glow = skillGlow(row.perk)
-            if glow > 0 then
-                self:drawRect(x - 2, y, self.width - PAD * 2 + 4, self.rowH, glow * 0.45, 1, 0.89, 0.38)
-            end
-            local ty = y + (self.rowH - FONT_S) / 2
-            self:drawText(self.labels[row.perk] or BridgeWindow.skillLabel(row.perk), x, ty, 1, 1, 1, 1, UIFont.Small)
-            self:drawBar(self.barX, y + (self.rowH - self.unit) / 2,
-                self.skillLevels[row.perk] or 0, self.skillProg[row.perk] or 0)
-            y = y + self.rowH
-        end
-        y = y + PAD
-    end
 end
 
 function BridgeWindowSkills:removeTooltip()
+    self.tooltipPerk = nil
     if self.tooltip ~= nil then
         self.tooltip:setVisible(false)
         self.tooltip:removeFromUIManager()
@@ -1358,19 +1471,31 @@ function BridgeWindowSkills:removeTooltip()
     end
 end
 
-function BridgeWindowSkills:showTooltip(row, lvl)
-    local label = BridgeWindow.skillLabel(row.perk)
-    local cur = skillLevel(row.perk)
+function BridgeWindowSkills:showTooltip(perk, lvl)
+    local item = self.rowItems ~= nil and self.rowItems[perk] or nil
+    local cur = item ~= nil and (item.level or 0) or skillLevel(perk)
+    local prog = item ~= nil and (item.prog or 0) or skillProgress(perk)
+    local stamp = math.floor((Bridge ~= nil and (Bridge.time or 0) or 0) / SKILL_TICKS)
+    if self.tooltip ~= nil and self.tooltipPerk == perk and self.tooltipLevel == lvl
+        and self.tooltipCur == cur and self.tooltipProg == prog and self.tooltipStamp == stamp then
+        return
+    end
+    self.tooltipPerk = perk
+    self.tooltipLevel = lvl
+    self.tooltipCur = cur
+    self.tooltipProg = prog
+    self.tooltipStamp = stamp
+    local label = BridgeWindow.skillLabel(perk)
     local msg = label .. " " .. gameText("IGUI_XP_level", "level") .. " " .. (lvl + 1)
     if lvl < cur then
         msg = msg .. " <LINE> " .. gameText("IGUI_XP_UnLocked", "Unlocked")
     elseif lvl == cur then
-        local need = skillTotalForNext(row.perk)
+        local need = skillTotalForNext(perk)
         if need > 0 then
             msg = msg .. " <LINE> " .. string.format("%.0f / %.0f XP  (%.0f%%)",
-                skillXp(row.perk), need, skillProgress(row.perk) * 100)
+                skillXp(perk), need, skillProgress(perk) * 100)
         else
-            msg = msg .. " <LINE> " .. string.format("%.0f XP", skillXp(row.perk))
+            msg = msg .. " <LINE> " .. string.format("%.0f XP", skillXp(perk))
         end
     else
         msg = msg .. " <LINE> " .. gameText("IGUI_XP_Locked", "Locked")
@@ -1386,22 +1511,29 @@ function BridgeWindowSkills:showTooltip(row, lvl)
     self.tooltip.description = msg
 end
 
-function BridgeWindowSkills:onMouseMove(dx, dy)
-    local mx, my = self:getMouseX(), self:getMouseY()
-    for _, e in ipairs(self.hitRows or {}) do
-        if my >= e.y and my < e.y + e.h and mx >= self.barX and mx < self.barX + self.barW then
-            local idx = math.floor((mx - self.barX) / (self.unit + SKILL_GAP))
-            if idx >= 0 and idx <= 9 then
-                self:showTooltip(e.row, idx)
-                if self.tooltip ~= nil then
-                    self.tooltip:setDesiredPosition(self:getAbsoluteX() + self.barX,
-                        self:getAbsoluteY() + e.y + e.h + 4)
-                end
-                return
-            end
-        end
+function BridgeWindowSkills:onHoverItem(item)
+    if item == nil or item.kind ~= "row" then
+        self:removeTooltip()
+        return
     end
-    self:removeTooltip()
+    local list = self.list
+    if list == nil then return end
+    local mx = list:getMouseX()
+    if mx < list.barX or mx >= list.barX + list.barW then
+        self:removeTooltip()
+        return
+    end
+    local unit = list.unit or skillUnit()
+    local idx = math.floor((mx - list.barX) / (unit + SKILL_GAP))
+    if idx < 0 or idx > 9 then
+        self:removeTooltip()
+        return
+    end
+    self:showTooltip(item.perk, idx)
+    if self.tooltip ~= nil then
+        local rowY = list:getAbsoluteY() + list:topOfItem(item.index) + list:getYScroll() + item.height + 4
+        self.tooltip:setDesiredPosition(list:getAbsoluteX() + list.barX, rowY)
+    end
 end
 
 function BridgeWindowSkills:onMouseMoveOutside(dx, dy)
@@ -1595,7 +1727,7 @@ function BridgeWindow.contentHeight(kind, width)
     local h = nil
     if kind == "info" then h = BridgeWindow.infoHeight()
     elseif kind == "settings" then h = BridgeWindow.settingsHeight(width)
-    elseif kind == "skills" then h = BridgeWindow.skillsHeight(width)
+    elseif kind == "skills" then h = BridgeWindow.skillsPageHeight(width)
     elseif kind == "home" and BridgeHomeTab ~= nil then h = BridgeHomeTab.heightFor(width)
     elseif kind == "order" and BridgeOrder ~= nil and BridgeOrder.heightFor ~= nil then h = BridgeOrder.heightFor(width)
     elseif kind == "loot" and BridgeLootSettings ~= nil then h = BridgeLootSettings.heightFor(width)

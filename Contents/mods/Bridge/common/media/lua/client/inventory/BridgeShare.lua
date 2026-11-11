@@ -12,7 +12,7 @@
 
 BridgeShare = BridgeShare or {}
 BridgeShare.PHASE = 7
-BridgeShare.EVERY = 10
+BridgeShare.EVERY = 15
 
 BridgeShare.SHARE = 0.5
 BridgeShare.CATCHUP = 0.75

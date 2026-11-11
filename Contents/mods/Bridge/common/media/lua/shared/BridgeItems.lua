@@ -135,82 +135,110 @@ end
 function BridgeItems.record(item, deep)
     local rec = { t = item:getFullType() }
 
-    try(function()
-        local c = item:getCondition()
-        local max = nil
-        pcall(function() max = item:getConditionMax() end)
-        if max == nil or c ~= max then rec.c = c end
-    end)
+    local okCond, cond = pcall(item.getCondition, item)
+    local maxCond = nil
+    local okMaxCond, maxVal = pcall(item.getConditionMax, item)
+    if okMaxCond then maxCond = maxVal end
+    if okCond and (maxCond == nil or cond ~= maxCond) then rec.c = cond end
 
 
 
-    try(function()
-        if item.hasSharpness ~= nil and item:hasSharpness() then
-            local sh, max = item:getSharpness(), 1.0
-            pcall(function() max = item:getMaxSharpness() end)
-            if sh < max - 0.0005 then rec.sh = sh end
+    local okHasSharp, hasSharp = pcall(item.hasSharpness, item)
+    if okHasSharp and hasSharp then
+        local okSharp, sharp = pcall(item.getSharpness, item)
+        local maxSharp = 1.0
+        local okMaxSharp, maxSharpVal = pcall(item.getMaxSharpness, item)
+        if okMaxSharp then maxSharp = maxSharpVal end
+        if okSharp and sharp < maxSharp - 0.0005 then rec.sh = sharp end
+    end
+    local okHasHead, hasHead = pcall(item.hasHeadCondition, item)
+    if okHasHead and hasHead then
+        local okHead, hc = pcall(item.getHeadCondition, item)
+        local okHeadMax, hcMax = pcall(item.getHeadConditionMax, item)
+        if okHead and okHeadMax and hc ~= hcMax then rec.hc = hc end
+    end
+    local okFc, fc = pcall(item.getFluidContainer, item)
+    if okFc and fc ~= nil then
+        local okEmpty, empty = pcall(fc.isEmpty, fc)
+        if okEmpty then
+            if empty then
+                rec.fe = true
+            else
+                local okPf, pf = pcall(fc.getPrimaryFluid, fc)
+                local okType, ftype = false, nil
+                if okPf and pf ~= nil then okType, ftype = pcall(pf.getFluidTypeString, pf) end
+                local okAmt, amount = pcall(fc.getAmount, fc)
+                if okType then rec.fl = ftype end
+                if okAmt then rec.fa = amount end
+            end
         end
-    end)
-    try(function()
-        if item.hasHeadCondition ~= nil and item:hasHeadCondition() then
-            local hc = item:getHeadCondition()
-            if hc ~= item:getHeadConditionMax() then rec.hc = hc end
-        end
-    end)
-    try(function()
-        local fc = item:getFluidContainer()
-        if fc == nil then return end
-        if fc:isEmpty() then
-            rec.fe = true
-        else
-            rec.fl = fc:getPrimaryFluid():getFluidTypeString()
-            rec.fa = fc:getAmount()
-        end
-    end)
-    try(function()
-        if item:IsWeapon() then
-            local parts = item:getAllWeaponParts()
-            if parts ~= nil and parts:size() > 0 then
+    end
+    local okWeaponParts, isWeaponParts = pcall(item.IsWeapon, item)
+    if okWeaponParts and isWeaponParts then
+        local okParts, parts = pcall(item.getAllWeaponParts, item)
+        if okParts and parts ~= nil then
+            local okSize, n = pcall(parts.size, parts)
+            if okSize and n > 0 then
                 local names = {}
-                for i = 0, parts:size() - 1 do names[#names + 1] = parts:get(i):getFullType() end
+                for i = 0, n - 1 do
+                    local okIt, part = pcall(parts.get, parts, i)
+                    if okIt and part ~= nil then
+                        local okType, typ = pcall(part.getFullType, part)
+                        if okType then names[#names + 1] = typ end
+                    end
+                end
                 rec.wp = table.concat(names, "+")
             end
         end
-    end)
-    try(function() if item:IsDrainable() then rec.u = item:getCurrentUsesFloat() end end)
-    try(function()
-        if not item:IsFood() then return end
-        rec.a = item:getAge()
-        local base, cur = nil, nil
-        pcall(function() base = item:getBaseHunger() end)
-        pcall(function() cur = item:getHungChange() end)
-        if base ~= nil and base ~= 0 and cur ~= nil and math.abs(cur) <= math.abs(base) * 0.999 then
-            rec.fp = cur / base
+    end
+    local okDrain, drainable = pcall(item.IsDrainable, item)
+    if okDrain and drainable then
+        local okUses, uses = pcall(item.getCurrentUsesFloat, item)
+        if okUses then rec.u = uses end
+    end
+    local okFood, isFood = pcall(item.IsFood, item)
+    if okFood and isFood then
+        local okAge, age = pcall(item.getAge, item)
+        if okAge then
+            rec.a = age
+            local okLa, la = pcall(item.getLastAged, item)
+            if okLa and type(la) == "number" and la >= 0 then rec.la = la end
+            local base, cur = nil, nil
+            local okBase, b = pcall(item.getBaseHunger, item)
+            if okBase then base = b end
+            local okCur, c = pcall(item.getHungChange, item)
+            if okCur then cur = c end
+            if base ~= nil and base ~= 0 and cur ~= nil and math.abs(cur) <= math.abs(base) * 0.999 then
+                rec.fp = cur / base
+            end
         end
-    end)
-    try(function() if item:isCooked() then rec.ck = true end end)
-    try(function() if item:isBurnt() then rec.bu = true end end)
-    try(function() if item:isFavorite() then rec.f = true end end)
-    try(function()
-        local k = item:getKeyId()
-        if k ~= nil and k ~= -1 then rec.k = k end
-    end)
+    end
+    local okCooked, cooked = pcall(item.isCooked, item)
+    if okCooked and cooked then rec.ck = true end
+    local okBurnt, burnt = pcall(item.isBurnt, item)
+    if okBurnt and burnt then rec.bu = true end
+    local okFav, fav = pcall(item.isFavorite, item)
+    if okFav and fav then rec.f = true end
+    local okKey, key = pcall(item.getKeyId, item)
+    if okKey and key ~= nil and key ~= -1 then rec.k = key end
 
 
-    try(function()
-        if not item:IsWeapon() and item:getMaxAmmo() > 0 then
-            local n = item:getCurrentAmmoCount()
-            if n ~= nil and n > 0 then rec.am = n end
+    local okAmmoWeapon, ammoWeapon = pcall(item.IsWeapon, item)
+    if okAmmoWeapon and not ammoWeapon then
+        local okMaxAmmo, maxAmmo = pcall(item.getMaxAmmo, item)
+        if okMaxAmmo and type(maxAmmo) == "number" and maxAmmo > 0 then
+            local okAmmoN, n = pcall(item.getCurrentAmmoCount, item)
+            if okAmmoN and n ~= nil and n > 0 then rec.am = n end
         end
-    end)
-    try(function()
-        if item:IsWeapon() then
-            local n = item:getCurrentAmmoCount()
-            if n ~= nil and n > 0 then rec.am = n end
-            if item:isContainsClip() then rec.cl = true end
-            if item:isRoundChambered() then rec.ch = true end
-        end
-    end)
+    end
+    if okAmmoWeapon and ammoWeapon then
+        local okAmmoN, n = pcall(item.getCurrentAmmoCount, item)
+        if okAmmoN and n ~= nil and n > 0 then rec.am = n end
+        local okClip, clip = pcall(item.isContainsClip, item)
+        if okClip and clip then rec.cl = true end
+        local okChamber, chamber = pcall(item.isRoundChambered, item)
+        if okChamber and chamber then rec.ch = true end
+    end
     try(function()
 
         local ci = item:getClothingItem()
@@ -260,12 +288,13 @@ function BridgeItems.record(item, deep)
     end)
 
 
-    try(function()
-        if item.isRecordedMedia ~= nil and item:isRecordedMedia() == true then
-            local mi = item:getRecordedMediaIndex()
-            if type(mi) == "number" and mi >= 0 then rec.mi = mi end
+    if item.isRecordedMedia ~= nil then
+        local okRec, isRec = pcall(item.isRecordedMedia, item)
+        if okRec and isRec == true then
+            local okMi, mi = pcall(item.getRecordedMediaIndex, item)
+            if okMi and type(mi) == "number" and mi >= 0 then rec.mi = mi end
         end
-    end)
+    end
 
 
     try(function()
@@ -295,16 +324,15 @@ function BridgeItems.record(item, deep)
     end)
 
     local isBook = false
-    try(function() isBook = item.IsLiterature ~= nil and item:IsLiterature() == true end)
+    if item.IsLiterature ~= nil then
+        local okLit, lit = pcall(item.IsLiterature, item)
+        isBook = okLit and lit == true
+    end
     if isBook then
-        try(function()
-            local pg = item:getAlreadyReadPages()
-            if type(pg) == "number" and pg > 0 then rec.pg = pg end
-        end)
-        try(function()
-            local lk = item:getLockedBy()
-            if type(lk) == "string" and lk ~= "" then rec.lk = lk end
-        end)
+        local okPg, pg = pcall(item.getAlreadyReadPages, item)
+        if okPg and type(pg) == "number" and pg > 0 then rec.pg = pg end
+        local okLk, lk = pcall(item.getLockedBy, item)
+        if okLk and type(lk) == "string" and lk ~= "" then rec.lk = lk end
         try(function()
             if item:canBeWrite() ~= true then return end
             local pages = item:getNumberOfPages()
@@ -421,6 +449,7 @@ function BridgeItems.apply(item, rec)
     if rec.sh ~= nil then try(function() if item.setSharpness ~= nil then item:setSharpness(rec.sh) end end) end
     if rec.u ~= nil then try(function() item:setCurrentUsesFloat(rec.u) end) end
     if rec.a ~= nil then try(function() item:setAge(rec.a) end) end
+    if rec.la ~= nil then try(function() item:setLastAged(rec.la) end) end
     if rec.ck then try(function() item:setCooked(true) end) end
     if rec.bu then try(function() item:setBurnt(true) end) end
     if rec.fp ~= nil then
@@ -543,16 +572,16 @@ end
 
 
 
-local NUM = { h = true, p = true, c = true, u = true, a = true, r = true, g = true, b = true,
+local NUM = { h = true, p = true, c = true, u = true, a = true, la = true, r = true, g = true, b = true,
               tc = true, bt = true, hue = true, k = true, am = true, fa = true, sh = true, hc = true,
               mi = true, pg = true, q = true, fp = true }
 local BOOL = { w = true, ck = true, bu = true, f = true, cl = true, ch = true, fe = true, as = true, cn = true }
 
 local TEXT = { n = true, lk = true, ga = true, gt = true, gp = true }
 local PACKED = { md = true, cp = true }
-local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "fp", "r", "g", "b", "tc", "bt", "hue", "dec", "ho", "pa", "bl", "di", "k", "f", "ck", "bu",
+local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "la", "fp", "r", "g", "b", "tc", "bt", "hue", "dec", "ho", "pa", "bl", "di", "k", "f", "ck", "bu",
                 "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp" }
-local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", fa = "%.3f", sh = "%.3f", fp = "%.4f" }
+local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", la = "%.3f", fa = "%.3f", sh = "%.3f", fp = "%.4f" }
 BridgeItems.MAX_LENGTH = 60000
 BridgeItems.BLOCK_RATIO = 0.92
 BridgeItems.CHUNK = 8000
@@ -764,7 +793,7 @@ function BridgeItems.encode(list, skip)
 end
 
 
-local VOLATILE = { a = true, u = true, fa = true, md = true, bl = true, di = true }
+local VOLATILE = { a = true, la = true, u = true, fa = true, md = true, bl = true, di = true }
 function BridgeItems.signature(list)
     return BridgeItems.encode(list, VOLATILE)
 end

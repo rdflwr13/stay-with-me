@@ -9,7 +9,9 @@
 BridgeHeal = BridgeHeal or {}
 
 local REACH = 1.3
-local STEP_FRAMES = 120
+local STEP_FLOOR = 30
+local HEAL_XP_HOLD = 600
+local WE_NOTICE_HOLD = 1800
 local GAP_FRAMES = 15
 local GIVEUP_DIST = 4.0
 local REQUEST_REACH = 45
@@ -32,19 +34,75 @@ BridgeHeal.lastAuto = -99999
 BridgeHeal.emptySig = nil
 BridgeHeal.emptyUntil = 0
 BridgeHeal.byRequest = false
+BridgeHeal.parkedActive = false
 BridgeHeal.sent = {}
 BridgeHeal.active = false
 BridgeHeal.nextAt = 0
 BridgeHeal.missing = {}
 BridgeHeal.done = 0
 BridgeHeal.pass = 0
+BridgeHeal.xpAt = BridgeHeal.xpAt or {}
+BridgeHeal.weSaid = BridgeHeal.weSaid or {}
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeHeal] " .. tostring(text)) end end
 local function warn(text) print("[BridgeHeal] " .. tostring(text)) end
 
+local function doctorLevel(body)
+    local lvl = 0
+    if type(BridgeSkills) == "table" and type(BridgeSkills.level) == "function" then
+        pcall(function() lvl = BridgeSkills.level("Doctor") end)
+    end
+    lvl = tonumber(lvl) or 0
+    if lvl < 0 then lvl = 0 end
+    if lvl > 10 then lvl = 10 end
+    return math.floor(lvl)
+end
+
+local function stepFrames(step)
+    local lvl = doctorLevel(nil)
+    local n = 120
+    local k = step.kind
+    if k == "bandage" or k == "unbandage" or k == "disinfect" then
+        n = 120 - 4 * lvl
+    elseif k == "stitch" then
+        local needle = false
+        local t = nil
+        if step.item ~= nil then pcall(function() t = step.item:getType() end) end
+        if t == "SutureNeedle" or t == "SutureNeedleHolder" then needle = true end
+        if not needle and step.item2 ~= nil then
+            pcall(function() t = step.item2:getType() end)
+            if t == "SutureNeedle" or t == "SutureNeedleHolder" then needle = true end
+        end
+        n = (needle and 150 or 200) - 4 * lvl
+    elseif k == "splint" then
+        n = 140 - 4 * lvl
+    elseif k == "glass" then
+        n = 150 - 4 * lvl
+    elseif k == "bullet" or k == "burn" then
+        n = 250 - 6 * lvl
+    elseif k == "we_rinse" or k == "we_debride" or k == "we_maggots" then
+        n = 120
+    end
+    if n < STEP_FLOOR then n = STEP_FLOOR end
+    return n
+end
+
 local function dist(a, b)
     local dx, dy = a:getX() - b:getX(), a:getY() - b:getY()
     return math.sqrt(dx * dx + dy * dy)
+end
+
+function BridgeHeal.parkedContext(red)
+    if BridgeCar == nil then return false end
+    if type(BridgeCar.isInside) ~= "function" or not BridgeCar.isInside() then return false end
+    if type(BridgeCar.withRed) ~= "function" then return false end
+    return BridgeCar.withRed(red) == true
+end
+
+function BridgeHeal.setPuppetTreat(name)
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.setTreatAnim) == "function" then
+        BridgeSeatPuppet.setTreatAnim(name)
+    end
 end
 
 
@@ -60,12 +118,46 @@ local PART_ANIM = {
 }
 
 
+local PART_NAME_CACHE = {}
+
 local function partName(part)
+    local idx = nil
+    pcall(function() idx = part:getIndex() end)
+    if idx == nil then
+        local key, name = "?", nil
+        pcall(function() key = tostring(BodyPartType.ToString(part:getType())) end)
+        pcall(function() name = BodyPartType.getDisplayName(part:getType()) end)
+        return key, name or key
+    end
+    local cached = PART_NAME_CACHE[idx]
+    if cached ~= nil then return cached.key, cached.name end
     local key, name = "?", nil
     pcall(function() key = tostring(BodyPartType.ToString(part:getType())) end)
     pcall(function() name = BodyPartType.getDisplayName(part:getType()) end)
-    return key, name or key
+    local out = { key = key, name = name or key }
+    PART_NAME_CACHE[idx] = out
+    return out.key, out.name
 end
+
+local FLAGS = {
+    { "injury", function(p) return p:HasInjury() end },
+    { "bleeding", function(p) return p:bleeding() end },
+    { "scratched", function(p) return p:scratched() end },
+    { "cut", function(p) return p:isCut() end },
+    { "deep", function(p) return p:isDeepWounded() end },
+    { "bitten", function(p) return p:bitten() end },
+    { "glass", function(p) return p:haveGlass() end },
+    { "bullet", function(p) return p:haveBullet() end },
+    { "fracture", function(p) return p:getFractureTime() > 0 and p:getSplintFactor() == 0 end },
+    { "splint", function(p) return p:getSplintFactor() > 0 end },
+    { "infected", function(p) return p:isInfectedWound() end },
+    { "burn", function(p) return p:getBurnTime() > 0 end },
+    { "burnWash", function(p) return p:isNeedBurnWash() end },
+    { "bandaged", function(p) return p:bandaged() end },
+    { "dirty", function(p) return p:isBandageDirty() end },
+    { "stitched", function(p) return p:stitched() end },
+    { "alcohol", function(p) return p:getAlcoholLevel() > 0 end },
+}
 
 
 local function tr(key, a, b)
@@ -88,36 +180,48 @@ local function tr(key, a, b)
 end
 
 
+local scanAt, scanRed, scanVal = nil, nil, nil
+
 function BridgeHeal.scan(red)
+    if red == nil then return {} end
+    local tick = Bridge.tick or 0
+    if scanRed == red and scanAt ~= nil and tick - scanAt < 15 then return scanVal end
     local out = {}
+    local weOn = type(BridgeWoundExpCompat) == "table" and type(BridgeWoundExpCompat.issues) == "function"
+        and BridgeWoundExpCompat.active() == true
+    local weRoot, weUseRoot = nil, false
+    if weOn then
+        if type(BridgeWoundExpCompat.root) == "function" then
+            local okRoot, root = pcall(BridgeWoundExpCompat.root, red)
+            if okRoot then
+                weRoot = root
+                weUseRoot = root ~= nil
+            end
+        else
+            weUseRoot = true
+        end
+    end
     pcall(function()
         local parts = red:getBodyDamage():getBodyParts()
         for i = 0, parts:size() - 1 do
             local p = parts:get(i)
             local key, name = partName(p)
             local w = { part = p, key = key, name = name }
-            local function flag(f, fn) pcall(function() w[f] = fn() end) end
-            flag("injury", function() return p:HasInjury() end)
-            flag("bleeding", function() return p:bleeding() end)
-            flag("scratched", function() return p:scratched() end)
-            flag("cut", function() return p:isCut() end)
-            flag("deep", function() return p:isDeepWounded() end)
-            flag("bitten", function() return p:bitten() end)
-            flag("glass", function() return p:haveGlass() end)
-            flag("bullet", function() return p:haveBullet() end)
-            flag("fracture", function() return p:getFractureTime() > 0 and p:getSplintFactor() == 0 end)
-            flag("splint", function() return p:getSplintFactor() > 0 end)
-            flag("infected", function() return p:isInfectedWound() end)
-            flag("burn", function() return p:getBurnTime() > 0 end)
-            flag("burnWash", function() return p:isNeedBurnWash() end)
-            flag("bandaged", function() return p:bandaged() end)
-            flag("dirty", function() return p:isBandageDirty() end)
-            flag("stitched", function() return p:stitched() end)
-            flag("alcohol", function() return p:getAlcoholLevel() > 0 end)
+            for fi = 1, #FLAGS do
+                local f = FLAGS[fi]
+                local okFlag, value = pcall(f[2], p)
+                if okFlag then w[f[1]] = value end
+            end
+            if weOn and weUseRoot then
+                local ok, we = pcall(BridgeWoundExpCompat.issues, red, p:getIndex(), weRoot)
+                if ok then w.we = we end
+            end
             local any = w.injury or w.bandaged or w.stitched or w.splint or w.fracture
+            if w.we ~= nil and w.we.any == true then any = true end
             if any then out[#out + 1] = w end
         end
     end)
+    scanAt, scanRed, scanVal = tick, red, out
     return out
 end
 
@@ -137,6 +241,10 @@ function BridgeHeal.describe(wounds)
         if w.fracture then f[#f + 1] = "fracture" end
         if w.burn then f[#f + 1] = "burn" end
         if w.infected then f[#f + 1] = "infected" end
+        if w.we ~= nil and type(BridgeWoundExpCompat) == "table" and type(BridgeWoundExpCompat.describe) == "function" then
+            local s = BridgeWoundExpCompat.describe(w.we)
+            if s ~= "" then f[#f + 1] = s end
+        end
 
         if w.alcohol then f[#f + 1] = "alcohol" end
         if w.stitched then f[#f + 1] = "stitched" end
@@ -170,7 +278,14 @@ local function eachItem(body, red, fn)
         end
         return false
     end
-    if walk(body:getInventory(), 0) then return end
+    local inv = nil
+    if body ~= nil then
+        inv = body:getInventory()
+    elseif BridgeHeal.parkedContext(red) and BridgeParked ~= nil and BridgeParked.active
+            and BridgeParked.main ~= nil then
+        inv = BridgeParked.main
+    end
+    if inv ~= nil and walk(inv, 0) then return end
 
 
     local useRed = BridgeData.optionOf(Bridge.store, "redKit")
@@ -252,6 +367,8 @@ end
 
 local function findDisinfectant(body, red, used)
     return findItem(body, red, used, function(it)
+        if type(BridgeWoundExpCompat) == "table" and type(BridgeWoundExpCompat.filterDisinfectant) == "function"
+            and BridgeWoundExpCompat.filterDisinfectant(it) then return false end
         local fluid = BridgeCare.fluidAlcohol(it)
         if fluid ~= nil then return fluid > 0 end
         return it:IsDrainable() and it:getAlcoholPower() == 4.0 and it:getCurrentUses() > 0
@@ -329,7 +446,91 @@ local function findSplint(body, red, used)
     return nil, nil
 end
 
+local function itemFullType(it)
+    local t = nil
+    pcall(function() t = it:getFullType() end)
+    if t == nil then pcall(function() t = it:getModule() .. "." .. it:getType() end) end
+    return t
+end
 
+local function findWater(body, red, used)
+    return findItem(body, red, used, function(it)
+        local water = false
+        pcall(function() water = it:isWaterSource() == true end)
+        if not water then return false end
+        local usable = false
+        pcall(function()
+            if ComponentType ~= nil and it:hasComponent(ComponentType.FluidContainer) then
+                local fc = it:getFluidContainer()
+                usable = fc ~= nil and fc:getAmount() > 0.2
+            elseif it:IsDrainable() then
+                usable = it:getCurrentUses() > 0
+            end
+        end)
+        return usable
+    end)
+end
+
+local function findSoap(body, red, used)
+    local found = nil
+    local function scan(inv, depth)
+        if found ~= nil or inv == nil or depth > 2 then return end
+        local soaps = nil
+        pcall(function() soaps = inv:getSoapList(nil, false) end)
+        if soaps ~= nil then
+            for i = 0, soaps:size() - 1 do
+                local it = soaps:get(i)
+                if it ~= nil and (used == nil or used[it] == nil or used[it] > 0) then
+                    local uses = 0
+                    pcall(function() uses = it:getCurrentUses() end)
+                    if uses > 0 then found = it return end
+                end
+            end
+        end
+        local items = nil
+        pcall(function() items = inv:getItems() end)
+        if items == nil then return end
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            local bag = false
+            pcall(function() bag = it:IsInventoryContainer() end)
+            if bag then
+                local sub = nil
+                pcall(function() sub = it:getInventory() end)
+                scan(sub, depth + 1)
+                if found ~= nil then return end
+            end
+        end
+    end
+    local inv = nil
+    if body ~= nil then
+        inv = body:getInventory()
+    elseif BridgeHeal.parkedContext(red) and BridgeParked ~= nil and BridgeParked.active
+            and BridgeParked.main ~= nil then
+        inv = BridgeParked.main
+    end
+    if inv ~= nil then pcall(function() scan(inv, 0) end) end
+    local useRed = BridgeData.optionOf(Bridge.store, "redKit")
+    if BridgeHeal.active and BridgeHeal.kitLock ~= nil then useRed = BridgeHeal.kitLock end
+    if found == nil and red ~= nil and useRed then pcall(function() scan(red:getInventory(), 0) end) end
+    if found ~= nil and used ~= nil then reserve(used, found) end
+    return found
+end
+
+local function findDebrisTool(body, red, used)
+    return findItem(body, red, used, function(it)
+        local t = itemFullType(it)
+        return t == "Base.Tweezers" or t == "Base.Tweezers_Forged" or t == "Base.SutureNeedleHolder"
+            or t == "WoundExpansion.WE_SurgicalKit"
+    end)
+end
+
+local function findMaggotsTool(body, red, used)
+    return findItem(body, red, used, function(it)
+        local t = itemFullType(it)
+        return t == "Base.Tweezers" or t == "Base.Tweezers_Forged" or t == "WoundExpansion.WE_SurgicalKit"
+    end)
+end
 
 function BridgeHeal.hasFor(body, red, kind)
     if kind == "bandage" then return bestBandage(body, red, nil) ~= nil end
@@ -364,6 +565,7 @@ function BridgeHeal.plan(body, red)
     local rawQueue, missing, used = {}, {}, {}
     local queue = rawQueue
     local lacking = {}
+    local lvl = doctorLevel(body)
     local function need(what, w)
         missing[#missing + 1] = tr("Need_" .. what, w.name)
         lacking[what] = true
@@ -373,6 +575,64 @@ function BridgeHeal.plan(body, red)
 
 
 
+        local weBandaged = false
+        local bandagePlanned = false
+        local bandageNeeded = false
+        if w.we ~= nil and type(BridgeWoundExpCompat) == "table" and type(BridgeWoundExpCompat.plan) == "function" then
+            local intents = BridgeWoundExpCompat.plan(red, body, red, w.part:getIndex(), w.we, lvl, {
+                soap = findSoap(body, red, nil) ~= nil,
+                debris = findDebrisTool(body, red, nil) ~= nil,
+                maggots = findMaggotsTool(body, red, nil) ~= nil,
+                vanillaBandage = false,
+            })
+            for _, intent in ipairs(intents) do
+                local op = intent.op
+                if op == "rinse" then
+                    local water = findWater(body, red, used)
+                    if water ~= nil then
+                        local soapItem = nil
+                        if intent.soap == true then soapItem = findSoap(body, red, used) end
+                        queue[#queue + 1] = { kind = "we_rinse", weOp = "rinse", w = w, water = water, soap = soapItem }
+                    else
+                        need("Water", w)
+                    end
+                elseif op == "debride" then
+                    local tool = findDebrisTool(body, red, nil)
+                    if tool ~= nil then
+                        queue[#queue + 1] = { kind = "we_debride", weOp = "debride", w = w, item = tool,
+                            water = findWater(body, red, used) }
+                    else
+                        need("DebrisTool", w)
+                    end
+                elseif op == "maggots" then
+                    local tool = findMaggotsTool(body, red, nil)
+                    if tool ~= nil then
+                        queue[#queue + 1] = { kind = "we_maggots", weOp = "maggots", w = w, item = tool,
+                            water = findWater(body, red, used) }
+                    else
+                        need("MaggotsTool", w)
+                    end
+                elseif op == "sprain" then
+                    local a, b = findSplint(body, red, used)
+                    if a ~= nil then
+                        queue[#queue + 1] = { kind = "splint", w = w, item = a, item2 = b }
+                    else
+                        need("Splint", w)
+                    end
+                elseif op == "rebandage" then
+                    local b = bestBandage(body, red, used)
+                    if b ~= nil then
+                        queue[#queue + 1] = { kind = "unbandage", w = w }
+                        queue[#queue + 1] = { kind = "bandage", w = w, item = b, weRebandage = true }
+                        weBandaged = true
+                        bandagePlanned = true
+                    else
+                        need("Bandage", w)
+                    end
+                end
+            end
+        end
+
         local needsCare = w.injury or w.stitched or w.infected
         local open = needsCare and not w.bandaged
         local wantBandage = open
@@ -381,7 +641,7 @@ function BridgeHeal.plan(body, red)
 
 
         local spare = nil
-        if w.bandaged and w.dirty then
+        if not weBandaged and w.bandaged and w.dirty then
             spare = bestBandage(body, red, used)
             if spare ~= nil then
                 queue[#queue + 1] = { kind = "unbandage", w = w }
@@ -398,7 +658,7 @@ function BridgeHeal.plan(body, red)
 
 
         local reuse = false
-        if w.bandaged and not w.dirty and w.deep and not w.stitched and not w.glass then
+        if not weBandaged and w.bandaged and not w.dirty and w.deep and not w.stitched and not w.glass then
             local a, b = findSuture(body, red, used)
             if a ~= nil then
                 spare = bestBandage(body, red, used)
@@ -420,7 +680,7 @@ function BridgeHeal.plan(body, red)
 
 
 
-        if w.bandaged and not w.dirty and w.infected and not w.alcohol and open ~= true then
+        if not weBandaged and w.bandaged and not w.dirty and w.infected and not w.alcohol and open ~= true then
             local d = findDisinfectant(body, red, nil)
             if d == nil then
                 need("Disinfectant", w)
@@ -473,19 +733,46 @@ function BridgeHeal.plan(body, red)
             if a ~= nil then queue[#queue + 1] = { kind = "splint", w = w, item = a, item2 = b }
             else need("Splint", w) end
         end
-        if wantBandage then
+        if wantBandage and not bandagePlanned then
             local b = spare or bestBandage(body, red, used)
             if b == nil and reuse then
 
                 queue[#queue + 1] = { kind = "bandage", w = w, reuse = true }
+                bandagePlanned = true
             elseif b ~= nil then
                 queue[#queue + 1] = { kind = "bandage", w = w, item = b }
+                bandagePlanned = true
             elseif w.bleeding and not w.bandaged then
                 local d = dirtyBandage(body, red, used)
-                if d ~= nil then queue[#queue + 1] = { kind = "bandage", w = w, item = d, dirty = true }
-                else need("Bandage", w) end
+                if d ~= nil then
+                    queue[#queue + 1] = { kind = "bandage", w = w, item = d, dirty = true }
+                    bandagePlanned = true
+                else
+                    need("Bandage", w)
+                    bandageNeeded = true
+                end
             else
                 need("Bandage", w)
+                bandageNeeded = true
+            end
+        end
+
+        if not bandagePlanned and not bandageNeeded and w.we ~= nil and type(BridgeWoundExpCompat) == "table"
+            and type(BridgeWoundExpCompat.plan) == "function" then
+            local dressIntents = BridgeWoundExpCompat.plan(red, body, red, w.part:getIndex(), w.we, lvl, {
+                vanillaBandage = false,
+            })
+            for _, intent in ipairs(dressIntents) do
+                if intent.op == "dress" then
+                    local b = bestBandage(body, red, used)
+                    if b ~= nil then
+                        queue[#queue + 1] = { kind = "bandage", w = w, item = b }
+                        bandagePlanned = true
+                    else
+                        need("Bandage", w)
+                    end
+                    break
+                end
             end
         end
     end
@@ -501,7 +788,48 @@ end
 
 
 
-local function doctorLevel(body) return 2 end
+local HEAL_XP = {
+    bandage = 5, stitch = 15, splint = 15, glass = 15, bullet = 20, burn = 10,
+    we_debride = 10, we_maggots = 12, we_rinse = 0, disinfect = 0,
+}
+
+local function xpEligible(step)
+    local k = step.kind
+    if k == "bandage" then
+        if step.weRebandage then return true end
+        return not step.w.bandaged
+    elseif k == "stitch" then
+        return not step.w.stitched
+    elseif k == "splint" then
+        return not step.w.splint
+    elseif k == "glass" then
+        return step.w.glass == true
+    elseif k == "bullet" then
+        return step.w.bullet == true
+    elseif k == "burn" then
+        return step.w.burn == true and step.w.burnWash == true
+    elseif k == "we_debride" then
+        return step.w.we ~= nil and step.w.we.conditions ~= nil
+            and step.w.we.conditions["EmbeddedDebris"] ~= nil
+    elseif k == "we_maggots" then
+        return step.w.we ~= nil and step.w.we.conditions ~= nil
+            and step.w.we.conditions["Maggots"] ~= nil
+    end
+    return false
+end
+
+local function grantHealXp(step)
+    local amount = HEAL_XP[step.kind]
+    if amount == nil or amount <= 0 then return end
+    if not xpEligible(step) then return end
+    local key = tostring(step.w.part:getIndex()) .. ":" .. step.kind
+    local at = BridgeHeal.xpAt[key]
+    if at ~= nil and Bridge.time - at <= HEAL_XP_HOLD then return end
+    BridgeHeal.xpAt[key] = Bridge.time
+    if type(BridgeSkills) == "table" and type(BridgeSkills.add) == "function" then
+        BridgeSkills.add("Doctor", amount, "heal:" .. step.kind)
+    end
+end
 
 
 
@@ -551,7 +879,44 @@ end
 
 
 
+local function applyWe(body, red, step)
+    local index = step.w.part:getIndex()
+    local change = { we = { op = step.weOp, part = index, level = doctorLevel(body) } }
+    if step.weOp == "rinse" then change.we.soap = step.soap ~= nil end
+    local key = tostring(step.w.key) .. ":" .. step.kind
+    if isClient() then
+        local function inRed(it)
+            local mine = false
+            pcall(function() mine = red:getInventory():containsRecursive(it) end)
+            return mine
+        end
+        if step.water ~= nil then
+            if inRed(step.water) then change.we.waterId = step.water:getID()
+            else BridgeWoundExpCompat.spendWater(step.water) end
+        end
+        if step.soap ~= nil then
+            if inRed(step.soap) then change.we.soapId = step.soap:getID()
+            else BridgeCare.consume(step.soap, false) end
+        end
+        sendClientCommand(red, "Bridge", "care", { change = change })
+        BridgeHeal.sent[key] = Bridge.time
+        return nil
+    end
+    if type(BridgeWoundExpCompat) ~= "table" or type(BridgeWoundExpCompat.apply) ~= "function" then
+        return "wound expansion unavailable"
+    end
+    local ok, why = BridgeWoundExpCompat.apply(red, change.we)
+    if not ok then return why or "we apply failed" end
+    if step.water ~= nil then BridgeWoundExpCompat.spendWater(step.water) end
+    if step.soap ~= nil then BridgeCare.consume(step.soap, false) end
+    if type(BridgeWoundExpCompat.push) == "function" then BridgeWoundExpCompat.push(red) end
+    return nil
+end
+
 local function apply(body, red, step)
+    if step.kind == "we_rinse" or step.kind == "we_debride" or step.kind == "we_maggots" then
+        return applyWe(body, red, step)
+    end
     local p = step.w.part
     local lvl = doctorLevel(body)
     local finder = FINDERS[step.kind]
@@ -567,6 +932,7 @@ local function apply(body, red, step)
     if step.kind == "unbandage" then
         local bag = nil
         pcall(function() bag = body:getInventory() end)
+        if bag == nil and BridgeParked ~= nil and BridgeParked.active then bag = BridgeParked.main end
         BridgeCare.returnBandage(bag, p)
     end
     if step.kind == "bullet" then
@@ -607,16 +973,18 @@ end
 
 local function say(key, a, b)
     if Bridge ~= nil and Bridge.speakText ~= nil then
+        if type(Bridge.speechAllowed) == "function" and not Bridge.speechAllowed(key, "health") then return end
 
         local text = nil
         pcall(function() text = BridgeMoments.line(string.gsub(key, "_", ""), a, b) end)
-        text = text or tr("Say_" .. key, a, b)
+        text = text or BridgeSpeech.getSay(key, a, b)
 
 
 
         local quiet = false
         pcall(function() quiet = Bridge.quiet() end)
         if quiet then
+            if type(Bridge.markSpeech) == "function" then Bridge.markSpeech() end
             pcall(function() Bridge.bridgeEvent(key, text) end)
             return
         end
@@ -636,15 +1004,42 @@ function BridgeHeal.needs(wounds)
 
         local festering = w.bandaged and not w.dirty and w.infected and not w.alcohol
         if open or (w.bandaged and w.dirty) or w.fracture or festering then any = true end
+        if w.we ~= nil then
+            if w.we.urgent == true then urgent = true end
+            if w.we.any == true then any = true end
+        end
     end
     return urgent, any
 end
 
 
+function BridgeHeal.weNotice(wounds)
+    local names = {}
+    if type(BridgeWoundExpCompat) ~= "table" or type(BridgeWoundExpCompat.detectOnly) ~= "function" then
+        return names
+    end
+    for _, w in ipairs(wounds) do
+        if w.we ~= nil then
+            local list = BridgeWoundExpCompat.detectOnly(w.we)
+            for _, id in ipairs(list) do
+                local key = tostring(w.key) .. ":" .. id
+                local at = BridgeHeal.weSaid[key]
+                if at == nil or Bridge.time - at > WE_NOTICE_HOLD then
+                    BridgeHeal.weSaid[key] = Bridge.time
+                    say("We_" .. id)
+                end
+                names[#names + 1] = id
+            end
+        end
+    end
+    return names
+end
+
 function BridgeHeal.start(body, red, byRequest)
     local queue, missing, wounds, lacking = BridgeHeal.plan(body, red)
     BridgeHeal.missing = missing
     BridgeHeal.lastAuto = Bridge.time
+    local weNames = BridgeHeal.weNotice(wounds)
     if #wounds == 0 then
         if byRequest then say("Heal_NoWounds") end
         BridgeHeal.info = "clean"
@@ -707,18 +1102,21 @@ function BridgeHeal.start(body, red, byRequest)
         end
         BridgeHeal.info = fetched and ("waiting for home supplies: " .. table.concat(missing, ", "))
             or ("nothing to do: " .. table.concat(missing, ", "))
+        if #weNames > 0 then BridgeHeal.info = "we: " .. table.concat(weNames, ", ") end
         return BridgeHeal.info
     end
     BridgeHeal.queue = queue
     BridgeHeal.current = nil
     BridgeHeal.state = "walk"
     BridgeHeal.active = true
+    BridgeHeal.parkedActive = body == nil and BridgeHeal.parkedContext(red) == true
     BridgeHeal.kitLock = BridgeData.optionOf(Bridge.store, "redKit")
     BridgeHeal.byRequest = byRequest == true
     BridgeHeal.walkSince = Bridge.time
     BridgeHeal.done = 0
     BridgeHeal.pass = 0
     BridgeHeal.info = "started " .. tostring(#queue) .. (byRequest and " by request" or " by herself")
+    if #weNames > 0 then BridgeHeal.info = BridgeHeal.info .. " we: " .. table.concat(weNames, ", ") end
     log(BridgeHeal.info .. ": " .. BridgeHeal.describe(wounds))
     local bites = {}
     for _, w in ipairs(wounds) do if w.bitten then bites[#bites + 1] = w.name end end
@@ -731,12 +1129,15 @@ end
 
 function BridgeHeal.request()
     local red = BridgeData.owner()
-    if red == nil or Bridge == nil or not Bridge.alive() then return "no body" end
+    if red == nil or Bridge == nil then return "no body" end
     if BridgeHeal.active then return "already" end
-    local res = BridgeHeal.start(Bridge.body, red, true)
-
-
-    if BridgeHeal.active and Bridge.mode ~= nil and Bridge.mode ~= "follow" and Bridge.setMode ~= nil then
+    local parked = BridgeHeal.parkedContext(red)
+    if not parked and not Bridge.alive() then return "no body" end
+    local res = BridgeHeal.start(parked and nil or Bridge.body, red, true)
+    if BridgeHeal.active and parked then
+        BridgeHeal.parkedActive = true
+    elseif BridgeHeal.active and not parked and Bridge.mode ~= nil and Bridge.mode ~= "follow"
+            and Bridge.setMode ~= nil then
         pcall(function() Bridge.setMode("follow") end)
         res = res .. ", follow"
     end
@@ -751,6 +1152,7 @@ function BridgeHeal.stop(reason)
     BridgeHeal.active = false
     BridgeHeal.kitLock = nil
     BridgeHeal.byRequest = false
+    BridgeHeal.parkedActive = false
     BridgeHeal.info = "stopped: " .. tostring(reason)
     if reason ~= "done" then log(BridgeHeal.info) end
 end
@@ -787,14 +1189,36 @@ end
 function BridgeHeal.isThreat(z, body, red)
     if z == nil or z == body then return false end
     local alive = false
-    pcall(function() alive = z:isAlive() end)
+    if BridgeZScan ~= nil and type(BridgeZScan.isAlive) == "function" then
+        alive = BridgeZScan.isAlive(z) == true
+    else
+        pcall(function() alive = z:isAlive() end)
+    end
     if not alive then return false end
-    local companion = false
-    pcall(function() companion = Bridge.BODY_VAR ~= nil and z:getVariableBoolean(Bridge.BODY_VAR) end)
+    local companion = nil
+    if Bridge.BODY_VAR ~= nil and BridgeZScan ~= nil and type(BridgeZScan.cachedBodyVar) == "function" then
+        companion = BridgeZScan.cachedBodyVar(z)
+    end
+    if companion == nil then
+        companion = false
+        pcall(function() companion = Bridge.BODY_VAR ~= nil and z:getVariableBoolean(Bridge.BODY_VAR) end)
+    end
     if companion then return false end
-    if math.abs(z:getZ() - red:getZ()) >= 0.8 then return false end
+    local zz = nil
+    if BridgeZScan ~= nil and type(BridgeZScan.pos) == "function" then
+        local _, _, pz = BridgeZScan.pos(z)
+        zz = pz
+    end
+    if zz == nil then zz = z:getZ() end
+    if math.abs(zz - red:getZ()) >= 0.8 then return false end
 
-    if BridgeData.harmless(z) then return false end
+    local harmless = false
+    if BridgeZScan ~= nil and type(BridgeZScan.isHarmless) == "function" then
+        harmless = BridgeZScan.isHarmless(z) == true
+    else
+        harmless = BridgeData.harmless(z) == true
+    end
+    if harmless then return false end
     local d = dist(z, red)
     if body ~= nil then d = math.min(d, dist(z, body)) end
     if d > THREAT_FAR then return false end
@@ -833,7 +1257,10 @@ function BridgeHeal.threatNear(body, red, imminentOnly, running)
             if x1 ~= nil then
                 local x2, y2 = x1, y1
                 if body ~= nil then x2, y2 = body:getX(), body:getY() end
-                list = BridgeZScan.nearUnion(x1, y1, x2, y2, THREAT_FAR, { tag = "heal.threat" })
+                local z = nil
+                if red ~= nil then pcall(function() z = red:getZ() end) end
+                list = BridgeZScan.nearUnion(x1, y1, x2, y2, THREAT_FAR,
+                    { tag = "heal.threat", z = z, zTol = 0.8 })
             end
         end
         if list == nil then list = getCell():getZombieList() end
@@ -912,6 +1339,153 @@ function BridgeHeal.autoCheck(body, red)
         BridgeHeal.emptySig = sig
         BridgeHeal.emptyUntil = Bridge.time + RETRY_EMPTY
     end
+end
+
+function BridgeHeal.parkedAuto(red)
+    if not BridgeData.optionOf(Bridge.store, "autoHeal") then
+        BridgeHeal.quietSince = nil
+        BridgeHeal.waitWhy = "auto heal off"
+        return
+    end
+    if not BridgeHeal.parkedContext(red) then
+        BridgeHeal.quietSince = nil
+        BridgeHeal.waitWhy = "not parked"
+        return
+    end
+    local dead = false
+    pcall(function() dead = red ~= nil and red:isDead() == true end)
+    if dead then
+        BridgeHeal.quietSince = nil
+        BridgeHeal.waitWhy = "player dead"
+        return
+    end
+    if BridgeHeal.threatNear(nil, red, true, false) then
+        BridgeHeal.quietSince = nil
+        BridgeHeal.waitWhy = "zombie"
+        return
+    end
+    if BridgeHeal.quietSince == nil then BridgeHeal.quietSince = Bridge.time end
+    local wounds = BridgeHeal.scan(red)
+    local urgent, any = BridgeHeal.needs(wounds)
+    if not any then
+        BridgeHeal.waitWhy = nil
+        return
+    end
+    if Bridge.time - BridgeHeal.quietSince < (urgent and QUIET_URGENT or QUIET) then
+        BridgeHeal.waitWhy = "quiet"
+        return
+    end
+    local sig = BridgeHeal.describe(wounds)
+    if sig == BridgeHeal.emptySig and Bridge.time < BridgeHeal.emptyUntil then
+        BridgeHeal.waitWhy = "nothing to treat with"
+        return
+    end
+    BridgeHeal.start(nil, red, false)
+    if BridgeHeal.active then
+        BridgeHeal.parkedActive = true
+        BridgeHeal.emptySig = nil
+        BridgeHeal.waitWhy = nil
+    else
+        BridgeHeal.emptySig = sig
+        BridgeHeal.emptyUntil = Bridge.time + RETRY_EMPTY
+    end
+end
+
+function BridgeHeal.parkedTick(red)
+    local parked = BridgeHeal.parkedContext(red)
+    if parked then
+        if BridgeHeal.active then BridgeHeal.parkedActive = true end
+    elseif not BridgeHeal.parkedActive then
+        return false
+    end
+
+    if not parked then
+        if BridgeHeal.active then
+            say("Heal_Left")
+            BridgeHeal.stop("left the car")
+        end
+        BridgeHeal.setPuppetTreat(nil)
+        BridgeHeal.parkedActive = false
+        return false
+    end
+
+    local dead = false
+    pcall(function() dead = red ~= nil and red:isDead() == true end)
+    if dead then
+        if BridgeHeal.active then BridgeHeal.stop("player dead") end
+        BridgeHeal.parkedActive = false
+        BridgeHeal.setPuppetTreat(nil)
+        return false
+    end
+
+    if not BridgeHeal.active then
+        if Bridge.every(CHECK_EVERY) then BridgeHeal.parkedAuto(red) end
+        if not BridgeHeal.active then
+            BridgeHeal.setPuppetTreat(nil)
+            return false
+        end
+    end
+
+    if Bridge.every(10) and BridgeHeal.threatNear(nil, red, true, false) then
+        say("Heal_Zombie")
+        BridgeHeal.stop("zombie")
+        BridgeHeal.quietSince = nil
+        BridgeHeal.setPuppetTreat(nil)
+        return false
+    end
+
+    BridgeHeal.parkedActive = true
+    BridgeHeal.state = "work"
+
+    if BridgeHeal.current == nil then
+        if Bridge.time < BridgeHeal.nextAt then
+            BridgeHeal.setPuppetTreat(nil)
+            return true
+        end
+        local step = table.remove(BridgeHeal.queue, 1)
+        if step == nil then
+            finish(nil, red)
+            BridgeHeal.setPuppetTreat(nil)
+            return BridgeHeal.active
+        end
+        step.startTick = nil
+        BridgeHeal.current = step
+        BridgeHeal.bestDist = nil
+    end
+
+    local step = BridgeHeal.current
+    if step.startTick == nil then
+        step.startTick = Bridge.time
+        BridgeHeal.state = "work"
+        BridgeHeal.info = step.kind .. " " .. step.w.key
+        local stepKey = step.kind
+        if step.kind == "unbandage" and not step.w.dirty then stepKey = "unbandage_clean" end
+        say("Heal_Step", tr("Heal_" .. stepKey), step.w.name)
+        startSounds(nil, red, step)
+    end
+
+    BridgeHeal.setPuppetTreat(PART_ANIM[step.w.key] or "TreatMid")
+
+    if (Bridge.time - step.startTick) >= stepFrames(step) then
+        stopSounds(nil, red, step)
+        local ok, err = pcall(function() return apply(nil, red, step) end)
+        if ok and err ~= nil then ok = false end
+        if not ok then
+            warn("apply failed: " .. tostring(err))
+            BridgeHeal.info = "apply error: " .. tostring(err)
+        else
+            BridgeHeal.done = BridgeHeal.done + 1
+            grantHealXp(step)
+            if step.dirty then say("Heal_DirtyBandage") end
+            if BridgeParked ~= nil and type(BridgeParked.save) == "function" then
+                pcall(BridgeParked.save)
+            end
+        end
+        BridgeHeal.current = nil
+        BridgeHeal.nextAt = Bridge.time + GAP_FRAMES
+        BridgeHeal.setPuppetTreat(nil)
+    end
+    return true
 end
 
 
@@ -1161,7 +1735,7 @@ function BridgeHeal.update(body)
     if red == nil then return false end
 
 
-    local okFire, busyFire = pcall(function() return BridgeHeal.fireUpdate(body, red) end)
+    local okFire, busyFire = pcall(BridgeHeal.fireUpdate, body, red)
     if okFire and busyFire then
         if BridgeHeal.active then BridgeHeal.stop("fire") end
         return true
@@ -1169,7 +1743,8 @@ function BridgeHeal.update(body)
 
 
     local redInCar = false
-    pcall(function() redInCar = red:getVehicle() ~= nil end)
+    local okCar, vehicle = pcall(red.getVehicle, red)
+    if okCar then redInCar = vehicle ~= nil end
     if redInCar then
         if BridgeHeal.active then BridgeHeal.stop("player in car") end
         return false
@@ -1243,7 +1818,7 @@ function BridgeHeal.update(body)
     end
     local anim = PART_ANIM[step.w.key] or "TreatMid"
     pcall(function() if body:getBumpType() ~= anim then body:setBumpType(anim) end end)
-    if (Bridge.time - step.startTick) >= STEP_FRAMES then
+    if (Bridge.time - step.startTick) >= stepFrames(step) then
         stopSounds(body, red, step)
         local ok, err = pcall(function() return apply(body, red, step) end)
         if ok and err ~= nil then ok = false end
@@ -1252,6 +1827,7 @@ function BridgeHeal.update(body)
             BridgeHeal.info = "apply error: " .. tostring(err)
         else
             BridgeHeal.done = BridgeHeal.done + 1
+            grantHealXp(step)
             if step.dirty then say("Heal_DirtyBandage") end
         end
         BridgeHeal.current = nil

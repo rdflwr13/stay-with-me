@@ -522,6 +522,25 @@ local function buildGun(context, env)
 end
 
 
+local function addKeepMenu(parent, env)
+    if not BridgeData.KEEP_ON then return end
+    local keepOption = parent:addOption(tr("Keep"))
+    local keep = ISContextMenu:getNew(parent)
+    parent:addSubMenu(keepOption, keep)
+    local far = BridgeData.farOf(env.st)
+    local side = BridgeData.keepOf(env.st)
+    local closer = keep:addOption(tr("KeepCloser"), "near", BridgeMenu.onKeepDistance)
+    if not far then closer.isDisabled = true end
+    local farther = keep:addOption(tr("KeepFarther"), "far", BridgeMenu.onKeepDistance)
+    if far then farther.isDisabled = true end
+    if BridgeData.KEEP_SIDES_ON then
+        for _, entry in ipairs({ { "behind", "KeepBehind" }, { "left", "KeepLeft" }, { "right", "KeepRight" } }) do
+            local o = keep:addOption(tr(entry[2]), entry[1], BridgeMenu.onKeepSide)
+            if side == entry[1] then o.isDisabled = true end
+        end
+    end
+end
+
 local function buildFight(context, playerNum, env)
     local combatOption = context:addOption(tr("Combat"))
     local guard = false
@@ -540,6 +559,7 @@ local function buildFight(context, playerNum, env)
             if combatMode == entry[1] then o.isDisabled = true end
             tip(o, tr(entry[2] .. "Tip"))
         end
+        addKeepMenu(combat, env)
     end
 end
 
@@ -585,6 +605,14 @@ local function buildJobs(context, playerNum, env)
     local jobs = ISContextMenu:getNew(context)
     context:addSubMenu(jobsOption, jobs)
     addLootWorkMenu(jobs)
+    if BridgeTask.DOORS_ENABLED == 1 then
+        local doorsOption = jobs:addOption(tr("Doors"))
+        local doors = ISContextMenu:getNew(jobs)
+        jobs:addSubMenu(doorsOption, doors)
+        local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
+        local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
+        if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
+    end
     if BridgeTask.CLEANING_ENABLED == 1 then
         local okClean = false
         pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
@@ -612,25 +640,6 @@ local function buildJobs(context, playerNum, env)
         local move = jobs:addOption(tr("JobMoveCorpses"), nil, BridgeMenu.onJobMoveCorpses)
         if not ok then jobTip(move, "moveCorpses") end
         if not ok or BridgeTask.active then move.notAvailable = true end
-    end
-end
-
-local function buildKeep(context, playerNum, env)
-    if not BridgeData.KEEP_ON then return end
-    local keepOption = context:addOption(tr("Keep"))
-    local keep = ISContextMenu:getNew(context)
-    context:addSubMenu(keepOption, keep)
-    local far = BridgeData.farOf(env.st)
-    local side = BridgeData.keepOf(env.st)
-    local closer = keep:addOption(tr("KeepCloser"), "near", BridgeMenu.onKeepDistance)
-    if not far then closer.isDisabled = true end
-    local farther = keep:addOption(tr("KeepFarther"), "far", BridgeMenu.onKeepDistance)
-    if far then farther.isDisabled = true end
-    if BridgeData.KEEP_SIDES_ON then
-        for _, entry in ipairs({ { "behind", "KeepBehind" }, { "left", "KeepLeft" }, { "right", "KeepRight" } }) do
-            local o = keep:addOption(tr(entry[2]), entry[1], BridgeMenu.onKeepSide)
-            if side == entry[1] then o.isDisabled = true end
-        end
     end
 end
 
@@ -669,7 +678,6 @@ BridgeMenu.ORDERABLE = {
     { id = "guns", label = "GunMenu", radialOnly = true },
     { id = "torch", label = "OptTorch", build = buildTorch },
     { id = "jobs", label = "Jobs", build = buildJobs },
-    { id = "keep", label = "Keep", build = buildKeep },
     { id = "cancel", label = "CancelTask", build = buildCancel },
 }
 
@@ -693,6 +701,15 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
         end
         if BridgeMenu.inCarWithRed() then
             pcall(function() BridgeSocial.fillMenu(context, tr) end)
+            if BridgeCar.isInside() then
+                local heal = context:addOption(tr("HealMe"), nil, BridgeMenu.onHeal)
+                local dead = false
+                pcall(function()
+                    local red = BridgeData.owner()
+                    dead = red ~= nil and red:isDead() == true
+                end)
+                if BridgeHeal == nil or BridgeHeal.active or dead then heal.notAvailable = true end
+            end
         end
         return
     end
@@ -738,6 +755,33 @@ BridgeMenu.VANILLA_BTNS = { "invBtn", "healthBtn", "craftingBtn", "buildBtn", "m
     "arfBtn", "warManagerBtn" }
 
 
+BridgeMenu.sidebarAuto = 0
+
+
+function BridgeMenu.sidebarAutoSlots()
+    local n = tonumber(BridgeMenu.sidebarAuto) or 0
+    if n < 0 then n = 0 end
+    if n > 12 then n = 12 end
+    return math.floor(n)
+end
+
+
+function BridgeMenu.sidebarShift()
+    local base = 0
+    pcall(function()
+        base = BridgeData.sandboxNumber("SidebarOffsetSlots", 0, 0, 12)
+    end)
+    base = math.floor(base) + BridgeMenu.sidebarAutoSlots()
+    if base >= 12 then return false end
+    BridgeMenu.sidebarAuto = BridgeMenu.sidebarAutoSlots() + 1
+    return true
+end
+
+
+local WINDOW_KEY_NAME = "Companion Menu"
+local WINDOW_KEY_SECTION = "[Companion Menu]"
+
+
 
 
 
@@ -752,8 +796,16 @@ function BridgeMenu.sidebarTarget(panel, btn, screenH)
         end
     end
     if last == nil then return nil end
-    local x, y = 0, bottom + UI_BORDER_SPACING + 5
-    if screenH ~= nil and screenH > 0 and panel:getAbsoluteY() + y + btn:getHeight() > screenH then
+    local slots = 0
+    pcall(function()
+        slots = BridgeData.sandboxNumber("SidebarOffsetSlots", 0, 0, 12)
+    end)
+    slots = math.floor(slots) + BridgeMenu.sidebarAutoSlots()
+    if slots > 12 then slots = 12 end
+    local gap = UI_BORDER_SPACING + 5
+    local h = btn:getHeight()
+    local x, y = 0, bottom + gap + math.floor(slots) * (h + gap)
+    if screenH ~= nil and screenH > 0 and panel:getAbsoluteY() + y + h > screenH then
         x, y = last:getRight() + UI_BORDER_SPACING, last:getY()
     end
     return x, y
@@ -786,6 +838,9 @@ function BridgeMenu.sidebarStep(panel, btn, screenH)
     if not S.shown then
         S.shown = true
         btn:setVisible(true)
+        if Bridge ~= nil then
+            log(string.format("sidebar diag icon shown t=%.1f tick=%d x=%d y=%d", Bridge.time, Bridge.tick, x, y))
+        end
         moved = true
     end
     return moved
@@ -818,6 +873,166 @@ function BridgeMenu.onButtonMenu(panel, button)
 end
 
 
+function BridgeMenu.installWindowKeybind()
+    if BridgeMenu.windowKeybindDone then return end
+    if type(keyBinding) ~= "table" then return end
+    for _, bind in ipairs(keyBinding) do
+        if type(bind) == "table" and bind.value == WINDOW_KEY_NAME then
+            BridgeMenu.windowKeybindDone = true
+            return
+        end
+    end
+    local section = false
+    for _, bind in ipairs(keyBinding) do
+        if type(bind) == "table" and bind.value == WINDOW_KEY_SECTION then section = true break end
+    end
+    if not section then table.insert(keyBinding, { value = WINDOW_KEY_SECTION }) end
+    local key = nil
+    if Keyboard ~= nil then key = Keyboard.KEY_F8 end
+    if key == nil then return end
+    table.insert(keyBinding, { value = WINDOW_KEY_NAME, key = key })
+    BridgeMenu.windowKeybindDone = true
+    log("window keybind registered")
+end
+
+
+function BridgeMenu.applySandboxWindowKey()
+    if type(keyBinding) ~= "table" then return false end
+    if BridgeRadial == nil or type(BridgeRadial.sandboxKeyCode) ~= "function" then return false end
+    local t = nil
+    pcall(function() t = (SandboxVars ~= nil) and SandboxVars.StayWithMe or nil end)
+    if t == nil then return false end
+    local code = BridgeRadial.sandboxKeyCode(t.CompanionMenuKey)
+    if code == nil then return false end
+    local found = false
+    for _, bind in ipairs(keyBinding) do
+        if type(bind) == "table" and bind.value == WINDOW_KEY_NAME then
+            bind.key = code
+            found = true
+            pcall(function() getCore():addKeyBinding(WINDOW_KEY_NAME, code, 0, false, false, false) end)
+            break
+        end
+    end
+    if not found then return false end
+    if MainOptions ~= nil and type(MainOptions.keys) == "table" then
+        for _, bind in ipairs(MainOptions.keys) do
+            if type(bind) == "table" and bind.value == WINDOW_KEY_NAME then bind.key = code end
+        end
+    end
+    BridgeMenu.windowKeyApplied = true
+    return true
+end
+
+
+function BridgeMenu.onWindowKey(key)
+    if Bridge == nil or Bridge.store == nil then return end
+    if BridgeWindow == nil then return end
+    if getSpecificPlayer(0) == nil then return end
+    if MainScreen == nil or MainScreen.instance == nil or MainScreen.instance.inGame ~= true then return end
+    local hit = false
+    pcall(function() hit = getCore():isKey(WINDOW_KEY_NAME, key) == true end)
+    if not hit then return end
+    local x, y = nil, nil
+    pcall(function()
+        local panel = ISEquippedItem ~= nil and ISEquippedItem.instance or nil
+        if panel == nil then return end
+        local btn = panel.notAloneBtn
+        if btn == nil or not btn:isVisible() then return end
+        x = panel:getAbsoluteX() + btn:getRight() + 4
+        y = panel:getAbsoluteY() + btn:getY()
+    end)
+    BridgeWindow.toggle(x, y)
+end
+
+
+function BridgeMenu.sidebarOverlap(panel)
+    if panel == nil then return nil end
+    local btn = panel.notAloneBtn
+    if btn == nil or not btn:isVisible() then return nil end
+    local order = nil
+    pcall(function() order = panel:getChildrenInOrder() end)
+    if type(order) ~= "table" then return nil end
+    local ignored = {}
+    for _, name in ipairs(BridgeMenu.VANILLA_BTNS) do
+        local child = panel[name]
+        if child ~= nil then ignored[child] = true end
+    end
+    if panel.mainHand ~= nil then ignored[panel.mainHand] = true end
+    if panel.offHand ~= nil then ignored[panel.offHand] = true end
+    ignored[btn] = true
+    local mine = nil
+    for i = 1, #order do
+        if order[i] == btn then mine = i break end
+    end
+    if mine == nil then return nil end
+    local left, top = btn:getX(), btn:getY()
+    local right, bottom = btn:getRight(), btn:getBottom()
+    for i = mine + 1, #order do
+        local other = order[i]
+        if other ~= nil and ignored[other] ~= true then
+            local visible = false
+            pcall(function() visible = other:isVisible() == true end)
+            if visible then
+                local w, h = other:getWidth(), other:getHeight()
+                if w > 0 and h > 0
+                        and other:getX() < right and other:getRight() > left
+                        and other:getY() < bottom and other:getBottom() > top then
+                    return other
+                end
+            end
+        end
+    end
+    return nil
+end
+
+
+function BridgeMenu.sidebarDiag(panel, other)
+    local btn = panel.notAloneBtn
+    if btn == nil then return "no-btn" end
+    local order = nil
+    pcall(function() order = panel:getChildrenInOrder() end)
+    if type(order) ~= "table" then return "no-order" end
+    local mine = nil
+    for i = 1, #order do
+        if order[i] == btn then mine = i break end
+    end
+    if mine == nil then return "btn-not-listed" end
+    local x, y = 0, 0
+    local w, h = 0, 0
+    pcall(function() x, y = btn:getX(), btn:getY() end)
+    pcall(function() w, h = btn:getWidth(), btn:getHeight() end)
+    local left, top, right, bottom = x, y, x + w, y + h
+    local parts = {}
+    parts[#parts + 1] = string.format("mine=%d,%d,%d,%d", x, y, w, h)
+    parts[#parts + 1] = "shown=" .. tostring(panel.notAlonePlace ~= nil and panel.notAlonePlace.shown == true)
+    local alive = false
+    pcall(function() alive = Bridge ~= nil and Bridge.alive() == true end)
+    parts[#parts + 1] = "alive=" .. tostring(alive)
+    parts[#parts + 1] = "other=" .. tostring(other ~= nil and (other.internal or other.type or "?") or "nil")
+    for i = mine + 1, #order do
+        local c = order[i]
+        if c ~= nil then
+            local vis = false
+            pcall(function() vis = c:isVisible() == true end)
+            local cw, ch = 0, 0
+            pcall(function() cw, ch = c:getWidth(), c:getHeight() end)
+            if vis and cw > 0 and ch > 0 then
+                local cx, cy = 0, 0
+                local cr, cb = 0, 0
+                pcall(function()
+                    cx, cy = c:getX(), c:getY()
+                    cr, cb = c:getRight(), c:getBottom()
+                end)
+                local over = cx < right and cr > left and cy < bottom and cb > top
+                parts[#parts + 1] = string.format("%s[%d,%d,%d,%d,%s]",
+                    tostring(c.internal or c.type or "?"), cx, cy, cw, ch, over and "over" or "clear")
+            end
+        end
+    end
+    return table.concat(parts, " ")
+end
+
+
 if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
     local originalInit = ISEquippedItem.initialise
     ISEquippedItem.initialise = function(self, ...)
@@ -825,6 +1040,7 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
         pcall(function()
             if self.chr == nil or self.chr:getPlayerNum() ~= 0 or self.invBtn == nil then return end
             BridgeMenu.resetNewHintCache()
+            BridgeMenu.sidebarDiagSig = nil
             local w, h = self.invBtn:getWidth(), self.invBtn:getHeight()
             local size = iconSize(self.invBtn)
             self.notAloneOff = getTexture("media/ui/Sidebar/NotAlone_Off_" .. size .. ".png")
@@ -876,6 +1092,29 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
             pcall(function() screenH = getCore():getScreenHeight() end)
             BridgeMenu.sidebarStep(self, btn, screenH)
 
+            if not BridgeMenu.windowKeyApplied and Bridge.every(60) then
+                pcall(BridgeMenu.applySandboxWindowKey)
+            end
+            if self.notAlonePlace ~= nil and self.notAlonePlace.shown == true
+                    and Bridge.every(60) then
+                local other = BridgeMenu.sidebarOverlap(self)
+                local sig = BridgeMenu.sidebarDiag(self, other)
+                if sig ~= BridgeMenu.sidebarDiagSig then
+                    BridgeMenu.sidebarDiagSig = sig
+                    log(string.format("sidebar diag t=%.1f tick=%d %s", Bridge.time, Bridge.tick, sig))
+                end
+                if other ~= nil then
+                    local tag = tostring(other.internal or "?")
+                    if BridgeMenu.sidebarOverlapSeen ~= tag then
+                        BridgeMenu.sidebarOverlapSeen = tag
+                        log("sidebar overlap: " .. tag)
+                    end
+                    if BridgeMenu.sidebarShift() then
+                        log("sidebar auto shift: " .. tostring(BridgeMenu.sidebarAutoSlots()))
+                    end
+                end
+            end
+
             if Bridge.every(30) then
                 for _, item in ipairs(self.mouseOverList or {}) do
                     if item.object == btn then item.displayString = BridgeMenu.newHintOn() and tr("SidebarNewTip") or BridgeMenu.status() end
@@ -885,6 +1124,19 @@ if ISEquippedItem ~= nil and not ISEquippedItem.notAloneWrapped then
     end
     ISEquippedItem.notAloneWrapped = true
     log("sidebar button wrapped")
+end
+
+BridgeMenu.installWindowKeybind()
+if Events ~= nil then
+    if Events.OnKeyStartPressed ~= nil then
+        Events.OnKeyStartPressed.Add(function(key) pcall(BridgeMenu.onWindowKey, key) end)
+    end
+    if Events.OnGameStart ~= nil then
+        Events.OnGameStart.Add(function()
+            pcall(BridgeMenu.installWindowKeybind)
+            BridgeMenu.windowKeyApplied = BridgeMenu.applySandboxWindowKey() == true
+        end)
+    end
 end
 
 
@@ -909,7 +1161,26 @@ end
 
 
 
+local menuMemo = setmetatable({}, { __mode = "k" })
+
+local function menuEntry(worldobjects)
+    if type(worldobjects) ~= "table" then return nil end
+    local tick = Bridge ~= nil and tonumber(Bridge.tick) or 0
+    local e = menuMemo[worldobjects]
+    if e == nil or e.tick ~= tick then
+        e = { tick = tick }
+        menuMemo[worldobjects] = e
+    end
+    return e
+end
+
 local function bodyNear(worldobjects, playerNum)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.bodyNear ~= nil then return e.bodyNear end
+    local function done(v)
+        if e ~= nil then e.bodyNear = v end
+        return v
+    end
     local pn = playerNum or 0
     local me = BridgeData.me()
     local mine, others = {}, {}
@@ -917,14 +1188,14 @@ local function bodyNear(worldobjects, playerNum)
     for z, info in pairs(Bridge.bodiesSeen()) do
         if info.who == me then mine[z] = true else others[z] = true end
     end
-    for z in pairs(mine) do if underMouse(z, pn) then return true end end
-    for z in pairs(others) do if underMouse(z, pn) then return false end end
+    for z in pairs(mine) do if underMouse(z, pn) then return done(true) end end
+    for z in pairs(others) do if underMouse(z, pn) then return done(false) end end
     local sq = nil
     for _, o in ipairs(worldobjects or {}) do
         pcall(function() sq = o:getSquare() end)
         if sq ~= nil then break end
     end
-    if sq == nil then return false end
+    if sq == nil then return done(false) end
     local function dist2(z)
         local d = nil
         pcall(function()
@@ -944,7 +1215,7 @@ local function bodyNear(worldobjects, playerNum)
         local d = dist2(z)
         if d ~= nil and d < best then best, bestMine, found = d, false, true end
     end
-    return found and bestMine
+    return done(found and bestMine)
 end
 
 function BridgeMenu.onWorldMenu(playerNum, context, worldobjects, test)
@@ -961,6 +1232,8 @@ function BridgeMenu.onWorldMenu(playerNum, context, worldobjects, test)
 end
 
 local function treeUnder(worldobjects)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.tree ~= nil then return e.tree or nil end
     local tree = nil
     for _, o in ipairs(worldobjects or {}) do
         pcall(function()
@@ -972,32 +1245,45 @@ local function treeUnder(worldobjects)
         end)
         if tree ~= nil then break end
     end
+    if e ~= nil then e.tree = tree or false end
     return tree
 end
 
 local function seatUnder(worldobjects)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.seat ~= nil then return e.seat or nil end
     for _, o in ipairs(worldobjects or {}) do
         if o ~= nil then
             local isSeat = false
             pcall(function()
                 isSeat = BridgeTask ~= nil and BridgeTask.seatIsSeat ~= nil and BridgeTask.seatIsSeat(o) == true
             end)
-            if isSeat then return o end
+            if isSeat then
+                if e ~= nil then e.seat = o end
+                return o
+            end
         end
     end
+    if e ~= nil then e.seat = false end
     return nil
 end
 
 local function bedUnder(worldobjects)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.bed ~= nil then return e.bed or nil end
     for _, o in ipairs(worldobjects or {}) do
         if o ~= nil then
             local isBed = false
             pcall(function()
                 isBed = BridgeTask ~= nil and BridgeTask.sitIsRealBed ~= nil and BridgeTask.sitIsRealBed(o) == true
             end)
-            if isBed then return o end
+            if isBed then
+                if e ~= nil then e.bed = o end
+                return o
+            end
         end
     end
+    if e ~= nil then e.bed = false end
     return nil
 end
 
@@ -1053,6 +1339,18 @@ function BridgeMenu.onJobMoveCorpses()
     BridgeWorkSelect.begin(BridgeData.owner(), "moveCorpses")
 end
 
+function BridgeMenu.onJobOpenDoors()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() and not (BridgeCar ~= nil and BridgeCar.isInside()) then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "openDoors")
+end
+
+function BridgeMenu.onJobCloseDoors()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() and not (BridgeCar ~= nil and BridgeCar.isInside()) then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "closeDoors")
+end
+
 
 function BridgeMenu.cancelEntry()
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return nil end
@@ -1099,7 +1397,6 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     if playerNum ~= nil and playerNum ~= 0 then return end
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
     if not present() then return end
-    if not emptySpaceUnder(worldobjects, playerNum) then return end
     if context:getOptionFromName(name()) ~= nil then return end
     local option = context:addOptionOnTop(name())
     local sub = ISContextMenu:getNew(context)
@@ -1112,6 +1409,14 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     local jobs = ISContextMenu:getNew(sub)
     sub:addSubMenu(jobsOption, jobs)
     addLootWorkMenu(jobs)
+    if BridgeTask.DOORS_ENABLED == 1 then
+        local doorsOption = jobs:addOption(tr("Doors"))
+        local doors = ISContextMenu:getNew(jobs)
+        jobs:addSubMenu(doorsOption, doors)
+        local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
+        local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
+        if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
+    end
     if BridgeTask.CLEANING_ENABLED == 1 then
         local okClean = false
         pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
@@ -1294,11 +1599,16 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
 end
 
 local function lootTargetsUnder(worldobjects)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.loot ~= nil then return e.loot or nil end
     for _, o in ipairs(worldobjects or {}) do
         if o ~= nil then
             local list = nil
             pcall(function() list = BridgeWorkSelect.lootTargetsForObject(o) end)
-            if list ~= nil and #list > 0 then return list end
+            if list ~= nil and #list > 0 then
+                if e ~= nil then e.loot = list end
+                return list
+            end
         end
     end
     local sq = nil
@@ -1306,14 +1616,32 @@ local function lootTargetsUnder(worldobjects)
         pcall(function() sq = o:getSquare() end)
         if sq ~= nil then break end
     end
-    if sq == nil then return nil end
+    if sq == nil then
+        if e ~= nil then e.loot = false end
+        return nil
+    end
     local list = nil
     pcall(function()
         local x, y, z = sq:getX(), sq:getY(), sq:getZ()
         list = BridgeWorkSelect.lootTargets({ x1 = x, y1 = y, x2 = x, y2 = y, z = z })
     end)
-    if list ~= nil and #list > 0 then return list end
+    if list ~= nil and #list > 0 then
+        if e ~= nil then e.loot = list end
+        return list
+    end
+    if e ~= nil then e.loot = false end
     return nil
+end
+
+local function depositTargetsUnder(worldobjects)
+    local e = menuEntry(worldobjects)
+    if e ~= nil and e.deposit ~= nil then return e.deposit or nil end
+    local targets = nil
+    if BridgeDeposit ~= nil and type(BridgeDeposit.targetsUnder) == "function" then
+        targets = BridgeDeposit.targetsUnder(worldobjects)
+    end
+    if e ~= nil then e.deposit = targets or false end
+    return targets
 end
 
 function BridgeMenu.onLootThis(targets)
@@ -1395,6 +1723,12 @@ function BridgeMenu.onPryMenu(playerNum, context, worldobjects, test)
     if not present() then return end
     local door = doorUnder(worldobjects)
     if door == nil then return end
+    if BridgeDoors ~= nil and BridgeLog ~= nil and BridgeLog.on() then
+        print("[BridgeDoors] pry " .. tostring(BridgeDoors.keyInfo(door, Bridge.body)))
+    end
+    local keyed = false
+    pcall(function() keyed = BridgeDoors ~= nil and BridgeDoors.hasKey(door, Bridge.body, true) == true end)
+    if keyed then return end
     local sq = nil
     pcall(function() sq = door:getSquare() end)
     if sq == nil then return end
@@ -1477,7 +1811,7 @@ function BridgeMenu.onDepositMenu(playerNum, context, worldobjects, test)
     local isPresent = present()
     local markOk = BridgeDeposit.homeMarkHere() == true
     if not isPresent and not markOk then return end
-    local targets = BridgeDeposit.targetsUnder(worldobjects)
+    local targets = depositTargetsUnder(worldobjects)
     if targets == nil or #targets == 0 then return end
     local sub = rinTopMenu(context)
     if isPresent then
@@ -1994,6 +2328,33 @@ function BridgeMenu.addWashTo(menu, worldobjects, playerNum)
     BridgeMenu.addRinActions(menu, sink)
 end
 
+local function onCarDoorMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+    if BridgeTask.DOORS_ENABLED ~= 1 then return end
+    if BridgeCar == nil or not BridgeCar.isInside() then return end
+    local red = BridgeData.owner()
+    if red == nil or not BridgeCar.withRed(red) then return end
+    if context:getOptionFromName(name()) ~= nil then return end
+    local option = context:addOptionOnTop(name())
+    local sub = ISContextMenu:getNew(context)
+    context:addSubMenu(option, sub)
+    if BridgeTask.active and BridgeTask.fromCar then
+        BridgeMenu.addCancelTask(sub)
+        return
+    end
+    local jobsOption = sub:addOption(tr("Jobs"))
+    local jobs = ISContextMenu:getNew(sub)
+    sub:addSubMenu(jobsOption, jobs)
+    local doorsOption = jobs:addOption(tr("Doors"))
+    local doors = ISContextMenu:getNew(jobs)
+    jobs:addSubMenu(doorsOption, doors)
+    local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
+    local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
+    if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
+end
+
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWorldMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onTreeMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onJobsMenu)
@@ -2003,9 +2364,11 @@ Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onSitMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLayMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onPryMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWashSinkMenu)
+Events.OnFillWorldObjectContextMenu.Add(onCarDoorMenu)
 
 Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
     if Bridge ~= nil and Bridge.claimMenuFix ~= nil then pcall(Bridge.claimMenuFix, playerNum, context, worldobjects, test) end
 end)
 log("loaded")
+
 

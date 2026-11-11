@@ -104,6 +104,23 @@ BridgeTorchShared.CFG = {
 
 
 BridgeTorchShared.state = {}
+
+local itemMemo = setmetatable({}, { __mode = "k" })
+local batteryMemo = setmetatable({}, { __mode = "k" })
+local ITEM_MEMO_TICKS = 6
+
+local function memoTtl()
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then
+        return BridgePerf.age("torch", ITEM_MEMO_TICKS)
+    end
+    return ITEM_MEMO_TICKS
+end
+
+local function memoClock()
+    if Bridge ~= nil and tonumber(Bridge.tick) ~= nil then return tonumber(Bridge.tick) end
+    if BridgeServer ~= nil and tonumber(BridgeServer.tick) ~= nil then return tonumber(BridgeServer.tick) end
+    return nil
+end
 BridgeTorchShared.lastHours = {}
 BridgeTorchShared.stepAcc = {}
 
@@ -284,13 +301,18 @@ BridgeTorchShared.eachItem = eachItem
 
 function BridgeTorchShared.findBattery(body)
     if body == nil then return nil end
+    local now = memoClock()
+    local memo = now ~= nil and batteryMemo[body] or nil
+    if memo ~= nil and now - memo.at < memoTtl() then return memo.item end
     local found = nil
     eachItem(body, function(it)
         local t = nil
-        pcall(function() t = it:getType() end)
+        local okType, typ = pcall(it.getType, it)
+        if okType then t = typ end
         if t == "Battery" then found = it return true end
         return false
     end)
+    if now ~= nil then batteryMemo[body] = { at = now, item = found } end
     return found
 end
 
@@ -347,6 +369,9 @@ end
 
 function BridgeTorchShared.findTorch(body)
     if body == nil then return nil end
+    local now = memoClock()
+    local memo = now ~= nil and itemMemo[body] or nil
+    if memo ~= nil and now - memo.at < memoTtl() then return memo.item end
 
     local function bestOf(predicate, allowEmpty)
         local best, bestScore = nil, -1
@@ -367,31 +392,35 @@ function BridgeTorchShared.findTorch(body)
         return best
     end
 
-
+    local result = nil
     local listed = bestOf(function(it)
         if not BridgeTorchShared.isListedTorch(it) then return false end
         if not BridgeTorchShared.isDrainable(it) then noteRejectedLight(it) return false end
         return BridgeTorchShared.canLight(it)
     end)
-    if listed ~= nil then BridgeTorchShared.pullToMain(body, listed) return listed end
-
-    local generic = bestOf(function(it)
-        if BridgeTorchShared.isListedTorch(it) then return false end
-        if not BridgeTorchShared.canLight(it) then return false end
-        if not BridgeTorchShared.isDrainable(it) then noteRejectedLight(it) return false end
-        return true
-    end)
-    if generic ~= nil then BridgeTorchShared.pullToMain(body, generic) return generic end
-
-
-
-
-
-    local dead = bestOf(function(it)
-        return BridgeTorchShared.isListedTorch(it) and BridgeTorchShared.isDrainable(it)
-    end, true)
-    if dead ~= nil then BridgeTorchShared.pullToMain(body, dead) end
-    return dead
+    if listed ~= nil then
+        BridgeTorchShared.pullToMain(body, listed)
+        result = listed
+    else
+        local generic = bestOf(function(it)
+            if BridgeTorchShared.isListedTorch(it) then return false end
+            if not BridgeTorchShared.canLight(it) then return false end
+            if not BridgeTorchShared.isDrainable(it) then noteRejectedLight(it) return false end
+            return true
+        end)
+        if generic ~= nil then
+            BridgeTorchShared.pullToMain(body, generic)
+            result = generic
+        else
+            local dead = bestOf(function(it)
+                return BridgeTorchShared.isListedTorch(it) and BridgeTorchShared.isDrainable(it)
+            end, true)
+            if dead ~= nil then BridgeTorchShared.pullToMain(body, dead) end
+            result = dead
+        end
+    end
+    if now ~= nil then itemMemo[body] = { at = now, item = result } end
+    return result
 end
 
 

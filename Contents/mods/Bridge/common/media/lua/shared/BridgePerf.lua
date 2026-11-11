@@ -12,6 +12,17 @@ P.ages = {
     ammoPresence = 3,
     scanFrame = 30,
     list = 15,
+    items = 6,
+    torch = 6,
+    wornBags = 30,
+    melee = 30,
+    gunItem = 60,
+    fetchAmmo = 120,
+    homeTargets = 120,
+    ooa = 60,
+    reserve = 15,
+    needAmmo = 30,
+    hasAmmo = 30,
 }
 
 P.agesBase = {
@@ -23,6 +34,17 @@ P.agesBase = {
     ammoPresence = 1,
     scanFrame = 15,
     list = 15,
+    items = 1,
+    torch = 1,
+    wornBags = 1,
+    melee = 1,
+    gunItem = 1,
+    fetchAmmo = 1,
+    homeTargets = 1,
+    ooa = 1,
+    reserve = 1,
+    needAmmo = 1,
+    hasAmmo = 1,
 }
 
 P.everyBase = { snapshot = 30, backup = 60 }
@@ -89,8 +111,9 @@ function P.set(n)
 end
 
 function P.statusText()
-    return string.format("perf tier=%d zscan=%d/%d/%d bodyVar=%d outfit=%d ammo=%d scanFrame=%d snapshot=%d backup=%d",
+    return string.format("perf tier=%d zscan=%d/%d/%d bodyVar=%d outfit=%d ammo=%d scanFrame=%d snapshot=%d backup=%d items=%d wornBags=%d melee=%d fetch=%d",
         tier(), P.age("zscan"), P.age("zscanShort"), P.age("zscanTight"), P.age("bodyVar"),
         P.age("outfit"), P.age("ammoPresence"), P.age("scanFrame"),
-        P.everyTier2.snapshot, P.everyTier2.backup)
+        P.everyTier2.snapshot, P.everyTier2.backup,
+        P.age("items"), P.age("wornBags"), P.age("melee"), P.age("fetchAmmo"))
 end

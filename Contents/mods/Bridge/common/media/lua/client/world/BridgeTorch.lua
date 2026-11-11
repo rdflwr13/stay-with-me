@@ -992,6 +992,18 @@ local function placeBeam(cell, z, key, px, py, zz, dir, now)
 end
 
 function BridgeTorch.renderFrame()
+    local bt = tonumber(Bridge ~= nil and Bridge.time or nil)
+    if bt ~= nil then
+        local gap = 1
+        if Bridge ~= nil and type(Bridge.companionUpdateGap) == "function" then gap = Bridge.companionUpdateGap() end
+        if Bridge ~= nil and type(Bridge.companionUpdateDue) == "function" then
+            if not Bridge.companionUpdateDue(BridgeTorch, "renderNext", gap) then return end
+        else
+            if BridgeTorch.renderAt == nil or bt < BridgeTorch.renderAt then BridgeTorch.renderAt = bt end
+            if (bt - BridgeTorch.renderAt) < gap then return end
+            BridgeTorch.renderAt = bt
+        end
+    end
     BridgeTorch.stats.frames = BridgeTorch.stats.frames + 1
     local cell = getCell()
     if cell == nil then return end

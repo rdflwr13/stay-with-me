@@ -378,6 +378,7 @@ end
 
 local function forget(who, rec, why)
     local b = BridgeServer.bodies[who]
+    rec.horse = nil
     if stillBody(b, rec.bodyId) then releaseBody(b) end
     if b ~= nil and not stillBody(b, rec.bodyId) then
         pcall(function() if b:hasModData() then b:getModData().RandomZedsExcluded = nil end end)
@@ -395,6 +396,7 @@ local function forget(who, rec, why)
 end
 
 local function removeBody(who, rec)
+    rec.horse = nil
     local body = currentBody(who, rec)
     if body ~= nil then
         pcall(function()
@@ -431,6 +433,206 @@ local function dist(a, x, y)
 end
 
 BridgeServer.Commands = {}
+
+BridgeHorseServer = BridgeHorseServer or {}
+BridgeHorseServer.disabled = false
+
+local SERVER_RIDE_RANGE = 35
+
+local function horseMounts()
+    if BridgeHorseServer.mounts ~= nil then return BridgeHorseServer.mounts end
+    local ok, mounts = pcall(require, "HorseMod/Mounts")
+    if ok and type(mounts) == "table" then
+        BridgeHorseServer.mounts = mounts
+        return mounts
+    end
+    return nil
+end
+
+local function horseCommands()
+    if BridgeHorseServer.commands ~= nil then return BridgeHorseServer.commands end
+    local ok, cmds = pcall(require, "HorseMod/networking/commands")
+    if ok and type(cmds) == "table" then
+        BridgeHorseServer.commands = cmds
+        return cmds
+    end
+    return nil
+end
+
+local function safeFalse(obj, method)
+    local value = false
+    if obj == nil or obj[method] == nil then return false end
+    pcall(function() value = obj[method](obj) == true end)
+    return value
+end
+
+function BridgeHorseServer.clear(who, rec, why)
+    if rec == nil or rec.horse == nil then return false end
+    rec.horse = nil
+    transmit()
+    log("horse association cleared " .. tostring(who) .. ": " .. tostring(why))
+    return true
+end
+
+function BridgeHorseServer.validate(player, args)
+    if player == nil then return nil, "no player" end
+    if not BridgeData.horseRidingEnabled() then return nil, "disabled" end
+    local who = player:getUsername()
+    if BridgeServer.online[who] ~= player then return nil, "not online" end
+    local mounts = horseMounts()
+    local cmds = horseCommands()
+    if mounts == nil or cmds == nil then return nil, "horse mod" end
+    local mounted = false
+    pcall(function() mounted = mounts.hasMount(player) == true end)
+    local animal = nil
+    pcall(function() animal = mounts.getMount(player) end)
+    if not mounted or animal == nil then return nil, "not mounted" end
+    if type(args.animal) ~= "number" then return nil, "bad animal" end
+    local id = nil
+    pcall(function() id = cmds.getAnimalId(animal) end)
+    if id == nil or math.floor(args.animal) ~= id then return nil, "wrong animal" end
+    local rec = record(who)
+    if rec.bodyId == nil then return nil, "no body record" end
+    local body = currentBody(who, rec)
+    if body == nil then return nil, "no body" end
+    local dead, inWorld, vehicle = false, false, nil
+    pcall(function()
+        dead = body:isDead()
+        inWorld = body:isExistInTheWorld()
+        vehicle = body:getVehicle()
+    end)
+    if dead or not inWorld then return nil, "body invalid" end
+    if vehicle ~= nil then return nil, "body in vehicle" end
+    if BridgeData.modeOf(rec) ~= "follow" then return nil, "not following" end
+    if rec.car ~= nil then return nil, "in car" end
+    if rec.horse ~= nil then return nil, "already riding" end
+    local bx, by = body:getX(), body:getY()
+    local px, py = player:getX(), player:getY()
+    local dx, dy = bx - px, by - py
+    if dx * dx + dy * dy > SERVER_RIDE_RANGE * SERVER_RIDE_RANGE then return nil, "too far" end
+    if math.abs(body:getZ() - player:getZ()) > 0.5 then return nil, "different floor" end
+    return id
+end
+
+function BridgeHorseServer.tick(who, rec, owner, body)
+    if BridgeHorseServer.disabled then return false end
+    if rec == nil or rec.horse == nil then return false end
+    local mounts = horseMounts()
+    local reason = nil
+    if not BridgeData.horseRidingEnabled() then
+        reason = "disabled"
+    elseif owner == nil then
+        reason = "owner offline"
+    elseif safeFalse(owner, "isDead") then
+        reason = "owner dead"
+    elseif mounts == nil then
+        reason = "horse mod"
+    elseif rec.horse.b ~= rec.bodyId then
+        reason = "body changed"
+    elseif BridgeData.modeOf(rec) ~= "follow" then
+        reason = "mode"
+    elseif rec.car ~= nil then
+        reason = "car"
+    elseif body == nil then
+        reason = "body"
+    else
+        local dead, inWorld, vehicle = false, false, nil
+        pcall(function()
+            dead = body:isDead()
+            inWorld = body:isExistInTheWorld()
+            vehicle = body:getVehicle()
+        end)
+        if dead or not inWorld then
+            reason = "body"
+        elseif vehicle ~= nil then
+            reason = "body in vehicle"
+        else
+            local mount = nil
+            pcall(function() mount = mounts.getMount(owner) end)
+            if mount == nil then
+                reason = "mount"
+            else
+                local hx, hy = mount:getX(), mount:getY()
+                local bx, by = body:getX(), body:getY()
+                local dhx, dhy = bx - hx, by - hy
+                local dox, doy = bx - owner:getX(), by - owner:getY()
+                if dox * dox + doy * doy > 3600 then
+                    reason = "owner far"
+                elseif dhx * dhx + dhy * dhy > 400 then
+                    reason = "horse far"
+                end
+            end
+        end
+    end
+    if reason ~= nil then
+        BridgeHorseServer.clear(who, rec, reason)
+        return false
+    end
+    return true
+end
+
+function BridgeHorseServer.onDismount(player, animal)
+    if player == nil then return end
+    local who = player:getUsername()
+    local rec = record(who)
+    if rec.horse == nil then return end
+    if animal == nil then
+        BridgeHorseServer.clear(who, rec, "dismount without animal")
+        return
+    end
+    local cmds = horseCommands()
+    local id = nil
+    if cmds ~= nil then pcall(function() id = cmds.getAnimalId(animal) end) end
+    if id == nil or rec.horse.h == id then
+        BridgeHorseServer.clear(who, rec, "dismount")
+    end
+end
+
+function BridgeHorseServer.install()
+    if BridgeHorseServer.installed then return true end
+    if BridgeHorseServer.disabled then return false end
+    if BridgeData ~= nil and type(BridgeData.horseModActive) == "function" then
+        local active = BridgeData.horseModActive()
+        if not active and getActivatedMods ~= nil then
+            BridgeHorseServer.disabled = true
+            return false
+        end
+    end
+    local mounts = horseMounts()
+    if mounts == nil or type(mounts.onDismount) ~= "table" or type(mounts.onDismount.add) ~= "function" then
+        return false
+    end
+    mounts.onDismount:add(function(player, animal) BridgeHorseServer.onDismount(player, animal) end)
+    BridgeHorseServer.installed = true
+    log("horse server hooks installed")
+    return true
+end
+
+BridgeServer.Commands.horse = function(player, args)
+    if BridgeHorseServer.disabled then return end
+    local who = player:getUsername()
+    local rec = record(who)
+    if args.release == true then
+        BridgeHorseServer.clear(who, rec, "release request")
+        return
+    end
+    local id, why = BridgeHorseServer.validate(player, args)
+    if id == nil then
+        sendServerCommand(player, "Bridge", "horse", { ok = false, why = why })
+        return
+    end
+    rec.horse = { h = id, b = rec.bodyId }
+    transmit()
+    sendServerCommand(player, "Bridge", "horse", { ok = true, h = id, b = rec.bodyId })
+    log("horse passenger associated " .. tostring(who) .. " animal=" .. tostring(id))
+end
+
+if Events ~= nil and Events.OnGameStart ~= nil then
+    Events.OnGameStart.Add(function() pcall(BridgeHorseServer.install) end)
+end
+if Events ~= nil and Events.OnServerStarted ~= nil then
+    Events.OnServerStarted.Add(function() pcall(BridgeHorseServer.install) end)
+end
 
 
 
@@ -507,6 +709,10 @@ end
 BridgeServer.Commands.spawn = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
+    if rec.horse ~= nil then
+        rec.horse = nil
+        transmit()
+    end
 
 
 
@@ -647,6 +853,43 @@ end
 BridgeServer.Commands.care = function(player, args)
     local change = args.change
     if type(change) ~= "table" then return end
+    if type(change.we) == "table" then
+        if BridgeWoundExpCompat == nil or type(BridgeWoundExpCompat.apply) ~= "function" then return end
+        local ok, why = BridgeWoundExpCompat.apply(player, change.we)
+        if not ok then
+            log("care we " .. tostring(change.we.op) .. " failed: " .. tostring(why))
+            return
+        end
+        local index = math.floor(tonumber(change.we.part) or -1)
+        local part = nil
+        if type(BridgeCare) == "table" and type(BridgeCare.part) == "function" then
+            part = BridgeCare.part(player, index)
+        end
+        if part ~= nil and change.we.op == "debride" then
+            pcall(function() syncBodyPart(part, 0x00480000) end)
+            pcall(function() syncBodyPart(part, 0x40460108) end)
+        end
+        if change.we.waterId ~= nil then
+            local item = nil
+            pcall(function()
+                item = player:getInventory():getItemWithIDRecursiv(math.floor(tonumber(change.we.waterId) or -1))
+            end)
+            if item ~= nil then BridgeWoundExpCompat.spendWater(item) end
+        end
+        if change.we.soapId ~= nil then
+            local item = nil
+            pcall(function()
+                item = player:getInventory():getItemWithIDRecursiv(math.floor(tonumber(change.we.soapId) or -1))
+            end)
+            if item ~= nil and type(BridgeCare) == "table" and type(BridgeCare.consume) == "function" then
+                BridgeCare.consume(item, true)
+            end
+        end
+        if type(BridgeWoundExpCompat.push) == "function" then BridgeWoundExpCompat.push(player) end
+        log("care we " .. tostring(change.we.op) .. " part " .. tostring(change.we.part)
+            .. " for " .. tostring(player:getUsername()))
+        return
+    end
     local part, why = BridgeCare.apply(player, change)
     if part == nil then
         log("care " .. tostring(change.kind) .. " failed: " .. tostring(why))
@@ -1108,6 +1351,7 @@ BridgeServer.Commands.state = function(player, args)
     local genderBefore = BridgeData.genderOf(rec)
     if args.mode ~= nil and BridgeData.MODES[args.mode] and rec.mode ~= args.mode then
         rec.mode = args.mode
+        if args.mode ~= "follow" and rec.horse ~= nil then rec.horse = nil end
         changed = true
     end
     if args.waitX ~= nil then
@@ -1530,8 +1774,8 @@ BridgeServer.Commands.state = function(player, args)
 
             local tier = BridgeData.relTier(rel)
             local bonus = (tier == "Close" and 3) or (tier == "Friend" and 2) or (tier == "Pal" and 1) or 0
-            rel.gainF = math.min(rel.gainF, BridgeData.sandboxNumber("DailyFriendCap", 6, 0, 50) + bonus)
-            rel.gainR = math.min(rel.gainR, BridgeData.sandboxNumber("DailyRomanceCap", 3, 0, 50) + bonus)
+    rel.gainF = math.min(rel.gainF, BridgeData.sandboxNumber("DailyFriendCap", 10, 0, 50) + bonus)
+    rel.gainR = math.min(rel.gainR, BridgeData.sandboxNumber("DailyRomanceCap", 6, 0, 50) + bonus)
             rel.giftF = math.min(rel.giftF, BridgeData.sandboxNumber("DailyGiftCapFriend", 3, 0, 50) + bonus)
             rel.giftR = math.min(rel.giftR, BridgeData.sandboxNumber("DailyGiftCapRomance", 1, 0, 50) + bonus)
 
@@ -2991,6 +3235,11 @@ BridgeServer.Commands.carSeat = function(player, args)
         end
     end
     local c = { v = v, s = s, lap = lap or nil, inside = args.inside == true or nil }
+    if rec.horse ~= nil then
+        rec.horse = nil
+        transmit()
+        log("horse association cleared " .. tostring(who) .. ": car seat")
+    end
     local was = rec.car
     if type(was) ~= "table" or was.v ~= c.v or was.s ~= c.s or was.lap ~= c.lap or was.inside ~= c.inside then
         rec.car = c
@@ -4251,7 +4500,10 @@ local function tickPlayer(who, rec)
         transmit()
         log("car seat of " .. tostring(who) .. " cleared: owner offline")
     end
-    if rec.bodyId == nil then return end
+    if rec.bodyId == nil then
+        if rec.horse ~= nil then BridgeHorseServer.clear(who, rec, "no body record") end
+        return
+    end
 
 
     if rec.testGuest then
@@ -4260,6 +4512,9 @@ local function tickPlayer(who, rec)
     end
     local owner = BridgeServer.online[who]
     local body = currentBody(who, rec)
+    if not BridgeHorseServer.disabled then
+        BridgeHorseServer.tick(who, rec, owner, body)
+    end
     local now = nowMs()
     local check = BridgeServer.diedCheck[who]
     if check ~= nil and now >= check then
@@ -4326,25 +4581,27 @@ local function tickPlayer(who, rec)
     end
 
 
-    if BridgeData.modeOf(rec) == "follow" and BridgeServer.newSecond
-        and dist(owner, body:getX(), body:getY()) > HOME_FAR * 2 then
-        removeBody(who, rec)
-        forget(who, rec, "owner far from following companion")
-        return
-    end
-    if BridgeData.modeOf(rec) ~= "follow" and BridgeServer.newSecond then
-
-
-        if dist(owner, body:getX(), body:getY()) > HOME_FAR then
-            if rec.waitX == nil then rec.waitX, rec.waitY, rec.waitZ = body:getX(), body:getY(), body:getZ() end
+    if rec.horse == nil then
+        if BridgeData.modeOf(rec) == "follow" and BridgeServer.newSecond
+            and dist(owner, body:getX(), body:getY()) > HOME_FAR * 2 then
             removeBody(who, rec)
-            forget(who, rec, "owner far from waiting companion")
+            forget(who, rec, "owner far from following companion")
             return
         end
+        if BridgeData.modeOf(rec) ~= "follow" and BridgeServer.newSecond then
+
+
+            if dist(owner, body:getX(), body:getY()) > HOME_FAR then
+                if rec.waitX == nil then rec.waitX, rec.waitY, rec.waitZ = body:getX(), body:getY(), body:getZ() end
+                removeBody(who, rec)
+                forget(who, rec, "owner far from waiting companion")
+                return
+            end
+        end
+        pcall(function()
+            if body:getTarget() ~= owner then body:setTarget(owner) end
+        end)
     end
-    pcall(function()
-        if body:getTarget() ~= owner then body:setTarget(owner) end
-    end)
 end
 
 
@@ -4375,7 +4632,13 @@ local function bodyNear(p, bodies)
     return false
 end
 
+local othersMemo = { tick = nil, p = nil, bodies = nil, value = false }
+
 local function othersNear(p, bodies)
+    local tick = BridgeServer.tick
+    if othersMemo.tick == tick and othersMemo.p == p and othersMemo.bodies == bodies then
+        return othersMemo.value
+    end
     local found = false
     pcall(function()
         local px, py, pz = p:getX(), p:getY(), p:getZ()
@@ -4394,6 +4657,7 @@ local function othersNear(p, bodies)
             end
         end
     end)
+    othersMemo.tick, othersMemo.p, othersMemo.bodies, othersMemo.value = tick, p, bodies, found
     return found
 end
 
@@ -4844,6 +5108,9 @@ local function onTick()
 
     pcall(animalFlagOff)
     BridgeServer.tick = BridgeServer.tick + 1
+    if BridgeServer.tick % 600 == 0 and not BridgeHorseServer.installed and not BridgeHorseServer.disabled then
+        pcall(BridgeHorseServer.install)
+    end
 
     if BridgeServer.tick % 15 == 0 and BridgeVoice ~= nil then
         for _, b in pairs(BridgeServer.bodies) do
@@ -4954,6 +5221,7 @@ local function onInit()
 
     for who, rec in pairs(md.players) do
         n = n + 1
+        if rec.horse ~= nil then rec.horse = nil end
         if rec.bodyId ~= nil then
             BridgeData.notePrevBody(rec, rec.bodyId, rec.lastX, rec.lastY, rec.lastZ, true)
             rec.lastBodyId = rec.bodyId

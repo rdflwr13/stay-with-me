@@ -37,7 +37,7 @@ end
 BridgeEquip.DEV = false
 
 BridgeEquip.range = 2.5
-BridgeEquip.REFRESH_EVERY = 6
+BridgeEquip.REFRESH_EVERY = 10
 BridgeEquip.refreshStats = {
     ticks = 0,
     heavy = 0,

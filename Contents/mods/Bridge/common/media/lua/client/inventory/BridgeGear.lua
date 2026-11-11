@@ -35,7 +35,8 @@ local function sayGear(kind, fallback, gap)
     pcall(function() now = Bridge.time or 0 end)
     if now - (BridgeGear.said[kind] or -99999) < (gap or 120) then return end
     BridgeGear.said[kind] = now
-    local text = trOr("IGUI_NotAlone_Say_" .. kind, fallback)
+    local text = BridgeSpeech.getOrNull("IGUI_NotAlone_Say_" .. kind)
+    if type(text) ~= "string" or text == "" or text == ("IGUI_NotAlone_Say_" .. kind) then text = fallback end
     pcall(function() if Bridge ~= nil and Bridge.speakText ~= nil then Bridge.speakText(text) end end)
 end
 

@@ -8,8 +8,8 @@ S.FINE = 0.02
 S.COARSE = 0.10
 S.LIMIT = 1.00
 S.SWEEP_TICKS = 18000
-S.IS_CACHE_TICKS = 3
-S.SWEEP_CACHE_TICKS = 60
+S.IS_CACHE_TICKS = 60
+S.SWEEP_CACHE_TICKS = 240
 S.ENABLED_CACHE_TICKS = 30
 
 S.p = nil
@@ -32,6 +32,13 @@ S.offsetCache = setmetatable({}, { __mode = "k" })
 S.seatCache = setmetatable({}, { __mode = "k" })
 S.enabledCache = nil
 S.strippedCache = nil
+S.treatAnim = nil
+S.treatApplied = nil
+S.TREAT_FALLBACK = {
+    TreatHigh = "BandageHead",
+    TreatMid = "BandageUpperBody",
+    TreatLow = "BandageLowerBody",
+}
 
 local function log(text)
     if BridgeLog ~= nil and BridgeLog.on() then print("[SeatPuppet] " .. tostring(text)) end
@@ -220,8 +227,7 @@ local function freeSeat(car, avoid)
 end
 
 local function targetSeat(car, red)
-    local his = nil
-    if red ~= nil then pcall(function() his = car:getSeat(red) end) end
+    local his = S.playerSeat
     if his == -1 then his = nil end
     local want = (BridgeCar ~= nil) and BridgeCar.seat or nil
     local lap = (BridgeCar ~= nil) and BridgeCar.lap == true or false
@@ -386,6 +392,7 @@ local function create(car, seat)
     local p = list:get(0)
     if p == nil then return false end
     S.p = p
+    S.treatApplied = nil
     pcall(function() p:setVariable(S.VAR, true) end)
     pcall(function() p:getModData().swmSeatPuppet = true end)
     pcall(function() p:getModData().ST_Ignore = true end)
@@ -461,9 +468,11 @@ function S.show(car)
     S.offsetCache[car] = nil
     S.seat = nil
     S.retryAt = nil
+    S.tickNext = nil
     S.losses = 0
     S.offForEntry = false
     S.voiceTicks = 0
+    S.treatAnim, S.treatApplied = nil, nil
     S.playerSeat, S.playerPrevSeat, S.swap = nil, nil, false
     capture()
     log("show")
@@ -475,7 +484,9 @@ function S.hide(why)
     if p ~= nil then id = pidOf(p) end
     S.p, S.car, S.seat = nil, nil, nil
     S.retryAt = nil
+    S.tickNext = nil
     S.voiceTicks = 0
+    S.treatAnim, S.treatApplied = nil, nil
     S.playerSeat, S.playerPrevSeat, S.swap = nil, nil, false
     if p == nil then return end
     S.isCache[p] = nil
@@ -509,13 +520,37 @@ function S.hide(why)
     log("hide " .. tostring(why))
 end
 
+function S.setTreatAnim(name)
+    S.treatAnim = name
+end
+
+local function applyTreatAnim()
+    local p = S.p
+    if p == nil then
+        S.treatApplied = nil
+        return
+    end
+    if S.treatAnim ~= nil then
+        local want = S.TREAT_FALLBACK[S.treatAnim] or S.treatAnim
+        pcall(function()
+            if p:getBumpType() ~= want then p:setBumpType(want) end
+        end)
+        S.treatApplied = want
+    elseif S.treatApplied ~= nil then
+        pcall(function() p:setBumpType("") end)
+        S.treatApplied = nil
+    end
+end
+
 function S.tick()
     sweepTick()
     if not S.enabled() then
+        S.treatAnim, S.treatApplied = nil, nil
         if S.p ~= nil then S.hide("off") end
         return
     end
     if BridgeCar == nil or BridgeCar.state ~= "inside" or BridgeCar.car == nil then
+        S.treatAnim, S.treatApplied = nil, nil
         if S.p ~= nil then S.hide("not inside") end
         return
     end
@@ -524,6 +559,14 @@ function S.tick()
     local now = (Bridge ~= nil and Bridge.time) or 0
     if S.retryAt ~= nil and now < S.retryAt then return end
     S.retryAt = nil
+    if Bridge ~= nil and type(Bridge.companionUpdateDue) == "function" then
+        local gap = 1
+        if type(Bridge.companionUpdateGap) == "function" then
+            gap = tonumber(Bridge.companionUpdateGap()) or 1
+        end
+        if gap < 1 then gap = 1 end
+        if not Bridge.companionUpdateDue(S, "tickNext", gap) then return end
+    end
     local car = BridgeCar.car
     if S.car ~= car then
         S.car = car
@@ -555,6 +598,7 @@ function S.tick()
     S.seat = seat
     place(car, seat)
     keepInert(S.p)
+    applyTreatAnim()
 end
 
 function S.diagLine()
@@ -658,7 +702,6 @@ end
 installMutants()
 
 Events.OnGameStart.Add(function()
-    S.sweepUntil = (Bridge ~= nil and Bridge.time or 0) + S.SWEEP_TICKS
     S.sweepQueue = {}
     S.sweepCount = 0
     S.isCache = setmetatable({}, { __mode = "k" })
@@ -667,6 +710,20 @@ Events.OnGameStart.Add(function()
     S.seatCache = setmetatable({}, { __mode = "k" })
     S.enabledCache = nil
     S.strippedCache = nil
+    S.tickNext = nil
+    S.sweepUntil = nil
+    if S.enabled() then
+        local st = store(false)
+        local hasIds = false
+        if st ~= nil and type(st.ids) == "table" then
+            pcall(function()
+                for _ in pairs(st.ids) do hasIds = true break end
+            end)
+        end
+        if hasIds then
+            S.sweepUntil = (Bridge ~= nil and Bridge.time or 0) + S.SWEEP_TICKS
+        end
+    end
     installMutants()
 end)
 
@@ -682,7 +739,6 @@ end)
 Events.OnZombieUpdate.Add(function(z)
     if z == nil then return end
     if S.is(z) then
-        keepInert(z)
         pcall(function() z:setVehicle4TestCollision(nil) end)
         return
     end

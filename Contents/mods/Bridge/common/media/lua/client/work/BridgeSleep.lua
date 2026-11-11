@@ -31,6 +31,8 @@ BridgeSleep.letting = false
 BridgeSleep.noWindow = 0
 BridgeSleep.noWindowSaid = false
 BridgeSleep.lastVerdict = nil
+BridgeSleep.detected = nil
+BridgeSleep.warned = {}
 BridgeSleep.sweep = {}
 BridgeSleep.GETTERS = { "getNumVisibleZombies", "getNumVeryCloseZombies", "getNumChasingZombies" }
 
@@ -42,6 +44,138 @@ local function benign(z)
     local yes = false
     pcall(function() yes = BridgeData.harmless(z) == true end)
     return yes
+end
+
+
+function BridgeSleep.detect()
+    if BridgeSleep.detected ~= nil then return BridgeSleep.detected end
+    local set = {}
+    pcall(function()
+        local mods = getActivatedMods()
+        if mods == nil then return end
+        local n = nil
+        pcall(function() n = mods:size() end)
+        if type(n) == "number" and n > 0 then
+            for i = 0, n - 1 do
+                local id = nil
+                pcall(function() id = mods:get(i) end)
+                if id ~= nil then
+                    local s = tostring(id)
+                    set[s] = true
+                    set["\\" .. s] = true
+                end
+            end
+        elseif type(mods.contains) == "function" then
+            local names = { "NPCCrew", "TrueCompanions", "TrueSleepEverywhere", "justsleep", "tsarslib" }
+            for i = 1, #names do
+                local has = false
+                pcall(function()
+                    has = mods:contains(names[i]) == true or mods:contains("\\" .. names[i]) == true
+                end)
+                if has then set[names[i]] = true end
+            end
+        end
+    end)
+    local bandits = rawget(_G, "BanditsNPC")
+    if type(bandits) == "table" and type(bandits.RealZombiesNear) == "function" then
+        set.__banditsNPC = true
+    end
+    if rawget(_G, "TrueSleepEverywhere") ~= nil then set.__trueSleepEverywhere = true end
+    local common = rawget(_G, "ISCommonMenu")
+    if type(common) == "table" and type(common.onSleepWalkToComplete) == "function" then
+        set.__isCommonMenu = true
+    end
+    BridgeSleep.detected = set
+    return set
+end
+
+
+function BridgeSleep.foreignGate()
+    local d = BridgeSleep.detect()
+    if d.NPCCrew or d["\\NPCCrew"] then return true end
+    if d.TrueCompanions or d["\\TrueCompanions"] then return true end
+    if d.__banditsNPC then return true end
+    return false
+end
+
+
+function BridgeSleep.foreignGateName()
+    local d = BridgeSleep.detect()
+    if d.NPCCrew or d["\\NPCCrew"] then return "NPCCrew" end
+    if d.TrueCompanions or d["\\TrueCompanions"] then return "TrueCompanions" end
+    if d.__banditsNPC then return "BanditsNPC" end
+    return nil
+end
+
+
+function BridgeSleep.unsupportedSleepMods()
+    local d = BridgeSleep.detect()
+    local out = {}
+    if d.TrueSleepEverywhere or d["\\TrueSleepEverywhere"] or d.__trueSleepEverywhere then
+        out[#out + 1] = "TrueSleepEverywhere"
+    end
+    if d.justsleep or d["\\justsleep"] then out[#out + 1] = "justsleep" end
+    if d.tsarslib or d["\\tsarslib"] then out[#out + 1] = "tsarslib" end
+    return out
+end
+
+
+function BridgeSleep.companionNear(playerObj, range)
+    if Bridge == nil or type(Bridge.alive) ~= "function" or not Bridge.alive() then return false end
+    local body = Bridge.body
+    if body == nil or playerObj == nil then return false end
+    local limit = tonumber(range) or 20
+    local near = false
+    pcall(function()
+        local dx = body:getX() - playerObj:getX()
+        local dy = body:getY() - playerObj:getY()
+        near = dx * dx + dy * dy <= limit * limit
+            and math.abs(body:getZ() - playerObj:getZ()) < 2
+    end)
+    return near
+end
+
+
+function BridgeSleep.warnDetected()
+    local gate = BridgeSleep.foreignGateName()
+    if gate ~= nil and not BridgeSleep.warned.gate then
+        BridgeSleep.warned.gate = true
+        log("foreign sleep gate present (" .. tostring(gate) .. "), park fallback will be used")
+    end
+    for _, id in ipairs(BridgeSleep.unsupportedSleepMods()) do
+        if not BridgeSleep.warned[id] then
+            BridgeSleep.warned[id] = true
+            if id == "TrueSleepEverywhere" then
+                warn("True Sleep Everywhere is unsupported: it can bypass the companion sleep gate. Load Stay With Me after it or sleep may be refused.")
+            elseif id == "justsleep" then
+                warn("Just Sleep is unsupported: Force Sleep bypasses companion parking and the game may wake the player immediately.")
+            elseif id == "tsarslib" then
+                warn("tsarslib RV sleep is unsupported: vehicle or bag sleep bypasses companion parking and the game may wake the player immediately.")
+            end
+        end
+    end
+end
+
+
+function BridgeSleep.ensureParkWrapper(o, playerObj, foreign)
+    if o == nil or o.bridgeCalmWrapped then return end
+    if type(o.onSelect) ~= "function" then return end
+    o.bridgeCalmWrapped = true
+    o.bridgeCalmOnSelect = o.onSelect
+    local saved = o.onSelect
+    local isForeign = foreign == true
+    o.onSelect = function(...)
+        if BridgeSleep.parkFallback and not Bridge.mp and (isForeign or not BridgeSleep.ownsGate()) then
+            if Bridge ~= nil then pcall(function() Bridge.sleepParkNow() end) end
+            if isForeign then
+                local name = BridgeSleep.foreignGateName() or "unknown"
+                log("park fallback: known foreign gate (" .. tostring(name) .. ")")
+            else
+                log("park fallback: foreign gate")
+            end
+        end
+        return saved(...)
+    end
 end
 
 function BridgeSleep.tentSleepWrapper()
@@ -507,39 +641,32 @@ function BridgeSleep.fixSleepOption(playerNum, context, worldobjects, test)
     local playerObj = getSpecificPlayer(playerNum)
     if playerObj == nil then return end
     local notSafe = getText("IGUI_Sleep_NotSafe")
+    local foreignPark = BridgeSleep.parkFallback and not Bridge.mp and BridgeSleep.foreignGate()
+        and BridgeSleep.companionNear(playerObj, 20)
     for _, o in ipairs(BridgeSleep.allOptions(context)) do
-        local tip = o.toolTip
-        local desc = tip ~= nil and tip.description or nil
-        if isSleepOption(o) and o.notAvailable and type(desc) == "string" and string.find(desc, notSafe, 1, true) ~= nil then
-            local ok, calm = pcall(function() return BridgeSleep.calm(playerObj) == true end)
-            if ok and calm then
-
-                local needed = true
-                pcall(function() if isClient() then needed = getServerOptions():getBoolean("SleepNeeded") end end)
-                local tired = true
-                pcall(function() tired = playerObj:getStats():get(CharacterStat.FATIGUE) > 0.3 end)
-                local rest = desc:gsub(notSafe:gsub("%p", "%%%0") .. " <BR> ", "", 1)
-                if needed and not tired then
-                    tip.description = (rest == desc) and getText("IGUI_Sleep_NotTiredEnough")
-                        or (getText("IGUI_Sleep_NotTiredEnough") .. " <BR> " .. rest)
-                    log("sleep option: only companions near, but not tired")
-                else
-                    o.notAvailable = false
-                    if rest == desc then o.toolTip = nil else tip.description = rest end
-                    if not o.bridgeCalmWrapped and type(o.onSelect) == "function" then
-                        o.bridgeCalmWrapped = true
-                        o.bridgeCalmOnSelect = o.onSelect
-                        local saved = o.onSelect
-                        o.onSelect = function(...)
-                            if BridgeSleep.parkFallback and not Bridge.mp and not BridgeSleep.ownsGate() then
-                                if Bridge ~= nil then pcall(function() Bridge.sleepParkNow() end) end
-                                log("park fallback: foreign gate")
-                            end
-                            return saved(...)
-                        end
+        if isSleepOption(o) then
+            if foreignPark then BridgeSleep.ensureParkWrapper(o, playerObj, true) end
+            local tip = o.toolTip
+            local desc = tip ~= nil and tip.description or nil
+            if o.notAvailable and type(desc) == "string" and string.find(desc, notSafe, 1, true) ~= nil then
+                local ok, calm = pcall(function() return BridgeSleep.calm(playerObj) == true end)
+                if ok and calm then
+                    local needed = true
+                    pcall(function() if isClient() then needed = getServerOptions():getBoolean("SleepNeeded") end end)
+                    local tired = true
+                    pcall(function() tired = playerObj:getStats():get(CharacterStat.FATIGUE) > 0.3 end)
+                    local rest = desc:gsub(notSafe:gsub("%p", "%%%0") .. " <BR> ", "", 1)
+                    if needed and not tired then
+                        tip.description = (rest == desc) and getText("IGUI_Sleep_NotTiredEnough")
+                            or (getText("IGUI_Sleep_NotTiredEnough") .. " <BR> " .. rest)
+                        log("sleep option: only companions near, but not tired")
+                    else
+                        o.notAvailable = false
+                        if rest == desc then o.toolTip = nil else tip.description = rest end
+                        BridgeSleep.ensureParkWrapper(o, playerObj, foreignPark)
+                        BridgeSleep.request[playerNum] = Bridge.time
+                        log("sleep option: only companions near, enabled")
                     end
-                    BridgeSleep.request[playerNum] = Bridge.time
-                    log("sleep option: only companions near, enabled")
                 end
             end
         end
@@ -582,6 +709,9 @@ if Events ~= nil and Events.OnGameStart ~= nil then
         BridgeSleep.sweep = {}
         BridgeSleep.window = nil
         BridgeSleep.letting = false
+        BridgeSleep.detected = nil
+        BridgeSleep.warned = {}
+        pcall(BridgeSleep.warnDetected)
         pcall(BridgeSleep.wrap, "game start")
         pcall(BridgeSleep.wrapVehicle)
     end)
@@ -677,9 +807,10 @@ pcall(BridgeSleep.wrapVehicle)
 function BridgeSleep.statusText()
     local depth = 0
     for _ in pairs(BridgeSleep.queue) do depth = depth + 1 end
-    return string.format("sleep calm=%s park=%s window=%s queue=%d noWindow=%d verdict=%s",
+    local foreign = BridgeSleep.foreignGateName() or "-"
+    return string.format("sleep calm=%s park=%s window=%s queue=%d noWindow=%d verdict=%s foreign=%s",
         tostring(BridgeSleep.calmEnabled), tostring(BridgeSleep.parkFallback), tostring(BridgeSleep.window ~= nil),
-        depth, BridgeSleep.noWindow, tostring(BridgeSleep.lastVerdict or "-"))
+        depth, BridgeSleep.noWindow, tostring(BridgeSleep.lastVerdict or "-"), tostring(foreign))
 end
 
 
@@ -840,6 +971,87 @@ function BridgeSleep.selftest()
         BridgeSleep.fixSleepOption(0, { options = { optTired } })
         check("fix tired stays unavailable", optTired.notAvailable, true)
         check("fix tired text", optTired.toolTip.description, "IGUI_Sleep_NotTiredEnough <BR> ")
+        local oldActivated = getActivatedMods
+        local oldBandits = rawget(_G, "BanditsNPC")
+        local oldOwns = BridgeSleep.ownsGate
+        local oldPark = BridgeSleep.parkFallback
+        local oldDetected = BridgeSleep.detected
+        local oldWarned = BridgeSleep.warned
+        local oldBridgeState = Bridge
+        getActivatedMods = function()
+            return { size = function() return 1 end, get = function(_, i) return i == 0 and "NPCCrew" or nil end }
+        end
+        BridgeSleep.detected = nil
+        check("detect NPCCrew gate", BridgeSleep.foreignGate(), true)
+        check("detect NPCCrew name", BridgeSleep.foreignGateName(), "NPCCrew")
+        getActivatedMods = function() return nil end
+        rawset(_G, "BanditsNPC", { RealZombiesNear = function() return true end })
+        BridgeSleep.detected = nil
+        check("bandits fallback gate", BridgeSleep.foreignGate(), true)
+        check("bandits fallback name", BridgeSleep.foreignGateName(), "BanditsNPC")
+        local parks = 0
+        local pRide = playerStub(statsStub(0, 0, 0, 0.5), false)
+        getSpecificPlayer = function() return pRide end
+        Bridge = { alive = function() return true end, body = pRide, mp = false,
+            sleepParkNow = function() parks = parks + 1 return true end }
+        BridgeSleep.ownsGate = function() return true end
+        BridgeSleep.parkFallback = true
+        BridgeSleep.detected = { NPCCrew = true }
+        local optForeign = { name = "ContextMenu_Sleep", notAvailable = true,
+            toolTip = { description = "IGUI_Sleep_NotSafe <BR> " }, onSelect = function() end }
+        BridgeSleep.fixSleepOption(0, { options = { optForeign } })
+        check("foreign fix clears", optForeign.notAvailable, false)
+        check("foreign fix wraps", optForeign.bridgeCalmWrapped, true)
+        optForeign.onSelect()
+        check("foreign park once", parks, 1)
+        parks = 0
+        local optForeignOpen = { name = "ContextMenu_Sleep", notAvailable = false,
+            toolTip = { description = "" }, onSelect = function() end }
+        BridgeSleep.fixSleepOption(0, { options = { optForeignOpen } })
+        check("foreign open wraps", optForeignOpen.bridgeCalmWrapped, true)
+        optForeignOpen.onSelect()
+        check("foreign open parks", parks, 1)
+        parks = 0
+        BridgeSleep.detected = {}
+        local optClean = { name = "ContextMenu_Sleep", notAvailable = false,
+            toolTip = { description = "" }, onSelect = function() end }
+        BridgeSleep.fixSleepOption(0, { options = { optClean } })
+        check("no foreign no wrapper", optClean.bridgeCalmWrapped, nil)
+        check("no foreign no park", parks, 0)
+        BridgeSleep.detected = { NPCCrew = true }
+        BridgeSleep.parkFallback = false
+        local optParkOff = { name = "ContextMenu_Sleep", notAvailable = false,
+            toolTip = { description = "" }, onSelect = function() end }
+        BridgeSleep.fixSleepOption(0, { options = { optParkOff } })
+        check("park off no wrapper", optParkOff.bridgeCalmWrapped, nil)
+        check("park off no park", parks, 0)
+        BridgeSleep.parkFallback = true
+        Bridge.mp = true
+        local optMp = { name = "ContextMenu_Sleep", notAvailable = false,
+            toolTip = { description = "" }, onSelect = function() end }
+        BridgeSleep.fixSleepOption(0, { options = { optMp } })
+        check("mp no wrapper", optMp.bridgeCalmWrapped, nil)
+        check("mp no park", parks, 0)
+        Bridge.mp = false
+        BridgeSleep.detected = {}
+        BridgeSleep.ownsGate = function() return true end
+        local optOwn = { name = "ContextMenu_Sleep", notAvailable = false,
+            toolTip = { description = "" }, onSelect = function() end }
+        BridgeSleep.fixSleepOption(0, { options = { optOwn } })
+        check("owns gate no wrapper", optOwn.bridgeCalmWrapped, nil)
+        check("owns gate no park", parks, 0)
+        BridgeSleep.detected = { NPCCrew = true }
+        check("status foreign", string.find(BridgeSleep.statusText(), "foreign=", 1, true) ~= nil, true)
+        getActivatedMods = oldActivated
+        if oldBandits == nil then rawset(_G, "BanditsNPC", nil)
+        else rawset(_G, "BanditsNPC", oldBandits) end
+        BridgeSleep.ownsGate = oldOwns
+        BridgeSleep.parkFallback = oldPark
+        BridgeSleep.detected = oldDetected
+        BridgeSleep.warned = oldWarned
+        Bridge = oldBridgeState
+        BridgeSleep.sweep = {}
+        BridgeSleep.request = {}
         BridgeSleep.queue = {}
     end)
     BridgeZScan.find, BridgeZScan.isCompanion, BridgeZScan.isDragged = oldFind, oldComp, oldDragged

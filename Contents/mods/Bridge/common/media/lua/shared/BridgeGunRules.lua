@@ -810,6 +810,8 @@ local function ggsShotDesc(desc, item)
     if type(profile) == "table" and type(profile.ammoFullType) == "string" then
         copy.ammoTypeKey = profile.ammoFullType
     end
+    copy._ammoTypesCache = nil
+    copy._ammoWantedCache = nil
     return copy
 end
 
@@ -1090,8 +1092,13 @@ function BridgeGunRules.ammoTypesFor(desc, owner)
     local ownerKey = tostring(owner)
     local sig = (gunworksAmmo() ~= nil and "1" or "0") .. (gunsmith() ~= nil and "1" or "0")
         .. (BridgeGunRules.ggsActive() and "1" or "0")
+    local typeKey = tostring(desc.ammoTypeKey) .. "|" .. tostring(desc.ammoFamily)
+        .. "|" .. (desc.efzAmmo ~= nil and "1" or "0")
     local memo = desc._ammoTypesCache
-    if type(memo) == "table" and memo.owner == ownerKey and memo.sig == sig then return memo.types end
+    if type(memo) == "table" and memo.owner == ownerKey and memo.sig == sig
+            and memo.typeKey == typeKey then
+        return memo.types
+    end
     local function add(t)
         if type(t) ~= "string" or t == "" or seen[t] then return end
         seen[t] = true
@@ -1145,7 +1152,7 @@ function BridgeGunRules.ammoTypesFor(desc, owner)
     end
     add(desc.ammoTypeKey)
     for _, t in ipairs(ggsAmmoTypesFor(desc)) do add(t) end
-    desc._ammoTypesCache = { owner = ownerKey, sig = sig, types = out }
+    desc._ammoTypesCache = { owner = ownerKey, sig = sig, typeKey = typeKey, types = out }
     return out
 end
 
@@ -1918,19 +1925,24 @@ function BridgeGunRules.validType(value)
 end
 
 
+local function wornListOf(body) return body:getWornItems() end
+local function wornSize(worn) return worn:size() end
+local function wornAt(worn, i) return worn:get(i) end
+local function wornByIndex(worn, i) return worn:getItemByIndex(i) end
+local function wornEntryItem(entry) return entry:getItem() end
+
 local function wornItems(body)
     local list = {}
     if body == nil then return list end
     pcall(function()
-        local worn = body:getWornItems()
+        local worn = wornListOf(body)
         if worn == nil then return end
-        for i = 0, worn:size() - 1 do
-            local entry = nil
-            pcall(function() entry = worn:get(i) end)
-            if entry == nil then pcall(function() entry = worn:getItemByIndex(i) end) end
+        for i = 0, wornSize(worn) - 1 do
+            local okEntry, entry = pcall(wornAt, worn, i)
+            if not okEntry or entry == nil then okEntry, entry = pcall(wornByIndex, worn, i) end
             local item = entry
             if entry ~= nil then
-                local ok, inner = pcall(function() return entry:getItem() end)
+                local ok, inner = pcall(wornEntryItem, entry)
                 if ok and inner ~= nil then item = inner end
             end
             if item ~= nil then list[#list + 1] = item end
@@ -1953,39 +1965,52 @@ local function itemsTick()
     return 0
 end
 
+local ITEM_MEMO_TICKS = 6
+
+local function itemListTtl()
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then
+        return BridgePerf.age("items", ITEM_MEMO_TICKS)
+    end
+    return ITEM_MEMO_TICKS
+end
+
+local function containerItems(container) if container ~= nil then return container:getItems() end end
+local function containerItemAt(items, i) return items:get(i) end
+local function itemInnerInventory(item)
+    if item ~= nil and item:IsInventoryContainer() then return item:getInventory() end
+end
+local function bodyInventory(body) return body:getInventory() end
+
 function BridgeGunRules.itemsOf(body)
-    local out = {}
-    if body == nil then return out end
+    if body == nil then return {} end
     local now = itemsTick()
     local cached = itemsMemo[body]
-    if cached ~= nil and cached.tick == now and cached.epoch == itemsEpoch then return cached.list end
+    if cached ~= nil and cached.epoch == itemsEpoch and now - cached.tick < itemListTtl() then
+        return cached.list
+    end
+    local out = {}
     local seen = {}
     local function scan(container)
         if container == nil or seen[container] then return end
         seen[container] = true
-        local items = nil
-        pcall(function() items = container:getItems() end)
-        if items == nil then return end
-        for i = 0, items:size() - 1 do
-            local item = nil
-            pcall(function() item = items:get(i) end)
-            if item ~= nil then
+        local okItems, items = pcall(containerItems, container)
+        if not okItems or items == nil then return end
+        local itemCount = items:size()
+        for i = 0, itemCount - 1 do
+            local okItem, item = pcall(containerItemAt, items, i)
+            if okItem and item ~= nil then
                 out[#out + 1] = item
-                local inner = nil
-                pcall(function()
-                    if item:IsInventoryContainer() then inner = item:getInventory() end
-                end)
-                if inner ~= nil then scan(inner) end
+                local okInner, inner = pcall(itemInnerInventory, item)
+                if okInner and inner ~= nil then scan(inner) end
             end
         end
     end
-    pcall(function() scan(body:getInventory()) end)
+    pcall(function() scan(bodyInventory(body)) end)
     pcall(function()
         for _, item in ipairs(wornItems(body)) do
             out[#out + 1] = item
-            local bag = nil
-            pcall(function() if item:IsInventoryContainer() then bag = item:getInventory() end end)
-            if bag ~= nil then scan(bag) end
+            local okBag, bag = pcall(itemInnerInventory, item)
+            if okBag and bag ~= nil then scan(bag) end
         end
     end)
     itemsMemo[body] = { tick = now, epoch = itemsEpoch, list = out }
@@ -2142,7 +2167,6 @@ end
 
 function BridgeGunRules.setRounds(item, rounds, containsClip)
     if item == nil then return false end
-    BridgeGunRules.bumpItems()
     local n = math.floor(tonumber(rounds) or 0)
     if n < 0 then n = 0 end
     local gun = BridgeGunRules.isGun(item)
@@ -2478,7 +2502,7 @@ function BridgeGunRules.removeOneLooseRound(body, desc, items, owner)
     for _, key in ipairs(types) do
         local removed = nil
         pcall(function() removed = body:getInventory():RemoveOneOf(key, true) end)
-        if removed ~= nil then return removed end
+        if removed ~= nil then BridgeGunRules.bumpItems() return removed end
         for _, bagItem in ipairs(wornItems(body)) do
             if removed ~= nil then break end
             if bagItem:IsInventoryContainer() then
@@ -2489,7 +2513,7 @@ function BridgeGunRules.removeOneLooseRound(body, desc, items, owner)
                 end
             end
         end
-        if removed ~= nil then return removed end
+        if removed ~= nil then BridgeGunRules.bumpItems() return removed end
     end
     return nil
 end
@@ -3330,6 +3354,10 @@ function BridgeGunRules.findAmmoBox(body, gun, items, owner)
     if #types == 0 then return nil end
     local wantedKey = tostring(owner) .. "|" .. tostring(#types) .. "|"
         .. (gunworksAmmo() ~= nil and "1" or "0") .. (gunsmith() ~= nil and "1" or "0")
+        .. "|" .. tostring(gun.ammoTypeKey) .. "|" .. tostring(gun.ammoFamily)
+        .. "|" .. (BridgeGunRules.ggsActive() and "1" or "0")
+        .. (gun.efzAmmo ~= nil and "1" or "0")
+        .. "|" .. tostring(types[1]) .. "|" .. tostring(types[#types])
     local wantedMemo = gun._ammoWantedCache
     local wanted
     if type(wantedMemo) == "table" and wantedMemo.key == wantedKey then

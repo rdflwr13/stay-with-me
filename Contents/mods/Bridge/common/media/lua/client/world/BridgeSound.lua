@@ -37,6 +37,20 @@ local function playStyled(emitter, sound, voiceType, pitch)
     return id, path
 end
 
+function BridgeSound.event(body, sound, style)
+    if body == nil then return 0 end
+    local emitter = nil
+    pcall(function() emitter = body:getEmitter() end)
+    if emitter == nil then return 0 end
+    local voiceType = tonumber(style and style.type) or 0
+    local pitch = tonumber(style and style.pitch) or 0
+    local id, path = playStyled(emitter, tostring(sound), voiceType, pitch)
+    if id == nil then id = 0 end
+    BridgeSound.info = string.format("%s via %s id=%s type=%d pitch=%d",
+        tostring(sound), tostring(path), tostring(id), voiceType, pitch)
+    return id
+end
+
 function BridgeSound.voice(body, name, gap, style)
     if body == nil then return "no body" end
     if type(style) ~= "table" or type(style.prefix) ~= "string" or style.prefix == "" then
@@ -96,6 +110,16 @@ function BridgeSound.sfx(body, sound)
     if not BridgeSound.logged[sound] then
         BridgeSound.logged[sound] = true
         log("sfx " .. BridgeSound.info)
+    end
+    return id
+end
+
+
+function BridgeSound.sfxAt(body, sound, volume)
+    local id = BridgeSound.sfx(body, sound)
+    if id == nil then return nil end
+    if volume ~= nil then
+        pcall(function() body:getEmitter():setVolume(id, volume) end)
     end
     return id
 end

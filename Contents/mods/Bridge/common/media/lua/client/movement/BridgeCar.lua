@@ -23,6 +23,8 @@ BridgeCar.opened = nil
 BridgeCar.closeAt = nil
 BridgeCar.exit = nil
 BridgeCar.info = "none"
+BridgeCar.taskHold = nil
+BridgeCar.pendingTask = nil
 
 local LEAVE = 10
 local RETURN = 20
@@ -178,7 +180,11 @@ end
 
 
 
+local frameAt, frameCar, frameVal = nil, nil, nil
+
 function BridgeCar.frame(car)
+    local tick = Bridge.tick or 0
+    if frameAt == tick and frameCar == car then return frameVal end
     local cx, cy, fx, fy, w, l = nil, nil, nil, nil, nil, nil
     pcall(function()
         cx, cy = car:getX(), car:getY()
@@ -186,10 +192,18 @@ function BridgeCar.frame(car)
         w, l = e:x(), e:z()
     end)
     fx, fy = BridgeCar.forward(car)
-    if cx == nil or fx == nil or type(w) ~= "number" or type(l) ~= "number" then return nil end
+    if cx == nil or fx == nil or type(w) ~= "number" or type(l) ~= "number" then
+        frameAt, frameCar, frameVal = tick, car, nil
+        return nil
+    end
     local fl = math.sqrt(fx * fx + fy * fy)
-    if fl < 1e-3 then return nil end
-    return { cx = cx, cy = cy, fx = fx / fl, fy = fy / fl, hw = w / 2, hl = l / 2 }
+    if fl < 1e-3 then
+        frameAt, frameCar, frameVal = tick, car, nil
+        return nil
+    end
+    local result = { cx = cx, cy = cy, fx = fx / fl, fy = fy / fl, hw = w / 2, hl = l / 2 }
+    frameAt, frameCar, frameVal = tick, car, result
+    return result
 end
 
 
@@ -978,6 +992,63 @@ function BridgeCar.stop(why)
 end
 
 
+function BridgeCar.startDoorTask(kind, targets)
+    if BridgeCar.state ~= "inside" or BridgeCar.car == nil then return "not inside" end
+    if BridgeCar.moving(BridgeCar.car) then
+        Bridge.speak("JobCarStop")
+        return "moving"
+    end
+    if not BridgeData.wants(Bridge.store) then return "not now" end
+    local mode = kind == "openDoors" and "open" or "close"
+    local pre = nil
+    pcall(function() pre = BridgeTask.doorPreflight(targets, mode) end)
+    if pre ~= nil and pre ~= "ok" then
+        if pre == "locked" then Bridge.speak("JobDoorLocked")
+        elseif pre == "barricade" then Bridge.speak("JobDoorBarricaded")
+        else Bridge.speak(kind == "openDoors" and "JobNoDoorsOpen" or "JobNoDoorsClose") end
+        return "unavailable"
+    end
+    if BridgeTask ~= nil and type(BridgeTask.dangerNear) == "function" then
+        local danger = false
+        pcall(function() danger = BridgeTask.dangerNear(nil, BridgeTask.DOOR_DANGER_RADIUS) == true end)
+        if danger then
+            Bridge.speak("JobDanger")
+            return "danger"
+        end
+    end
+    local seat = BridgeCar.seat
+    local sq = BridgeCar.doorSquare(BridgeCar.car, seat)
+    if sq == nil then return "no door" end
+    openDoor(BridgeCar.car, seat)
+    local res = "?"
+    pcall(function() res = Bridge.spawnZombie(sq:getX(), sq:getY(), sq:getZ()) end)
+    local asked = Bridge.alive() or string.find(tostring(res), "spawn asked", 1, true) ~= nil
+    if not asked then
+        BridgeCar.closeDoor("door task spawn failed")
+        log("door task spawn failed: " .. tostring(res))
+        return "spawn failed"
+    end
+    Bridge.parked = false
+    BridgeCar.release()
+    BridgeCar.state, BridgeCar.phase = "idle", nil
+    BridgeCar.car, BridgeCar.seat, BridgeCar.lap, BridgeCar.exit = nil, nil, false, nil
+    BridgeCar.tried = {}
+    if BridgeCar.opened ~= nil then BridgeCar.closeAt = Bridge.time + CLOSE_AFTER end
+    BridgeCar.taskHold = true
+    BridgeCar.pendingTask = { kind = kind, targets = targets, since = Bridge.time, tries = 0 }
+    BridgeCar.returnWanted = nil
+    log("door task handoff: " .. tostring(kind) .. " targets=" .. tostring(#targets))
+    return "asked"
+end
+
+
+function BridgeCar.finishTask()
+    BridgeCar.taskHold = nil
+    BridgeCar.pendingTask = nil
+    BridgeCar.returnWanted = true
+end
+
+
 local function setInside(car, why)
     movesReset()
     BridgeCar.state, BridgeCar.phase = "inside", nil
@@ -1569,6 +1640,7 @@ end
 function BridgeCar.update(body)
     local red = BridgeData.owner()
     if red == nil then return false end
+    if BridgeCar.taskHold then return false end
     if BridgeCar.state == "exiting" or BridgeCar.state == "standing" then return exitFrame(body, red) end
     if BridgeCar.state == "inside" then
         local v = nil
@@ -1638,19 +1710,79 @@ function BridgeCar.update(body)
 end
 
 
-function BridgeCar.tick()
-    local mult = 1
-    pcall(function() mult = getGameTime():getTrueMultiplier() end)
-    if type(mult) ~= "number" or mult ~= mult or mult < 1 then mult = 1 end
-    if mult > 60 then mult = 60 end
+function BridgeCar.tick(red)
+    local now = Bridge.time or 0
+    local mult = BridgeCar.mult or 1
+    if BridgeCar.multAt == nil or now - BridgeCar.multAt >= 30 then
+        local m = 1
+        pcall(function() m = getGameTime():getTrueMultiplier() end)
+        if type(m) ~= "number" or m ~= m or m < 1 then m = 1 end
+        if m > 60 then m = 60 end
+        BridgeCar.mult = m
+        BridgeCar.multAt = now
+        mult = m
+    end
     BridgeCar.gt = (BridgeCar.gt or 0) + (Bridge.dt or 1) * mult
     if BridgeCar.closeAt ~= nil and Bridge.time >= BridgeCar.closeAt then BridgeCar.closeDoor("done") end
-    local red = BridgeData.owner()
+    red = red or BridgeData.owner()
     if red == nil then return end
     local dead = false
     pcall(function() dead = red:isDead() end)
     if dead then
+        if BridgeTask ~= nil and BridgeTask.active then pcall(BridgeTask.cancel, "car owner died") end
+        BridgeCar.taskHold = nil
+        BridgeCar.pendingTask = nil
+        BridgeCar.returnWanted = nil
         if BridgeCar.state ~= "idle" then BridgeCar.stop("he died") end
+        return
+    end
+    if BridgeCar.returnWanted then
+        if BridgeTask == nil or not BridgeTask.active then
+            BridgeCar.returnWanted = nil
+            local v = nil
+            pcall(function() v = red:getVehicle() end)
+            if v ~= nil and Bridge.alive() and Bridge.mode ~= "follow" then Bridge.setMode("follow") end
+        end
+    end
+    if BridgeCar.taskHold then
+        local v = nil
+        pcall(function() v = red:getVehicle() end)
+        if BridgeTask ~= nil and BridgeTask.active
+                and (BridgeTask.kind == "openDoors" or BridgeTask.kind == "closeDoors") then
+            if v ~= nil and BridgeCar.moving(v) then
+                pcall(function() BridgeTask.cancel("car") end)
+                BridgeCar.taskHold = nil
+                BridgeCar.pendingTask = nil
+                log("door task cancelled: car moving")
+                return
+            end
+        end
+        local p = BridgeCar.pendingTask
+        if p ~= nil then
+            if v == nil then
+                BridgeCar.pendingTask = nil
+                BridgeCar.taskHold = nil
+                log("door task cancelled: owner left the car")
+                return
+            end
+            if Bridge.alive() and Bridge.hiddenSince == nil and Bridge.drivable() then
+                local res = "?"
+                pcall(function() res = BridgeTask.start(p.kind, p.targets) end)
+                if res == "started" then
+                    BridgeTask.fromCar = true
+                    BridgeCar.pendingTask = nil
+                    log("door task started from the car")
+                    return
+                end
+            end
+            p.tries = (p.tries or 0) + 1
+            if p.tries > SPAWN_WAIT then
+                BridgeCar.pendingTask = nil
+                BridgeCar.taskHold = nil
+                log("door task did not start")
+            end
+            return
+        end
         return
     end
     if BridgeCar.state == "inside" then
@@ -1825,5 +1957,34 @@ function BridgeCar.tick()
         end
     end
 end
+
+function BridgeCar.onMechanicsOpened(action)
+    if BridgeMoments == nil or type(BridgeMoments.say) ~= "function" then return end
+    local p = nil
+    if BridgeData ~= nil and type(BridgeData.owner) == "function" then p = BridgeData.owner() end
+    if p == nil or action == nil or action.character ~= p then return end
+    if p:getVehicle() ~= nil then return end
+    if type(BridgeMoments.available) == "function"
+            and not BridgeMoments.available(p, Bridge.body, 10) then return end
+    BridgeMoments.say("EvIdleMechanic", 10 * 60 * 60, "soft", "IdleMechanic")
+end
+
+function BridgeCar.hookMechanics()
+    local A = ISOpenMechanicsUIAction
+    if A == nil or A.bridgeIdleHooked then return end
+    if type(A.perform) ~= "function" then return end
+    A.bridgeIdleHooked = true
+    local base = A.perform
+    A.perform = function(self, ...)
+        local result = base(self, ...)
+        pcall(BridgeCar.onMechanicsOpened, self)
+        return result
+    end
+end
+
+if Events ~= nil and Events.OnGameStart ~= nil then
+    Events.OnGameStart.Add(BridgeCar.hookMechanics)
+end
+pcall(BridgeCar.hookMechanics)
 
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeCar] loaded") end

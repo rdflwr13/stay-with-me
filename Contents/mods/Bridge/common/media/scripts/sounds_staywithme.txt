@@ -39,4 +39,34 @@ module Base
             volume = 1.0,
         }
     }
+
+    sound NA_BreathFemale
+    {
+        category = Object,
+        loop = false,
+        is3D = true,
+        clip
+        {
+            file = media/sound/na_breath_female.ogg,
+            distanceMin = 1,
+            distanceMax = 4,
+            reverbFactor = 0.1,
+            volume = 0.6,
+        }
+    }
+
+    sound NA_BreathMale
+    {
+        category = Object,
+        loop = false,
+        is3D = true,
+        clip
+        {
+            file = media/sound/na_breath_male.ogg,
+            distanceMin = 1,
+            distanceMax = 4,
+            reverbFactor = 0.1,
+            volume = 0.6,
+        }
+    }
 }

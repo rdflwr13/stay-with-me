@@ -46,24 +46,10 @@ function BridgeZS.countSeen(cx, cy, cz, r, a, b, opts)
     return s.countSeen(cx, cy, cz, r, a, b, opts) or 0
 end
 
-function BridgeZS.list(opts)
-    local s = scan()
-    if s == nil then return nil end
-    return s.list(opts)
-end
-
-function BridgeZS.update()
-    local s = scan()
-    if s == nil then return nil end
-    return s.refresh()
-end
-
 function BridgeZS.invalidate(reason)
     local s = scan()
     if s ~= nil then s.invalidate(reason or "start") end
 end
-
-BridgeZS.stats = BridgeZScan ~= nil and BridgeZScan.stats or {}
 
 if BridgeZScan ~= nil then
     BridgeZScan.tickOf = function()
@@ -80,9 +66,7 @@ if BridgeZScan ~= nil then
 
     BridgeZScan.isRemoteOf = function(z)
         if isClient == nil or not isClient() then return false end
-        local remote = false
-        pcall(function() remote = z:isRemoteZombie() == true end)
-        return remote
+        return z:isRemoteZombie() == true
     end
 end
 

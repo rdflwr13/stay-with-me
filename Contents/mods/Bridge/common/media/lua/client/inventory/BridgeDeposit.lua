@@ -85,17 +85,23 @@ local function containerEmpty(item)
     return n == 0
 end
 
-local wornSetBody, wornSetValue = nil, nil
+local wornSetBody, wornSetValue, wornSetAt = nil, nil, nil
 
 local function wornBagSet(body)
-    if body ~= nil and wornSetBody == body and wornSetValue ~= nil then return wornSetValue end
+    local now = Bridge ~= nil and tonumber(Bridge.time) or 0
+    local ttl = 30
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then ttl = BridgePerf.age("wornBags", 30) end
+    if body ~= nil and wornSetBody == body and wornSetValue ~= nil
+            and wornSetAt ~= nil and now - wornSetAt < ttl then
+        return wornSetValue
+    end
     local set = {}
     if BridgeInventory ~= nil and type(BridgeInventory.wornBags) == "function" then
         pcall(function()
             for _, bag in ipairs(BridgeInventory.wornBags(body)) do set[bag] = true end
         end)
     end
-    wornSetBody, wornSetValue = body, set
+    wornSetBody, wornSetValue, wornSetAt = body, set, now
     return set
 end
 
@@ -339,7 +345,8 @@ function BridgeDeposit.storableItems(body)
         local list = nil
         pcall(function() list = invs[i]:getItems() end)
         if list ~= nil then
-            for j = 0, list:size() - 1 do
+            local ln = list:size()
+            for j = 0, ln - 1 do
                 local item = list:get(j)
                 if item ~= nil and BridgeDeposit.storable(item, body, home) then out[#out + 1] = item end
             end
@@ -351,7 +358,9 @@ function BridgeDeposit.storableItems(body)
         local it = out[i]
         if not keep[it] then filtered[#filtered + 1] = it end
     end
-    table.sort(filtered, function(a, b) return itemWeight(a) < itemWeight(b) end)
+    local weights = {}
+    for i = 1, #filtered do weights[filtered[i]] = itemWeight(filtered[i]) end
+    table.sort(filtered, function(a, b) return (weights[a] or 0) < (weights[b] or 0) end)
     return filtered
 end
 
@@ -567,12 +576,13 @@ function BridgeDeposit.targetsIn(b, cap)
     cap = tonumber(cap) or AREA_CAP
     local seen = {}
     local player = owner()
+    local cell = getCell()
+    if cell == nil then return list end
     for x = b.x1, b.x2 do
         for y = b.y1, b.y2 do
             if #list >= cap then return list end
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
-            squareTargets(sq, list, seen, player, cap)
+            local okSq, sq = pcall(cell.getGridSquare, cell, x, y, b.z)
+            if okSq then squareTargets(sq, list, seen, player, cap) end
         end
     end
     return list
@@ -633,6 +643,8 @@ function BridgeDeposit.homeTargets()
     if floors == nil or #floors == 0 then floors = { h.z } end
     local player = owner()
     local seen = {}
+    local cell = getCell()
+    if cell == nil then return list end
     for fi = 1, #floors do
         if #list >= HOME_CAP then break end
         local z = floors[fi]
@@ -640,9 +652,8 @@ function BridgeDeposit.homeTargets()
             if #list >= HOME_CAP then break end
             for y = h.y, h.y + h.h - 1 do
                 if #list >= HOME_CAP then break end
-                local sq = nil
-                pcall(function() sq = getCell():getGridSquare(x, y, z) end)
-                if sq ~= nil and BridgeData.homeBuildingOk(h, sq) then
+                local okSq, sq = pcall(cell.getGridSquare, cell, x, y, z)
+                if okSq and sq ~= nil and BridgeData.homeBuildingOk(h, sq) then
                     squareTargets(sq, list, seen, player, HOME_CAP)
                 end
             end
@@ -1093,7 +1104,7 @@ function BridgeDeposit.clear()
     BridgeDeposit.poolCache = {}
     BridgeDeposit.catCache = {}
     BridgeDeposit.catTypeCache = {}
-    wornSetBody, wornSetValue = nil, nil
+    wornSetBody, wornSetValue, wornSetAt = nil, nil, nil
     if BridgeTask ~= nil and type(BridgeTask.lootAbortAct) == "function" then pcall(BridgeTask.lootAbortAct) end
     if BridgeMove ~= nil then BridgeMove.holdDoors = false end
     saveOutfit()
@@ -1120,7 +1131,7 @@ local function initJob(body, pending)
     end
     job.items = items
     job.plan, job.planEntry, job.assign = nil, nil, nil
-    wornSetBody, wornSetValue = nil, nil
+    wornSetBody, wornSetValue, wornSetAt = nil, nil, nil
     if job.dests == nil then job.dests = {} end
     ensureIndex(job)
     job.allDests = {}
