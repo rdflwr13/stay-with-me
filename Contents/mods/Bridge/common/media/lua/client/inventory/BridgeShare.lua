@@ -43,6 +43,7 @@ end
 
 
 local function inRange(red)
+    if Bridge == nil then return false end
     local body = Bridge.body
     if body == nil then return false end
     local dx, dy, dz = 0, 0, 99
@@ -72,6 +73,7 @@ local function fracFor(perk, red)
 end
 
 function BridgeShare.tick()
+    if Bridge == nil then return end
     if Bridge.every ~= nil and not Bridge.every(BridgeShare.EVERY, BridgeShare.PHASE) then return end
     if BridgeSkills == nil or BridgeSkills.add == nil then return end
     local red = owner()
@@ -156,7 +158,7 @@ end
 local MIRROR_FLAT = 1
 local mirrorWasAttacking = false
 local function mirrorTick()
-    if not Bridge.mp then return end
+    if Bridge == nil or not Bridge.mp then return end
     local red = owner()
     if red == nil then return end
     local attacking = false
@@ -195,7 +197,7 @@ end
 local fitnessAt = -9999
 local fitWasX, fitWasY = nil, nil
 local function fitnessMirrorTick()
-    if BridgeSkills == nil then return end
+    if BridgeSkills == nil or Bridge == nil then return end
     local red = owner()
     if red == nil then return end
     if (Bridge.time or 0) < fitnessAt then return end

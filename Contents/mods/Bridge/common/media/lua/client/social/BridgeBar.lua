@@ -50,7 +50,7 @@ end
 
 local function isEnabled()
     local on = false
-    pcall(function() on = BridgeData.optionOf(Bridge.store, "fatigueBar") == true end)
+    pcall(function() on = Bridge ~= nil and BridgeData.optionOf(Bridge.store, "fatigueBar") == true end)
     return on
 end
 

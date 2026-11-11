@@ -9403,6 +9403,7 @@ function Bridge.stuckDiagnostics()
 end
 
 function Bridge.onTick()
+    if Bridge == nil then Bridge = BridgeKeep end
     Bridge.tick = Bridge.tick + 1
     local dt = 1
     pcall(function() dt = getGameTime():getRealworldSecondsSinceLastUpdate() * 60 end)

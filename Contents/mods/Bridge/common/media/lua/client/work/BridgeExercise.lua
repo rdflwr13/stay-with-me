@@ -508,6 +508,7 @@ end
 
 if type(Events) == "table" and Events.OnTick ~= nil then
     Events.OnTick.Add(function()
+        if Bridge == nil then return end
         if Bridge.every ~= nil and not Bridge.every(BridgeExercise.POLL_EVERY, BridgeExercise.POLL_PHASE) then return end
         pcall(BridgeExercise.readyTick)
         pcall(BridgeExercise.mirrorTick)

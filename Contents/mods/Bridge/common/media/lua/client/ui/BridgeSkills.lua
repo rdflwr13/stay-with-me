@@ -333,6 +333,7 @@ end
 
 
 local function drawPops()
+    if Bridge == nil then return end
     local pops = BridgeSkills.pops
     local count = #pops
     if count == 0 then return end
@@ -584,6 +585,7 @@ end
 
 if type(Events) == "table" and Events.OnTick ~= nil then
     Events.OnTick.Add(function()
+        if Bridge == nil then return end
         pcall(sayTick)
         pcall(xpTick)
         pcall(runTick)
