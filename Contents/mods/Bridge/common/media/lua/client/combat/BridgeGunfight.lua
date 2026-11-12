@@ -34,6 +34,12 @@ BridgeGunfight.pendingShot = nil
 BridgeGunfight.shots = 0
 BridgeGunfight.hits = 0
 BridgeGunfight.blockAt = nil
+BridgeGunfight.blockSince = nil
+BridgeGunfight.blockSinceTarget = nil
+BridgeGunfight.blockRetargetAt = nil
+BridgeGunfight.blockRetargetTo = nil
+BridgeGunfight.holdReleasedFor = nil
+BridgeGunfight.yieldFor = nil
 BridgeGunfight.moving = false
 BridgeGunfight.standoffMoving = false
 BridgeGunfight.followHold = false
@@ -198,6 +204,10 @@ RELOAD.FLEE_STUCK        = 20
 
 local STOW_TICKS = 180
 local RECHECK = 12
+local CLEAR_PENALTY = 20.0
+local BLOCK_RETARGET_TICKS = 30
+local BLOCK_RETARGET_RETRY = 60
+local HOLD_RELEASE_TICKS = 45
 MELEE.TO_GUN = 90
 GUN.TO_MELEE = 30
 MELEE.RELEASE_RANGE = 3.5
@@ -227,6 +237,7 @@ local bumpName
 local playGunSound
 local reloadFactor
 local tellLoadOne
+local friendlies
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeGunfight] " .. tostring(text)) end end
 local function logf(fmt, ...)
@@ -464,6 +475,8 @@ local function clearFields()
     BridgeGunfight.lowCheckAt = nil
     clearAmmoPresence()
     BridgeGunfight.target = nil
+    BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
     BridgeGunfight.state = "idle"
     BridgeGunfight.drawn = false
     BridgeGunfight.attached = nil
@@ -1147,6 +1160,8 @@ function BridgeGunfight.stow(body)
     if body == nil or (Bridge.body ~= nil and body ~= Bridge.body) then return false end
     BridgeGunfight.meleeFallback = true
     BridgeGunfight.stance = "melee"
+    BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
     stopReposition(body)
     BridgeGunfight.peek = nil
     local item = BridgeGunfight.assignedItem(body)
@@ -1413,7 +1428,18 @@ function BridgeGunfight.holdBand(body)
     end
     local _, _, ceiling = BridgeGunfight.preferredBand(body, mode)
     if ceiling <= 0 then return false end
-    return dist(body, t) <= ceiling
+    if dist(body, t) > ceiling then return false end
+    if BridgeGunfight.blockSinceTarget ~= t or BridgeGunfight.blockSince == nil then return true end
+    if (Bridge.time or 0) - BridgeGunfight.blockSince < HOLD_RELEASE_TICKS then return true end
+    if BridgeGunfight.reposition ~= nil or BridgeGunfight.standoffMoving == true
+            or BridgeGunfight.fireUntil ~= nil or BridgeGunfight.pendingShot ~= nil then
+        return true
+    end
+    if BridgeGunfight.holdReleasedFor ~= t then
+        BridgeGunfight.holdReleasedFor = t
+        vlog(string.format("hold band released: blocked %dt", (Bridge.time or 0) - BridgeGunfight.blockSince))
+    end
+    return false
 end
 
 
@@ -1459,7 +1485,7 @@ pickState.nearForGun = function(body, radius, tag)
     return list
 end
 
-local function pickTarget(body, red)
+local function pickTarget(body, red, opts)
     local range = nightRange(BridgeGunfight.modeRange or (BridgeGunfight.gun and BridgeGunfight.gun.range) or 0, body)
     if range <= 0 then return nil end
     local cell = getCell()
@@ -1469,14 +1495,18 @@ local function pickTarget(body, red)
     local fx, fy = BridgeGunfight.facingOf(body)
     local range2 = range * range
     local list = pickState.nearForGun(body, range + 1.0, "gun.pick")
+    local friends = friendlies(body)
     local cands = pickState.cands
     local cn = 0
     local function addCandidate(z, dSelf, bonus, dRed)
+        if opts ~= nil and opts.exclude ~= nil and z == opts.exclude then return end
         cn = cn + 1
         local entry = pickState.entries[cn]
         if entry == nil then entry = {} pickState.entries[cn] = entry end
         entry.z, entry.d, entry.bonus = z, dSelf, bonus
+        entry.blocked = BridgeGunRules.friendlyInLine(body, z, friends)
         entry.score = dRed + dSelf * 0.01 + bonus
+            + (entry.blocked ~= nil and CLEAR_PENALTY or 0)
         cands[cn] = entry
     end
     local listSize = list:size()
@@ -1538,7 +1568,8 @@ local function pickTarget(body, red)
     end
     pickState.n = cn
     if cn == 0 then return nil end
-    local function usable(z)
+    local function usable(z, blockedFriendly)
+        if opts ~= nil and opts.requireFriendlyClear and blockedFriendly ~= nil then return false end
         if not BridgeGunRules.targetVisible(body, red, z) then return false end
         local okClear, clearVal = pcall(lineClearFor, cell, body, z)
         return okClear and clearVal == true
@@ -1571,7 +1602,7 @@ local function pickTarget(body, red)
     local prefer = BridgeGunfight.shovePreferred
     if prefer ~= nil then
         for _, c in ipairs(cands) do
-            if c.z == prefer and c.d <= closeRange and usable(prefer) then
+            if c.z == prefer and c.d <= closeRange and usable(prefer, c.blocked) then
                 BridgeGunfight.shovePreferred = nil
                 return chosen(prefer, "shove retarget")
             end
@@ -1588,10 +1619,12 @@ local function pickTarget(body, red)
         end
         if #close > 0 then
             table.sort(close, function(a, b)
-                return (a.d + (a.bonus or 0)) < (b.d + (b.bonus or 0))
+                local ad = a.d + (a.bonus or 0) + (a.blocked ~= nil and CLEAR_PENALTY or 0)
+                local bd = b.d + (b.bonus or 0) + (b.blocked ~= nil and CLEAR_PENALTY or 0)
+                return ad < bd
             end)
             for _, c in ipairs(close) do
-                if usable(c.z) then
+                if usable(c.z, c.blocked) then
                     BridgeGunfight.shovePreferred = nil
                     return chosen(c.z, "close override")
                 end
@@ -1602,7 +1635,7 @@ local function pickTarget(body, red)
     BridgeGunfight.shovePreferred = nil
     table.sort(cands, function(a, b) return a.score < b.score end)
     for _, c in ipairs(cands) do
-        if usable(c.z) then return chosen(c.z, "player priority") end
+        if usable(c.z, c.blocked) then return chosen(c.z, "player priority") end
     end
     return nil
 end
@@ -1757,7 +1790,7 @@ local function peekTick(body, red)
 end
 
 
-local function friendlies(body)
+friendlies = function(body)
     local reach = BridgeGunfight.modeRange or 0
     if reach <= 0 then reach = (BridgeGunfight.gun and BridgeGunfight.gun.range) or 20 end
     local radius = math.max(20, reach + 1)
@@ -1814,6 +1847,35 @@ local function blockedBy(body, t)
     end
     blockAt, blockBody, blockTarget, blockWhy, blockHit = tick, body, t, why, hit
     return why, hit
+end
+
+
+local function blockedRetarget(body, red, t)
+    if body == nil or red == nil or t == nil then return false end
+    if BridgeGunfight.reposition ~= nil then return false end
+    if BridgeGunfight.standoffMoving == true then return false end
+    if BridgeGunfight.fireUntil ~= nil or BridgeGunfight.pendingShot ~= nil then return false end
+    if BridgeGunfight.blockSince == nil then return false end
+    local now = Bridge.time or 0
+    if now - BridgeGunfight.blockSince < BLOCK_RETARGET_TICKS then return false end
+    if BridgeGunfight.blockRetargetAt ~= nil
+            and now - BridgeGunfight.blockRetargetAt < BLOCK_RETARGET_RETRY then
+        return false
+    end
+    BridgeGunfight.blockRetargetAt = now
+    local alt = pickTarget(body, red, { requireFriendlyClear = true, exclude = t })
+    if alt == nil then return false end
+    if BridgeGunfight.blockRetargetTo ~= alt then
+        BridgeGunfight.blockRetargetTo = alt
+        local oldType, newType = "?", "?"
+        pcall(function() oldType = tostring(t:getType()) end)
+        pcall(function() newType = tostring(alt:getType()) end)
+        logf("blocked retarget: %s -> %s", oldType, newType)
+    end
+    BridgeGunfight.target = nil
+    BridgeGunfight.lastPick = 0
+    BridgeGunfight.state = "idle"
+    return true
 end
 
 
@@ -2277,6 +2339,8 @@ local function fire(body)
     BridgeGunfight.lastGunAt = Bridge.time
     BridgeGunfight.nextShotAt = (Bridge.time or 0) + math.max(24, (gun.recoilDelay or 24) + 6) + ZombRand(0, 6)
     BridgeGunfight.lastShotTarget = t
+    BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
     BridgeGunfight.retargetUntil = (Bridge.time or 0) + BridgeGunRules.RETARGET_TICKS
     BridgeGunfight.plantRequired = false
     BridgeGunfight.retreatHoldUntil = (Bridge.time or 0) + GUN.SHOT_RETREAT_HOLD
@@ -3177,6 +3241,8 @@ function BridgeGunfight.ejectNow(body, item)
     BridgeGunfight.interruptReload(body, "manual eject", true)
     BridgeGunfight.body = body
     BridgeGunfight.target = nil
+    BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
     BridgeGunfight.aimUntil = nil
     BridgeGunfight.nextShotAt = nil
     BridgeGunfight.fireUntil = nil
@@ -3212,6 +3278,8 @@ function BridgeGunfight.resetAim(body, reason)
     BridgeGunfight.plantRequired = true
     BridgeGunfight.stationarySince = Bridge.time or 0
     BridgeGunfight.target = nil
+    BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
     BridgeGunfight.state = "idle"
     BridgeGunfight.moving = false
     BridgeGunfight.standoffMoving = false
@@ -3233,6 +3301,7 @@ function BridgeGunfight.interruptForFlee(body)
     BridgeGunfight.reposition = nil
     BridgeGunfight.reposSide = nil
     BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
     BridgeGunfight.target = nil
     BridgeGunfight.aimUntil = nil
     BridgeGunfight.nextShotAt = nil
@@ -3638,6 +3707,8 @@ local function forceMeleeFallback(body)
     BridgeGunfight.stance = "melee"
     BridgeGunfight.meleeFallback = true
     BridgeGunfight.target = nil
+    BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
     BridgeGunfight.state = "idle"
     BridgeGunfight.info = "out of ammo: melee fallback"
     BridgeGunfight.canMelee = true
@@ -3674,6 +3745,7 @@ local function outOfAmmo(body, items)
     BridgeGunfight.state = "idle"
     BridgeGunfight.target = nil
     BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
     BridgeGunfight.stow(body)
     clearBump(body)
     if first then
@@ -4135,6 +4207,8 @@ function BridgeGunfight.releaseForFollow(body, why)
     local wasHold = BridgeGunfight.followHold == true
     clearAmmoPresence()
     BridgeGunfight.target = nil
+    BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
     BridgeGunfight.aimUntil = nil
     BridgeGunfight.nextShotAt = nil
     BridgeGunfight.plantRequired = false
@@ -4218,12 +4292,22 @@ end
 BridgeGunfight.crowdDanger = crowdDanger
 
 
-local function standoffMeleeEligible(body, S)
+local function meleeEligible(body)
     if BridgeData.optionOf(Bridge.store, "gunMelee") ~= true then return false end
     if not swingRecoveryReady() or not meleeReady(body) then return false end
     local locked = BridgeGunfight.lastGunAt ~= nil
         and (Bridge.time or 0) - BridgeGunfight.lastGunAt < GUN.TO_MELEE
-    if locked then return false end
+    return not locked
+end
+
+
+local function standoffMeleeEligible(body, S)
+    if not meleeEligible(body) then return false end
+    local held = BridgeGunfight.target
+    if held ~= nil and blockedBy(body, held) ~= nil then
+        if BridgeFight.reachable ~= nil and not BridgeFight.reachable(body, held) then return false end
+        return true
+    end
     local z = S.standThreat
     if z == nil or (S.standD or 999) > BridgeGunRules.MIN_RANGE then return false end
     if BridgeFight.reachable ~= nil and not BridgeFight.reachable(body, z) then return false end
@@ -5571,16 +5655,26 @@ BridgeGunfight.lastShotTarget = nil
         vlog("target lost: " .. lost .. (line and "" or " (line blocked)"))
         t = nil
         BridgeGunfight.target = nil
+        BridgeGunfight.blockSince = nil
+        BridgeGunfight.blockSinceTarget = nil
         BridgeGunfight.state = "idle"
         BridgeGunfight.stowAt = Bridge.time + STOW_TICKS
     end
     if t == nil and pick then
         BridgeGunfight.lastPick = Bridge.time
-        t = pickTarget(body, red)
+        local engaged = BridgeFight ~= nil
+            and (BridgeFight.state == "approach" or BridgeFight.state == "step" or BridgeFight.state == "swing")
+        t = pickTarget(body, red, engaged and { requireFriendlyClear = true } or nil)
         if t ~= nil then
             BridgeGunfight.peek = nil
             if not BridgeGunfight.standoffMoving then stopForAim(body) end
             BridgeGunfight.target = t
+            if BridgeGunfight.blockSinceTarget ~= t then
+                BridgeGunfight.blockSince = nil
+                BridgeGunfight.blockSinceTarget = nil
+                BridgeGunfight.blockRetargetAt = nil
+                BridgeGunfight.blockRetargetTo = nil
+            end
             BridgeGunfight.lastTargetAt = Bridge.time
             BridgeGunfight.stowAt = nil
             pcall(BridgeCallout.gunEngage)
@@ -5755,6 +5849,7 @@ BridgeGunfight.lastShotTarget = nil
     if (BridgeGunfight.rounds or 0) <= 0 then
         if BridgeGunfight.reposition ~= nil then stopReposition(body) end
         BridgeGunfight.blockSince = nil
+        BridgeGunfight.blockSinceTarget = nil
         BridgeGunfight.reposSide = nil
         if d < floor and retreat then
             BridgeGunfight.info = "backstep before reload"
@@ -5790,8 +5885,21 @@ BridgeGunfight.lastShotTarget = nil
         local moved = repositionTick(body, t, blocker)
         if moved then
             BridgeGunfight.blockSince = nil
+            BridgeGunfight.blockSinceTarget = nil
         else
             BridgeGunfight.blockSince = BridgeGunfight.blockSince or Bridge.time
+            BridgeGunfight.blockSinceTarget = t
+            if blockedRetarget(body, red, t) then return true end
+            if meleeEligible(body) and (BridgeFight.reachable == nil or BridgeFight.reachable(body, t))
+                    and (Bridge.time - BridgeGunfight.blockSince) >= HOLD_RELEASE_TICKS then
+                BridgeGunfight.state = "idle"
+                BridgeGunfight.info = "yield: " .. why .. " in the line"
+                if BridgeGunfight.yieldFor ~= t then
+                    BridgeGunfight.yieldFor = t
+                    vlog(string.format("line blocked %dt, yielding to follow", Bridge.time - BridgeGunfight.blockSince))
+                end
+                return false
+            end
         end
         BridgeGunfight.info = (moved and "sidestep " or "hold fire: ") .. why
         if not moved and Bridge.time - (BridgeGunfight.blockSince or Bridge.time) > 300 then
@@ -5799,12 +5907,14 @@ BridgeGunfight.lastShotTarget = nil
             BridgeGunfight.target = nil
             BridgeGunfight.stowAt = Bridge.time + STOW_TICKS
             BridgeGunfight.blockSince = nil
+            BridgeGunfight.blockSinceTarget = nil
             BridgeGunfight.reposSide = nil
         end
         return true
     end
     if BridgeGunfight.reposition ~= nil then stopReposition(body) end
     BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
     BridgeGunfight.reposSide = nil
 
     if BridgeGunfight.fireUntil == nil then
@@ -5822,6 +5932,8 @@ BridgeGunfight.lastShotTarget = nil
             local leash = tonumber(leashMode.leash) or 999
             if dist(red, body) > leash then
                 BridgeGunfight.target = nil
+                BridgeGunfight.blockSince = nil
+                BridgeGunfight.blockSinceTarget = nil
                 BridgeGunfight.state = "idle"
                 BridgeGunfight.stowAt = Bridge.time + STOW_TICKS
                 BridgeGunfight.plantRequired = false
@@ -6374,6 +6486,12 @@ function BridgeGunfight.reset()
     BridgeGunfight.retargetUntil = nil
     BridgeGunfight.lastShotTarget = nil
     BridgeGunfight.blockAt = nil
+    BridgeGunfight.blockSince = nil
+    BridgeGunfight.blockSinceTarget = nil
+    BridgeGunfight.blockRetargetAt = nil
+    BridgeGunfight.blockRetargetTo = nil
+    BridgeGunfight.holdReleasedFor = nil
+    BridgeGunfight.yieldFor = nil
     BridgeGunfight.missingSince = nil
     BridgeGunfight.friendlies = nil
     BridgeGunfight.friendliesAt = nil
