@@ -1942,6 +1942,18 @@ function BridgeMenu.onSitThis(targets)
     log("sit from menu: " .. tostring(res))
 end
 
+function BridgeMenu.onSitReadThis(targets)
+    if BridgeTask == nil or targets == nil or #targets == 0 then return end
+    targets[1].read = true
+    local res = BridgeTask.start("sit", targets)
+    log("sit+read test: " .. tostring(res))
+end
+
+function BridgeMenu.onSitReadStop()
+    if BridgeTask == nil or type(BridgeTask.sitReadStop) ~= "function" then return end
+    BridgeTask.sitReadStop(Bridge.body)
+end
+
 function BridgeMenu.onSitStandUp()
     if BridgeTask ~= nil and BridgeTask.sitStandUp ~= nil then BridgeTask.sitStandUp() end
 end
@@ -1956,6 +1968,9 @@ function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
 
     if BridgeTask.isSeated ~= nil and BridgeTask.isSeated() then
         addCompanion(context, seat, tr("StandUp"), nil, BridgeMenu.onSitStandUp)
+        if BridgeTask.READ_TEST == true and BridgeTask.sitRead then
+            addCompanion(context, seat, "Stop reading (test)", nil, BridgeMenu.onSitReadStop)
+        end
         return
     end
 
@@ -1977,6 +1992,16 @@ function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
     pcall(function()
         if BridgeTask.seatTaken({ obj = seat }, Bridge.body) then opt.notAvailable = true end
     end)
+    if BridgeTask.READ_TEST == true then
+        local readTargets = { { obj = seat, x = targets[1].x, y = targets[1].y, z = targets[1].z, read = true } }
+        local readOpt = addCompanion(context, seat, "Sit + read (test)", readTargets, BridgeMenu.onSitReadThis)
+        if readOpt ~= nil then
+            if not ok or BridgeTask.active then readOpt.notAvailable = true end
+            pcall(function()
+                if BridgeTask.seatTaken({ obj = seat }, Bridge.body) then readOpt.notAvailable = true end
+            end)
+        end
+    end
 end
 
 function BridgeMenu.onLayThis(targets)

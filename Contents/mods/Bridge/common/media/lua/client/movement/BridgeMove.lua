@@ -1868,7 +1868,7 @@ function BridgeMove.seatGuard(body)
             BridgeMove.sendSit(nil)
             BridgeMove.seat = nil
         end
-    elseif pose ~= nil and pose.seat then
+    elseif pose ~= nil and pose.seat and not busy then
 
         if chairPose then chairLeave(body, nil, "pose without sitting") end
         Bridge.pose = nil

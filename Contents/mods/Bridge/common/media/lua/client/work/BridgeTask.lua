@@ -69,6 +69,10 @@ BridgeTask.SIT_TIMEOUT = 20 * SECOND
 BridgeTask.SIT_SETTLE = 0.30
 BridgeTask.SIT_ANIM_MAX = 240
 
+BridgeTask.READ_TEST = true
+BridgeTask.SIT_READ_ANIM = "SitChairRead"
+BridgeTask.READ_PROP = "Bridge.ReadBookProp"
+
 
 BridgeTask.ABORT_AFTER_FAILS = 3
 BridgeTask.CHOP_ANIM = "NA_Chop"
@@ -305,6 +309,10 @@ BridgeTask.chopRestSitAt = nil
 BridgeTask.chopResumeAt = nil
 BridgeTask.savedPrimary = nil
 BridgeTask.savedSecondary = nil
+BridgeTask.sitRead = nil
+BridgeTask.sitBook = nil
+BridgeTask.sitReadWanted = nil
+BridgeTask.sitPageAt = nil
 BridgeTask.lootList = nil
 BridgeTask.lootIdx = nil
 BridgeTask.lootPending = nil
@@ -2596,6 +2604,10 @@ function BridgeTask.reset()
     BridgeTask.sitBestD = nil
     BridgeTask.sitCloseAt = nil
     BridgeTask.sitFromX, BridgeTask.sitFromY, BridgeTask.sitSlideAt = nil, nil, nil
+    BridgeTask.sitRead = nil
+    BridgeTask.sitBook = nil
+    BridgeTask.sitReadWanted = nil
+    BridgeTask.sitPageAt = nil
     BridgeTask.layPlan = nil
     BridgeTask.layUp = nil
     BridgeTask.laySleep = false
@@ -2879,6 +2891,10 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     BridgeTask.sitBestD = nil
     BridgeTask.sitCloseAt = nil
     BridgeTask.sitFromX, BridgeTask.sitFromY, BridgeTask.sitSlideAt = nil, nil, nil
+    BridgeTask.sitRead = nil
+    BridgeTask.sitBook = nil
+    BridgeTask.sitReadWanted = nil
+    BridgeTask.sitPageAt = nil
     BridgeTask.layPlan = nil
     BridgeTask.layUp = nil
     BridgeTask.laySleep = false
@@ -6521,10 +6537,15 @@ local function sitClear(body, plan)
         end)
         pcall(function() body:clearVariable("SitOnFurnitureDirection") end)
         pcall(function() body:clearVariable("SitOnFurnitureStarted") end)
+        if BridgeTask.sitBook ~= nil then
+            pcall(function()
+                if body:getSecondaryHandItem() == BridgeTask.sitBook then body:setSecondaryHandItem(nil) end
+            end)
+        end
         pcall(function()
             if tostring(body:getActionStateName()) == "bumped" then body:setVariable("BumpAnimFinished", true) end
             local b = tostring(body:getBumpType())
-            if b == "SitChair" or b == "SitChairDown" or b == "SitChairUp" then body:setBumpType("") end
+            if b == "SitChair" or b == "SitChairDown" or b == "SitChairUp" or b == "SitChairRead" then body:setBumpType("") end
         end)
         if plan ~= nil and plan.sx ~= nil and plan.obj ~= nil then
             pcall(function()
@@ -6539,6 +6560,10 @@ local function sitClear(body, plan)
         end
     end
     if plan ~= nil and plan.obj ~= nil then pcall(function() plan.obj:setSatChair(false) end) end
+    BridgeTask.sitRead = nil
+    BridgeTask.sitBook = nil
+    BridgeTask.sitReadWanted = nil
+    BridgeTask.sitPageAt = nil
     Bridge.pose = nil
     if BridgeMove ~= nil then pcall(BridgeMove.sendSit, nil) end
 end
@@ -6568,6 +6593,72 @@ function BridgeTask.sitStandUp()
         return
     end
     sitClear(Bridge.body, nil)
+end
+
+function BridgeTask.sitReadStart(body)
+    if BridgeTask.READ_TEST ~= true then return false end
+    if not BridgeTask.active or BridgeTask.kind ~= "sit" or BridgeTask.phase ~= "sit" then return false end
+    if BridgeTask.sitRead == true then return true end
+    body = body or Bridge.body
+    if body == nil then return false end
+
+    local primary = nil
+    pcall(function() primary = body:getPrimaryHandItem() end)
+    if primary ~= nil and BridgeWeapon ~= nil and type(BridgeWeapon.putAway) == "function" then
+        local ok, changed = pcall(function() return BridgeWeapon.putAway(body) end)
+        log("sittest: put away before read ok=" .. tostring(ok) .. " changed=" .. tostring(changed))
+    end
+
+    local secondary = nil
+    pcall(function() secondary = body:getSecondaryHandItem() end)
+    if secondary ~= nil and secondary ~= BridgeTask.sitBook then
+        if BridgeWeapon ~= nil and type(BridgeWeapon.putAway) == "function" then
+            pcall(function() BridgeWeapon.putAway(body) end)
+        end
+        pcall(function() secondary = body:getSecondaryHandItem() end)
+        if secondary ~= nil then
+            log("sittest: secondary hand busy " .. tostring(secondary:getType()))
+            return false
+        end
+    end
+
+    local ok, item = pcall(instanceItem, BridgeTask.READ_PROP)
+    if not ok or item == nil then
+        log("sittest: prop failed " .. tostring(item))
+        return false
+    end
+    local setOk = pcall(function() body:setSecondaryHandItem(item) end)
+    if not setOk then
+        log("sittest: set secondary failed")
+        return false
+    end
+
+    BridgeTask.sitBook = item
+    BridgeTask.sitRead = true
+    BridgeTask.sitPageAt = Bridge.time
+    Bridge.pose = { anim = BridgeTask.SIT_READ_ANIM, seat = true }
+    pcall(function() body:setBumpType(BridgeTask.SIT_READ_ANIM) end)
+    log("sittest: read start prop=" .. tostring(BridgeTask.READ_PROP))
+    return true
+end
+
+function BridgeTask.sitReadStop(body)
+    body = body or Bridge.body
+    local changed = BridgeTask.sitRead == true or BridgeTask.sitBook ~= nil
+    if body ~= nil and BridgeTask.sitBook ~= nil then
+        pcall(function()
+            if body:getSecondaryHandItem() == BridgeTask.sitBook then body:setSecondaryHandItem(nil) end
+        end)
+    end
+    BridgeTask.sitBook = nil
+    BridgeTask.sitRead = nil
+    BridgeTask.sitPageAt = nil
+    if body ~= nil and BridgeTask.active and BridgeTask.kind == "sit" and BridgeTask.phase == "sit" then
+        Bridge.pose = { anim = "SitChair", seat = true }
+        pcall(function() body:setBumpType("SitChair") end)
+    end
+    if changed then log("sittest: read stop") end
+    return changed
 end
 
 BridgeTask.kinds.sit = {}
@@ -6606,6 +6697,7 @@ function BridgeTask.kinds.sit.update(body)
         BridgeTask.sitPlan = plan
         BridgeTask.sitUp = nil
         BridgeTask.sitAnimSeen = false
+        BridgeTask.sitReadWanted = target.read == true
         BridgeTask.sitPathFails = 0
         BridgeTask.sitFailTick = nil
         BridgeTask.sitBestD = nil
@@ -6712,6 +6804,7 @@ function BridgeTask.kinds.sit.update(body)
             Bridge.pose = { anim = "SitChair", seat = true }
             pcall(function() BridgeMove.sendSit("chair") end)
             log("sit: seated")
+            if BridgeTask.sitReadWanted then BridgeTask.sitReadStart(body) end
         end
         BridgeTask.info = "sit: sitting down"
         return true
@@ -6719,8 +6812,22 @@ function BridgeTask.kinds.sit.update(body)
 
     if phase == "sit" then
         pcall(function() body:setVariable("SitOnFurnitureStarted", true) end)
-        pcall(function() if tostring(body:getBumpType()) ~= "SitChair" then body:setBumpType("SitChair") end end)
-        Bridge.pose = { anim = "SitChair", seat = true }
+        local readAnim = BridgeTask.sitRead and BridgeTask.SIT_READ_ANIM or "SitChair"
+        pcall(function() if tostring(body:getBumpType()) ~= readAnim then body:setBumpType(readAnim) end end)
+        Bridge.pose = { anim = readAnim, seat = true }
+        if BridgeTask.sitRead then
+            local held = nil
+            pcall(function() held = body:getSecondaryHandItem() end)
+            if held == nil and BridgeTask.sitBook ~= nil then
+                pcall(function() body:setSecondaryHandItem(BridgeTask.sitBook) end)
+            end
+            if Bridge.time >= (BridgeTask.sitPageAt or 0) then
+                if BridgeSound ~= nil and type(BridgeSound.sfx) == "function" then
+                    pcall(function() BridgeSound.sfx(body, "PageFlipBook") end)
+                end
+                BridgeTask.sitPageAt = Bridge.time + 12 * 60 + ZombRand(15 * 60)
+            end
+        end
         local face = sitFaceOf(plan.side, plan.dir)
         pcall(function() if face ~= nil then body:faceDirection(face) end end)
         local d = sitDist(body:getX(), body:getY(), plan.seatX, plan.seatY)
@@ -6735,6 +6842,7 @@ function BridgeTask.kinds.sit.update(body)
         end)
         if BridgeTask.sitUp then
             BridgeTask.sitUp = nil
+            BridgeTask.sitReadStop(body)
             BridgeTask.phase = "up"
             BridgeTask.since = Bridge.time
             BridgeTask.sitAnimSeen = false
@@ -6745,7 +6853,7 @@ function BridgeTask.kinds.sit.update(body)
             Bridge.speak("StandUp")
             return true
         end
-        BridgeTask.info = "sitting"
+        BridgeTask.info = BridgeTask.sitRead and "sitting (reading)" or "sitting"
         return true
     end
 
