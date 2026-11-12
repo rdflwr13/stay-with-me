@@ -959,6 +959,8 @@ function BridgeMenu.sidebarOverlap(panel)
     end
     if panel.mainHand ~= nil then ignored[panel.mainHand] = true end
     if panel.offHand ~= nil then ignored[panel.offHand] = true end
+    if panel.movableTooltip ~= nil then ignored[panel.movableTooltip] = true end
+    if panel.radialIcon ~= nil then ignored[panel.radialIcon] = true end
     ignored[btn] = true
     local mine = nil
     for i = 1, #order do
@@ -975,6 +977,21 @@ function BridgeMenu.sidebarOverlap(panel)
             if visible then
                 local w, h = other:getWidth(), other:getHeight()
                 if w > 0 and h > 0
+                        and other:getX() < right and other:getRight() > left
+                        and other:getY() < bottom and other:getBottom() > top then
+                    return other
+                end
+            end
+        end
+    end
+    for i = mine - 1, 1, -1 do
+        local other = order[i]
+        if other ~= nil and ignored[other] ~= true then
+            local visible = false
+            pcall(function() visible = other:isVisible() == true end)
+            if visible then
+                local w, h = other:getWidth(), other:getHeight()
+                if w > 0 and h > 0 and h <= btn:getHeight() * 3
                         and other:getX() < right and other:getRight() > left
                         and other:getY() < bottom and other:getBottom() > top then
                     return other

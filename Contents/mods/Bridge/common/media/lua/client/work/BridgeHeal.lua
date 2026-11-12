@@ -560,6 +560,14 @@ local FINDERS = {
 
 
 
+local function needsCover(w)
+    return w.injury or w.bleeding or w.scratched or w.cut or w.deep or w.bitten
+        or w.glass or w.bullet or w.fracture or w.splint or w.infected or w.burn
+        or w.burnWash or w.stitched
+        or (w.we ~= nil and w.we.any == true)
+end
+
+
 function BridgeHeal.plan(body, red)
     local wounds = BridgeHeal.scan(red)
     local rawQueue, missing, used = {}, {}, {}
@@ -642,13 +650,17 @@ function BridgeHeal.plan(body, red)
 
         local spare = nil
         if not weBandaged and w.bandaged and w.dirty then
-            spare = bestBandage(body, red, used)
-            if spare ~= nil then
-                queue[#queue + 1] = { kind = "unbandage", w = w }
-                open = w.injury
-                wantBandage = true
+            if needsCover(w) then
+                spare = bestBandage(body, red, used)
+                if spare ~= nil then
+                    queue[#queue + 1] = { kind = "unbandage", w = w }
+                    open = w.injury
+                    wantBandage = true
+                else
+                    need("Bandage", w)
+                end
             else
-                need("Bandage", w)
+                queue[#queue + 1] = { kind = "unbandage", w = w }
             end
         end
 

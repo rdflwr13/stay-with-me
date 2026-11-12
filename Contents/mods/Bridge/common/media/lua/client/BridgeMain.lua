@@ -6490,7 +6490,7 @@ local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, fol
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
-    friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
+    friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, livingworldselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
     exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, sound = true, meet = true,
     perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true }
 
@@ -7290,6 +7290,13 @@ function Bridge.run(line)
             return "BridgeKnoxSurvivors not loaded"
         end
         return BridgeKnoxSurvivors.selftest()
+    end
+
+    if cmd == "livingworldselftest" then
+        if BridgeLivingWorld == nil or type(BridgeLivingWorld.selftest) ~= "function" then
+            return "livingworldselftest: not loaded"
+        end
+        return BridgeLivingWorld.selftest()
     end
 
     if cmd == "theodoreselftest" then

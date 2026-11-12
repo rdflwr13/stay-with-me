@@ -1270,6 +1270,12 @@ function BridgeWeapon.update(body)
 
     if BridgeGunfight ~= nil and BridgeGunfight.hasGun ~= nil and BridgeGunfight.hasGun() then return end
     if BridgeGunfight ~= nil and BridgeGunfight.magCareStage ~= nil then return end
+    local fightNow = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state == "swing")
+    if not fightNow and BridgeGunfight ~= nil and type(BridgeGunfight.recoveringAmmo) == "function" then
+        local recovering = false
+        pcall(function() recovering = BridgeGunfight.recoveringAmmo(body) == true end)
+        if recovering then return end
+    end
     if Bridge.zombieTicks % 10 ~= 0 then return end
     if BridgeWeapon.body ~= body then
         BridgeWeapon.reset()

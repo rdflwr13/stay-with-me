@@ -219,6 +219,7 @@ local FRIENDLY_TTL = 30
 FIRE.VAR = "BumpAnimFinished"
 RELOAD.VAR = "ReloadSpeed"
 local OOA_RECHECK = 60
+local RELOAD_STANDOFF = true
 RELOAD.UNLOAD_HANDGUN = 36
 RELOAD.UNLOAD_RIFLE = 45
 local MANUAL_EJECT_HOLD = 900
@@ -635,6 +636,23 @@ function BridgeGunfight.hasPrepAmmo(body, items)
     end
     presenceWrite("prepPresence", body, false, items, result)
     return result
+end
+
+function BridgeGunfight.recoveringAmmo(body)
+    if BridgeGunfight.suspended ~= true then return false end
+    if (BridgeGunfight.rounds or 0) > 0 then return false end
+    if (BridgeGunfight.recheckAt or 0) - (Bridge.time or 0) > OOA_RECHECK then return false end
+    if BridgeGunfight.ammoItem ~= nil then return true end
+    local gun = BridgeGunfight.gun
+    if body == nil or gun == nil then return false end
+    local mode = nil
+    if BridgeFight ~= nil and type(BridgeFight.mode) == "function" then
+        local ok, value = pcall(BridgeFight.mode)
+        if ok then mode = value end
+    end
+    if mode == nil or mode.passive or (tonumber(mode.gunRangePct) or 0) <= 0 then return false end
+    if hasMagProfile(gun) and not BridgeData.optionOf(Bridge.store, "gunMagCare") then return false end
+    return BridgeGunfight.hasPrepAmmo(body) == true
 end
 
 function BridgeGunfight.reloadSourceReady(body)
@@ -5042,7 +5060,17 @@ local function standoffTick(body, red, mode, S)
     if body == nil or red == nil or mode == nil or BridgeMove == nil then return false end
     if BridgeFight == nil or BridgeFight.flee or BridgeFight.state == "swing" then return false end
     if BridgeGunfight.reloadFlee or BridgeGunfight.followHold then return false end
-    if BridgeGunfight.stance == "melee" then standoffStop() return false end
+    local rearming = false
+    if BridgeGunfight.stance == "melee" and RELOAD_STANDOFF
+            and type(BridgeGunfight.recoveringAmmo) == "function" then
+        local ok, value = pcall(BridgeGunfight.recoveringAmmo, body)
+        rearming = ok and value == true
+    end
+    local meleeFight = BridgeFight ~= nil and BridgeFight.target ~= nil
+    if BridgeGunfight.stance == "melee" and not (rearming and not meleeFight) then
+        standoffStop()
+        return false
+    end
     if BridgeGunfight.gunShoveAt ~= nil then standoffStop() return false end
     if BridgeData.gunUseOf(Bridge.store) == "off" then standoffStop() return false end
     S = S or BridgeGunfight.scan
@@ -5262,7 +5290,7 @@ function BridgeGunfight.update(body, S)
     end
 
     if climbTick(body) then return true end
-    local wantReloadFlee = allows == true and reloadFleeNeeded(body)
+    local wantReloadFlee = not RELOAD_STANDOFF and allows == true and reloadFleeNeeded(body)
     if BridgeGunfight.reloadFlee and not wantReloadFlee then
         BridgeGunfight.reloadFlee = false
         BridgeGunfight.reloadFleeMoving = false

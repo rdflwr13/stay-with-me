@@ -246,6 +246,11 @@ end
 
 
 function BridgeData.foreign(z)
+    local lw = rawget(_G, "BridgeLivingWorld")
+    if type(lw) == "table" and type(lw.isBody) == "function" then
+        local ok, yes = pcall(lw.isBody, z)
+        if ok and yes == true then return true end
+    end
     if markedForeign(z) then return true end
     local npc = BridgeData.banditBrain(z, true)
     return npc
@@ -294,6 +299,11 @@ function BridgeData.foreignPeaceful(z, player)
     local dt = rawget(_G, "BridgeDT")
     if type(dt) == "table" and type(dt.peaceful) == "function" then
         local ok, answer = pcall(dt.peaceful, z, player)
+        if ok and answer ~= nil then return answer end
+    end
+    local lw = rawget(_G, "BridgeLivingWorld")
+    if type(lw) == "table" and type(lw.peaceful) == "function" then
+        local ok, answer = pcall(lw.peaceful, z, player)
         if ok and answer ~= nil then return answer end
     end
     local npc, hostile = BridgeData.bandit(z)
