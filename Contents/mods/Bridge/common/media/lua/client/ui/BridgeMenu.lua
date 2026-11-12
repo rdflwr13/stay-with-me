@@ -599,12 +599,32 @@ local function addLootWorkMenu(parent)
     return loot
 end
 
+local function addGardeningMenu(jobs)
+    if BridgeTask == nil or jobs == nil then return end
+    local hasHarvest = BridgeTask.HARVESTING_ENABLED == 1
+        and BridgeTask.kinds ~= nil and BridgeTask.kinds.harvestCrops ~= nil
+    local hasDig = BridgeTask.FURROWS_ENABLED == 1
+    if not hasHarvest and not hasDig then return end
+    local gardenOpt = jobs:addOption(tr("Gardening"))
+    local garden = ISContextMenu:getNew(jobs)
+    jobs:addSubMenu(gardenOpt, garden)
+    if hasHarvest then
+        local harvest = garden:addOption(tr("JobHarvestCrops"), nil, BridgeMenu.onJobHarvestCrops)
+        if BridgeTask.active then harvest.notAvailable = true end
+    end
+    if hasDig then
+        local dig = garden:addOption(tr("DigFurrows"), nil, BridgeMenu.onJobDigFurrows)
+        if BridgeTask.active then dig.notAvailable = true end
+    end
+end
+
 local function buildJobs(context, playerNum, env)
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
     local jobsOption = context:addOption(tr("Jobs"))
     local jobs = ISContextMenu:getNew(context)
     context:addSubMenu(jobsOption, jobs)
     addLootWorkMenu(jobs)
+    addGardeningMenu(jobs)
     if BridgeTask.DOORS_ENABLED == 1 then
         local doorsOption = jobs:addOption(tr("Doors"))
         local doors = ISContextMenu:getNew(jobs)
@@ -1368,6 +1388,26 @@ function BridgeMenu.onJobCloseDoors()
     BridgeWorkSelect.begin(BridgeData.owner(), "closeDoors")
 end
 
+function BridgeMenu.onJobHarvestCrops()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if BridgeGardening == nil then return end
+    if not Bridge.alive() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "harvestCrops")
+end
+
+function BridgeMenu.onJobDigFurrows()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if BridgeGardening == nil then return end
+    if not Bridge.alive() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "digFurrows")
+end
+
+function BridgeMenu.onHarvestCrop(target)
+    if BridgeTask == nil or target == nil then return end
+    local res = BridgeTask.start("harvestCrops", { target })
+    log("harvest crop from menu: " .. tostring(res))
+end
+
 
 function BridgeMenu.cancelEntry()
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return nil end
@@ -1426,6 +1466,7 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     local jobs = ISContextMenu:getNew(sub)
     sub:addSubMenu(jobsOption, jobs)
     addLootWorkMenu(jobs)
+    addGardeningMenu(jobs)
     if BridgeTask.DOORS_ENABLED == 1 then
         local doorsOption = jobs:addOption(tr("Doors"))
         local doors = ISContextMenu:getNew(jobs)
@@ -1609,10 +1650,49 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
         local jobs = ISContextMenu:getNew(sub)
         sub:addSubMenu(jobsOption, jobs)
         addLootWorkMenu(jobs)
+        addGardeningMenu(jobs)
         local area = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
         if not ok or BridgeTask.active then area.notAvailable = true end
     end
     BridgeMenu.addCancelTask(sub)
+end
+
+function BridgeMenu.onCropMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+    if BridgeTask.HARVESTING_ENABLED ~= 1 then return end
+    if BridgeGardening == nil or type(BridgeGardening.plantUnder) ~= "function" then return end
+    if not present() then return end
+    local target, ready, growable = BridgeGardening.plantUnder(worldobjects)
+    if target == nil then return end
+    local sub = rinTopMenu(context)
+    if sub == nil then return end
+    if ready and BridgeTask.kinds ~= nil and BridgeTask.kinds.harvestCrops ~= nil
+            and sub:getOptionFromName(tr("HarvestCrop")) == nil then
+        local opt = sub:addOption(tr("HarvestCrop"), target, BridgeMenu.onHarvestCrop)
+        local can = false
+        pcall(function() can = BridgeTask.kinds.harvestCrops.available(Bridge.body) == true end)
+        if BridgeTask.active or not can then opt.notAvailable = true end
+    end
+    if growable and sub:getOptionFromName(tr("DebugRipen")) == nil then
+        sub:addOption(tr("DebugRipen"), target, BridgeMenu.onRipenCrop)
+    end
+end
+
+function BridgeMenu.onRipenCrop(target)
+    if BridgeGardening == nil or target == nil then return end
+    if Bridge ~= nil and Bridge.mp then
+        pcall(function()
+            sendClientCommand(BridgeData.owner(), "Bridge", "ripenCrops",
+                { x = target.x, y = target.y, z = target.z })
+        end)
+        log("ripen requested " .. tostring(target.x) .. "," .. tostring(target.y))
+        return
+    end
+    local ok, stages = BridgeGardening.ripenAt(target, true)
+    log("ripened " .. tostring(target.x) .. "," .. tostring(target.y)
+        .. " ok=" .. tostring(ok) .. " stages=" .. tostring(stages))
 end
 
 local function lootTargetsUnder(worldobjects)
@@ -2400,6 +2480,7 @@ end
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWorldMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onTreeMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onJobsMenu)
+Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onCropMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLootMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onDepositMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onSitMenu)

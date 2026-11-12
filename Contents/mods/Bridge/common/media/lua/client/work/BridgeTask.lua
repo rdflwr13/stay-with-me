@@ -9,6 +9,8 @@ BridgeTask.SIT_ENABLED = 1
 BridgeTask.LAY_ENABLED = 1
 BridgeTask.MOVE_CORPSES_ENABLED = 1
 BridgeTask.DEPOSIT_ENABLED = 1
+BridgeTask.HARVESTING_ENABLED = 1
+BridgeTask.FURROWS_ENABLED = 1
 
 
 
@@ -434,6 +436,42 @@ local function usableAxe(item)
             and ItemTag ~= nil and ItemTag.CHOP_TREE ~= nil and item:hasTag(ItemTag.CHOP_TREE)
     end)
     return ok
+end
+
+function BridgeTask.isDigTool(item)
+    local ok = false
+    pcall(function()
+        ok = item ~= nil and not item:isBroken()
+            and ItemTag ~= nil and ItemTag.DIG_PLOW ~= nil and item:hasTag(ItemTag.DIG_PLOW)
+    end)
+    return ok
+end
+
+function BridgeTask.findDigTool(body)
+    if body == nil then return nil end
+    local tool = nil
+    pcall(function()
+        local hand = body:getPrimaryHandItem()
+        if BridgeTask.isDigTool(hand) then tool = hand return end
+        local best, bestScore = nil, -1
+        local inv = body:getInventory()
+        if inv == nil or inv.getAllEvalRecurse == nil then return end
+        local items = inv:getAllEvalRecurse(BridgeTask.isDigTool)
+        if items ~= nil then
+            local n = items:size()
+            for i = 0, n - 1 do
+                local it = items:get(i)
+                local score = 0
+                if it ~= nil and it.getCondition ~= nil then
+                    local okScore, value = pcall(it.getCondition, it)
+                    if okScore and type(value) == "number" then score = value end
+                end
+                if score > bestScore then best, bestScore = it, score end
+            end
+        end
+        tool = best
+    end)
+    return tool
 end
 
 function BridgeTask.findAxe(body)
@@ -1235,6 +1273,27 @@ local function ashCleanAnim(tool)
     return BridgeTask.DIG_ANIMS.DigShovel
 end
 
+function BridgeTask.digAnimFor(tool)
+    if tool == nil then return BridgeTask.DIG_ANIMS.DigShovel end
+    local t = itemType(tool)
+    if digTypeIs(tool, "Trowel") or t == "HandShovel" or t == "HandFork" or t == "EntrenchingTool" then
+        return BridgeTask.DIG_ANIMS.DigTrowel
+    end
+    if t == "Hoe" or t == "GardenHoe" then return BridgeTask.DIG_ANIMS.DigHoe end
+    if t == "PickAxe" then return BridgeTask.DIG_ANIMS.DigPickAxe end
+    return BridgeTask.DIG_ANIMS.DigShovel
+end
+
+function BridgeTask.digSoundFor(tool)
+    local t = nil
+    if tool ~= nil then t = itemType(tool) end
+    if tool ~= nil and (digTypeIs(tool, "Trowel") or t == "HandShovel"
+            or t == "HandFork" or t == "EntrenchingTool") then
+        return "DigFurrowWithTrowel"
+    end
+    return "DigFurrowWithShovel"
+end
+
 
 
 
@@ -1741,6 +1800,17 @@ local function isBadSpot(x, y)
     return set ~= nil and set[x .. "," .. y] == true
 end
 
+local function plantedSpot(sq)
+    if sq == nil or BridgeGardening == nil or type(BridgeGardening.plantAt) ~= "function" then
+        return false
+    end
+    local plant = BridgeGardening.plantAt(sq, false)
+    if plant == nil then return false end
+    local alive = false
+    pcall(function() alive = plant:isAlive() == true end)
+    return alive
+end
+
 local function spotUsable(sq)
     if sq == nil then return false end
     local ok = false
@@ -1935,9 +2005,13 @@ local function reachSpot(body, targetSq, target)
         pcall(function() sq = BridgeDoors.standNear(targetSq, body) end)
         if sq ~= nil and spotUsable(sq) and not isBadSpot(sq:getX(), sq:getY())
                 and not (sq:getX() == target.x and sq:getY() == target.y)
+                and not plantedSpot(sq)
                 and not sealedBetween(sq, targetSq) then
             pcall(function() spot = { x = sq:getX(), y = sq:getY(), z = sq:getZ() } end)
         end
+    end
+    if spot == nil then
+        spot = freeAdjacent(body, target, function(sq) return not plantedSpot(sq) end)
     end
     if spot == nil then spot = freeAdjacent(body, target) end
     return spot
@@ -2453,6 +2527,7 @@ function BridgeTask.speakMissing(kind)
     elseif missing == "cleaner" then key = "JobNeedCleaner"
     elseif missing == "petrol" then key = "JobNeedPetrol"
     elseif missing == "ashes" then key = "JobNeedAshTool"
+    elseif missing == "digTool" then key = "JobNeedShovel"
     elseif missing == "broom" then key = "JobNeedBroom"
     elseif missing == "crowbar" then key = "JobNeedCrowbar" end
     Bridge.speak(key)
@@ -3156,7 +3231,8 @@ function BridgeTask.finish()
     else
         if finishKind == "sit" or finishKind == "lay" or finishKind == "exercise" or finishKind == "washSink"
                 or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor"
-                or finishKind == "shower" or finishKind == "anim" then
+                or finishKind == "shower" or finishKind == "anim" or finishKind == "harvestCrops"
+                or finishKind == "digFurrows" then
         elseif depositFull then
             Bridge.speak("JobLootFull")
         elseif wasLootFull then
@@ -3211,6 +3287,28 @@ function BridgeTask.progress()
         local span = BridgeTask.PRY_TIME or 190
         if span <= 0 then span = 1 end
         local p = (t - BridgeTask.swingStart) * ffMult() / span
+        if p < 0 then p = 0 elseif p > 1 then p = 1 end
+        return p
+    end
+    if BridgeTask.kind == "harvestCrops" and BridgeTask.phase == "harvest"
+            and BridgeTask.harvestStart ~= nil then
+        local span = 1
+        if BridgeGardening ~= nil and BridgeGardening.HARVEST_TIME ~= nil then
+            span = BridgeGardening.HARVEST_TIME
+        end
+        if span <= 0 then span = 1 end
+        local p = (t - BridgeTask.harvestStart) * ffMult() / span
+        if p < 0 then p = 0 elseif p > 1 then p = 1 end
+        return p
+    end
+    if BridgeTask.kind == "digFurrows" and BridgeTask.phase == "dig"
+            and BridgeTask.digStart ~= nil then
+        local span = 1
+        if BridgeGardening ~= nil and BridgeGardening.DIG_TIME ~= nil then
+            span = BridgeGardening.DIG_TIME
+        end
+        if span <= 0 then span = 1 end
+        local p = (t - BridgeTask.digStart) * ffMult() / span
         if p < 0 then p = 0 elseif p > 1 then p = 1 end
         return p
     end

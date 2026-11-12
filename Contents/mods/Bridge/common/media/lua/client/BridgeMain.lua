@@ -4872,10 +4872,45 @@ local function armedIdleReady(body, kind)
 end
 Bridge.armedIdleReady = armedIdleReady
 
+Bridge.probe = Bridge.probe ~= false
+Bridge.probeAcc = Bridge.probeAcc or {}
+Bridge.probeCnt = Bridge.probeCnt or {}
+
+local function probeT()
+    local v = nil
+    pcall(function() v = getTimestampMs() end)
+    return v
+end
+
+local function probeAdd(key, t0, t1)
+    if not Bridge.probe or t0 == nil or t1 == nil then return end
+    local ms = t1 - t0
+    if ms < 0 then return end
+    Bridge.probeAcc[key] = (Bridge.probeAcc[key] or 0) + ms
+    Bridge.probeCnt[key] = (Bridge.probeCnt[key] or 0) + 1
+end
+
+function Bridge.probeFlush()
+    if not Bridge.probe then return end
+    local acc, cnt = Bridge.probeAcc, Bridge.probeCnt
+    local keys = {}
+    for k in pairs(acc) do keys[#keys + 1] = k end
+    if #keys == 0 then return end
+    table.sort(keys)
+    local parts = {}
+    for i = 1, #keys do
+        local k = keys[i]
+        parts[#parts + 1] = string.format("%s=%.1f/%d", k, acc[k], cnt[k] or 0)
+    end
+    Bridge.probeAcc, Bridge.probeCnt = {}, {}
+    log("probe " .. table.concat(parts, " "))
+end
+
 local function updateZombieBody(body)
     if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
     Bridge.zombieTicks = Bridge.zombieTicks + 1
     local red = BridgeData.owner()
+    local g0 = probeT()
     Bridge.keepHidden(body)
 
     local okGuard, errGuard = true, nil
@@ -4889,6 +4924,7 @@ local function updateZombieBody(body)
         pcall(Bridge.keepHealth, body)
     end
     lookShare(body)
+    probeAdd("guard", g0, probeT())
 
     if BridgeHorse ~= nil and not BridgeHorse.softDisabled and type(BridgeHorse.frame) == "function" and BridgeHorse.frame(body) then
         if BridgeVoice ~= nil and type(BridgeVoice.ensure) == "function" then pcall(BridgeVoice.ensure, body) end
@@ -5064,6 +5100,7 @@ local function updateZombieBody(body)
 
     local itemsDirtyDue = Bridge.itemsDirty == true
         and (Bridge.time - (Bridge.itemsDirtyAt or 0)) >= ITEMS_DIRTY_DEBOUNCE
+    local i0 = probeT()
     if Bridge.zombieTicks % 30 == 15 or itemsDirtyDue then
         local ok, now = pcall(BridgeInventory.wornList, body)
 
@@ -5145,6 +5182,7 @@ local function updateZombieBody(body)
             end
         end
     end
+    probeAdd("inv", i0, probeT())
 
 
 
@@ -5298,6 +5336,7 @@ local function updateZombieBody(body)
 
 
     local ownerDead = Bridge.mourning ~= nil or Bridge.redDead(red)
+    local t0 = probeT()
     if not ownerDead then
         handProbe(body, "before weapon")
         if BridgeTask == nil or not BridgeTask.active then pcall(BridgeWeapon.update, body) end
@@ -5326,6 +5365,7 @@ local function updateZombieBody(body)
     end
 
 
+    probeAdd("talk", t0, probeT())
     pcall(BridgeWeapon.animStep, body)
 
 
@@ -5423,7 +5463,9 @@ local function updateZombieBody(body)
 
     if ownerDead then
         if Bridge.mourning ~= nil or Bridge.mournAware(body, red) then
-            if not Bridge.mournFrame(body, red) then BridgeMove.update(body) end
+            local m0 = probeT()
+    if not Bridge.mournFrame(body, red) then BridgeMove.update(body) end
+    probeAdd("move", m0, probeT())
             return
         end
         pcall(function() BridgeHeal.stop("player died far away") end)
@@ -5673,7 +5715,9 @@ local function updateZombieBody(body)
     end
 
     BridgeMove.followDebug("main-before-update", body, "call")
+    local m1 = probeT()
     BridgeMove.update(body)
+    probeAdd("move", m1, probeT())
     handProbe(body, "frame end")
 end
 
@@ -6264,7 +6308,9 @@ local function runBodyUpdate(zombie, red)
     Bridge.bodyAiAt = now
     local savedDt = Bridge.dt
     if elapsed > (savedDt or 1) then Bridge.dt = elapsed end
+    local r0 = probeT()
     local ok, err = pcall(updateZombieBody, zombie)
+    probeAdd("body", r0, probeT())
     Bridge.dt = savedDt
     if not ok then
         BridgeMove.pathResult = "update error: " .. tostring(err)
@@ -10114,6 +10160,15 @@ function Bridge.onServerCommand(module, command, args)
     elseif command == "giveFailed" then
         pcall(function() BridgeInventory.giveFailed(args) end)
         Bridge.result = "give failed: " .. tostring(args.why)
+    elseif command == "harvestCropsResult" then
+        if BridgeGardening ~= nil then pcall(function() BridgeGardening.onResult(args) end) end
+        Bridge.result = "harvest: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+    elseif command == "ripenResult" then
+        Bridge.result = "ripen: " .. tostring(args.ok) .. " stages=" .. tostring(args.stages)
+        log(Bridge.result)
+    elseif command == "digFurrowResult" then
+        Bridge.result = "dig: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
     elseif command == "say" and args.text ~= nil then
         local name = args.name or BridgeData.DEFAULT_NAME
         if args.chat ~= false then
@@ -10158,7 +10213,15 @@ Events.OnSave.Add(Bridge.onSave)
 Events.OnTick.Add(Bridge.onTick)
 Events.OnPlayerUpdate.Add(Bridge.onPlayerUpdate)
 Events.OnPlayerUpdate.Add(function(player) pcall(Bridge.clearCompanionOutline, player) end)
-Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
+local function timedZombieUpdate(z)
+    local t0 = probeT()
+    Bridge.onZombieUpdate(z)
+    probeAdd("zupd", t0, probeT())
+    if Bridge.probe and Bridge.every(300) then pcall(Bridge.probeFlush) end
+end
+Bridge.zombieUpdateHandler = timedZombieUpdate
+
+Events.OnZombieUpdate.Add(Bridge.zombieUpdateHandler)
 
 
 Events.OnGameStart.Add(function()
@@ -10168,8 +10231,8 @@ Events.OnGameStart.Add(function()
         Bridge.floorMismatchSince = nil
         Bridge.zPrev = nil
         Bridge.xyPrev = nil
-        Events.OnZombieUpdate.Remove(Bridge.onZombieUpdate)
-Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
+        Events.OnZombieUpdate.Remove(Bridge.zombieUpdateHandler)
+Events.OnZombieUpdate.Add(Bridge.zombieUpdateHandler)
 Events.OnZombieCreate.Add(function(z)
     if Bridge.creating and z ~= nil then pcall(BridgeVoice.ensure, z) end
 end)

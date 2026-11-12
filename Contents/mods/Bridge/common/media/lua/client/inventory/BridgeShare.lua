@@ -90,7 +90,7 @@ function BridgeShare.tick()
     for i = 1, #tracked do
         local perk = tracked[i]
         local p = perkObject(perk)
-        if p ~= nil then
+        if p ~= nil and perk ~= "Agriculture" then
             local now = nil
             pcall(function() now = red:getXp():getXP(p) end)
             if now ~= nil then

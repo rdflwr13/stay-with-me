@@ -33,7 +33,11 @@ local thresholdCache = setmetatable({}, { __mode = "k" })
 local function perkOf(name)
     local p = perkCache[name]
     if p ~= nil then return p end
-    pcall(function() p = PerkFactory.getPerk(Perks[name]) end)
+    local key = name
+    if BridgeData ~= nil and type(BridgeData.perkKey) == "function" then
+        pcall(function() key = BridgeData.perkKey(name) end)
+    end
+    pcall(function() p = PerkFactory.getPerk(Perks[key]) end)
     if p ~= nil then perkCache[name] = p end
     return p
 end

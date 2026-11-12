@@ -3584,6 +3584,146 @@ BridgeServer.Commands.clearPlants = function(player, args)
     if not ok then log("clearPlants: applyPlant failed: " .. tostring(err)) end
 end
 
+BridgeServer.Commands.harvestCrops = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("harvestCrops: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+    if BridgeGardening == nil or BridgeItems == nil then
+        log("harvestCrops: BridgeGardening not loaded")
+        return
+    end
+    pcall(BridgeGardening.pruneSeen)
+    local key = tostring(who) .. "|" .. tostring(args.id)
+    local seen = BridgeGardening.serverSeen
+    if seen[key] ~= nil then
+        log("harvestCrops: duplicate " .. tostring(args.id))
+        sendServerCommand(player, "Bridge", "harvestCropsResult", seen[key])
+        return
+    end
+    local result = { id = args.id, ok = false, why = "gone", xp = 0, x = args.x, y = args.y, z = args.z }
+    local plant = BridgeGardening.plantAt(sq, true)
+    if plant == nil or not BridgeGardening.canHarvest(plant) then
+        result.why = "notripe"
+    else
+        local rec = record(who)
+        local stored = 0
+        local okSkills = pcall(function()
+            local skills = BridgeData.skillsOf(rec)
+            stored = tonumber(skills.Agriculture) or 0
+        end)
+        if not okSkills then stored = 0 end
+        local skill = 0
+        pcall(function() skill = BridgeData.levelFromXp("Agriculture", stored) end)
+        local ok, why, xp, recs = BridgeGardening.harvestProduce(plant, skill)
+        result.ok = ok == true
+        result.why = why
+        result.xp = xp or 0
+        result.recs = recs or {}
+        if ok then
+            local list = BridgeItems.decode(rec.items or "")
+            local before = #list
+            for i = 1, #result.recs do flatten(result.recs[i], nil, list) end
+            local text = BridgeItems.encode(list)
+            if #BridgeItems.decode(text) == #list then
+                BridgeItems.set(rec, text)
+                rec.saved = 1
+            else
+                log(string.format("harvestCrops: %s snapshot full, %d record(s) not stored (was %d)",
+                    tostring(who), #list - before, before))
+            end
+            rec.iseq = (rec.iseq or 0) + 1
+            transmit()
+            result.iseq = rec.iseq
+        end
+    end
+    seen[key] = { id = args.id, ok = result.ok, why = result.why, xp = result.xp,
+        recs = result.recs, iseq = result.iseq,
+        x = result.x, y = result.y, z = result.z, at = BridgeGardening.now() }
+    sendServerCommand(player, "Bridge", "harvestCropsResult", seen[key])
+    log(string.format("harvestCrops: %s ok=%s why=%s items=%d", tostring(who),
+        tostring(result.ok), tostring(result.why), #(result.recs or {})))
+end
+
+BridgeServer.Commands.ripenCrops = function(player, args)
+    if BridgeGardening == nil then
+        log("ripenCrops: BridgeGardening not loaded")
+        return
+    end
+    local x, y, z = tonumber(args.x), tonumber(args.y), tonumber(args.z)
+    if x == nil or y == nil then return end
+    z = z or 0
+    local px, py = player:getX(), player:getY()
+    if (px - x) ^ 2 + (py - y) ^ 2 > 225 then
+        log("ripenCrops: too far for " .. tostring(player:getUsername()))
+        return
+    end
+    local ok, stages = BridgeGardening.ripenAt({ x = x, y = y, z = z }, true)
+    sendServerCommand(player, "Bridge", "ripenResult",
+        { x = x, y = y, z = z, ok = ok == true, stages = tonumber(stages) or 0 })
+    log(string.format("ripenCrops: %s %d,%d ok=%s stages=%d", tostring(player:getUsername()), x, y,
+        tostring(ok == true), tonumber(stages) or 0))
+end
+
+BridgeServer.Commands.digFurrow = function(player, args)
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("digFurrow: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y))
+        return
+    end
+    if BridgeGardening == nil then
+        log("digFurrow: BridgeGardening not loaded")
+        return
+    end
+    local why = nil
+    pcall(function()
+        if sq:hasGrave() then why = "grave" end
+    end)
+    if why == nil then
+        local free = false
+        pcall(function() free = sq:isFree(false) == true end)
+        if not free then why = "blocked" end
+    end
+    if why == nil then
+        local ground = nil
+        pcall(function() ground = ISShovelGroundCursor.GetDirtGravelSand(sq) end)
+        if ground ~= "dirt" then why = "notdirt" end
+    end
+    if why == nil then
+        local above = false
+        pcall(function()
+            above = getSandboxOptions():getOptionByName("PlaceDirtAboveground"):getValue() == true
+        end)
+        if math.floor(sq:getZ()) ~= 0 and not above then why = "aboveground" end
+    end
+    if why == nil then
+        local plant = nil
+        pcall(function()
+            if SFarmingSystem ~= nil and SFarmingSystem.instance ~= nil then
+                plant = SFarmingSystem.instance:getLuaObjectOnSquare(sq)
+            end
+        end)
+        if plant ~= nil then
+            local bad = true
+            pcall(function() bad = plant.state == "plow" or plant:isAlive() == true end)
+            if bad then why = "plant" end
+        end
+    end
+    local ok = false
+    if why == nil then
+        local done, fail = BridgeGardening.digAt({ x = args.x, y = args.y, z = args.z }, true)
+        ok = done == true
+        if not ok then why = fail or "error" end
+    end
+    sendServerCommand(player, "Bridge", "digFurrowResult",
+        { x = args.x, y = args.y, z = args.z, ok = ok, why = why })
+    log(string.format("digFurrow: %s %s,%s ok=%s why=%s", tostring(player:getUsername()),
+        tostring(args.x), tostring(args.y), tostring(ok), tostring(why)))
+end
+
 
 local function serverCorpseOn(sq, cx, cy)
     local best, bestD = nil, nil

@@ -915,6 +915,13 @@ BridgeWorkSelect.kinds = {
         min = 1,
         noneSay = "JobNoDoorsClose",
     },
+    digFurrows = {
+        collect = function(b) return BridgeGardening.furrowSpots(b) end,
+        max = BridgeGardening.MAX_FURROWS,
+        maxSide = 8,
+        min = 1,
+        noneSay = "JobNoDigSpots",
+    },
 }
 
 function BridgeWorkSelect.sortTargets(targets)
@@ -965,6 +972,8 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "lootArea" and BridgeTask.LOOTING_ENABLED ~= 1 then return nil end
     if kind == "depositArea" and (BridgeTask.DEPOSIT_ENABLED ~= 1 or BridgeDeposit == nil) then return nil end
     if kind == "moveCorpses" and BridgeTask.MOVE_CORPSES_ENABLED ~= 1 then return nil end
+    if kind == "harvestCrops" and BridgeTask.HARVESTING_ENABLED ~= 1 then return nil end
+    if kind == "digFurrows" and BridgeTask.FURROWS_ENABLED ~= 1 then return nil end
     if (kind == "openDoors" or kind == "closeDoors") and BridgeTask.DOORS_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)

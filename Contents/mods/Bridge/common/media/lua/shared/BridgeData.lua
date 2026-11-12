@@ -1939,14 +1939,19 @@ if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeData] loaded") end
 
 
 
-BridgeData.SKILL_KEYS = { "Strength", "Axe", "Blunt", "SmallBlunt", "LongBlade", "SmallBlade", "Spear", "Maintenance", "Fitness", "Aiming", "Reloading", "Doctor" }
+BridgeData.SKILL_KEYS = { "Strength", "Axe", "Blunt", "SmallBlunt", "LongBlade", "SmallBlade", "Spear", "Maintenance", "Fitness", "Aiming", "Reloading", "Doctor", "Agriculture" }
 
+BridgeData.SKILL_PERK = { Agriculture = "Farming" }
 
-
+function BridgeData.perkKey(k)
+    local alias = BridgeData.SKILL_PERK[k]
+    return alias or k
+end
 
 function BridgeData.skillCap(k)
     local cap = nil
-    pcall(function() cap = PerkFactory.getPerk(Perks[k]):getTotalXpForLevel(10) end)
+    local perk = BridgeData.perkKey(k)
+    pcall(function() cap = PerkFactory.getPerk(Perks[perk]):getTotalXpForLevel(10) end)
     return tonumber(cap)
 end
 
@@ -1992,7 +1997,8 @@ end
 
 function BridgeData.levelFromXp(perkKey, xp)
     local p = nil
-    pcall(function() p = PerkFactory.getPerk(Perks[perkKey]) end)
+    local key = BridgeData.perkKey(perkKey)
+    pcall(function() p = PerkFactory.getPerk(Perks[key]) end)
     if p == nil then return 0 end
     xp = tonumber(xp) or 0
     local lvl = 0

@@ -76,6 +76,29 @@ function BridgeFarm.install()
     return true
 end
 
-pcall(BridgeFarm.install)
-Events.OnGameStart.Add(function() pcall(BridgeFarm.install) end)
-Events.OnServerStarted.Add(function() pcall(BridgeFarm.install) end)
+BridgeFarm.trampleSkipped = BridgeFarm.trampleSkipped or 0
+
+function BridgeFarm.wrapDestroyPlant(system)
+    if system == nil or type(system.destroyPlant) ~= "function" then return false end
+    if system.destroyPlant == BridgeFarm.destroyPlantWrapped then return true end
+    if BridgeFarm.destroyPlantWrapped == nil then
+        BridgeFarm.destroyPlantWrapped = function(square)
+            BridgeFarm.trampleSkipped = BridgeFarm.trampleSkipped + 1
+            if BridgeFarm.trampleSkipped == 1 then
+                log("trample guard: engine crop destruction blocked")
+            end
+        end
+    end
+    system.destroyPlant = BridgeFarm.destroyPlantWrapped
+    return true
+end
+
+function BridgeFarm.installGuard()
+    local ok = BridgeFarm.wrapDestroyPlant(SFarmingSystem)
+    pcall(BridgeFarm.install)
+    return ok
+end
+
+pcall(BridgeFarm.installGuard)
+Events.OnGameStart.Add(function() pcall(BridgeFarm.installGuard) end)
+Events.OnServerStarted.Add(function() pcall(BridgeFarm.installGuard) end)

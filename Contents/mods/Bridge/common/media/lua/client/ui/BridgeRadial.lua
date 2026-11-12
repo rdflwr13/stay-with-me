@@ -340,7 +340,7 @@ end
 local JOB_KINDS = {
     lootArea = true, depositArea = true, deposit = true, cleanUp = true, clearPlants = true, chopTree = true,
     moveCorpses = true, pryDoor = true, fillWater = true, emptyFluid = true,
-    washSink = true, openDoors = true, closeDoors = true,
+    washSink = true, openDoors = true, closeDoors = true, harvestCrops = true, digFurrows = true,
 }
 
 local function doingJob()
@@ -371,6 +371,8 @@ local function workEntries(playerNum)
         { flag = "CLEARING_ENABLED", kind = "clearPlants", key = "JobClearPlants", handler = BridgeMenu.onJobClearPlants, icon = ICONS.plants },
         { flag = "TREECUTTING_ENABLED", kind = "chopTree", key = "JobChopTree", handler = BridgeMenu.onJobChopTree, icon = ICONS.chop },
         { flag = "MOVE_CORPSES_ENABLED", kind = "moveCorpses", key = "JobMoveCorpses", handler = BridgeMenu.onJobMoveCorpses, icon = ICONS.corpses },
+        { flag = "HARVESTING_ENABLED", kind = "harvestCrops", key = "JobHarvestCrops", handler = BridgeMenu.onJobHarvestCrops, icon = ICONS.plants },
+        { flag = "FURROWS_ENABLED", kind = "digFurrows", key = "DigFurrows", handler = BridgeMenu.onJobDigFurrows, icon = ICONS.plants },
     }
     for _, def in ipairs(defs) do
         if BridgeTask[def.flag] == 1 and (def.when == nil or def.when() == true) then

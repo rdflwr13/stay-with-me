@@ -182,6 +182,9 @@ end
 BridgeFetch.NEEDS = {
     { id = "axe",            matches = usableAxe },
     { id = "cutTool",        matches = usableCutTool },
+    { id = "digTool",        matches = function(it)
+        return BridgeTask ~= nil and BridgeTask.isDigTool(it) == true
+    end },
     { id = "ashTool",        matches = ashToolItem },
     { id = "cleanImplement", matches = cleanStainItem },
     { id = "cleanerFluid",   fluid = true, matches = cleanerFluidAmt },
@@ -210,6 +213,7 @@ function BridgeFetch.has(id)
     pcall(function()
         if id == "axe" then ok = BridgeTask.findAxe(b) ~= nil
         elseif id == "cutTool" then ok = BridgeTask.findCutTool(b) ~= nil
+        elseif id == "digTool" then ok = BridgeTask.findDigTool(b) ~= nil
         elseif id == "ashTool" then ok = BridgeTask.findAshTool(b) ~= nil
         elseif id == "cleanImplement" then ok = BridgeTask.findCleanStainItem(b) ~= nil
         elseif id == "cleanerFluid" then ok = BridgeTask.findStainCleaner(b) ~= nil
@@ -820,6 +824,7 @@ local function jobEnabled(kind)
         if kind == "chopTree" then ok = BridgeTask.TREECUTTING_ENABLED == 1
         elseif kind == "clearPlants" then ok = BridgeTask.CLEARING_ENABLED == 1
         elseif kind == "cleanUp" then ok = BridgeTask.CLEANING_ENABLED == 1
+        elseif kind == "digFurrows" then ok = BridgeTask.FURROWS_ENABLED == 1
         end
     end)
     return ok == true
@@ -833,6 +838,8 @@ function BridgeFetch.jobMissing(kind, targets)
     pcall(function()
         if kind == "chopTree" then
             if BridgeTask.findAxe(b) == nil then out[#out + 1] = "axe" end
+        elseif kind == "digFurrows" then
+            if BridgeTask.findDigTool(b) == nil then out[#out + 1] = "digTool" end
         elseif kind == "clearPlants" then
             local needCut = false
             local haveCut = BridgeTask.findCutTool(b) ~= nil
