@@ -185,6 +185,9 @@ BridgeFetch.NEEDS = {
     { id = "digTool",        matches = function(it)
         return BridgeTask ~= nil and BridgeTask.isDigTool(it) == true
     end },
+    { id = "waterContainer", matches = function(it)
+        return BridgeGardening ~= nil and BridgeGardening.isWaterContainer(it) == true
+    end },
     { id = "ashTool",        matches = ashToolItem },
     { id = "cleanImplement", matches = cleanStainItem },
     { id = "cleanerFluid",   fluid = true, matches = cleanerFluidAmt },
@@ -214,6 +217,8 @@ function BridgeFetch.has(id)
         if id == "axe" then ok = BridgeTask.findAxe(b) ~= nil
         elseif id == "cutTool" then ok = BridgeTask.findCutTool(b) ~= nil
         elseif id == "digTool" then ok = BridgeTask.findDigTool(b) ~= nil
+        elseif id == "waterContainer" then
+            ok = BridgeGardening ~= nil and BridgeGardening.findWaterContainer(b) ~= nil
         elseif id == "ashTool" then ok = BridgeTask.findAshTool(b) ~= nil
         elseif id == "cleanImplement" then ok = BridgeTask.findCleanStainItem(b) ~= nil
         elseif id == "cleanerFluid" then ok = BridgeTask.findStainCleaner(b) ~= nil
@@ -402,7 +407,9 @@ function BridgeFetch.sowNeed(count)
     local stock = BridgeFetch.seedStock(false)
     local counts = stock ~= nil and stock[kind] or nil
     if counts == nil then return 0 end
+    local per = BridgeGardening.SEEDS_PER_PACKET or 5
     local carried = math.floor(tonumber(counts.loose) or 0)
+        + per * math.floor(tonumber(counts.packets) or 0)
     local want = BridgeFetch.sowWant(count)
     if carried >= want then return 0 end
     return want - carried
@@ -1061,6 +1068,7 @@ local function jobEnabled(kind)
         elseif kind == "cleanUp" then ok = BridgeTask.CLEANING_ENABLED == 1
         elseif kind == "digFurrows" then ok = BridgeTask.FURROWS_ENABLED == 1
         elseif kind == "sowSeeds" then ok = BridgeTask.SOWING_ENABLED == 1
+        elseif kind == "waterPlants" then ok = BridgeTask.WATER_PLANTS_ENABLED == 1
         end
     end)
     return ok == true
@@ -1078,6 +1086,10 @@ function BridgeFetch.jobMissing(kind, targets)
             if BridgeTask.findDigTool(b) == nil then out[#out + 1] = "digTool" end
         elseif kind == "sowSeeds" then
             if BridgeFetch.sowNeed(#targets) > 0 then out[#out + 1] = "seeds" end
+        elseif kind == "waterPlants" then
+            if BridgeGardening == nil or BridgeGardening.findWaterContainer(b) == nil then
+                out[#out + 1] = "waterContainer"
+            end
         elseif kind == "clearPlants" then
             local needCut = false
             local haveCut = BridgeTask.findCutTool(b) ~= nil

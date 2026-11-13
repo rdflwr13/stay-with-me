@@ -13,6 +13,7 @@ BridgeGardening.WORK_SAY_COOLDOWN = 25 * SECOND
 BridgeGardening.WORK_SAY_CHANCE = 30
 
 BridgeGardening.DIG_TIME = 110
+BridgeGardening.DIG_SETTLE = 27
 BridgeGardening.DIG_RANGE = 1.45
 BridgeGardening.MAX_FURROWS = 64
 BridgeGardening.DIG_SAY_COOLDOWN = 30 * SECOND
@@ -21,6 +22,7 @@ BridgeGardening.DIG_WORK_SAY_CHANCE = 30
 
 BridgeGardening.SEEDS_PER_PACKET = 5
 BridgeGardening.SOW_TIME = 40
+BridgeGardening.SOW_SETTLE = 21
 BridgeGardening.SOW_RANGE = 1.45
 BridgeGardening.MAX_SOWS = 80
 BridgeGardening.SOW_XP = 0
@@ -29,6 +31,11 @@ BridgeGardening.SOW_SAY_COOLDOWN = 30 * SECOND
 BridgeGardening.SOW_WORK_SAY_COOLDOWN = 25 * SECOND
 BridgeGardening.SOW_WORK_SAY_CHANCE = 30
 BridgeGardening.RETURN_TIMEOUT = 10 * SECOND
+
+BridgeGardening.WATER_THRESHOLD = 60
+BridgeGardening.WATER_MAX_USES = 10
+BridgeGardening.WATER_PER_USE_ML = 200
+BridgeGardening.MAX_WATER_PLANTS = 80
 
 BridgeGardening.serverSeen = BridgeGardening.serverSeen or {}
 BridgeGardening.weighed = BridgeGardening.weighed or {}
@@ -1092,6 +1099,10 @@ function BridgeGardening.digUpdate(body)
         end
     end
 
+    if T.phase == "settle" then
+        if (Bridge.time - (T.settleAt or Bridge.time)) * T.ffMult() < (T.settleFor or 0) then return true end
+        T.settled = true
+    end
     if T.phase ~= "dig" then
         local walk, why = T.walkTo(body, target, BridgeGardening.DIG_RANGE, true)
         if walk == "unreachable" then return T.dropTarget(why) end
@@ -1099,6 +1110,14 @@ function BridgeGardening.digUpdate(body)
         pcall(function() BridgeMove.stopPath(body) end)
         T.forceIdle(body)
         pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+        if (T.doneCount or 0) > 0 and T.settled ~= true then
+            T.phase = "settle"
+            T.settleAt = Bridge.time
+            T.settleFor = BridgeGardening.DIG_SETTLE or 27
+            T.info = "settling"
+            return true
+        end
+        T.settled = nil
         T.phase = "dig"
         T.digStart = Bridge.time
         T.digAnimStart = Bridge.time
@@ -2016,10 +2035,22 @@ function BridgeGardening.sowUpdate(body)
         end
     end
 
+    if T.phase == "settle" then
+        if (Bridge.time - (T.settleAt or Bridge.time)) * T.ffMult() < (T.settleFor or 0) then return true end
+        T.settled = true
+    end
     if T.phase ~= "sow" then
         local walk, why = T.walkTo(body, target, BridgeGardening.SOW_RANGE, true)
         if walk == "unreachable" then return T.dropTarget(why) end
         if walk ~= "arrived" then return true end
+        if (T.doneCount or 0) > 0 and T.settled ~= true then
+            T.phase = "settle"
+            T.settleAt = Bridge.time
+            T.settleFor = BridgeGardening.SOW_SETTLE or 21
+            T.info = "settling"
+            return true
+        end
+        T.settled = nil
         beginSow(body, target)
         return true
     end
@@ -2128,6 +2159,222 @@ function BridgeGardening.onSowPacketResult(args)
     BridgeGardening.sowOutOfSeeds(body)
 end
 
+function BridgeGardening.waterUsesFor(plant)
+    if plant == nil then return 0 end
+    local lvl = 100
+    pcall(function() lvl = tonumber(plant.waterLvl) or 100 end)
+    if lvl >= 100 then return 0 end
+    local uses = math.ceil((100 - lvl) / 10)
+    if uses < 1 then uses = 1 end
+    local cap = BridgeGardening.WATER_MAX_USES or 10
+    if uses > cap then uses = cap end
+    return uses
+end
+
+function BridgeGardening.needsWater(plant)
+    if plant == nil then return false end
+    local ok = false
+    pcall(function()
+        local alive = plant:isAlive() == true
+        local state = plant.state
+        local seed = plant.typeOfSeed
+        local lvl = tonumber(plant.waterLvl) or 0
+        ok = alive and seed ~= nil and seed ~= "none"
+            and state ~= "harvested" and state ~= "destroyed"
+            and lvl < (BridgeGardening.WATER_THRESHOLD or 60)
+    end)
+    return ok
+end
+
+function BridgeGardening.waterSpots(b)
+    local list = {}
+    if b == nil then return list end
+    local cap = BridgeGardening.MAX_WATER_PLANTS or 80
+    for x = b.x1, b.x2 do
+        for y = b.y1, b.y2 do
+            if #list >= cap then return list end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
+            if sq ~= nil then
+                local plant = BridgeGardening.plantAt(sq, false)
+                if BridgeGardening.needsWater(plant) then
+                    list[#list + 1] = { x = x, y = y, z = b.z }
+                end
+            end
+        end
+    end
+    return list
+end
+
+function BridgeGardening.waterContainerRank(item)
+    if item == nil then return 9 end
+    local pour, full = nil, nil
+    pcall(function() pour = item:getPourType() end)
+    pcall(function() full = item:getFullType() end)
+    local p = string.lower(tostring(pour or ""))
+    local f = string.lower(tostring(full or ""))
+    if p == "wateringcan" or string.find(f, "wateredcan", 1, true) ~= nil then return 1 end
+    if p == "bucket" or string.find(f, "bucket", 1, true) ~= nil then return 2 end
+    return 3
+end
+
+function BridgeGardening.isWaterContainer(item)
+    if item == nil then return false end
+    local ok = false
+    pcall(function()
+        local fc = item:getFluidContainer()
+        if fc == nil then return end
+        if item:canStoreWater() ~= true then return end
+        local use = (BridgeGardening.WATER_PER_USE_ML or 200) / 1000
+        local cap = fc:getCapacity()
+        if type(cap) ~= "number" or cap < use then return end
+        local amount = fc:getAmount() or 0
+        if amount > 0 then
+            local water = fc:contains(Fluid.Water) == true
+                or (Fluid.TaintedWater ~= nil and fc:contains(Fluid.TaintedWater) == true)
+            if not water then return end
+        end
+        ok = true
+    end)
+    return ok
+end
+
+function BridgeGardening.containerUses(item)
+    if item == nil then return 0 end
+    local uses = 0
+    pcall(function()
+        local fc = item:getFluidContainer()
+        if fc == nil then return end
+        local water = fc:contains(Fluid.Water) == true
+            or (Fluid.TaintedWater ~= nil and fc:contains(Fluid.TaintedWater) == true)
+        if not water then return end
+        local amount = fc:getAmount() or 0
+        local use = (BridgeGardening.WATER_PER_USE_ML or 200) / 1000
+        if use <= 0 then return end
+        uses = math.floor(amount / use)
+    end)
+    return uses
+end
+
+function BridgeGardening.findWaterContainer(b)
+    if b == nil then return nil end
+    local best, bestRank, bestUses = nil, nil, nil
+    local function consider(it)
+        if it == nil or not BridgeGardening.isWaterContainer(it) then return end
+        local rank = BridgeGardening.waterContainerRank(it)
+        local uses = BridgeGardening.containerUses(it)
+        if best == nil or rank < bestRank or (rank == bestRank and uses > bestUses) then
+            best, bestRank, bestUses = it, rank, uses
+        end
+    end
+    local hand = nil
+    pcall(function() hand = b:getPrimaryHandItem() end)
+    consider(hand)
+    pcall(function() hand = b:getSecondaryHandItem() end)
+    consider(hand)
+    local lists = BridgeGardening.bagLists(b)
+    for i = 1, #lists do
+        local items = nil
+        pcall(function() items = lists[i]:getItems() end)
+        if items ~= nil then
+            for j = 0, items:size() - 1 do consider(items:get(j)) end
+        end
+    end
+    return best
+end
+
+function BridgeGardening.useContainerWater(item, uses)
+    local n = math.floor(tonumber(uses) or 0)
+    if item == nil or n < 1 then return false end
+    local ok = false
+    pcall(function()
+        local fc = item:getFluidContainer()
+        if fc == nil then return end
+        local amount = fc:getAmount() or 0
+        local use = (BridgeGardening.WATER_PER_USE_ML or 200) / 1000
+        local left = amount - n * use
+        if left < 0 then left = 0 end
+        fc:adjustAmount(left)
+        ok = true
+    end)
+    if not ok then return false end
+    pcall(function() item:syncItemFields() end)
+    pcall(function() sendItemStats(item) end)
+    pcall(function()
+        if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+        if Bridge ~= nil and type(Bridge.saveOutfit) == "function" then Bridge.saveOutfit() end
+    end)
+    return true
+end
+
+function BridgeGardening.waterAt(target, uses, server)
+    if target == nil then return false, "notarget" end
+    local n = math.floor(tonumber(uses) or 0)
+    if n < 1 then return false, "nouses" end
+    local sq = BridgeGardening.squareAt(target)
+    local plant = BridgeGardening.plantAt(sq, true)
+    if plant == nil and server ~= true then plant = BridgeGardening.plantAt(sq, false) end
+    if plant == nil then return false, "noplant" end
+    local water = nil
+    pcall(function() water = plant.water end)
+    if type(water) ~= "function" then return false, "nowater" end
+    local ok, err = pcall(water, plant, nil, n)
+    if not ok then return false, tostring(err) end
+    pcall(function() plant:saveData() end)
+    return true
+end
+
+function BridgeGardening.requestWater(target, uses)
+    if target == nil then return false end
+    local n = math.floor(tonumber(uses) or 0)
+    if n < 1 then return false end
+    if Bridge == nil or Bridge.mp ~= true or BridgeData == nil then return false end
+    local red = nil
+    pcall(function() red = BridgeData.owner() end)
+    if red == nil then return false end
+    local ok = pcall(function()
+        sendClientCommand(red, "Bridge", "waterPlants",
+            { x = target.x, y = target.y, z = target.z, uses = n })
+    end)
+    return ok == true
+end
+
+function BridgeGardening.onWaterResult(args)
+    local T = BridgeTask
+    if T == nil or args == nil then return end
+    if T.active ~= true or T.kind ~= "waterPlants" then return end
+    local pending = T.waterPending
+    if pending == nil then return end
+    if tonumber(args.x) ~= pending.x or tonumber(args.y) ~= pending.y then return end
+    T.waterPending = nil
+    T.waterPendingAt = nil
+    if args.ok == true then
+        BridgeGardening.useContainerWater(T.waterContainer, pending.uses)
+        if pending.need ~= nil and (pending.uses or 0) < pending.need then
+            table.insert(T.queue, 1, { x = pending.x, y = pending.y, z = pending.z })
+        end
+        T.waterUses = nil
+        T.waterPhase = nil
+        T.current = nil
+        T.phase = nil
+        T.waterNeed = nil
+        T.waterApproachFor = nil
+        T.markDone()
+        return
+    end
+    log("water refused: " .. tostring(args.why))
+    pcall(function() Bridge.speak("CantReachWater") end)
+    T.waterUses = nil
+    T.waterPhase = nil
+    T.current = nil
+    T.phase = nil
+    T.waterApproachFor = nil
+end
+
+function BridgeGardening.waterSay(event, slot)
+    return sayLine(event, slot)
+end
+
 local function install()
     if BridgeTask ~= nil and BridgeTask.kinds ~= nil then
         BridgeTask.kinds.harvestCrops = {
@@ -2155,6 +2402,15 @@ local function install()
             update = function(body) return BridgeGardening.sowUpdate(body) end,
             leave = function(body) return BridgeGardening.sowLeave(body) end,
         }
+        BridgeTask.kinds.waterPlants = {
+            available = function(body) return BridgeTask.WATER_PLANTS_ENABLED == 1 end,
+            missing = function(body)
+                if BridgeGardening.findWaterContainer(body) == nil then return "waterContainer" end
+                return nil
+            end,
+            update = function(body) return BridgeTask.waterUpdate(body) end,
+            leave = function(body) return BridgeTask.waterLeave(body) end,
+        }
     end
     if BridgeWorkSelect ~= nil and BridgeWorkSelect.kinds ~= nil then
         BridgeWorkSelect.kinds.harvestCrops = {
@@ -2175,6 +2431,13 @@ local function install()
             maxSide = 8,
             min = 1,
             noneSay = "JobNoSowSpots",
+        }
+        BridgeWorkSelect.kinds.waterPlants = {
+            collect = function(b) return BridgeGardening.waterSpots(b) end,
+            max = BridgeGardening.MAX_WATER_PLANTS,
+            maxSide = 8,
+            min = 1,
+            noneSay = "JobNoWaterPlants",
         }
     end
     log("kinds registered")

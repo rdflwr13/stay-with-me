@@ -636,12 +636,18 @@ local function addGardeningMenu(jobs)
     local hasDig = BridgeTask.FURROWS_ENABLED == 1
     local hasSow = BridgeTask.SOWING_ENABLED == 1
         and BridgeTask.kinds ~= nil and BridgeTask.kinds.sowSeeds ~= nil
-    if not hasHarvest and not hasDig and not hasSow then return end
+    local hasWater = BridgeTask.WATER_PLANTS_ENABLED == 1
+        and BridgeTask.kinds ~= nil and BridgeTask.kinds.waterPlants ~= nil
+    if not hasHarvest and not hasDig and not hasSow and not hasWater then return end
     local gardenOpt = jobs:addOption(tr("Gardening"))
     local garden = ISContextMenu:getNew(jobs)
     jobs:addSubMenu(gardenOpt, garden)
     if hasSow then
         addSowSubMenu(garden, "JobPlantSeeds", BridgeMenu.onJobSowSeeds)
+    end
+    if hasWater then
+        local water = garden:addOption(tr("WaterPlants"), nil, BridgeMenu.onJobWaterPlants)
+        if BridgeTask.active then water.notAvailable = true end
     end
     if hasHarvest then
         local harvest = garden:addOption(tr("JobHarvestCrops"), nil, BridgeMenu.onJobHarvestCrops)
@@ -1445,6 +1451,19 @@ function BridgeMenu.onJobSowSeeds(kind)
     BridgeWorkSelect.begin(BridgeData.owner(), "sowSeeds")
 end
 
+function BridgeMenu.onJobWaterPlants()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if BridgeGardening == nil then return end
+    if not Bridge.alive() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "waterPlants")
+end
+
+function BridgeMenu.onWaterPlant(target)
+    if BridgeTask == nil or BridgeGardening == nil or target == nil then return end
+    local res = BridgeTask.start("waterPlants", { target })
+    log("water plant from menu: " .. tostring(res))
+end
+
 function BridgeMenu.onPlantSeedFurrow(target, kind)
     if BridgeTask == nil or BridgeGardening == nil then return end
     if target == nil or kind == nil then return end
@@ -1709,6 +1728,22 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
     BridgeMenu.addCancelTask(sub)
 end
 
+local function plantLabel(plant)
+    local label = nil
+    pcall(function()
+        if ISFarmingMenu ~= nil and type(ISFarmingMenu.getPlantName) == "function" then
+            label = ISFarmingMenu.getPlantName(plant)
+        end
+    end)
+    if type(label) ~= "string" or label == "" then
+        local seed = nil
+        pcall(function() seed = plant.typeOfSeed end)
+        if seed ~= nil then pcall(function() label = getText("Farming_" .. tostring(seed)) end) end
+    end
+    if type(label) ~= "string" or label == "" then label = tr("Gardening") end
+    return label
+end
+
 function BridgeMenu.onCropMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -1718,7 +1753,28 @@ function BridgeMenu.onCropMenu(playerNum, context, worldobjects, test)
     local target, ready, growable, state = BridgeGardening.plantUnder(worldobjects)
     if target == nil then return end
     if state == "plow" and BridgeTask.SOWING_ENABLED ~= 1 then return end
-    local sub = rinTopMenu(context)
+    local sub = nil
+    if state == "plow" then
+        sub = rinTopMenu(context)
+    else
+        local plant = nil
+        pcall(function()
+            plant = BridgeGardening.plantAt(BridgeGardening.squareAt(target), false)
+        end)
+        local label = plantLabel(plant)
+        local parent = nil
+        pcall(function() parent = context:getOptionFromName(label) end)
+        local plantMenu = nil
+        if parent ~= nil and parent.subOption ~= nil then
+            pcall(function() plantMenu = context:getSubMenu(parent.subOption) end)
+        end
+        if plantMenu == nil then
+            parent = context:addOptionOnTop(label)
+            plantMenu = ISContextMenu:getNew(context)
+            context:addSubMenu(parent, plantMenu)
+        end
+        sub = rinTopMenu(plantMenu)
+    end
     if sub == nil then return end
     if state == "plow" then
         if sub:getOptionFromName(tr("PlantSeed")) == nil then
@@ -1727,6 +1783,18 @@ function BridgeMenu.onCropMenu(playerNum, context, worldobjects, test)
             end)
         end
         return
+    end
+    if BridgeTask.WATER_PLANTS_ENABLED == 1 and BridgeTask.kinds ~= nil
+            and BridgeTask.kinds.waterPlants ~= nil
+            and sub:getOptionFromName(tr("WaterPlants")) == nil then
+        local plant = nil
+        pcall(function()
+            plant = BridgeGardening.plantAt(BridgeGardening.squareAt(target), false)
+        end)
+        if BridgeGardening.needsWater(plant) then
+            local opt = sub:addOption(tr("WaterPlants"), target, BridgeMenu.onWaterPlant)
+            if BridgeTask.active then opt.notAvailable = true end
+        end
     end
     if BridgeTask.HARVESTING_ENABLED ~= 1 then return end
     if ready and BridgeTask.kinds ~= nil and BridgeTask.kinds.harvestCrops ~= nil

@@ -3777,6 +3777,41 @@ BridgeServer.Commands.sowSeeds = function(player, args)
         tostring(args.x), tostring(args.y), tostring(kind), tostring(result.ok), tostring(result.why)))
 end
 
+BridgeServer.Commands.waterPlants = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local result = { x = args.x, y = args.y, z = args.z, uses = args.uses, ok = false, why = nil }
+    local function reply(why)
+        result.why = why
+        sendServerCommand(player, "Bridge", "waterPlantResult", result)
+    end
+    if body == nil or sq == nil then
+        log("waterPlants: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    if BridgeGardening == nil then return reply("notloaded") end
+    local uses = math.floor(tonumber(args.uses) or 0)
+    if uses < 1 then uses = 1 end
+    if uses > 10 then uses = 10 end
+    result.uses = uses
+    local plant = BridgeGardening.plantAt(sq, true)
+    local seed, alive = nil, false
+    pcall(function()
+        seed = plant ~= nil and plant.typeOfSeed or nil
+        alive = plant ~= nil and plant:isAlive() == true
+    end)
+    if plant == nil or seed == nil or seed == "none" or not alive then return reply("noplant") end
+    local ok, err = pcall(function() plant:water(nil, uses) end)
+    if ok then pcall(function() plant:saveData() end) end
+    result.ok = ok == true
+    if not ok then
+        log("waterPlants: water failed for " .. tostring(who) .. ": " .. tostring(err))
+        return reply("error")
+    end
+    reply(nil)
+    log(string.format("waterPlants: %s %s,%s uses=%d", tostring(who), tostring(args.x), tostring(args.y), uses))
+end
+
 BridgeServer.Commands.openSeedPacket = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
@@ -3794,7 +3829,7 @@ BridgeServer.Commands.openSeedPacket = function(player, args)
     local list = BridgeItems.decode(rec.items or "")
     local idx = nil
     for i = 1, #list do
-        if list[i].p == nil and list[i].t == packetType then idx = i break end
+        if list[i].t == packetType then idx = i break end
     end
     if idx == nil then return reply(false, "no packet") end
     local trimmed = removeSubtree(list, idx)

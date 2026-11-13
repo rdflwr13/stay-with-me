@@ -10177,6 +10177,10 @@ function Bridge.onServerCommand(module, command, args)
         if BridgeGardening ~= nil then pcall(function() BridgeGardening.onSowPacketResult(args) end) end
         Bridge.result = "seed packet: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
         log(Bridge.result)
+    elseif command == "waterPlantResult" then
+        if BridgeGardening ~= nil then pcall(function() BridgeGardening.onWaterResult(args) end) end
+        Bridge.result = "water: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
     elseif command == "say" and args.text ~= nil then
         local name = args.name or BridgeData.DEFAULT_NAME
         if args.chat ~= false then

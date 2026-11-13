@@ -367,18 +367,66 @@ function BridgeWash.waterOn(square)
 end
 
 
-function BridgeWash.waterList(body)
+function BridgeWash.waterRank(o)
+    if o == nil then return 4 end
+    if type(o.getFluidContainer) ~= "function" then return 4 end
+    local fc = BridgeWash.safeCall(o, "getFluidContainer")
+    if fc == nil then return 1 end
+    local text = ""
+    local function add(s)
+        if type(s) == "string" and s ~= "" then text = text .. " " .. string.lower(s) end
+    end
+    pcall(function() add(o:getName()) end)
+    pcall(function() add(o:getType()) end)
+    pcall(function() add(o:getObjectName()) end)
+    pcall(function()
+        local spr = o:getSprite()
+        if spr ~= nil then add(spr:getName()) end
+    end)
+    local props = BridgeWash.safeCall(o, "getProperties")
+    if props ~= nil then add(BridgeWash.safeCall(props, "get", "CustomName")) end
+    if string.find(text, "well", 1, true) ~= nil then return 2 end
+    if string.find(text, "sink", 1, true) ~= nil or string.find(text, "tap", 1, true) ~= nil
+            or string.find(text, "bath", 1, true) ~= nil or string.find(text, "toilet", 1, true) ~= nil
+            or o.bridgeTap == true then
+        return 3
+    end
+    return 4
+end
+
+
+function BridgeWash.waterList(body, centre, radius, rect)
     local list = {}
+    local proxies = {}
+    local ranked = centre ~= nil or rect ~= nil
     pcall(function()
         local cell = getCell()
         local bx, by, bz = math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ())
         local home = nil
         pcall(function() local sq = body:getCurrentSquare() if sq ~= nil then home = sq:getBuilding() end end)
-        for dx = -RADIUS, RADIUS do
-            for dy = -RADIUS, RADIUS do
-                local sq = cell:getGridSquare(bx + dx, by + dy, bz)
+        local r = radius or RADIUS
+        local xs, ys = {}, {}
+        if rect ~= nil then
+            for x = rect.x1, rect.x2 do xs[#xs + 1] = x end
+            for y = rect.y1, rect.y2 do ys[#ys + 1] = y end
+        else
+            local cx, cy = bx, by
+            if centre ~= nil then
+                cx = math.floor(tonumber(centre.x) or bx)
+                cy = math.floor(tonumber(centre.y) or by)
+            end
+            for d = -r, r do
+                xs[#xs + 1] = cx + d
+                ys[#ys + 1] = cy + d
+            end
+        end
+        for xi = 1, #xs do
+            for yi = 1, #ys do
+                local x, y = xs[xi], ys[yi]
+                local sq = cell:getGridSquare(x, y, bz)
                 if sq ~= nil then
                     local objects = sq:getObjects()
+                    local added = false
                     for i = 0, objects:size() - 1 do
                         local o = objects:get(i)
                         local wet = false
@@ -386,21 +434,35 @@ function BridgeWash.waterList(body)
                             wet = BridgeWash.isWaterObject(o) and (o:getFluidAmount() or 0) > 0
                         end)
                         if wet then
-                            local d = dx * dx + dy * dy
+                            local d = (x - bx) ^ 2 + (y - by) ^ 2
                             local house = nil
                             pcall(function() house = sq:getBuilding() end)
                             if house ~= home then d = d + OTHER_HOUSE end
-                            list[#list + 1] = { o = o, d = d }
-                            if BridgeWash.DEBUG or (Bridge ~= nil and Bridge.verbose == true) then
+                            list[#list + 1] = { o = o, d = d, rank = BridgeWash.waterRank(o) }
+                            added = true
+                            if not ranked and (BridgeWash.DEBUG or (Bridge ~= nil and Bridge.verbose == true)) then
                                 dbg("waterList " .. BridgeWash.objInfo(o))
                             end
                         end
+                    end
+                    if ranked and not added and BridgeWash.waterSquare(sq) then
+                        proxies[#proxies + 1] = { o = BridgeWash.waterProxy(sq), d = (x - bx) ^ 2 + (y - by) ^ 2, rank = 1 }
                     end
                 end
             end
         end
     end)
-    table.sort(list, function(a, b) return a.d < b.d end)
+    if ranked and #list == 0 then
+        for i = 1, #proxies do list[#list + 1] = proxies[i] end
+    end
+    if ranked then
+        table.sort(list, function(a, b)
+            if a.rank ~= b.rank then return a.rank < b.rank end
+            return a.d < b.d
+        end)
+    else
+        table.sort(list, function(a, b) return a.d < b.d end)
+    end
     return list
 end
 
