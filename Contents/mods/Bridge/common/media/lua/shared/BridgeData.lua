@@ -523,7 +523,8 @@ BridgeData.OPTIONS = { autoHeal = true, gifts = true, redKit = true, mood = true
     homeAmmo = false, homeAllFloors = false, startUnarmed = false,
     gunMelee = true, gunReloadIdle = true, gunMagCare = false, gunUse = "always",
     ammoReserve = "free", lootMenu = true,
-    storeMatch = true, storeKeepTools = true, storeKeepMeds = true, storeKeepLight = true }
+    storeMatch = true, storeKeepTools = true, storeKeepMeds = true, storeKeepLight = true,
+    storeKeepSeeds = false }
 BridgeData.HAIR_MAX = 40
 BridgeData.GENDER_SWAP_COOLDOWN = 60
 BridgeData.GENDER_COMBAT_GRACE = 15

@@ -365,6 +365,241 @@ local function homeTargets(perFloorCap, totalCap)
 end
 
 
+BridgeFetch.SEED_STOCK_MS = 5000
+BridgeFetch.SEED_SCAN_CONTAINERS = 60
+BridgeFetch.SEED_SCAN_ITEMS = 800
+
+local seedStockAt, seedStockKey, seedStockOut = nil, nil, nil
+
+
+function BridgeFetch.invalidateSeedStock()
+    seedStockAt, seedStockKey, seedStockOut = nil, nil, nil
+end
+
+
+local function seedPickKind()
+    local pick = BridgeGardening ~= nil and BridgeGardening.sowPick or nil
+    return pick ~= nil and pick.kind or nil
+end
+
+
+function BridgeFetch.sowWant(count)
+    local kind = seedPickKind()
+    if kind == nil then return 0 end
+    local stock = BridgeFetch.seedStock(false)
+    local counts = stock ~= nil and stock[kind] or nil
+    if counts == nil then return 0 end
+    local plantable = math.floor(tonumber(counts.plantable) or 0)
+    local want = math.min(math.floor(tonumber(count) or 0), plantable)
+    if want < 0 then want = 0 end
+    return want
+end
+
+
+function BridgeFetch.sowNeed(count)
+    local kind = seedPickKind()
+    if kind == nil then return 0 end
+    local stock = BridgeFetch.seedStock(false)
+    local counts = stock ~= nil and stock[kind] or nil
+    if counts == nil then return 0 end
+    local carried = math.floor(tonumber(counts.loose) or 0)
+    local want = BridgeFetch.sowWant(count)
+    if carried >= want then return 0 end
+    return want - carried
+end
+
+
+function BridgeFetch.seedStock(force)
+    local b = Bridge.body
+    if b == nil or BridgeGardening == nil or type(BridgeGardening.seedTable) ~= "function" then return {} end
+    local st = BridgeGardening.seedTable()
+    local h = nil
+    pcall(function() h = BridgeHome ~= nil and BridgeHome.get() or nil end)
+    local hk = "none"
+    if h ~= nil then
+        hk = string.format("%s:%s:%s:%s:%s", tostring(h.x), tostring(h.y), tostring(h.z),
+            tostring(h.w), tostring(h.h))
+    end
+    local dirty = 0
+    pcall(function() dirty = tonumber(Bridge.itemsDirtyAt) or 0 end)
+    local key = hk .. "|" .. tostring(dirty) .. "|" .. tostring(Bridge.itemsDirty == true)
+    local now = 0
+    if BridgeGardening ~= nil and type(BridgeGardening.now) == "function" then
+        pcall(function() now = BridgeGardening.now() end)
+    end
+    local ttl = BridgeFetch.SEED_STOCK_MS or 5000
+    if force ~= true and seedStockOut ~= nil and seedStockKey == key
+            and (now - (seedStockAt or 0)) < ttl then
+        return seedStockOut
+    end
+    local out = {}
+    local itemsSeen, capped = 0, false
+    local itemCap = BridgeFetch.SEED_SCAN_ITEMS or 800
+
+    local function bump(kind, field, n)
+        local entry = out[kind]
+        if entry == nil then
+            entry = { loose = 0, packets = 0, homeLoose = 0, homePackets = 0, yours = 0, plantable = 0 }
+            out[kind] = entry
+        end
+        entry[field] = (entry[field] or 0) + n
+    end
+
+    local function scanContainer(cont, bucket)
+        if cont == nil or itemsSeen >= itemCap then return end
+        local list = nil
+        pcall(function() list = cont:getItems() end)
+        if list == nil then return end
+        for i = 0, list:size() - 1 do
+            if itemsSeen >= itemCap then
+                capped = true
+                return
+            end
+            local it = list:get(i)
+            if it ~= nil then
+                itemsSeen = itemsSeen + 1
+                local full = nil
+                pcall(function() full = it:getFullType() end)
+                if type(full) == "string" then
+                    local kind = st.bySeed[full]
+                    local packet = st.byPacket[full]
+                    if kind ~= nil or packet ~= nil then
+                        local n = 1
+                        pcall(function() n = it:getCount() or 1 end)
+                        n = math.max(1, math.floor(tonumber(n) or 1))
+                        if kind ~= nil then
+                            if bucket == "hers" then bump(kind, "loose", n)
+                            elseif bucket == "home" then bump(kind, "homeLoose", n)
+                            else bump(kind, "yours", n) end
+                        elseif bucket == "hers" then
+                            bump(packet.kind, "packets", n)
+                        elseif bucket == "home" then
+                            bump(packet.kind, "homePackets", n)
+                        else
+                            bump(packet.kind, "yours", (BridgeGardening.SEEDS_PER_PACKET or 5) * n)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local lists = BridgeGardening.bagLists(b)
+    for i = 1, #lists do scanContainer(lists[i], "hers") end
+    local cap = BridgeFetch.SEED_SCAN_CONTAINERS or 60
+    local targets = homeTargets(cap, cap)
+    local used = 0
+    for i = 1, #(targets or {}) do
+        if used >= cap then
+            capped = true
+            break
+        end
+        local cont = targets[i].cont
+        if cont ~= nil then
+            used = used + 1
+            scanContainer(cont, "home")
+        end
+    end
+    local red = nil
+    pcall(function() red = BridgeData.owner() end)
+    if red ~= nil then
+        local pinv = nil
+        pcall(function() pinv = red:getInventory() end)
+        scanContainer(pinv, "player")
+    end
+
+    local per = BridgeGardening.SEEDS_PER_PACKET or 5
+    for kind, entry in pairs(out) do
+        entry.plantable = (entry.loose or 0) + (entry.homeLoose or 0)
+            + per * ((entry.packets or 0) + (entry.homePackets or 0))
+    end
+    if capped then
+        log(string.format("seed stock capped at %d item(s) in %d container(s)", itemsSeen, used))
+    end
+    seedStockAt, seedStockKey, seedStockOut = now, key, out
+    return out
+end
+
+
+local function moveSeedLocal(body, red, kind, want)
+    local types = BridgeGardening.seedTypesOf(kind)
+    if #types == 0 then return "absent" end
+    local rank = {}
+    for i = 1, #types do rank[types[i]] = i end
+    local cap = BridgeFetch.SEED_SCAN_CONTAINERS or 60
+    local targets = homeTargets(cap, cap)
+    if targets == nil then return "absent" end
+    local need = math.floor(tonumber(want) or 0)
+    if need < 1 then need = 1 end
+    local moved = 0
+    for i = 1, #targets do
+        if need <= 0 then break end
+        local cont = targets[i].cont
+        if cont ~= nil then
+            local list = nil
+            pcall(function() list = cont:getItems() end)
+            if list ~= nil then
+                for j = list:size() - 1, 0, -1 do
+                    if need <= 0 then break end
+                    local it = list:get(j)
+                    local full = nil
+                    pcall(function() full = it ~= nil and it:getFullType() or nil end)
+                    if full ~= nil and rank[full] ~= nil then
+                        local have = BridgeGunRules.itemCount(it)
+                        local use = math.min(have, need)
+                        local dest = nil
+                        pcall(function() dest = BridgeInventory.overflowDest(body, red, it, nil) end)
+                        if dest ~= nil then
+                            local okMove = false
+                            pcall(function()
+                                if use >= have then
+                                    cont:Remove(it)
+                                    dest:AddItem(it)
+                                    okMove = it:getContainer() == dest
+                                elseif BridgeGunRules.setItemCount(it, have - use) then
+                                    local made = nil
+                                    pcall(function() made = dest:AddItems(full, use) end)
+                                    okMove = made ~= nil and made:size() >= use
+                                end
+                            end)
+                            if okMove then
+                                moved = moved + use
+                                need = need - use
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if moved <= 0 then return "absent" end
+    pcall(function() if Bridge.saveOutfit ~= nil then Bridge.saveOutfit() end end)
+    BridgeFetch.invalidateSeedStock()
+    log(string.format("home seeds: pulled %d of %s from home", moved, tostring(kind)))
+    return "moved"
+end
+
+
+function BridgeFetch.pullSeeds(kind, want)
+    if BridgeGardening == nil then return "unavailable" end
+    local b = Bridge.body
+    local red = BridgeData.owner()
+    if b == nil or red == nil or kind == nil then return "unavailable" end
+    if #BridgeGardening.seedTypesOf(kind) == 0 then return "absent" end
+    local n = math.floor(tonumber(want) or 0)
+    if n < 1 then n = 1 end
+    if Bridge.mp then
+        local ok = pcall(function()
+            sendClientCommand(red, "Bridge", "fetchSeeds", { kind = kind, want = n })
+        end)
+        if not ok then return "failed" end
+        log(string.format("home seeds: requested %d of %s from home", n, tostring(kind)))
+        return "requested"
+    end
+    return moveSeedLocal(b, red, kind, n)
+end
+
+
 function BridgeFetch.findItem(needId)
     local need = BridgeFetch.BY_ID[needId]
     local b = Bridge.body
@@ -825,6 +1060,7 @@ local function jobEnabled(kind)
         elseif kind == "clearPlants" then ok = BridgeTask.CLEARING_ENABLED == 1
         elseif kind == "cleanUp" then ok = BridgeTask.CLEANING_ENABLED == 1
         elseif kind == "digFurrows" then ok = BridgeTask.FURROWS_ENABLED == 1
+        elseif kind == "sowSeeds" then ok = BridgeTask.SOWING_ENABLED == 1
         end
     end)
     return ok == true
@@ -840,6 +1076,8 @@ function BridgeFetch.jobMissing(kind, targets)
             if BridgeTask.findAxe(b) == nil then out[#out + 1] = "axe" end
         elseif kind == "digFurrows" then
             if BridgeTask.findDigTool(b) == nil then out[#out + 1] = "digTool" end
+        elseif kind == "sowSeeds" then
+            if BridgeFetch.sowNeed(#targets) > 0 then out[#out + 1] = "seeds" end
         elseif kind == "clearPlants" then
             local needCut = false
             local haveCut = BridgeTask.findCutTool(b) ~= nil
@@ -896,13 +1134,27 @@ function BridgeFetch.primeJob(kind, targets)
     log("job " .. tostring(kind) .. " missing home supplies: " .. table.concat(missing, ","))
     local requested = 0
     for i = 1, #missing do
-        local res = BridgeFetch.pull(missing[i])
+        local res = nil
+        if missing[i] == "seeds" then
+            local kind = BridgeGardening ~= nil and BridgeGardening.sowPick ~= nil
+                and BridgeGardening.sowPick.kind or nil
+            if kind ~= nil then
+                res = BridgeFetch.pullSeeds(kind, BridgeFetch.sowWant(#targets))
+            end
+            if res == nil then res = "absent" end
+        else
+            res = BridgeFetch.pull(missing[i])
+        end
         if res == "requested" then requested = requested + 1 end
         log("  " .. missing[i] .. " -> " .. tostring(res))
     end
     local remaining = 0
     for i = 1, #missing do
-        if not BridgeFetch.has(missing[i]) then remaining = remaining + 1 end
+        if missing[i] == "seeds" then
+            if BridgeFetch.sowNeed(#targets) > 0 then remaining = remaining + 1 end
+        elseif not BridgeFetch.has(missing[i]) then
+            remaining = remaining + 1
+        end
     end
     if remaining == 0 then return "ok" end
     if requested > 0 then return "pending" end

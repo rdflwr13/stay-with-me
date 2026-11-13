@@ -922,6 +922,13 @@ BridgeWorkSelect.kinds = {
         min = 1,
         noneSay = "JobNoDigSpots",
     },
+    sowSeeds = {
+        collect = function(b) return BridgeGardening.sowSpots(b) end,
+        max = BridgeGardening.MAX_SOWS,
+        maxSide = 8,
+        min = 1,
+        noneSay = "JobNoSowSpots",
+    },
 }
 
 function BridgeWorkSelect.sortTargets(targets)
@@ -974,6 +981,7 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "moveCorpses" and BridgeTask.MOVE_CORPSES_ENABLED ~= 1 then return nil end
     if kind == "harvestCrops" and BridgeTask.HARVESTING_ENABLED ~= 1 then return nil end
     if kind == "digFurrows" and BridgeTask.FURROWS_ENABLED ~= 1 then return nil end
+    if kind == "sowSeeds" and (BridgeTask.SOWING_ENABLED ~= 1 or BridgeGardening == nil) then return nil end
     if (kind == "openDoors" or kind == "closeDoors") and BridgeTask.DOORS_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)

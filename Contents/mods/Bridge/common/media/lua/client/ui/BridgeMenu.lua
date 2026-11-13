@@ -599,15 +599,50 @@ local function addLootWorkMenu(parent)
     return loot
 end
 
+local function sowRows()
+    if BridgeGardening == nil or type(BridgeGardening.seedMenuRows) ~= "function" then return {} end
+    local stock = nil
+    pcall(function()
+        if BridgeFetch ~= nil and type(BridgeFetch.seedStock) == "function" then
+            stock = BridgeFetch.seedStock(false)
+        end
+    end)
+    local rows = nil
+    pcall(function() rows = BridgeGardening.seedMenuRows(stock) end)
+    if type(rows) ~= "table" then return {} end
+    return rows
+end
+
+local function addSowSubMenu(parent, labelKey, onPick)
+    if parent == nil or BridgeTask == nil or BridgeGardening == nil or onPick == nil then return nil end
+    if BridgeTask.SOWING_ENABLED ~= 1 then return nil end
+    local rows = sowRows()
+    if #rows == 0 then return nil end
+    local opt = parent:addOption(tr(labelKey))
+    local sub = ISContextMenu:getNew(parent)
+    parent:addSubMenu(opt, sub)
+    for i = 1, #rows do
+        local row = rows[i]
+        local o = sub:addOption(row.label, row.kind, function(kind) onPick(kind) end)
+        if BridgeTask.active then o.notAvailable = true end
+    end
+    return opt, sub
+end
+
 local function addGardeningMenu(jobs)
     if BridgeTask == nil or jobs == nil then return end
     local hasHarvest = BridgeTask.HARVESTING_ENABLED == 1
         and BridgeTask.kinds ~= nil and BridgeTask.kinds.harvestCrops ~= nil
     local hasDig = BridgeTask.FURROWS_ENABLED == 1
-    if not hasHarvest and not hasDig then return end
+    local hasSow = BridgeTask.SOWING_ENABLED == 1
+        and BridgeTask.kinds ~= nil and BridgeTask.kinds.sowSeeds ~= nil
+    if not hasHarvest and not hasDig and not hasSow then return end
     local gardenOpt = jobs:addOption(tr("Gardening"))
     local garden = ISContextMenu:getNew(jobs)
     jobs:addSubMenu(gardenOpt, garden)
+    if hasSow then
+        addSowSubMenu(garden, "JobPlantSeeds", BridgeMenu.onJobSowSeeds)
+    end
     if hasHarvest then
         local harvest = garden:addOption(tr("JobHarvestCrops"), nil, BridgeMenu.onJobHarvestCrops)
         if BridgeTask.active then harvest.notAvailable = true end
@@ -1402,6 +1437,23 @@ function BridgeMenu.onJobDigFurrows()
     BridgeWorkSelect.begin(BridgeData.owner(), "digFurrows")
 end
 
+function BridgeMenu.onJobSowSeeds(kind)
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if BridgeGardening == nil or kind == nil then return end
+    if not Bridge.alive() then return end
+    BridgeGardening.sowPick = { kind = kind }
+    BridgeWorkSelect.begin(BridgeData.owner(), "sowSeeds")
+end
+
+function BridgeMenu.onPlantSeedFurrow(target, kind)
+    if BridgeTask == nil or BridgeGardening == nil then return end
+    if target == nil or kind == nil then return end
+    BridgeGardening.sowPick = { kind = kind }
+    local res = BridgeTask.start("sowSeeds", { target })
+    if res ~= "started" and res ~= "fetching" then BridgeGardening.sowPick = nil end
+    log("plant seed from menu: " .. tostring(res))
+end
+
 function BridgeMenu.onHarvestCrop(target)
     if BridgeTask == nil or target == nil then return end
     local res = BridgeTask.start("harvestCrops", { target })
@@ -1661,13 +1713,22 @@ function BridgeMenu.onCropMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
-    if BridgeTask.HARVESTING_ENABLED ~= 1 then return end
     if BridgeGardening == nil or type(BridgeGardening.plantUnder) ~= "function" then return end
     if not present() then return end
-    local target, ready, growable = BridgeGardening.plantUnder(worldobjects)
+    local target, ready, growable, state = BridgeGardening.plantUnder(worldobjects)
     if target == nil then return end
+    if state == "plow" and BridgeTask.SOWING_ENABLED ~= 1 then return end
     local sub = rinTopMenu(context)
     if sub == nil then return end
+    if state == "plow" then
+        if sub:getOptionFromName(tr("PlantSeed")) == nil then
+            addSowSubMenu(sub, "PlantSeed", function(kind)
+                BridgeMenu.onPlantSeedFurrow(target, kind)
+            end)
+        end
+        return
+    end
+    if BridgeTask.HARVESTING_ENABLED ~= 1 then return end
     if ready and BridgeTask.kinds ~= nil and BridgeTask.kinds.harvestCrops ~= nil
             and sub:getOptionFromName(tr("HarvestCrop")) == nil then
         local opt = sub:addOption(tr("HarvestCrop"), target, BridgeMenu.onHarvestCrop)

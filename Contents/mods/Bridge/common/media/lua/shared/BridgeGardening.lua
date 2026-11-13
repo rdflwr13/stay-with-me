@@ -19,6 +19,17 @@ BridgeGardening.DIG_SAY_COOLDOWN = 30 * SECOND
 BridgeGardening.DIG_WORK_SAY_COOLDOWN = 25 * SECOND
 BridgeGardening.DIG_WORK_SAY_CHANCE = 30
 
+BridgeGardening.SEEDS_PER_PACKET = 5
+BridgeGardening.SOW_TIME = 40
+BridgeGardening.SOW_RANGE = 1.45
+BridgeGardening.MAX_SOWS = 80
+BridgeGardening.SOW_XP = 0
+BridgeGardening.SOW_SOUND = "SowSeeds"
+BridgeGardening.SOW_SAY_COOLDOWN = 30 * SECOND
+BridgeGardening.SOW_WORK_SAY_COOLDOWN = 25 * SECOND
+BridgeGardening.SOW_WORK_SAY_CHANCE = 30
+BridgeGardening.RETURN_TIMEOUT = 10 * SECOND
+
 BridgeGardening.serverSeen = BridgeGardening.serverSeen or {}
 BridgeGardening.weighed = BridgeGardening.weighed or {}
 
@@ -122,9 +133,12 @@ function BridgeGardening.plantUnder(worldobjects)
                     state = plant.state
                     alive = plant:isAlive() == true
                 end)
+                if state == "plow" then
+                    return { x = sq:getX(), y = sq:getY(), z = sq:getZ() }, false, false, "plow"
+                end
                 if seed ~= nil and alive and state ~= "harvested" and state ~= "destroyed" then
                     return { x = sq:getX(), y = sq:getY(), z = sq:getZ() },
-                        BridgeGardening.canHarvest(plant), state == "seeded"
+                        BridgeGardening.canHarvest(plant), state == "seeded", state
                 end
             end
         end
@@ -1157,6 +1171,963 @@ function BridgeGardening.digLeave(body)
     BridgeGardening.clearDigState()
 end
 
+local seedCache = nil
+local seedScanDone = false
+
+local function stripSeedSuffix(full)
+    if type(full) ~= "string" then return nil end
+    local base = string.match(full, "^(.+)Seeds$")
+    if base == nil then base = string.match(full, "^(.+)Seed$") end
+    return base
+end
+
+local function itemExists(full)
+    local ok = false
+    if type(full) ~= "string" then return false end
+    pcall(function()
+        if ScriptManager ~= nil and ScriptManager.instance ~= nil then
+            ok = ScriptManager.instance:getItem(full) ~= nil
+        end
+    end)
+    return ok
+end
+
+local function packetForSeed(seed)
+    local base = stripSeedSuffix(seed)
+    if base == nil then return nil end
+    local names = { "BagSeed", "BagSeed2" }
+    for i = 1, #names do
+        local typeName = base .. names[i]
+        if itemExists(typeName) and itemExists(typeName .. "_Empty") then return typeName end
+    end
+    return nil
+end
+
+local function scanPackets(t, missing)
+    if seedScanDone or #missing == 0 then return end
+    seedScanDone = true
+    local all = nil
+    pcall(function()
+        all = getAllItems()
+        if all == nil then
+            local manager = getScriptManager()
+            if manager ~= nil then all = manager:getAllItems() end
+        end
+    end)
+    if all == nil then return end
+    local want = {}
+    for i = 1, #missing do
+        local base = stripSeedSuffix(missing[i])
+        if base ~= nil then want[base] = missing[i] end
+    end
+    local have = {}
+    pcall(function()
+        for i = 0, all:size() - 1 do
+            local full = nil
+            pcall(function() full = all:get(i):getFullName() end)
+            if type(full) == "string" then have[full] = true end
+        end
+    end)
+    local found = {}
+    pcall(function()
+        for i = 0, all:size() - 1 do
+            local full = nil
+            pcall(function() full = all:get(i):getFullName() end)
+            if type(full) == "string" and string.find(full, "BagSeed", 1, true) ~= nil
+                    and string.sub(full, -6) ~= "_Empty" then
+                local base = string.match(full, "^(.+)BagSeed2$")
+                if base == nil then base = string.match(full, "^(.+)BagSeed$") end
+                local seed = base ~= nil and want[base] or nil
+                local empty = full .. "_Empty"
+                if seed ~= nil and found[seed] == nil and (have[empty] == true or itemExists(empty)) then
+                    found[seed] = full
+                end
+            end
+        end
+    end)
+    local n = 0
+    for seed, packet in pairs(found) do
+        local kind = t.bySeed[seed]
+        local entry = kind ~= nil and t.byKind[kind] or nil
+        if entry ~= nil then
+            entry.packets[#entry.packets + 1] = packet
+            t.byPacket[packet] = { seed = seed, empty = packet .. "_Empty", kind = kind }
+            n = n + 1
+        end
+    end
+    if n > 0 then log("seed table: scanned " .. tostring(n) .. " packet(s)") end
+end
+
+function BridgeGardening.seedTable()
+    if seedCache ~= nil then return seedCache end
+    local t = { bySeed = {}, byPacket = {}, byKind = {}, kinds = {} }
+    seedCache = t
+    local props = nil
+    if farming_vegetableconf ~= nil then props = farming_vegetableconf.props end
+    if props == nil then
+        log("seed table: farming_vegetableconf unavailable")
+        return t
+    end
+    local missing = {}
+    for kind, cfg in pairs(props) do
+        if type(cfg) == "table" then
+            local seeds = {}
+            local list = cfg.seedTypes
+            if type(list) ~= "table" then list = (cfg.seedName ~= nil) and { cfg.seedName } or nil end
+            for i = 1, #(list or {}) do
+                local seed = list[i]
+                if type(seed) == "string" and t.bySeed[seed] == nil then
+                    seeds[#seeds + 1] = seed
+                    t.bySeed[seed] = kind
+                end
+            end
+            if #seeds > 0 then
+                local entry = {
+                    kind = kind,
+                    seeds = seeds,
+                    packets = {},
+                    sowMonth = cfg.sowMonth,
+                    bestMonth = cfg.bestMonth,
+                    riskMonth = cfg.riskMonth,
+                }
+                for i = 1, #seeds do
+                    local packet = packetForSeed(seeds[i])
+                    if packet ~= nil then
+                        entry.packets[#entry.packets + 1] = packet
+                        t.byPacket[packet] = { seed = seeds[i], empty = packet .. "_Empty", kind = kind }
+                    else
+                        missing[#missing + 1] = seeds[i]
+                    end
+                end
+                t.byKind[kind] = entry
+                t.kinds[#t.kinds + 1] = kind
+            end
+        end
+    end
+    table.sort(t.kinds)
+    local okScan, errScan = pcall(scanPackets, t, missing)
+    if not okScan then log("seed table scan failed: " .. tostring(errScan)) end
+    log("seed table: " .. tostring(#t.kinds) .. " crop kind(s), " .. tostring(#missing)
+        .. " seed type(s) without a packet")
+    return t
+end
+
+function BridgeGardening.seedTypesOf(kind)
+    local entry = BridgeGardening.seedTable().byKind[kind]
+    if entry == nil then return {} end
+    return entry.seeds
+end
+
+function BridgeGardening.packetOf(kind)
+    local entry = BridgeGardening.seedTable().byKind[kind]
+    if entry == nil then return nil end
+    return entry.packets[1]
+end
+
+function BridgeGardening.packetInfo(packetType)
+    if packetType == nil then return nil end
+    return BridgeGardening.seedTable().byPacket[packetType]
+end
+
+function BridgeGardening.cropOfItem(fullType)
+    if fullType == nil then return nil end
+    return BridgeGardening.seedTable().bySeed[fullType]
+end
+
+function BridgeGardening.kindLabel(kind)
+    local text = nil
+    pcall(function() text = getText("Farming_" .. tostring(kind)) end)
+    local fallback = "Farming_" .. tostring(kind)
+    if type(text) ~= "string" or text == "" or text == fallback then text = tostring(kind) end
+    return text
+end
+
+local function seasonLabel(entry)
+    local seasons = false
+    pcall(function()
+        local opt = getSandboxOptions():getOptionByName("PlantGrowingSeasons")
+        if opt ~= nil then seasons = opt:getValue() == true end
+    end)
+    if not seasons then return nil, nil end
+    local month = nil
+    pcall(function() month = getGameTime():getMonth() + 1 end)
+    if month == nil then return nil, nil end
+    local function has(list)
+        for i = 1, #(list or {}) do
+            if list[i] == month then return true end
+        end
+        return false
+    end
+    local key = nil
+    if has(entry.bestMonth) then
+        key = "Farming_Tooltip_BestMonth"
+    elseif has(entry.riskMonth) then
+        key = "Farming_Tooltip_RiskMonth"
+    elseif has(entry.sowMonth) then
+        key = "Farming_Tooltip_InSeason"
+    else
+        key = "Farming_Tooltip_BadMonth"
+    end
+    local text = nil
+    pcall(function() text = getText(key) end)
+    if type(text) ~= "string" or text == "" or text == key then text = nil end
+    return text, month
+end
+
+function BridgeGardening.seedMenuRows(stock)
+    local rows = {}
+    local t = BridgeGardening.seedTable()
+    for i = 1, #t.kinds do
+        local kind = t.kinds[i]
+        local entry = t.byKind[kind]
+        local counts = type(stock) == "table" and stock[kind] or nil
+        local plantable = counts ~= nil and math.floor(tonumber(counts.plantable) or 0) or 0
+        if plantable > 0 then
+            local text = BridgeGardening.kindLabel(kind)
+            local season, month = seasonLabel(entry)
+            if season ~= nil then text = text .. " (" .. season .. ")" end
+            local label = text
+            local yours = counts ~= nil and math.floor(tonumber(counts.yours) or 0) or 0
+            if yours > 0 then label = label .. " (+" .. tostring(yours) .. " yours)" end
+            label = label .. " : " .. tostring(plantable)
+            rows[#rows + 1] = {
+                kind = kind, text = text, label = label,
+                plantable = plantable, yours = yours, season = season, month = month,
+            }
+        end
+    end
+    table.sort(rows, function(a, c)
+        if a.text == c.text then return a.kind < c.kind end
+        return a.text < c.text
+    end)
+    return rows
+end
+
+function BridgeGardening.carriedSeedCount(body, kind)
+    if BridgeFetch == nil or type(BridgeFetch.seedStock) ~= "function" then return 0 end
+    local stock = nil
+    pcall(function() stock = BridgeFetch.seedStock(false) end)
+    local counts = stock ~= nil and stock[kind] or nil
+    if counts == nil then return 0 end
+    return math.floor(tonumber(counts.loose) or 0)
+end
+
+function BridgeGardening.plantableCount(kind)
+    if BridgeFetch == nil or type(BridgeFetch.seedStock) ~= "function" then return 0 end
+    local stock = nil
+    pcall(function() stock = BridgeFetch.seedStock(false) end)
+    local counts = stock ~= nil and stock[kind] or nil
+    if counts == nil then return 0 end
+    return math.floor(tonumber(counts.plantable) or 0)
+end
+
+function BridgeGardening.bagLists(body)
+    local lists = {}
+    if body == nil then return lists end
+    pcall(function() lists[#lists + 1] = body:getInventory() end)
+    if BridgeInventory ~= nil and type(BridgeInventory.wornBags) == "function" then
+        pcall(function()
+            for _, bag in ipairs(BridgeInventory.wornBags(body)) do
+                local inv = nil
+                pcall(function() inv = bag:getInventory() end)
+                if inv ~= nil then lists[#lists + 1] = inv end
+            end
+        end)
+    end
+    return lists
+end
+
+local function itemFull(item)
+    local full = nil
+    pcall(function() full = item ~= nil and item:getFullType() or nil end)
+    return full
+end
+
+local function itemId(item)
+    local id = nil
+    pcall(function() id = item ~= nil and item:getID() or nil end)
+    return id
+end
+
+function BridgeGardening.looseCount(body, seedTypes)
+    local total = 0
+    local lists = BridgeGardening.bagLists(body)
+    local want = {}
+    for i = 1, #(seedTypes or {}) do want[seedTypes[i]] = true end
+    for i = 1, #lists do
+        local list = nil
+        pcall(function() list = lists[i]:getItems() end)
+        if list ~= nil then
+            for j = 0, list:size() - 1 do
+                local it = list:get(j)
+                local full = itemFull(it)
+                if full ~= nil and want[full] then
+                    local n = 1
+                    pcall(function() n = it:getCount() or 1 end)
+                    total = total + math.max(1, math.floor(tonumber(n) or 1))
+                end
+            end
+        end
+    end
+    return total
+end
+
+function BridgeGardening.firstSeedId(body, seedTypes)
+    local want = {}
+    for i = 1, #(seedTypes or {}) do want[seedTypes[i]] = true end
+    local lists = BridgeGardening.bagLists(body)
+    for i = 1, #lists do
+        local list = nil
+        pcall(function() list = lists[i]:getItems() end)
+        if list ~= nil then
+            for j = 0, list:size() - 1 do
+                local it = list:get(j)
+                local full = itemFull(it)
+                if full ~= nil and want[full] then
+                    local id = itemId(it)
+                    if id ~= nil then return id end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function BridgeGardening.firstPacket(body, entry)
+    if entry == nil or #entry.packets == 0 then return nil, nil end
+    local want = {}
+    for i = 1, #entry.packets do want[entry.packets[i]] = true end
+    local lists = BridgeGardening.bagLists(body)
+    for i = 1, #lists do
+        local list = nil
+        pcall(function() list = lists[i]:getItems() end)
+        if list ~= nil then
+            for j = 0, list:size() - 1 do
+                local it = list:get(j)
+                local full = itemFull(it)
+                if full ~= nil and want[full] then
+                    local id = itemId(it)
+                    if id ~= nil then return id, full end
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+function BridgeGardening.sowSpots(b)
+    local list = {}
+    if b == nil then return list end
+    local cap = BridgeGardening.MAX_SOWS
+    local pick = BridgeGardening.sowPick
+    local kind = pick ~= nil and pick.kind or nil
+    if kind ~= nil and BridgeFetch ~= nil and type(BridgeFetch.seedStock) == "function" then
+        local stock = nil
+        pcall(function() stock = BridgeFetch.seedStock(false) end)
+        local counts = stock ~= nil and stock[kind] or nil
+        if counts ~= nil then
+            local plantable = math.floor(tonumber(counts.plantable) or 0)
+            if plantable < cap then cap = plantable end
+        end
+    end
+    if cap < 1 then return list end
+    for x = b.x1, b.x2 do
+        for y = b.y1, b.y2 do
+            if #list >= cap then return list end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
+            if sq ~= nil then
+                local plant = BridgeGardening.plantAt(sq, false)
+                local state = nil
+                pcall(function() state = plant ~= nil and plant.state or nil end)
+                if state == "plow" then
+                    list[#list + 1] = { x = x, y = y, z = b.z }
+                end
+            end
+        end
+    end
+    return list
+end
+
+function BridgeGardening.sowMissing()
+    local pick = BridgeGardening.sowPick
+    local kind = pick ~= nil and pick.kind or nil
+    if kind == nil then return "seeds" end
+    if BridgeGardening.plantableCount(kind) <= 0 then return "seeds" end
+    return nil
+end
+
+function BridgeGardening.resetSowTarget()
+    local T = BridgeTask
+    if T == nil then return end
+    T.phase = nil
+    T.sowStart = nil
+    T.sowAnimStart = nil
+    T.sowSoundId = nil
+    T.sowEmitter = nil
+    T.sowAnim = nil
+    T.sowRestarts = nil
+    T.animHold = 0
+end
+
+function BridgeGardening.clearSowState()
+    local T = BridgeTask
+    if T == nil then return end
+    BridgeGardening.resetSowTarget()
+    T.sowSaid = nil
+    T.sowSayCheck = nil
+    T.sowWorkSay = nil
+    T.sowWorkSayCheck = nil
+    T.sowDoneSaid = nil
+    T.sowOutSaid = nil
+    T.sowPending = nil
+    T.sowWaitAt = nil
+    T.sowPacket = nil
+    T.sowPacketAt = nil
+    T.sowReturnItems = nil
+    T.sowReturnDest = nil
+    T.sowReturnAt = nil
+    T.sowReturnAct = nil
+end
+
+local function stopSowSound(body)
+    local T = BridgeTask
+    if T == nil then return end
+    local id, emitter = T.sowSoundId, T.sowEmitter
+    T.sowSoundId, T.sowEmitter = nil, nil
+    if id == nil or emitter == nil or id == 0 then return end
+    pcall(function() emitter:stopOrTriggerSound(id) end)
+end
+
+local function beginSow(body, target)
+    local T = BridgeTask
+    pcall(function() BridgeMove.stopPath(body) end)
+    T.forceIdle(body)
+    pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+    T.sowAnim = T.LOOT_LOW or "LootLow"
+    T.sowStart = Bridge.time
+    T.sowAnimStart = Bridge.time
+    T.sowRestarts = 0
+    T.animHold = 0
+    T.phase = "sow"
+    pcall(function()
+        body:setVariable("LootPosition", "Low")
+        body:setVariable("BumpAnimFinished", false)
+        body:setBumpType(T.sowAnim)
+    end)
+    local id = nil
+    pcall(function()
+        if BridgeSound ~= nil and type(BridgeSound.event) == "function" then
+            id = BridgeSound.event(body, BridgeGardening.SOW_SOUND)
+        end
+    end)
+    T.sowSoundId = id
+    local emitter = nil
+    pcall(function() emitter = body:getEmitter() end)
+    T.sowEmitter = emitter
+    log(string.format("sow start %d,%d anim=%s", target.x, target.y, tostring(T.sowAnim)))
+end
+
+function BridgeGardening.sowLocal(body, target, kind)
+    local sq = BridgeGardening.squareAt(target)
+    if sq == nil then return false, "gone" end
+    local plant = BridgeGardening.plantAt(sq, true)
+    if plant == nil then return false, "gone" end
+    local state = nil
+    pcall(function() state = plant.state end)
+    if state ~= "plow" then return false, "noplow" end
+    local skill = 0
+    pcall(function() skill = BridgeSkills.level("Agriculture") end)
+    local owner = nil
+    if BridgeData ~= nil and type(BridgeData.owner) == "function" then
+        pcall(function() owner = BridgeData.owner() end)
+    end
+    local ok, err = pcall(function()
+        plant:seed(kind, skill)
+        if owner ~= nil then plant.owner = owner:getPlayerNum() end
+        plant:saveData()
+    end)
+    if not ok then
+        warn("sow failed: " .. tostring(err))
+        return false, "error"
+    end
+    return true, nil
+end
+
+function BridgeGardening.requestSow(target, kind)
+    if target == nil or kind == nil then return end
+    pcall(function()
+        sendClientCommand(BridgeData.owner(), "Bridge", "sowSeeds",
+            { x = target.x, y = target.y, z = target.z, kind = kind })
+    end)
+end
+
+function BridgeGardening.requestOpenPacket(packetType)
+    if packetType == nil then return end
+    pcall(function()
+        sendClientCommand(BridgeData.owner(), "Bridge", "openSeedPacket", { packetType = packetType })
+    end)
+end
+
+local function stillHers(item)
+    if item == nil then return false end
+    local cont = nil
+    pcall(function() cont = item:getContainer() end)
+    if cont == nil then return false end
+    local inside = false
+    pcall(function()
+        if BridgeInventory ~= nil and type(BridgeInventory.inBody) == "function" then
+            inside = BridgeInventory.inBody(cont) == true
+        end
+    end)
+    return inside
+end
+
+function BridgeGardening.restorePacket(body, packetType)
+    if body == nil or packetType == nil then return end
+    local dest = nil
+    pcall(function() dest = body:getInventory() end)
+    if dest == nil then return end
+    pcall(function()
+        local one = instanceItem(packetType)
+        if one ~= nil then dest:AddItem(one) end
+    end)
+    pcall(function()
+        if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+        if Bridge ~= nil and type(Bridge.saveOutfit) == "function" then Bridge.saveOutfit() end
+    end)
+end
+
+function BridgeGardening.openPacketLocal(body, packetId, packetType)
+    local info = BridgeGardening.packetInfo(packetType)
+    if info == nil then return false, "unknown" end
+    if BridgeGunRules == nil or type(BridgeGunRules.removeItemById) ~= "function" then return false, "no rules" end
+    local dest = nil
+    pcall(function() dest = body:getInventory() end)
+    if dest == nil then return false, "no bag" end
+    if instanceItem(info.seed) == nil or instanceItem(info.empty) == nil then return false, "no item" end
+    local got = nil
+    pcall(function() got = BridgeGunRules.removeItemById(body, packetId) end)
+    if got == nil then return false, "no packet" end
+    local added = nil
+    pcall(function() added = dest:AddItems(info.seed, BridgeGardening.SEEDS_PER_PACKET) end)
+    local count = added ~= nil and added:size() or 0
+    if count < BridgeGardening.SEEDS_PER_PACKET then
+        if added ~= nil then
+            pcall(function()
+                for i = count - 1, 0, -1 do
+                    local one = added:get(i)
+                    if one ~= nil then dest:Remove(one) end
+                end
+            end)
+        end
+        BridgeGardening.restorePacket(body, packetType)
+        return false, "no room"
+    end
+    local empty = nil
+    pcall(function() empty = dest:AddItem(info.empty) end)
+    if empty == nil then
+        pcall(function()
+            for i = 0, added:size() - 1 do
+                local one = added:get(i)
+                if one ~= nil then dest:Remove(one) end
+            end
+        end)
+        BridgeGardening.restorePacket(body, packetType)
+        return false, "no room"
+    end
+    pcall(function()
+        if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+        if Bridge ~= nil and type(Bridge.saveOutfit) == "function" then Bridge.saveOutfit() end
+    end)
+    log("opened " .. tostring(packetType) .. " into " .. tostring(BridgeGardening.SEEDS_PER_PACKET) .. " seeds")
+    return true, nil
+end
+
+function BridgeGardening.leftovers(body)
+    local out = {}
+    if body == nil then return out end
+    local pick = BridgeGardening.sowPick
+    local kind = pick ~= nil and pick.kind or nil
+    if kind == nil then return out end
+    local t = BridgeGardening.seedTable()
+    local entry = t.byKind[kind]
+    if entry == nil then return out end
+    local want = {}
+    for i = 1, #entry.seeds do want[entry.seeds[i]] = true end
+    for i = 1, #entry.packets do
+        local info = t.byPacket[entry.packets[i]]
+        if info ~= nil then want[info.empty] = true end
+    end
+    local lists = BridgeGardening.bagLists(body)
+    for i = 1, #lists do
+        local list = nil
+        pcall(function() list = lists[i]:getItems() end)
+        if list ~= nil then
+            for j = 0, list:size() - 1 do
+                local it = list:get(j)
+                local full = itemFull(it)
+                if full ~= nil and want[full] then out[#out + 1] = it end
+            end
+        end
+    end
+    return out
+end
+
+function BridgeGardening.returnDest(body)
+    if body == nil then return nil end
+    if BridgeDeposit == nil or type(BridgeDeposit.homeTargets) ~= "function" then return nil end
+    local targets = nil
+    pcall(function() targets = BridgeDeposit.homeTargets() end)
+    if type(targets) ~= "table" then return nil end
+    local bx, by, bz = body:getX(), body:getY(), body:getZ()
+    local best, bestD = nil, nil
+    for i = 1, #targets do
+        local t = targets[i]
+        if t ~= nil and t.cont ~= nil then
+            local usable = false
+            pcall(function() usable = BridgeDeposit.destUsable(t) == true end)
+            if usable then
+                local d = (bx - (t.x or bx)) ^ 2 + (by - (t.y or by)) ^ 2 + 400 * math.abs(bz - (t.z or bz))
+                if bestD == nil or d < bestD then best, bestD = t, d end
+            end
+        end
+    end
+    return best
+end
+
+function BridgeGardening.sowFinishStep(body, outOfSeeds)
+    local T = BridgeTask
+    if T == nil then return false end
+    if (T.doneCount or 0) > 0 and not T.sowDoneSaid then
+        T.sowDoneSaid = true
+        sayLine("EvSowingDone", "SowingDone", BridgeGardening.SOW_SAY_COOLDOWN)
+    end
+    if outOfSeeds == true and not T.sowOutSaid then
+        T.sowOutSaid = true
+        if not sayLine("EvSowingOut", "SowingOut", BridgeGardening.SOW_SAY_COOLDOWN) then
+            Bridge.speak("JobNoSeeds")
+        end
+    end
+    local leftovers = BridgeGardening.leftovers(body)
+    if #leftovers > 0 then
+        local dest = BridgeGardening.returnDest(body)
+        if dest ~= nil then
+            T.phase = "return"
+            T.current = { x = dest.x, y = dest.y, z = dest.z }
+            T.spot = nil
+            T.bestD = nil
+            T.pathFails = 0
+            T.pathFailTick = nil
+            T.sowReturnItems = leftovers
+            T.sowReturnDest = dest
+            T.sowReturnAt = Bridge.time
+            T.sowReturnAct = nil
+            T.info = "return seeds"
+            log("returning " .. tostring(#leftovers) .. " leftover item(s)")
+            return true
+        end
+    end
+    return T.finish()
+end
+
+function BridgeGardening.sowOutOfSeeds(body)
+    local T = BridgeTask
+    if T == nil then return false end
+    T.queue = {}
+    T.current = nil
+    BridgeGardening.resetSowTarget()
+    return BridgeGardening.sowFinishStep(body, true)
+end
+
+function BridgeGardening.openPacketStep(body, packetId, packetType)
+    local T = BridgeTask
+    if T == nil or packetId == nil or packetType == nil then return false end
+    T.sowPacket = { id = packetId, t = packetType }
+    T.sowPacketAt = Bridge.time
+    T.info = "open packet"
+    if Bridge ~= nil and Bridge.mp == true then
+        T.phase = "packet"
+        BridgeGardening.requestOpenPacket(packetType)
+        log("seed packet requested: " .. tostring(packetType))
+        return true
+    end
+    local ok, why = BridgeGardening.openPacketLocal(body, packetId, packetType)
+    T.sowPacket = nil
+    T.phase = nil
+    if not ok then
+        log("seed packet failed: " .. tostring(why))
+        return BridgeGardening.sowOutOfSeeds(body)
+    end
+    return true
+end
+
+function BridgeGardening.commitSow(body, seedId)
+    local T = BridgeTask
+    if T == nil then return false end
+    if seedId ~= nil and BridgeGunRules ~= nil and type(BridgeGunRules.removeItemById) == "function" then
+        pcall(function() BridgeGunRules.removeItemById(body, seedId) end)
+    end
+    pcall(function()
+        if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+        if Bridge ~= nil and type(Bridge.saveOutfit) == "function" then Bridge.saveOutfit() end
+    end)
+    if BridgeGardening.SOW_XP > 0 then
+        pcall(function() BridgeSkills.add("Agriculture", BridgeGardening.SOW_XP, "sow") end)
+    end
+    T.markDone()
+    T.current = nil
+    BridgeGardening.resetSowTarget()
+    if #T.queue == 0 then return BridgeGardening.sowFinishStep(body, false) end
+    return true
+end
+
+function BridgeGardening.sowReturn(body)
+    local T = BridgeTask
+    if T == nil or body == nil then return false end
+    local dest = T.sowReturnDest
+    if dest == nil then return T.finish() end
+    local items = T.sowReturnItems or {}
+    if T.sowReturnAct ~= nil then
+        local pending = false
+        for i = 1, #items do
+            if stillHers(items[i]) then pending = true break end
+        end
+        if not pending then
+            log("return seeds done")
+            return T.finish()
+        end
+        if (Bridge.time - (T.sowReturnAt or Bridge.time)) > BridgeGardening.RETURN_TIMEOUT then
+            log("return seeds timed out")
+            return T.finish()
+        end
+        return true
+    end
+    if #items == 0 then return T.finish() end
+    local walk, why = T.walkTo(body, T.current, BridgeGardening.SOW_RANGE, true)
+    if walk == "unreachable" then
+        log("return seeds unreachable: " .. tostring(why))
+        return T.finish()
+    end
+    if walk ~= "arrived" then return true end
+    pcall(function() BridgeMove.stopPath(body) end)
+    T.forceIdle(body)
+    local act = nil
+    pcall(function() act = BridgeDeposit.depositItems(body, items, dest) end)
+    if act == nil then
+        log("return seeds unavailable")
+        return T.finish()
+    end
+    T.sowReturnAct = act
+    T.sowReturnAt = Bridge.time
+    T.info = "returning seeds"
+    return true
+end
+
+function BridgeGardening.sowUpdate(body)
+    local T = BridgeTask
+    if T == nil or body == nil then return false end
+    if T.SOWING_ENABLED ~= 1 then return T.finish() end
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
+
+    local pick = BridgeGardening.sowPick
+    local kind = pick ~= nil and pick.kind or nil
+    local entry = kind ~= nil and BridgeGardening.seedTable().byKind[kind] or nil
+    if entry == nil then return T.cancel("noSeeds") end
+
+    if T.phase == "wait" then
+        if T.sowPending == nil then
+            T.phase = nil
+        elseif (Bridge.time - (T.sowWaitAt or Bridge.time)) > BridgeGardening.PENDING_TIMEOUT then
+            T.sowPending = nil
+            T.info = "sow timeout"
+            log("sow timeout")
+            return T.cancel("sow timeout")
+        end
+        return true
+    end
+
+    if T.phase == "packet" then
+        if T.sowPacket == nil then
+            T.phase = nil
+        elseif (Bridge.time - (T.sowPacketAt or Bridge.time)) > BridgeGardening.PENDING_TIMEOUT then
+            T.sowPacket = nil
+            T.info = "packet timeout"
+            log("seed packet timeout")
+            return T.cancel("packet timeout")
+        end
+        return true
+    end
+
+    if T.phase == "return" then return BridgeGardening.sowReturn(body) end
+
+    if T.current == nil then
+        if #T.queue == 0 then return BridgeGardening.sowFinishStep(body, false) end
+        if BridgeGardening.looseCount(body, entry.seeds) <= 0 then
+            local packetId, packetType = BridgeGardening.firstPacket(body, entry)
+            if packetId ~= nil then
+                return BridgeGardening.openPacketStep(body, packetId, packetType)
+            end
+            return BridgeGardening.sowOutOfSeeds(body)
+        end
+        local picked = BridgeGardening.nextTarget(body)
+        if picked == nil then return BridgeGardening.sowFinishStep(body, false) end
+        BridgeGardening.resetSowTarget()
+        T.current = picked
+        T.phase = "walk"
+        T.info = "furrow"
+        T.progressAt = Bridge.time
+        T.pathFails = 0
+        T.pathFailTick = nil
+        T.bestD = nil
+        T.spot = nil
+    end
+
+    local target = T.current
+    local sq = BridgeGardening.squareAt(target)
+    local plant = BridgeGardening.plantAt(sq, false)
+    local state = nil
+    pcall(function() state = plant ~= nil and plant.state or nil end)
+    if state ~= "plow" then
+        stopSowSound(body)
+        BridgeGardening.clearAnim(body)
+        BridgeGardening.resetSowTarget()
+        T.info = "not plow"
+        T.current = nil
+        if #T.queue == 0 then return BridgeGardening.sowFinishStep(body, false) end
+        return true
+    end
+
+    if not T.sowSaid then
+        if (Bridge.time - (T.sowSayCheck or 0)) >= SECOND then
+            T.sowSayCheck = Bridge.time
+            if sayLine("EvSowing", "Sowing", BridgeGardening.SOW_SAY_COOLDOWN) then T.sowSaid = true end
+        end
+    end
+    if T.phase ~= "walk" and T.sowSaid then
+        if (Bridge.time - (T.sowWorkSayCheck or 0)) >= SECOND then
+            T.sowWorkSayCheck = Bridge.time
+            if (Bridge.time - (T.sowWorkSay or -99999)) >= BridgeGardening.SOW_WORK_SAY_COOLDOWN
+                    and ZombRand(100) < BridgeGardening.SOW_WORK_SAY_CHANCE then
+                if sayLine("EvSowingWork", "SowingWork", BridgeGardening.SOW_WORK_SAY_COOLDOWN) then
+                    T.sowWorkSay = Bridge.time
+                end
+            end
+        end
+    end
+
+    if T.phase ~= "sow" then
+        local walk, why = T.walkTo(body, target, BridgeGardening.SOW_RANGE, true)
+        if walk == "unreachable" then return T.dropTarget(why) end
+        if walk ~= "arrived" then return true end
+        beginSow(body, target)
+        return true
+    end
+
+    local anim = T.sowAnim or T.LOOT_LOW or "LootLow"
+    local animAge = (Bridge.time - (T.sowAnimStart or T.sowStart or Bridge.time)) * T.ffMult()
+    if animAge >= T.SCRUB_GUARD then
+        local playing = false
+        pcall(function()
+            playing = body:getActionStateName() == "bumped" and tostring(body:getBumpType()) == anim
+        end)
+        if not playing and (T.sowRestarts or 0) < 6 then
+            T.sowRestarts = (T.sowRestarts or 0) + 1
+            BridgeGardening.clearAnim(body)
+            pcall(function()
+                body:setVariable("BumpAnimFinished", false)
+                body:setBumpType(anim)
+            end)
+            T.sowAnimStart = Bridge.time
+            T.info = "sow anim restarted"
+            return true
+        end
+    end
+    local age = (Bridge.time - (T.sowStart or Bridge.time)) * T.ffMult()
+    if age < BridgeGardening.SOW_TIME then return true end
+
+    stopSowSound(body)
+    BridgeGardening.clearAnim(body)
+
+    local seedId = BridgeGardening.firstSeedId(body, entry.seeds)
+    if seedId == nil then
+        local packetId, packetType = BridgeGardening.firstPacket(body, entry)
+        if packetId == nil then return BridgeGardening.sowOutOfSeeds(body) end
+        return BridgeGardening.openPacketStep(body, packetId, packetType)
+    end
+
+    if Bridge ~= nil and Bridge.mp == true then
+        T.sowPending = { x = target.x, y = target.y, z = target.z, kind = kind, seedId = seedId }
+        T.sowWaitAt = Bridge.time
+        T.phase = "wait"
+        BridgeGardening.requestSow(target, kind)
+        return true
+    end
+
+    local ok, why = BridgeGardening.sowLocal(body, target, kind)
+    if not ok then
+        if why == "noplow" or why == "gone" then
+            BridgeGardening.resetSowTarget()
+            T.current = nil
+            if #T.queue == 0 then return BridgeGardening.sowFinishStep(body, false) end
+            return true
+        end
+        return T.cancel("sow error")
+    end
+    return BridgeGardening.commitSow(body, seedId)
+end
+
+function BridgeGardening.sowLeave(body)
+    local T = BridgeTask
+    if T == nil then return end
+    stopSowSound(body)
+    BridgeGardening.clearAnim(body)
+    BridgeGardening.clearSowState()
+end
+
+function BridgeGardening.onSowResult(args)
+    local T = BridgeTask
+    if T == nil or args == nil then return end
+    if T.active ~= true or T.kind ~= "sowSeeds" then return end
+    local pending = T.sowPending
+    if pending == nil then return end
+    if tonumber(args.x) ~= pending.x or tonumber(args.y) ~= pending.y then return end
+    T.sowPending = nil
+    local body = Bridge.body
+    if args.ok == true then
+        BridgeGardening.commitSow(body, pending.seedId)
+        return
+    end
+    log("sow refused: " .. tostring(args.why))
+    BridgeGardening.resetSowTarget()
+    T.current = nil
+    if #T.queue == 0 then BridgeGardening.sowFinishStep(body, false) end
+end
+
+function BridgeGardening.onSowPacketResult(args)
+    local T = BridgeTask
+    if T == nil or args == nil then return end
+    if T.active ~= true or T.kind ~= "sowSeeds" then return end
+    local pending = T.sowPacket
+    if pending == nil then return end
+    T.sowPacket = nil
+    T.phase = nil
+    local body = Bridge.body
+    if args.ok == true then
+        if BridgeGunRules ~= nil and type(BridgeGunRules.removeItemById) == "function" then
+            pcall(function() BridgeGunRules.removeItemById(body, pending.id) end)
+        end
+        pcall(function()
+            if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+            if Bridge ~= nil and type(Bridge.saveOutfit) == "function" then Bridge.saveOutfit() end
+        end)
+        log("seed packet opened: " .. tostring(pending.t))
+        return
+    end
+    log("seed packet refused: " .. tostring(args.why))
+    BridgeGardening.sowOutOfSeeds(body)
+end
+
 local function install()
     if BridgeTask ~= nil and BridgeTask.kinds ~= nil then
         BridgeTask.kinds.harvestCrops = {
@@ -1178,6 +2149,12 @@ local function install()
             update = function(body) return BridgeGardening.digUpdate(body) end,
             leave = function(body) return BridgeGardening.digLeave(body) end,
         }
+        BridgeTask.kinds.sowSeeds = {
+            available = function(body) return BridgeTask.SOWING_ENABLED == 1 end,
+            missing = function(body) return BridgeGardening.sowMissing() end,
+            update = function(body) return BridgeGardening.sowUpdate(body) end,
+            leave = function(body) return BridgeGardening.sowLeave(body) end,
+        }
     end
     if BridgeWorkSelect ~= nil and BridgeWorkSelect.kinds ~= nil then
         BridgeWorkSelect.kinds.harvestCrops = {
@@ -1191,6 +2168,13 @@ local function install()
             maxSide = 8,
             min = 1,
             noneSay = "JobNoDigSpots",
+        }
+        BridgeWorkSelect.kinds.sowSeeds = {
+            collect = function(b) return BridgeGardening.sowSpots(b) end,
+            max = BridgeGardening.MAX_SOWS,
+            maxSide = 8,
+            min = 1,
+            noneSay = "JobNoSowSpots",
         }
     end
     log("kinds registered")

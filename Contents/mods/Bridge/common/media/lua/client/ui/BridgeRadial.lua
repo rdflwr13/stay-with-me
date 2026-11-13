@@ -340,7 +340,7 @@ end
 local JOB_KINDS = {
     lootArea = true, depositArea = true, deposit = true, cleanUp = true, clearPlants = true, chopTree = true,
     moveCorpses = true, pryDoor = true, fillWater = true, emptyFluid = true,
-    washSink = true, openDoors = true, closeDoors = true, harvestCrops = true, digFurrows = true,
+    washSink = true, openDoors = true, closeDoors = true, harvestCrops = true, digFurrows = true, sowSeeds = true,
 }
 
 local function doingJob()

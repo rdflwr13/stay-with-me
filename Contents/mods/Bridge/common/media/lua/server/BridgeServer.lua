@@ -3725,6 +3725,105 @@ BridgeServer.Commands.digFurrow = function(player, args)
 end
 
 
+BridgeServer.Commands.sowSeeds = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("sowSeeds: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+    if BridgeGardening == nil then
+        log("sowSeeds: BridgeGardening not loaded")
+        return
+    end
+    local kind = args.kind
+    local result = { x = args.x, y = args.y, z = args.z, ok = false, kind = kind, why = nil }
+    local props = nil
+    if farming_vegetableconf ~= nil then props = farming_vegetableconf.props end
+    local plant = BridgeGardening.plantAt(sq, true)
+    local state = nil
+    pcall(function() state = plant ~= nil and plant.state or nil end)
+    if plant == nil or state ~= "plow" then
+        result.why = "noplow"
+    elseif type(kind) ~= "string" or props == nil or props[kind] == nil then
+        result.why = "badkind"
+    else
+        local rec = record(who)
+        local stored = 0
+        pcall(function()
+            local skills = BridgeData.skillsOf(rec)
+            stored = tonumber(skills.Agriculture) or 0
+        end)
+        local skill = 0
+        pcall(function() skill = BridgeData.levelFromXp("Agriculture", stored) end)
+        local ok, err = pcall(function()
+            plant:seed(kind, skill)
+            if isClient() then
+                plant.owner = player:getOnlineID()
+            else
+                plant.owner = player:getPlayerNum()
+            end
+            plant:saveData()
+        end)
+        result.ok = ok == true
+        if not ok then
+            result.why = "error"
+            log("sowSeeds: seed failed for " .. tostring(who) .. ": " .. tostring(err))
+        end
+    end
+    sendServerCommand(player, "Bridge", "sowSeedsResult", result)
+    log(string.format("sowSeeds: %s %s,%s kind=%s ok=%s why=%s", tostring(who),
+        tostring(args.x), tostring(args.y), tostring(kind), tostring(result.ok), tostring(result.why)))
+end
+
+BridgeServer.Commands.openSeedPacket = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    local packetType = args.packetType
+    local function reply(ok, why)
+        sendServerCommand(player, "Bridge", "sowPacketResult",
+            { ok = ok == true, why = why, packet = packetType })
+    end
+    if BridgeGardening == nil or BridgeItems == nil then return reply(false, "not loaded") end
+    local info = BridgeGardening.packetInfo(packetType)
+    if info == nil then return reply(false, "bad packet") end
+    local seedProbe = instanceItem(info.seed)
+    local emptyProbe = instanceItem(info.empty)
+    if seedProbe == nil or emptyProbe == nil then return reply(false, "missing item") end
+    local list = BridgeItems.decode(rec.items or "")
+    local idx = nil
+    for i = 1, #list do
+        if list[i].p == nil and list[i].t == packetType then idx = i break end
+    end
+    if idx == nil then return reply(false, "no packet") end
+    local trimmed = removeSubtree(list, idx)
+    local recs = {}
+    local per = BridgeGardening.SEEDS_PER_PACKET or 5
+    for i = 1, per do
+        local r = BridgeItems.record(instanceItem(info.seed), true)
+        recs[#recs + 1] = r
+        flatten(r, nil, trimmed)
+    end
+    local emptyRec = BridgeItems.record(instanceItem(info.empty), true)
+    recs[#recs + 1] = emptyRec
+    flatten(emptyRec, nil, trimmed)
+    local text = BridgeItems.encode(trimmed)
+    if BridgeItems.overBlock() then return reply(false, "carrying too much") end
+    if #BridgeItems.decode(text) ~= #trimmed then return reply(false, "snapshot full") end
+    BridgeItems.set(rec, text)
+    rec.saved = 1
+    rec.iseq = (rec.iseq or 0) + 1
+    local ids = {}
+    local base = (rec.iseq or 0) * 1000
+    for i = 1, #recs do ids[i] = -(base + i) - 1 end
+    transmit()
+    sendServerCommand(player, "Bridge", "gave",
+        { ids = ids, recs = recs, token = args.token, iseq = rec.iseq })
+    reply(true, nil)
+    log(string.format("openSeedPacket: %s %s into %d seeds", tostring(who), tostring(packetType), per))
+end
+
 local function serverCorpseOn(sq, cx, cy)
     local best, bestD = nil, nil
     if sq == nil then return nil end
@@ -4070,7 +4169,16 @@ local function collectHomeItems(rec, body, player, fullType, want)
     local all = BridgeData.optionOf(rec, "homeAllFloors")
     local h, x1, y1, x2, y2, z1, z2 = homeRectOf(rec, all)
     local out, total = {}, 0
-    if h == nil or type(fullType) ~= "string" then return out, total end
+    local wanted = nil
+    if type(fullType) == "string" then
+        wanted = { [fullType] = true }
+    elseif type(fullType) == "table" then
+        wanted = {}
+        for i = 1, #fullType do
+            if type(fullType[i]) == "string" then wanted[fullType[i]] = true end
+        end
+    end
+    if h == nil or wanted == nil then return out, total end
     local need = math.floor(tonumber(want) or 0)
     if need <= 0 then need = 1 end
     local seen = {}
@@ -4115,7 +4223,7 @@ local function collectHomeItems(rec, body, player, fullType, want)
                                                     local it = list:get(k)
                                                     local full = nil
                                                     pcall(function() if it ~= nil then full = it:getFullType() end end)
-                                                    if full == fullType then
+                                                    if full ~= nil and wanted[full] then
                                                         local cnt = 0
                                                         pcall(function() cnt = it:getCount() end)
                                                         cnt = math.floor(tonumber(cnt) or 1)
@@ -4330,6 +4438,155 @@ BridgeServer.Commands.fetchSupply = function(player, args)
 end
 
 
+
+local function splitHomePacket(player, container, item, info)
+    if container == nil or item == nil or info == nil then return false end
+    local seedProbe = instanceItem(info.seed)
+    local emptyProbe = instanceItem(info.empty)
+    if seedProbe == nil or emptyProbe == nil then return false end
+    local per = BridgeGardening.SEEDS_PER_PACKET or 5
+    pcall(function()
+        if container:hasRoomFor(player, seedProbe) == false then error("no room") end
+    end)
+    local removed, added, addedCount = false, nil, 0
+    local ok, err = pcall(function()
+        container:Remove(item)
+        removed = true
+        sendRemoveItemFromContainer(container, item)
+        pcall(function() added = container:AddItems(info.seed, per) end)
+        if added ~= nil then pcall(function() addedCount = added:size() end) end
+        if addedCount < per then error("seeds rejected " .. tostring(addedCount)) end
+        pcall(function() sendAddItemsToContainer(container, added) end)
+        local empty = nil
+        pcall(function() empty = container:AddItem(info.empty) end)
+        if empty == nil then error("empty packet rejected") end
+        pcall(function() sendAddItemToContainer(container, empty) end)
+    end)
+    if not ok then
+        pcall(function()
+            if added ~= nil then
+                for i = addedCount - 1, 0, -1 do
+                    local one = added:get(i)
+                    if one ~= nil then container:Remove(one) end
+                end
+            end
+            if removed then
+                container:AddItem(item)
+                sendAddItemToContainer(container, item)
+            end
+        end)
+        log("fetchSeeds: opening " .. tostring(info.seed) .. " packet failed: " .. tostring(err))
+        return false
+    end
+    return true
+end
+
+BridgeServer.Commands.fetchSeeds = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    local kind = args.kind
+    local function fail(why)
+        log("fetchSeeds failed for " .. tostring(who) .. ": " .. tostring(why))
+    end
+    if BridgeGardening == nil or BridgeItems == nil then return fail("not loaded") end
+    if rec.bodyId == nil then return fail("no body") end
+    local all = BridgeData.optionOf(rec, "homeAllFloors")
+    local h = homeRectOf(rec, all)
+    if h == nil then return fail("no home") end
+    local body = BridgeServer.bodies[who] or currentBody(who, rec)
+    if body == nil then return fail("no body") end
+    local bx, by, bz = nil, nil, nil
+    pcall(function() bx, by, bz = math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()) end)
+    if bx == nil then return fail("no position") end
+    if not BridgeData.homeHas(h, bx, by, bz, FETCH_MARGIN, all) then return fail("not at home") end
+    local types = BridgeGardening.seedTypesOf(kind)
+    if #types == 0 then return fail("bad kind") end
+    local want = math.floor(tonumber(args.want) or 0)
+    if want < 1 then return fail("no want") end
+    if want > 200 then want = 200 end
+    local seedType = nil
+    for i = 1, #types do
+        if instanceItem(types[i]) ~= nil then
+            seedType = types[i]
+            break
+        end
+    end
+    if seedType == nil then return fail("no seed item") end
+    local picked, available = collectHomeItems(rec, body, player, types, want)
+    if available < want then
+        local entry = BridgeGardening.seedTable().byKind[kind]
+        local packets = entry ~= nil and entry.packets or {}
+        if #packets > 0 then
+            local needPacks = math.ceil((want - available) / (BridgeGardening.SEEDS_PER_PACKET or 5))
+            local packs = collectHomeItems(rec, body, player, packets, needPacks)
+            local opened = 0
+            for i = 1, #packs do
+                if opened >= needPacks then break end
+                local item, cont = packs[i].item, packs[i].container
+                local full = nil
+                pcall(function() full = item ~= nil and item:getFullType() or nil end)
+                local info = BridgeGardening.packetInfo(full)
+                if info ~= nil and splitHomePacket(player, cont, item, info) then
+                    opened = opened + 1
+                end
+            end
+            if opened > 0 then
+                picked, available = collectHomeItems(rec, body, player, types, want)
+            end
+        end
+    end
+    if available < 1 or #picked == 0 then return fail("no seeds") end
+    local take = math.min(want, available)
+    local list = BridgeItems.decode(rec.items or "")
+    local recs = {}
+    local made = 0
+    for i = 1, #picked do
+        if made >= take then break end
+        local it = picked[i].item
+        local full = nil
+        pcall(function() full = it ~= nil and it:getFullType() or nil end)
+        local have = picked[i].count
+        local use = math.min(have, take - made)
+        if full ~= nil then
+            for _ = 1, use do
+                local r = BridgeItems.record(instanceItem(full), true)
+                recs[#recs + 1] = r
+                flatten(r, nil, list)
+                made = made + 1
+            end
+        end
+    end
+    if made < take then return fail("no seed item") end
+    local encoded = BridgeItems.encode(list)
+    if BridgeItems.overBlock() then return fail("carrying too much") end
+    if #BridgeItems.decode(encoded) ~= #list then return fail("snapshot full") end
+    local left = take
+    for i = 1, #picked do
+        if left <= 0 then break end
+        local it, c = picked[i].item, picked[i].container
+        local have = picked[i].count
+        local use = math.min(have, left)
+        if use >= have then
+            pcall(function() c:Remove(it) end)
+            pcall(function() sendRemoveItemFromContainer(c, it) end)
+        else
+            pcall(function() it:setCount(have - use) end)
+            pcall(function() sendItemStats(it) end)
+        end
+        left = left - use
+    end
+    BridgeItems.set(rec, encoded)
+    rec.saved = 1
+    rec.iseq = (rec.iseq or 0) + 1
+    local ids = {}
+    local base = (rec.iseq or 0) * 1000
+    for i = 1, take do ids[i] = -(base + i) - 1 end
+    transmit()
+    sendServerCommand(player, "Bridge", "gave",
+        { ids = ids, recs = recs, token = args.token, iseq = rec.iseq })
+    log(string.format("fetchSeeds: %d of %s for %s, left %d in home storage",
+        take, tostring(kind), tostring(who), available - take))
+end
 
 BridgeServer.Commands.take = function(player, args)
     local who = player:getUsername()

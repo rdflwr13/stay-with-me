@@ -1144,6 +1144,7 @@ BridgeWindow.STORE_TICKS = {
     { key = "storeKeepTools", label = "StoreKeepTools", tip = "StoreKeepToolsTip" },
     { key = "storeKeepMeds", label = "StoreKeepMeds", tip = "StoreKeepMedsTip" },
     { key = "storeKeepLight", label = "StoreKeepLight", tip = "StoreKeepLightTip" },
+    { key = "storeKeepSeeds", label = "StoreKeepSeeds", tip = "StoreKeepSeedsTip" },
 }
 
 BridgeWindow.STATSMENU_ENABLE = 1

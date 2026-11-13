@@ -307,6 +307,21 @@ local function reserveIds(body, items)
             end
         end
     end
+    if BridgeData ~= nil and rec ~= nil and BridgeData.optionOf(rec, "storeKeepSeeds")
+            and BridgeGardening ~= nil and type(BridgeGardening.seedTypesOf) == "function" then
+        local pick = BridgeGardening.sowPick
+        local kind = pick ~= nil and pick.kind or nil
+        if kind ~= nil then
+            local seedSet = {}
+            local types = BridgeGardening.seedTypesOf(kind)
+            for i = 1, #types do seedSet[types[i]] = true end
+            for i = 1, #items do
+                local full = nil
+                pcall(function() full = items[i]:getFullType() end)
+                if full ~= nil and seedSet[full] then keep[items[i]] = true end
+            end
+        end
+    end
     local assigned = nil
     if BridgeWeapon ~= nil and type(BridgeWeapon.assigned) == "function" then
         pcall(function() assigned = BridgeWeapon.assigned(body) end)
@@ -1393,13 +1408,14 @@ local function destLabel(dest)
     return string.format("%s@%s,%s,%s", kind, tostring(dest.x), tostring(dest.y), tostring(dest.z))
 end
 
-local function depositTake(body, item, target, available, home, job)
+local function depositTake(body, item, target, available, home, job, actor)
     local dest = target ~= nil and target.cont or nil
     local src = nil
     pcall(function() src = item:getContainer() end)
     if src == nil or dest == nil then return nil, nil end
+    local chr = actor or owner()
     local act = nil
-    pcall(function() act = ISInventoryTransferAction:new(owner(), item, src, dest) end)
+    pcall(function() act = ISInventoryTransferAction:new(chr, item, src, dest) end)
     if act == nil then return nil, nil end
     local group = { item }
     local weightMode = BridgeTask == nil or BridgeTask.transferMode ~= "legacy"
@@ -1407,7 +1423,7 @@ local function depositTake(body, item, target, available, home, job)
     local remaining = math.huge
     local budget, actual = 0, 0
     if weightMode and BridgeTask ~= nil and type(BridgeTask.batchLimit) == "function" then
-        remaining = BridgeTask.remainingCapacity(dest, owner())
+        remaining = BridgeTask.remainingCapacity(dest, chr)
         cap = BridgeTask.batchLimit(item, remaining)
         budget = BridgeTask.batchWeight(item)
         actual = BridgeTask.actualWeight(item)
@@ -1471,6 +1487,17 @@ local function depositTake(body, item, target, available, home, job)
     if not ok then return nil, nil end
     log(string.format("transfer n=%d home=%s dest=%s weight=%.2f time=%d", #group,
         tostring(home == true), destLabel(target), tw, t))
+    return act, group, t
+end
+
+function BridgeDeposit.depositItems(body, items, target)
+    if body == nil or type(items) ~= "table" or #items == 0 then return nil, nil end
+    if type(target) ~= "table" or target.cont == nil then return nil, nil end
+    local usable = false
+    pcall(function() usable = BridgeDeposit.destUsable(target) == true end)
+    if not usable then return nil, nil end
+    local act, group, t = depositTake(body, items[1], target, items, true, nil, body)
+    if act == nil then return nil, nil end
     return act, group, t
 end
 

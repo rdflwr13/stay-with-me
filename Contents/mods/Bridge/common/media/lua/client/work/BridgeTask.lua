@@ -11,6 +11,7 @@ BridgeTask.MOVE_CORPSES_ENABLED = 1
 BridgeTask.DEPOSIT_ENABLED = 1
 BridgeTask.HARVESTING_ENABLED = 1
 BridgeTask.FURROWS_ENABLED = 1
+BridgeTask.SOWING_ENABLED = 1
 
 
 
@@ -2528,6 +2529,7 @@ function BridgeTask.speakMissing(kind)
     elseif missing == "petrol" then key = "JobNeedPetrol"
     elseif missing == "ashes" then key = "JobNeedAshTool"
     elseif missing == "digTool" then key = "JobNeedShovel"
+    elseif missing == "seeds" then key = "JobNoSeeds"
     elseif missing == "broom" then key = "JobNeedBroom"
     elseif missing == "crowbar" then key = "JobNeedCrowbar" end
     Bridge.speak(key)
@@ -3232,7 +3234,7 @@ function BridgeTask.finish()
         if finishKind == "sit" or finishKind == "lay" or finishKind == "exercise" or finishKind == "washSink"
                 or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor"
                 or finishKind == "shower" or finishKind == "anim" or finishKind == "harvestCrops"
-                or finishKind == "digFurrows" then
+                or finishKind == "digFurrows" or finishKind == "sowSeeds" then
         elseif depositFull then
             Bridge.speak("JobLootFull")
         elseif wasLootFull then
