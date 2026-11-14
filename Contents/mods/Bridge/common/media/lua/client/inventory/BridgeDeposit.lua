@@ -5,6 +5,7 @@ BridgeDeposit.catTypeCache = BridgeDeposit.catTypeCache or {}
 BridgeDeposit.cacheOn = false
 
 local HOME_CAP = 240
+local HOME_TARGET_TTL = 120
 local AREA_CAP = 80
 local VALIDATE_EVERY = 120
 
@@ -344,6 +345,11 @@ end
 function BridgeDeposit.storableItems(body)
     local out = {}
     if body == nil or BridgeData == nil then return out end
+    local was = BridgeDeposit.cacheOn
+    BridgeDeposit.cacheOn = true
+    if not was then
+        BridgeDeposit.poolCache, BridgeDeposit.catCache, BridgeDeposit.catTypeCache = {}, {}, {}
+    end
     local home = bodyAtHome(body)
     local invs = {}
     pcall(function() invs[#invs + 1] = body:getInventory() end)
@@ -376,6 +382,10 @@ function BridgeDeposit.storableItems(body)
     local weights = {}
     for i = 1, #filtered do weights[filtered[i]] = itemWeight(filtered[i]) end
     table.sort(filtered, function(a, b) return (weights[a] or 0) < (weights[b] or 0) end)
+    if not was then
+        BridgeDeposit.cacheOn = false
+        BridgeDeposit.poolCache, BridgeDeposit.catCache, BridgeDeposit.catTypeCache = {}, {}, {}
+    end
     return filtered
 end
 
@@ -419,6 +429,11 @@ end
 function BridgeDeposit.explain(body)
     local out = {}
     if body == nil then return out end
+    local was = BridgeDeposit.cacheOn
+    BridgeDeposit.cacheOn = true
+    if not was then
+        BridgeDeposit.poolCache, BridgeDeposit.catCache, BridgeDeposit.catTypeCache = {}, {}, {}
+    end
     local home = bodyAtHome(body)
     local seen = {}
     local invs = {}
@@ -457,6 +472,10 @@ function BridgeDeposit.explain(body)
             reason = reasonFor(item, body, home, keep)
         end
         out[#out + 1] = string.format("%s=%s", tostring(itemFull(item)), reason)
+    end
+    if not was then
+        BridgeDeposit.cacheOn = false
+        BridgeDeposit.poolCache, BridgeDeposit.catCache, BridgeDeposit.catTypeCache = {}, {}, {}
     end
     return out
 end
@@ -648,6 +667,13 @@ function BridgeDeposit.targetsUnder(worldobjects)
     return list
 end
 
+local depositHomeKey, depositHomeAt, depositHomeOut = nil, nil, nil
+local function copyTargets(src)
+    local out = {}
+    for i = 1, #(src or {}) do out[i] = src[i] end
+    return out
+end
+
 function BridgeDeposit.homeTargets()
     local list = {}
     if BridgeHome == nil or type(BridgeHome.get) ~= "function" then return list end
@@ -656,6 +682,17 @@ function BridgeDeposit.homeTargets()
     local floors = nil
     pcall(function() floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn()) end)
     if floors == nil or #floors == 0 then floors = { h.z } end
+    local key = tostring(h.x) .. ":" .. tostring(h.y) .. ":" .. tostring(h.w) .. ":"
+        .. tostring(h.h) .. ":" .. tostring(h.z) .. ":" .. tostring(HOME_CAP)
+    for i = 1, #floors do key = key .. ":" .. tostring(floors[i]) end
+    local now = Bridge.time or 0
+    local ttl = HOME_TARGET_TTL
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then
+        ttl = BridgePerf.age("homeTargets", HOME_TARGET_TTL)
+    end
+    if depositHomeKey == key and depositHomeOut ~= nil and (now - (depositHomeAt or 0)) < ttl then
+        return copyTargets(depositHomeOut)
+    end
     local player = owner()
     local seen = {}
     local cell = getCell()
@@ -674,7 +711,8 @@ function BridgeDeposit.homeTargets()
             end
         end
     end
-    return list
+    depositHomeKey, depositHomeAt, depositHomeOut = key, now, list
+    return copyTargets(list)
 end
 
 BridgeDeposit.contIds = BridgeDeposit.contIds or setmetatable({}, { __mode = "k" })
@@ -1557,7 +1595,10 @@ local function updateTransfers(body, job)
                     if moved and it ~= nil then movedItems[#movedItems + 1] = it end
                 end
                 job.count = (job.count or 0) + #movedItems
-                if #movedItems > 0 then sayFor(job, job.pending) end
+                if #movedItems > 0 then
+                    sayFor(job, job.pending)
+                    if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+                end
                 removeItems(job, movedItems)
                 if job.pendingEntry ~= nil then removeFromList(job.pendingEntry.items, movedItems) end
                 indexAdd(job.current, movedItems)

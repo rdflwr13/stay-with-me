@@ -14,6 +14,7 @@ BridgeTask.FURROWS_ENABLED = 1
 BridgeTask.SOWING_ENABLED = 1
 BridgeTask.WATER_PLANTS_ENABLED = 1
 BridgeTask.FEED_PLANTS_ENABLED = 1
+BridgeTask.TEND_ENABLED = 1
 
 
 
@@ -55,6 +56,9 @@ BridgeTask.SWING_MAX = 200
 BridgeTask.ATTACK_AT = 0.5 * SECOND
 BridgeTask.CHOP_TIMEOUT = 30 * SECOND
 BridgeTask.WALK_TIMEOUT = 20 * SECOND
+BridgeTask.HOME_WATER_TTL = 600
+BridgeTask.LOOT_DESTS_TTL = 30
+BridgeTask.LOOT_SRC_TTL = 120
 
 
 
@@ -1372,18 +1376,19 @@ end
 
 
 
+local NEED_FRAG_KEY = {
+    fluid = "JobNeedFragFluid",
+    implement = "JobNeedFragImplement",
+    petrol = "JobNeedFragPetrol",
+    cut = "JobNeedFragCut",
+    ash = "JobNeedFragAsh",
+    feed = "JobNeedFragFeed",
+    spray = "JobNeedFragSpray",
+    water = "JobNeedFragWater",
+}
+
 local function needFragmentKey(name)
-    if name == "fluid" then
-        return "JobNeedFragFluid"
-    elseif name == "implement" then
-        return "JobNeedFragImplement"
-    elseif name == "petrol" then
-        return "JobNeedFragPetrol"
-    elseif name == "cut" then
-        return "JobNeedFragCut"
-    else
-        return "JobNeedFragAsh"
-    end
+    return NEED_FRAG_KEY[name]
 end
 
 
@@ -1391,19 +1396,18 @@ local function sayGet(key, a)
     return BridgeSpeech.getSay(key, a)
 end
 
-function BridgeTask.cleanNeedText(needs, mode)
+function BridgeTask.needText(needs, mode, order)
     if needs == nil then return nil end
-    local order = {}
-    if needs.implement then order[#order + 1] = "implement" end
-    if needs.fluid then order[#order + 1] = "fluid" end
-    if needs.petrol then order[#order + 1] = "petrol" end
-    if needs.ash then order[#order + 1] = "ash" end
-    if needs.cut then order[#order + 1] = "cut" end
-    if #order == 0 then return nil end
+    order = order or { "implement", "fluid", "petrol", "ash", "cut" }
     local frags = {}
     for i = 1, #order do
-        frags[i] = sayGet(needFragmentKey(order[i]))
+        local name = order[i]
+        if needs[name] == true then
+            local key = needFragmentKey(name)
+            if key ~= nil then frags[#frags + 1] = sayGet(key) end
+        end
     end
+    if #frags == 0 then return nil end
     local body
     if #frags == 1 then
         body = frags[1]
@@ -1422,6 +1426,47 @@ function BridgeTask.cleanNeedText(needs, mode)
     return sayGet("JobNeedList", body)
 end
 
+function BridgeTask.cleanNeedText(needs, mode)
+    return BridgeTask.needText(needs, mode, { "implement", "fluid", "petrol", "ash", "cut" })
+end
+
+
+function BridgeTask.clearTendState()
+    local T = BridgeTask
+    T.tendAction = nil
+    T.tendRounds = nil
+    T.tendHave = nil
+    T.tendNeedFeed = nil
+    T.tendNeedWater = nil
+    T.tendNeedSpray = nil
+    T.tendNeedSkill = nil
+    T.tendSaid = nil
+    T.tendWorkSay = nil
+    T.tendWorkSayCheck = nil
+    T.tendSkillSaid = nil
+    T.cureJob = nil
+    T.feedJob = nil
+    T.clearStart = nil
+    T.lastClearSay = nil
+    T.lastClearSayCheck = nil
+end
+
+function BridgeTask.recordTendNeeds(reason, advice)
+    local T = BridgeTask
+    if advice == "pests" or reason == "pests" then T.tendNeedSpray = true end
+    if advice == "dontknow" or reason == "dontknow" then T.tendNeedSkill = true end
+    if reason == "nofeed" then T.tendNeedFeed = true end
+    if reason == "nowater" then T.tendNeedWater = true end
+    return (T.tendNeedFeed == true or T.tendNeedWater == true
+        or T.tendNeedSpray == true or T.tendNeedSkill == true)
+end
+
+function BridgeTask.tendNeedText(needs)
+    if needs == nil then return nil end
+    if needs.feed ~= true and needs.water ~= true and needs.spray ~= true then return nil end
+    return BridgeTask.needText(needs, (BridgeTask.doneCount or 0) > 0 and "partial" or "need",
+        { "feed", "spray", "water" })
+end
 
 local function cleanNeedsTable(implement, fluid, petrol, ash, cut)
     return { implement = implement == true, fluid = fluid == true,
@@ -2584,6 +2629,18 @@ function BridgeTask.speakMissing(kind)
         Bridge.speak("JobNoSeeds")
         return
     end
+    if kind == "tendCrops" then
+        if missing == "waterContainer" then
+            Bridge.speak("JobNoBucket")
+        elseif missing == "cropFeed" then
+            Bridge.speak("JobNoFeed")
+        elseif missing ~= nil and string.sub(tostring(missing), 1, 4) == "cure" then
+            Bridge.speak("JobNoSpray")
+        else
+            Bridge.speak("JobNoSupplies")
+        end
+        return
+    end
     local key = "JobNoSupplies"
     if missing == "axe" then key = "JobNoAxe"
     elseif missing == "implement" then key = "JobNeedImplement"
@@ -2988,6 +3045,10 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     if kind == "fertilizePlants" then
         BridgeTask.feedJob = nil
     end
+    if kind == "tendCrops" then
+        BridgeTask.clearTendState()
+        BridgeTask.waterLeave(Bridge.body)
+    end
     if kind == "emptyFluid" then
         BridgeTask.emptyItems = opts ~= nil and opts.items or nil
         BridgeTask.emptyItem = opts ~= nil and opts.item or nil
@@ -3109,6 +3170,18 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     if kind == "clearPlants" then
         BridgeTask.clearNeedCut = clearNeedPlants
         Bridge.speak(clearNeedPlants and "JobStartNeedCutTool" or "JobStart")
+    elseif kind == "tendCrops" then
+        local needs = nil
+        pcall(function()
+            needs = BridgeGardening ~= nil and BridgeGardening.tendNeedScan(Bridge.body, BridgeTask.queue, nil) or nil
+        end)
+        if needs ~= nil then
+            BridgeTask.tendNeedFeed = needs.feed == true
+            BridgeTask.tendNeedWater = needs.water == true
+            BridgeTask.tendNeedSpray = needs.spray == true
+            BridgeTask.tendNeedSkill = needs.skill == true
+            startText = BridgeTask.tendNeedText(needs)
+        end
     elseif kind == "exercise" then
     elseif kind == "anim" then
     elseif kind == "washSink" then
@@ -3226,6 +3299,24 @@ end
 function BridgeTask.finish()
     if not BridgeTask.active then return "idle" end
     BridgeTask.chargeCleanSpend()
+    local tendText = nil
+    if BridgeTask.kind == "tendCrops" then
+        pcall(function()
+            local targets = {}
+            for i = 1, #BridgeTask.queue do targets[i] = BridgeTask.queue[i] end
+            if BridgeTask.current ~= nil then targets[#targets + 1] = BridgeTask.current end
+            local needs = BridgeGardening ~= nil and BridgeGardening.tendNeedScan(Bridge.body, targets, nil) or nil
+            if needs == nil then needs = {} end
+            needs.feed = needs.feed == true or BridgeTask.tendNeedFeed == true
+            needs.water = needs.water == true or BridgeTask.tendNeedWater == true
+            needs.spray = needs.spray == true or BridgeTask.tendNeedSpray == true
+            tendText = BridgeTask.tendNeedText(needs)
+        end)
+        if tendText == nil and (BridgeTask.doneCount or 0) > 0
+                and BridgeGardening ~= nil and type(BridgeGardening.tendSay) == "function" then
+            pcall(function() BridgeGardening.tendSay("EvTendingDone", "TendDone") end)
+        end
+    end
     local body = Bridge.body
     local clearNeed = BridgeTask.clearNeedCut == true
     BridgeTask.clearNeedCut = nil
@@ -3313,6 +3404,8 @@ function BridgeTask.finish()
         Bridge.speak((BridgeTask.doneCount or 0) > 0 and "JobPartialNeedCutTool" or "JobNeedCutTool")
     elseif needText ~= nil then
         Bridge.speakText(needText)
+    elseif tendText ~= nil then
+        Bridge.speakText(tendText)
     elseif (BridgeTask.failCount or 0) > 0 then
         if finishKind == "openDoors" or finishKind == "closeDoors" then
         elseif (BridgeTask.doneCount or 0) > 0 then
@@ -3330,7 +3423,7 @@ function BridgeTask.finish()
                 or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor"
                 or finishKind == "shower" or finishKind == "anim" or finishKind == "harvestCrops"
                 or finishKind == "digFurrows" or finishKind == "sowSeeds"
-                or finishKind == "fertilizePlants" then
+                or finishKind == "fertilizePlants" or finishKind == "tendCrops" then
         elseif depositFull then
             Bridge.speak("JobLootFull")
         elseif wasLootFull then
@@ -3423,6 +3516,26 @@ function BridgeTask.progress()
         local frac = nil
         pcall(function() frac = BridgeTask.showerWashFrac() end)
         if frac ~= nil then return frac end
+    end
+    if BridgeTask.kind == "tendCrops" then
+        local cj = BridgeTask.cureJob
+        if cj ~= nil and cj.phase == "pour" and cj.startAt ~= nil then
+            local span = 1
+            if BridgeGardening ~= nil and BridgeGardening.CURE_TIME ~= nil then
+                span = BridgeGardening.CURE_TIME
+            end
+            if span <= 0 then span = 1 end
+            local p = (t - cj.startAt) * ffMult() / span
+            if p < 0 then p = 0 elseif p > 1 then p = 1 end
+            return p
+        end
+        if BridgeTask.phase == "work" and BridgeTask.clearStart ~= nil then
+            local span = BridgeTask.GRASS_TIME or 50
+            if span <= 0 then span = 1 end
+            local p = (t - BridgeTask.clearStart) * ffMult() / span
+            if p < 0 then p = 0 elseif p > 1 then p = 1 end
+            return p
+        end
     end
     return nil
 end
@@ -4974,7 +5087,18 @@ function BridgeTask.fillRun(body, st, opts)
                 return "unreachable"
             end
             local sd = math.sqrt((body:getX() - (target.x + 0.5)) ^ 2 + (body:getY() - (target.y + 0.5)) ^ 2)
-            if single and sd > (BridgeTask.FILL_MAX_DIST or 1.6) then
+            local near = false
+            if bsq ~= nil and tsq ~= nil and math.floor(bsq:getZ()) == math.floor(target.z) then
+                local adx = math.abs(bsq:getX() - target.x)
+                local ady = math.abs(bsq:getY() - target.y)
+                near = adx <= 1 and ady <= 1 and not sealedBetween(bsq, tsq)
+            end
+            if single and not near and sd > (BridgeTask.FILL_MAX_DIST or 1.6) then
+                if BridgeTask.spot ~= nil then
+                    local key = BridgeTask.spot.x .. "," .. BridgeTask.spot.y
+                    BridgeTask.badSpots = BridgeTask.badSpots or {}
+                    BridgeTask.badSpots[key] = true
+                end
                 BridgeTask.spot = nil
                 st.fillPhase = "going"
                 BridgeTask.info = "fill too far"
@@ -5159,7 +5283,16 @@ local function waterSourceList(body, T)
     end)
     local list = {}
     if BridgeWash ~= nil and type(BridgeWash.waterList) == "function" then
-        if rect ~= nil then pcall(function() list = BridgeWash.waterList(body, centre, 12, rect) end) end
+        if rect ~= nil then
+            local key = rect.x1 .. ":" .. rect.y1 .. ":" .. rect.x2 .. ":" .. rect.y2 .. ":" .. tostring(rect.z)
+            if T.homeWaterKey == key and T.homeWaterAt ~= nil
+                    and (Bridge.time - T.homeWaterAt) < (T.HOME_WATER_TTL or 600) then
+                list = T.homeWater or {}
+            else
+                pcall(function() list = BridgeWash.waterList(body, centre, 12, rect) end)
+                T.homeWaterKey, T.homeWaterAt, T.homeWater = key, Bridge.time, list
+            end
+        end
         if #list == 0 then pcall(function() list = BridgeWash.waterList(body, centre, 12, nil) end) end
     end
     return list
@@ -5188,6 +5321,21 @@ local function waterHands(body, item)
         pcall(function() T.waterSavedSecondary = body:getSecondaryHandItem() end)
     end
     holdFillItem(body, item)
+end
+
+local function waterApplied(T)
+    local uses = T.waterUses or 1
+    BridgeGardening.useContainerWater(T.waterContainer, uses)
+    if uses < (T.waterNeed or uses) and T.current ~= nil then
+        table.insert(T.queue, 1, T.current)
+    end
+    T.waterUses = nil
+    T.waterNeed = nil
+    T.waterPhase = nil
+    T.phase = nil
+    T.waterApproachFor = nil
+    T.waterRetryTarget = nil
+    T.markDone()
 end
 
 local function waterPourStep(body, T)
@@ -5235,16 +5383,8 @@ local function waterPourStep(body, T)
     end
     local ok, why = BridgeGardening.waterAt(target, uses, false)
     if ok then
-        BridgeGardening.useContainerWater(T.waterContainer, uses)
-        if uses < (T.waterNeed or uses) then table.insert(T.queue, 1, target) end
-        T.waterUses = nil
-        T.waterPhase = nil
-        T.phase = nil
-        T.current = nil
-        T.waterNeed = nil
-        T.waterApproachFor = nil
-        T.markDone()
-        return true
+        waterApplied(T)
+        return "done"
     end
     log("water local failed: " .. tostring(why))
     pcall(function() Bridge.speak("CantReachWater") end)
@@ -5254,7 +5394,8 @@ local function waterPourStep(body, T)
     T.phase = nil
     T.current = nil
     T.waterApproachFor = nil
-    return true
+    T.waterRetryTarget = nil
+    return "skip"
 end
 
 local function waterRefill(body, T, need, plant)
@@ -5325,25 +5466,132 @@ local function waterRefill(body, T, need, plant)
     return true
 end
 
+function BridgeTask.waterPendingWait()
+    local T = BridgeTask
+    if T.waterPending == nil then return false end
+    if (Bridge.time - (T.waterPendingAt or Bridge.time)) > (BridgeGardening.PENDING_TIMEOUT or (20 * SECOND)) then
+        T.waterPending = nil
+        T.waterPendingAt = nil
+        T.waterPhase = nil
+        T.waterUses = nil
+        T.waterNeed = nil
+        T.current = nil
+        T.phase = nil
+        pcall(function() Bridge.speak("CantReachWater") end)
+    end
+    return true
+end
+
+function BridgeTask.waterPlantStep(body, target)
+    local T = BridgeTask
+    if T == nil or body == nil or target == nil then return "skip" end
+    if BridgeGardening == nil then return "skip" end
+
+    local plant = BridgeGardening.plantAt(BridgeGardening.squareAt(target), false)
+    if not BridgeGardening.needsWater(plant) then
+        if T.waterFill ~= nil then
+            fillSoundStop(body, T.waterFill)
+            T.waterFill = nil
+            T.waterSource = nil
+        end
+        T.waterPhase = nil
+        T.phase = nil
+        return "skip"
+    end
+    local need = BridgeGardening.waterUsesFor(plant)
+    if need <= 0 then
+        T.waterPhase = nil
+        T.phase = nil
+        return "skip"
+    end
+
+    if T.waterPhase == "refill" then
+        local res = waterRefill(body, T, need, plant)
+        if type(res) == "string" then return "cancelled" end
+        return "busy"
+    end
+    if T.waterPhase == "pour" then return waterPourStep(body, T) end
+
+    if T.waterContainer == nil or not BridgeGardening.isWaterContainer(T.waterContainer) then
+        T.waterContainer = BridgeGardening.findWaterContainer(body)
+    end
+    if T.waterContainer == nil then
+        T.waterPhase = nil
+        T.phase = nil
+        return "skip"
+    end
+
+    local have = BridgeGardening.containerUses(T.waterContainer)
+    if have < need and T.waterForcePour ~= true then
+        local res = waterRefill(body, T, need, plant)
+        if type(res) == "string" then return "cancelled" end
+        return "busy"
+    end
+    T.waterForcePour = nil
+
+    if T.waterApproachFor ~= target then
+        T.waterApproachFor = target
+        BridgeTask.resetWalkDest()
+    end
+    local walk, why = T.walkTo(body, target, BridgeGardening.SOW_RANGE, true)
+    if walk == "unreachable" then
+        if T.waterRetryTarget ~= target then
+            T.waterRetryTarget = target
+            T.waterApproachFor = nil
+            BridgeTask.resetWalkDest()
+            T.info = "water retry"
+            return "busy"
+        end
+        T.waterRetryTarget = nil
+        T.waterPhase = nil
+        T.phase = nil
+        return "unreachable", why
+    end
+    if walk ~= "arrived" then return "busy" end
+    T.waterRetryTarget = nil
+    pcall(function() BridgeMove.stopPath(body) end)
+    T.forceIdle(body)
+    if T.waterGoSaid ~= true then
+        T.waterGoSaid = true
+        pcall(function() BridgeGardening.waterSay("EvWaterGo", "WaterGo") end)
+    end
+    T.waterPhase = "pour"
+    T.waterUses = math.min(have, need)
+    T.waterNeed = need
+    T.waterPourStart = Bridge.time
+    T.waterAnimStart = Bridge.time
+    T.waterPourSpan = 20 + 6 * T.waterUses
+    T.waterRestarts = nil
+    T.phase = "pour"
+    waterHands(body, T.waterContainer)
+    pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+    pcall(function()
+        body:setVariable("BumpAnimFinished", false)
+        body:setVariable("PourType", T.waterContainer:getPourType() or "Bottle")
+        body:setBumpType("pourFluid")
+    end)
+    local id = nil
+    pcall(function()
+        if BridgeSound ~= nil and type(BridgeSound.event) == "function" then
+            id = BridgeSound.event(body, "WaterCrops")
+        end
+    end)
+    T.waterSoundId = id
+    local emitter = nil
+    pcall(function() emitter = body:getEmitter() end)
+    T.waterEmitter = emitter
+    T.info = "watering"
+    log(string.format("water start %d,%d uses=%d", target.x, target.y, T.waterUses))
+    return "busy"
+end
+
 function BridgeTask.waterUpdate(body)
     local T = BridgeTask
     if T == nil or body == nil then return false end
     if T.WATER_PLANTS_ENABLED ~= 1 then return T.finish() end
     if BridgeGardening == nil then return T.finish() end
 
-    if T.waterPending ~= nil then
-        if (Bridge.time - (T.waterPendingAt or Bridge.time)) > (20 * SECOND) then
-            T.waterPending = nil
-            T.waterPendingAt = nil
-            T.waterPhase = nil
-            T.waterUses = nil
-            T.waterNeed = nil
-            T.current = nil
-            T.phase = nil
-            pcall(function() Bridge.speak("CantReachWater") end)
-        end
-        return true
-    end
+    if BridgeTask.waterPendingWait() then return true end
 
     if T.waterContainer == nil or not BridgeGardening.isWaterContainer(T.waterContainer) then
         T.waterContainer = BridgeGardening.findWaterContainer(body)
@@ -5383,94 +5631,27 @@ function BridgeTask.waterUpdate(body)
         return T.finish()
     end
 
-    local plant = BridgeGardening.plantAt(BridgeGardening.squareAt(target), false)
-    if not BridgeGardening.needsWater(plant) then
-        if T.waterFill ~= nil then
-            fillSoundStop(body, T.waterFill)
-            T.waterFill = nil
-            T.waterSource = nil
-        end
+    local res, why = BridgeTask.waterPlantStep(body, target)
+    if res == "done" then
         T.current = nil
         T.phase = nil
-        T.waterPhase = nil
-        return true
-    end
-    local need = BridgeGardening.waterUsesFor(plant)
-    if need <= 0 then
-        T.current = nil
-        T.phase = nil
-        T.waterPhase = nil
-        return true
-    end
-
-    if T.waterPhase == "refill" then return waterRefill(body, T, need, plant) end
-    if T.waterPhase == "pour" then return waterPourStep(body, T) end
-
-    local have = BridgeGardening.containerUses(T.waterContainer)
-    if have < need and T.waterForcePour ~= true then return waterRefill(body, T, need, plant) end
-    T.waterForcePour = nil
-
-    if T.waterApproachFor ~= target then
-        T.waterApproachFor = target
-        BridgeTask.spot = nil
-        BridgeTask.bestD = nil
-        BridgeTask.progressAt = Bridge.time
-        BridgeTask.since = Bridge.time
-        BridgeTask.pathFails = 0
-    end
-    local walk, why = T.walkTo(body, target, BridgeGardening.SOW_RANGE, true)
-    if walk == "unreachable" then
-        if T.waterRetryTarget ~= target then
-            T.waterRetryTarget = target
-            T.waterApproachFor = nil
-            BridgeTask.spot = nil
-            BridgeTask.bestD = nil
-            BridgeTask.progressAt = Bridge.time
-            BridgeTask.since = Bridge.time
-            BridgeTask.pathFails = 0
-            BridgeTask.still = 0
-            T.info = "water retry"
-            return true
-        end
+        T.waterApproachFor = nil
         T.waterRetryTarget = nil
+        return true
+    end
+    if res == "busy" then return true end
+    if res == "unreachable" then
+        T.current = nil
+        T.phase = nil
         return T.dropTarget(why)
     end
-    if walk ~= "arrived" then return true end
-    T.waterRetryTarget = nil
-    pcall(function() BridgeMove.stopPath(body) end)
-    T.forceIdle(body)
-    if T.waterGoSaid ~= true then
-        T.waterGoSaid = true
-        pcall(function() BridgeGardening.waterSay("EvWaterGo", "WaterGo") end)
+    if res == "skip" then
+        T.current = nil
+        T.phase = nil
+        T.waterPhase = nil
+        return true
     end
-    T.waterPhase = "pour"
-    T.waterUses = math.min(have, need)
-    T.waterNeed = need
-    T.waterPourStart = Bridge.time
-    T.waterAnimStart = Bridge.time
-    T.waterPourSpan = 20 + 6 * T.waterUses
-    T.waterRestarts = nil
-    T.phase = "pour"
-    waterHands(body, T.waterContainer)
-    pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
-    pcall(function()
-        body:setVariable("BumpAnimFinished", false)
-        body:setVariable("PourType", T.waterContainer:getPourType() or "Bottle")
-        body:setBumpType("pourFluid")
-    end)
-    local id = nil
-    pcall(function()
-        if BridgeSound ~= nil and type(BridgeSound.event) == "function" then
-            id = BridgeSound.event(body, "WaterCrops")
-        end
-    end)
-    T.waterSoundId = id
-    local emitter = nil
-    pcall(function() emitter = body:getEmitter() end)
-    T.waterEmitter = emitter
-    T.info = "watering"
-    log(string.format("water start %d,%d uses=%d", target.x, target.y, T.waterUses))
-    return true
+    return res
 end
 
 function BridgeTask.waterLeave(body)
@@ -5523,7 +5704,7 @@ local function feedStopSound(body)
 end
 BridgeTask.feedSoundStop = feedStopSound
 
-local function feedResetDest()
+function BridgeTask.resetWalkDest()
     local T = BridgeTask
     T.spot = nil
     T.bestD = nil
@@ -5533,6 +5714,10 @@ local function feedResetDest()
     T.pathFailTick = nil
     T.still = 0
     T.checkX, T.checkY = nil, nil
+end
+
+local function feedResetDest()
+    BridgeTask.resetWalkDest()
 end
 
 local function feedClearTarget(job)
@@ -5625,7 +5810,7 @@ local function feedPourStep(body, job)
     local T = BridgeTask
     if job.target == nil then
         job.phase = nil
-        return true
+        return "skip"
     end
     local animAge = (Bridge.time - (job.animAt or job.startAt or Bridge.time)) * T.ffMult()
     if animAge >= (T.SCRUB_GUARD or 30) then
@@ -5643,11 +5828,11 @@ local function feedPourStep(body, job)
             end)
             job.animAt = Bridge.time
             T.info = "feed anim restarted"
-            return true
+            return "busy"
         end
     end
     local age = (Bridge.time - (job.startAt or Bridge.time)) * T.ffMult()
-    if age < (BridgeGardening.FEED_TIME or 100) then return true end
+    if age < (BridgeGardening.FEED_TIME or 100) then return "busy" end
 
     feedStopSound(body)
     BridgeGardening.clearAnim(body)
@@ -5660,25 +5845,28 @@ local function feedPourStep(body, job)
             job.phase = "wait"
             T.phase = "wait"
             T.info = "feed waiting"
-            return true
+            return "busy"
         end
     end
     local ok, why = BridgeGardening.fertilizeAt(job.target, compost, false)
-    if ok then return BridgeTask.feedCommit(body, job) end
+    if ok then
+        BridgeTask.feedApply(body, job)
+        return "done"
+    end
     log("feed local failed: " .. tostring(why))
     if why == "nofeed" then
         feedClearTarget(job)
-        return true
+        return "skip"
     end
     if why == "gone" or why == "noplant" then
         pcall(function() Bridge.speak("CantFeedCrop") end)
         feedClearTarget(job)
-        return true
+        return "skip"
     end
     return T.cancel("feed error")
 end
 
-function BridgeTask.feedCommit(body, job)
+function BridgeTask.feedApply(body, job)
     local T = BridgeTask
     if T == nil or job == nil then return false end
     local item = job.item
@@ -5693,11 +5881,19 @@ function BridgeTask.feedCommit(body, job)
     job.animAt = nil
     job.restarts = nil
     job.pourType = nil
+    job.pending = nil
+    job.pendingAt = nil
     T.phase = nil
     T.info = "fed"
     local left = 0
     if item ~= nil then pcall(function() left = tonumber(item:getCurrentUses()) or 0 end) end
     log(string.format("feed done kind=%s bag uses left %.2f", tostring(kind), left))
+    return true
+end
+
+local function feedAfterApply(body, job)
+    local T = BridgeTask
+    if T == nil or job == nil then return false end
     if BridgeGardening.findFeed(body) == nil then
         if not job.outSaid then
             job.outSaid = true
@@ -5711,6 +5907,229 @@ function BridgeTask.feedCommit(body, job)
     end
     if #T.queue == 0 then return feedFinished(body) end
     return true
+end
+
+function BridgeTask.feedCommit(body, job)
+    local T = BridgeTask
+    if T == nil or job == nil then return false end
+    if not BridgeTask.feedApply(body, job) then return false end
+    return feedAfterApply(body, job)
+end
+
+function BridgeTask.feedPlantStep(body, job, target)
+    local T = BridgeTask
+    if T == nil or job == nil or target == nil then return "skip" end
+    if job.target ~= target then
+        job.target = target
+        job.phase = "walk"
+        job.retryTarget = nil
+        job.settled = nil
+        job.settleAt = nil
+    end
+
+    local plant = BridgeGardening.plantAt(BridgeGardening.squareAt(target), false)
+    if not BridgeGardening.needsFeed(plant) then
+        feedClearTarget(job)
+        return "skip"
+    end
+
+    if job.phase == "settle" then
+        if (Bridge.time - (job.settleAt or Bridge.time)) * T.ffMult() < (job.settleFor or 0) then return "busy" end
+        job.settled = true
+    end
+
+    if job.phase ~= "pour" then
+        local walk, why = T.walkTo(body, target, BridgeGardening.FEED_RANGE, true)
+        if walk == "unreachable" then
+            if job.retryTarget ~= target then
+                job.retryTarget = target
+                BridgeTask.resetWalkDest()
+                T.info = "feed retry"
+                return "busy"
+            end
+            job.retryTarget = nil
+            feedClearTarget(job)
+            return "unreachable", why
+        end
+        if walk ~= "arrived" then return "busy" end
+        job.retryTarget = nil
+        pcall(function() BridgeMove.stopPath(body) end)
+        T.forceIdle(body)
+        pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+        if (T.doneCount or 0) > 0 and job.settled ~= true then
+            job.phase = "settle"
+            job.settleAt = Bridge.time
+            job.settleFor = BridgeGardening.FEED_SETTLE or 21
+            T.info = "settling"
+            return "busy"
+        end
+        job.settled = nil
+        feedBegin(body, job)
+        if job.phase ~= "pour" then
+            feedClearTarget(job)
+            return "skip"
+        end
+        return "busy"
+    end
+    return feedPourStep(body, job)
+end
+
+local function cureStopSound(body)
+    local T = BridgeTask
+    local job = T.cureJob
+    local id = job ~= nil and job.soundId or nil
+    local emitter = job ~= nil and job.emitter or nil
+    if job ~= nil then
+        job.soundId = nil
+        job.emitter = nil
+    end
+    if id == nil or emitter == nil or id == 0 then return end
+    pcall(function() emitter:stopOrTriggerSound(id) end)
+end
+BridgeTask.cureSoundStop = cureStopSound
+
+function BridgeTask.curePlantStep(body, job, target)
+    local T = BridgeTask
+    if T == nil or job == nil or target == nil then return "skip" end
+    if BridgeGardening == nil then return "skip" end
+    if job.target ~= target then
+        job.target = target
+        job.phase = "walk"
+        job.retryTarget = nil
+        job.settled = nil
+        job.settleAt = nil
+    end
+
+    local plant = BridgeGardening.plantAt(BridgeGardening.squareAt(target), false)
+    if not BridgeGardening.needsCure(plant) then
+        BridgeGardening.cureClearTarget(job)
+        T.phase = nil
+        return "skip"
+    end
+    if job.entry == nil then job.entry = BridgeGardening.diseaseOf(plant) end
+    if job.entry == nil then
+        BridgeGardening.cureClearTarget(job)
+        T.phase = nil
+        return "skip"
+    end
+    if job.item == nil or BridgeGardening.isCureItem(job.item, job.entry) ~= true then
+        job.item = BridgeGardening.findCure(body, job.entry)
+    end
+    if job.item == nil then
+        BridgeGardening.cureClearTarget(job)
+        T.phase = nil
+        return "skip"
+    end
+
+    if job.phase == "settle" then
+        if (Bridge.time - (job.settleAt or Bridge.time)) * T.ffMult() < (job.settleFor or 0) then return "busy" end
+        job.settled = true
+    end
+
+    if job.phase ~= "pour" then
+        local walk, why = T.walkTo(body, target, BridgeGardening.TEND_RANGE, true)
+        if walk == "unreachable" then
+            if job.retryTarget ~= target then
+                job.retryTarget = target
+                BridgeTask.resetWalkDest()
+                T.info = "cure retry"
+                return "busy"
+            end
+            job.retryTarget = nil
+            BridgeGardening.cureClearTarget(job)
+            T.phase = nil
+            return "unreachable", why
+        end
+        if walk ~= "arrived" then return "busy" end
+        job.retryTarget = nil
+        pcall(function() BridgeMove.stopPath(body) end)
+        T.forceIdle(body)
+        pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+        if (T.doneCount or 0) > 0 and job.settled ~= true then
+            job.phase = "settle"
+            job.settleAt = Bridge.time
+            job.settleFor = BridgeGardening.CURE_SETTLE or 21
+            T.info = "settling"
+            return "busy"
+        end
+        job.settled = nil
+        local pour = nil
+        pcall(function() pour = job.item:getPourType() end)
+        job.pourType = pour or "Bottle"
+        job.phase = "pour"
+        job.startAt = Bridge.time
+        job.animAt = Bridge.time
+        job.restarts = 0
+        T.phase = "pour"
+        holdFillItem(body, job.item)
+        pcall(function()
+            body:setVariable("BumpAnimFinished", false)
+            body:setVariable("PourType", job.pourType)
+            body:setBumpType("pourFluid")
+        end)
+        local id = nil
+        pcall(function()
+            if BridgeSound ~= nil and type(BridgeSound.event) == "function" then
+                id = BridgeSound.event(body, "WaterCrops")
+            end
+        end)
+        job.soundId = id
+        local emitter = nil
+        pcall(function() emitter = body:getEmitter() end)
+        job.emitter = emitter
+        T.info = "curing"
+        log(string.format("cure start %d,%d cure=%s", target.x, target.y, tostring(job.entry.cure)))
+        return "busy"
+    end
+
+    local animAge = (Bridge.time - (job.animAt or job.startAt or Bridge.time)) * T.ffMult()
+    if animAge >= (T.SCRUB_GUARD or 30) then
+        local playing = false
+        pcall(function()
+            playing = body:getActionStateName() == "bumped" and tostring(body:getBumpType()) == "pourFluid"
+        end)
+        if not playing and (job.restarts or 0) < 6 then
+            job.restarts = (job.restarts or 0) + 1
+            pcall(function()
+                BridgeGardening.clearAnim(body)
+                body:setVariable("BumpAnimFinished", false)
+                body:setVariable("PourType", job.pourType or "Bottle")
+                body:setBumpType("pourFluid")
+            end)
+            job.animAt = Bridge.time
+            T.info = "cure anim restarted"
+            return "busy"
+        end
+    end
+    local age = (Bridge.time - (job.startAt or Bridge.time)) * T.ffMult()
+    if age < (BridgeGardening.CURE_TIME or 100) then return "busy" end
+
+    cureStopSound(body)
+    BridgeGardening.clearAnim(body)
+    job.restarts = nil
+    if Bridge ~= nil and Bridge.mp == true then
+        if BridgeGardening.requestCure(target, job.entry, 1) then
+            job.pending = { x = target.x, y = target.y, z = target.z, cure = job.entry.cure }
+            job.pendingAt = Bridge.time
+            job.phase = "wait"
+            T.phase = "wait"
+            T.info = "cure waiting"
+            return "busy"
+        end
+    end
+    local ok, why = BridgeGardening.cureAt(target, job.entry, 1, false)
+    if ok then
+        BridgeGardening.cureApply(body, job)
+        T.tendHave = nil
+        return "done"
+    end
+    log("cure local failed: " .. tostring(why))
+    if why == "nocure" or why == "noplant" then
+        BridgeGardening.cureClearTarget(job)
+        T.phase = nil
+        return "skip"
+    end
+    return T.cancel("cure error")
 end
 
 function BridgeTask.feedUpdate(body)
@@ -5778,12 +6197,6 @@ function BridgeTask.feedUpdate(body)
     local target = job.target
     if target == nil then return T.finish() end
 
-    local plant = BridgeGardening.plantAt(BridgeGardening.squareAt(target), false)
-    if not BridgeGardening.needsFeed(plant) then
-        feedClearTarget(job)
-        return true
-    end
-
     if job.phase ~= "walk" and job.said then
         if (Bridge.time - (job.workSayCheck or 0)) >= SECOND then
             job.workSayCheck = Bridge.time
@@ -5798,41 +6211,16 @@ function BridgeTask.feedUpdate(body)
         end
     end
 
-    if job.phase == "settle" then
-        if (Bridge.time - (job.settleAt or Bridge.time)) * T.ffMult() < (job.settleFor or 0) then return true end
-        job.settled = true
+    local res, why = BridgeTask.feedPlantStep(body, job, target)
+    if res == "done" then return feedAfterApply(body, job) end
+    if res == "busy" then return true end
+    if res == "unreachable" then
+        T.current = nil
+        T.phase = nil
+        return T.dropTarget(why)
     end
-
-    if job.phase ~= "pour" then
-        local walk, why = T.walkTo(body, target, BridgeGardening.FEED_RANGE, true)
-        if walk == "unreachable" then
-            if job.retryTarget ~= target then
-                job.retryTarget = target
-                feedResetDest()
-                T.info = "feed retry"
-                return true
-            end
-            job.retryTarget = nil
-            feedClearTarget(job)
-            T.dropTarget(why)
-            return true
-        end
-        if walk ~= "arrived" then return true end
-        job.retryTarget = nil
-        pcall(function() BridgeMove.stopPath(body) end)
-        T.forceIdle(body)
-        pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
-        if (T.doneCount or 0) > 0 and job.settled ~= true then
-            job.phase = "settle"
-            job.settleAt = Bridge.time
-            job.settleFor = BridgeGardening.FEED_SETTLE or 21
-            T.info = "settling"
-            return true
-        end
-        job.settled = nil
-        return feedBegin(body, job)
-    end
-    return feedPourStep(body, job)
+    if res == "skip" then return true end
+    return res
 end
 
 function BridgeTask.feedLeave(body)
@@ -6037,6 +6425,144 @@ function BridgeTask.kinds.clearPlants.missing(body)
     return nil
 end
 
+function BridgeTask.clearPlantStep(body, target, kind, opts)
+    local T = BridgeTask
+    if T == nil or body == nil or target == nil or kind == nil then return "skip" end
+    opts = opts or {}
+    local square = getCell():getGridSquare(target.x, target.y, target.z)
+    if square == nil then return "skip" end
+
+    local reach = T.CLEAR_RANGE
+    if T.phase == "work" then reach = reach + 1.0 end
+    local walk, why = T.walkTo(body, target, reach)
+    if walk == "unreachable" then
+        T.phase = nil
+        T.swingStart = nil
+        T.animLogged = false
+        return "unreachable", why
+    end
+    if walk == "walking" then return "busy" end
+
+    if T.phase ~= "work" then
+        T.phase = "work"
+        T.clearStart = Bridge.time
+        T.swings = 0
+        T.swingStart = nil
+        T.swingHit = false
+        pcall(function() BridgeMove.stopPath(body) end)
+        T.info = "clearing"
+        log(string.format("arrived at clear %d,%d kind=%s", target.x, target.y, tostring(kind)))
+    end
+
+    if (Bridge.time - (T.since or Bridge.time)) > T.CLEAR_TIMEOUT then
+        T.clearChop(body)
+        T.info = "skip stubborn plant"
+        T.phase = nil
+        T.swingStart = nil
+        T.animLogged = false
+        return "unreachable", nil
+    end
+
+    pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+
+    local anim = (kind == "bush") and vineCleanAnim(opts.tool) or T.GRASS_ANIM
+    if not T.animLogged then
+        T.animLogged = true
+        log(string.format("clear anim=%s kind=%s", tostring(anim), tostring(kind)))
+    end
+
+    local sayEvent = opts.sayEvent or "EvClearing"
+    local saySlot = opts.saySlot or "Clearing"
+    if (Bridge.time - (T.lastClearSayCheck or 0)) >= SECOND then
+        T.lastClearSayCheck = Bridge.time
+        if (Bridge.time - (T.lastClearSay or -99999)) >= T.CLEAR_SAY_COOLDOWN
+                and ZombRand(100) < 30 then
+            local said = false
+            pcall(function()
+                said = BridgeMoments ~= nil
+                    and BridgeMoments.say(sayEvent, T.CLEAR_SAY_COOLDOWN, true, saySlot) == true
+            end)
+            if said then T.lastClearSay = Bridge.time end
+        end
+    end
+
+    if T.swingStart == nil then
+        if (T.animHold or 0) > 0 then
+            T.animHold = T.animHold - 1
+            pcall(function() body:setVariable("BumpAnimFinished", true) end)
+            pcall(function() body:changeState(ZombieIdleState.instance()) end)
+            pcall(function() body:setBumpType("") end)
+            T.info = "resettling clear"
+            return "busy"
+        end
+        T.swingStart = Bridge.time
+        T.swingHit = false
+        pcall(function() body:setVariable("NotAloneHitNow", false) end)
+        pcall(function()
+            body:setVariable("BumpAnimFinished", false)
+            body:setBumpType(anim)
+        end)
+        return "busy"
+    end
+
+    local age = (Bridge.time - T.swingStart) * ffMult()
+
+    if age >= T.SCRUB_GUARD then
+        local playing = false
+        pcall(function()
+            playing = body:getActionStateName() == "bumped"
+                and tostring(body:getBumpType()) == anim
+        end)
+        if not playing then
+            pcall(function() body:setVariable("BumpAnimFinished", true) end)
+            pcall(function() body:changeState(ZombieIdleState.instance()) end)
+            pcall(function() body:setBumpType("") end)
+            T.animHold = 2
+            T.swingStart = nil
+            T.info = "clear anim lost, restarting"
+            return "busy"
+        end
+    end
+
+    local workTime = (kind == "bush") and T.BUSH_TIME or T.GRASS_TIME
+    if (Bridge.time - (T.clearStart or Bridge.time)) * ffMult() >= workTime then
+        BridgePlants.applyPlant(square, kind, body)
+        if Bridge ~= nil and Bridge.mp then
+            pcall(function()
+                sendClientCommand(BridgeData.owner(), "Bridge", "clearPlants",
+                    { x = square:getX(), y = square:getY(), z = square:getZ(), kind = kind })
+            end)
+        end
+        if kind == "bush" then
+            pcall(function() square:playSound("ChopTree") end)
+            pcall(function() addSound(body, body:getX(), body:getY(), body:getZ(), 20, 1) end)
+            vineUseEndurance(body, opts.tool)
+        else
+            pcall(function() square:playSound("RemovePlant") end)
+            pcall(function() addSound(body, body:getX(), body:getY(), body:getZ(), 10, 5) end)
+            pcall(function()
+                local skill = body:getPerkLevel(Perks.Farming)
+                local use = (1 - (skill * 0.05)) * T.GRASS_ENDURANCE
+                if use > 0 then body:getStats():remove(CharacterStat.ENDURANCE, use) end
+            end)
+        end
+        T.swings = (T.swings or 0) + 1
+        T.info = "clear " .. tostring(kind) .. " " .. tostring(T.swings)
+        T.clearChop(body)
+        T.markDone()
+        T.phase = nil
+        T.clearStart = nil
+        T.swingStart = nil
+        T.swingHit = false
+        T.animHold = 0
+        T.animLogged = false
+        return "done"
+    end
+
+    if age >= T.SWING_MAX then T.swingStart = nil end
+    return "busy"
+end
+
 function BridgeTask.kinds.clearPlants.update(body)
     if BridgeTask.CLEARING_ENABLED ~= 1 then return BridgeTask.finish() end
 
@@ -6123,126 +6649,19 @@ function BridgeTask.kinds.clearPlants.update(body)
         end
     end
 
-    local reach = BridgeTask.CLEAR_RANGE
-    if BridgeTask.phase == "work" then reach = reach + 1.0 end
-    local walk, why = BridgeTask.walkTo(body, target, reach)
-    if walk == "unreachable" then return BridgeTask.dropTarget(why) end
-    if walk == "walking" then return true end
-
-    if BridgeTask.phase ~= "work" then
-        BridgeTask.phase = "work"
-        BridgeTask.since = Bridge.time
-        BridgeTask.clearStart = Bridge.time
-        BridgeTask.swings = 0
-        BridgeTask.swingStart = nil
-        BridgeTask.swingHit = false
-        pcall(function() BridgeMove.stopPath(body) end)
-        BridgeTask.info = "clearing"
-        log(string.format("arrived at clear %d,%d kind=%s", target.x, target.y, tostring(kind)))
-    end
-
-    if (Bridge.time - (BridgeTask.since or Bridge.time)) > BridgeTask.CLEAR_TIMEOUT then
-        BridgeTask.clearChop(body)
-        BridgeTask.info = "skip stubborn plant"
-        return BridgeTask.dropTarget(nil)
-    end
-
-    pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
-
-    local anim = (kind == "bush") and vineCleanAnim(tool) or BridgeTask.GRASS_ANIM
-    if not BridgeTask.animLogged then
-        BridgeTask.animLogged = true
-        log(string.format("clear anim=%s kind=%s", tostring(anim), tostring(kind)))
-    end
-
-    if (Bridge.time - (BridgeTask.lastClearSayCheck or 0)) >= SECOND then
-        BridgeTask.lastClearSayCheck = Bridge.time
-        if (Bridge.time - (BridgeTask.lastClearSay or -99999)) >= BridgeTask.CLEAR_SAY_COOLDOWN
-                and ZombRand(100) < 30 then
-            local said = false
-            pcall(function()
-                said = BridgeMoments ~= nil
-                    and BridgeMoments.say("EvClearing", BridgeTask.CLEAR_SAY_COOLDOWN, true, "Clearing") == true
-            end)
-            if said then BridgeTask.lastClearSay = Bridge.time end
-        end
-    end
-
-    local bump = ""
-    pcall(function() bump = tostring(body:getBumpType()) end)
-    if BridgeTask.swingStart == nil then
-        if (BridgeTask.animHold or 0) > 0 then
-            BridgeTask.animHold = BridgeTask.animHold - 1
-            pcall(function() body:setVariable("BumpAnimFinished", true) end)
-            pcall(function() body:changeState(ZombieIdleState.instance()) end)
-            pcall(function() body:setBumpType("") end)
-            BridgeTask.info = "resettling clear"
-            return true
-        end
-        BridgeTask.swingStart = Bridge.time
-        BridgeTask.swingHit = false
-        pcall(function() body:setVariable("NotAloneHitNow", false) end)
-        pcall(function()
-            body:setVariable("BumpAnimFinished", false)
-            body:setBumpType(anim)
-        end)
-        return true
-    end
-
-    local age = (Bridge.time - BridgeTask.swingStart) * ffMult()
-
-    if age >= BridgeTask.SCRUB_GUARD then
-        local playing = false
-        pcall(function()
-            playing = body:getActionStateName() == "bumped"
-                and tostring(body:getBumpType()) == anim
-        end)
-        if not playing then
-            pcall(function() body:setVariable("BumpAnimFinished", true) end)
-            pcall(function() body:changeState(ZombieIdleState.instance()) end)
-            pcall(function() body:setBumpType("") end)
-            BridgeTask.animHold = 2
-            BridgeTask.swingStart = nil
-            BridgeTask.info = "clear anim lost, restarting"
-            return true
-        end
-    end
-
-    local workTime = (kind == "bush") and BridgeTask.BUSH_TIME or BridgeTask.GRASS_TIME
-    if (Bridge.time - (BridgeTask.clearStart or Bridge.time)) * ffMult() >= workTime then
-        BridgePlants.applyPlant(square, kind, body)
-        if Bridge ~= nil and Bridge.mp then
-            pcall(function()
-                sendClientCommand(BridgeData.owner(), "Bridge", "clearPlants",
-                    { x = square:getX(), y = square:getY(), z = square:getZ(), kind = kind })
-            end)
-        end
-        if kind == "bush" then
-            pcall(function() square:playSound("ChopTree") end)
-            pcall(function() addSound(body, body:getX(), body:getY(), body:getZ(), 20, 1) end)
-            vineUseEndurance(body, tool)
-        else
-            pcall(function() square:playSound("RemovePlant") end)
-            pcall(function() addSound(body, body:getX(), body:getY(), body:getZ(), 10, 5) end)
-            pcall(function()
-                local skill = body:getPerkLevel(Perks.Farming)
-                local use = (1 - (skill * 0.05)) * BridgeTask.GRASS_ENDURANCE
-                if use > 0 then body:getStats():remove(CharacterStat.ENDURANCE, use) end
-            end)
-        end
-        BridgeTask.swings = (BridgeTask.swings or 0) + 1
-        BridgeTask.info = "clear " .. tostring(kind) .. " " .. tostring(BridgeTask.swings)
-
-        BridgeTask.clearChop(body)
-        BridgeTask.markDone()
+    local res, why = BridgeTask.clearPlantStep(body, target, kind, { tool = tool })
+    if res == "done" then
         BridgeTask.current = nil
         if #BridgeTask.queue == 0 then return BridgeTask.finish() end
         return true
     end
-
-    if age >= BridgeTask.SWING_MAX then
-        BridgeTask.swingStart = nil
+    if res == "busy" then return true end
+    if res == "unreachable" then
+        BridgeTask.current = nil
+        return BridgeTask.dropTarget(why)
     end
+    BridgeTask.current = nil
+    if #BridgeTask.queue == 0 then return BridgeTask.finish() end
     return true
 end
 
@@ -6275,11 +6694,18 @@ end
 
 function BridgeTask.lootDestsCached(body)
     if body == nil then return {} end
-    if BridgeTask.lootDestsBody == body and BridgeTask.lootDestsCache ~= nil then
+    local now = Bridge.time or 0
+    local gen = 0
+    if BridgeInventory ~= nil then gen = tonumber(BridgeInventory.wornBagGen) or 0 end
+    if BridgeTask.lootDestsBody == body and BridgeTask.lootDestsCache ~= nil
+            and (BridgeTask.lootDestsGen or -1) == gen
+            and (now - (BridgeTask.lootDestsAt or 0)) < (BridgeTask.LOOT_DESTS_TTL or 30) then
         return BridgeTask.lootDestsCache
     end
     local d = BridgeTask.lootDests(body)
     BridgeTask.lootDestsBody = body
+    BridgeTask.lootDestsGen = gen
+    BridgeTask.lootDestsAt = now
     BridgeTask.lootDestsCache = d
     return d
 end
@@ -6542,9 +6968,12 @@ function BridgeTask.lootTake(body, target, item, dest)
         else
             local size = 0
             pcall(function() size = src:getItems():size() end)
+            local now = Bridge.time or 0
             local cache = BridgeTask.lootSrcCache
-            if cache == nil or cache.src ~= src or size > (cache.size or 0) then
-                cache = { src = src, size = size, entries = {} }
+            local ttl = BridgeTask.LOOT_SRC_TTL or 120
+            if cache == nil or cache.src ~= src or size > (cache.size or 0)
+                    or (now - (cache.at or 0)) > ttl then
+                cache = { src = src, size = size, entries = {}, at = now }
                 pcall(function()
                     local list = src:getItems()
                     for i = 0, list:size() - 1 do
@@ -6557,6 +6986,18 @@ function BridgeTask.lootTake(body, target, item, dest)
                     end
                 end)
                 BridgeTask.lootSrcCache = cache
+            elseif size < (cache.size or 0) then
+                local kept = {}
+                for i = 1, #cache.entries do
+                    local e = cache.entries[i]
+                    local it = e.item
+                    local same = false
+                    if it ~= nil then pcall(function() same = it:getContainer() == src end) end
+                    if same then kept[#kept + 1] = e end
+                end
+                cache.entries = kept
+                cache.size = size
+                cache.at = now
             end
             for i = 1, #cache.entries do
                 local e = cache.entries[i]
@@ -6810,6 +7251,7 @@ function BridgeTask.kinds.lootArea.update(body)
                 BridgeTask.lootAct = nil
                 BridgeTask.lootSrc = nil
                 BridgeTask.lootTook = (BridgeTask.lootTook or 0) + 1
+                if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
                 if not BridgeTask.lootSaid then
                     BridgeTask.lootSaid = true
                     pcall(function() BridgeTask.lootSay(pend, target.kind) end)

@@ -47,8 +47,30 @@ BridgeGardening.FEED_WORK_SAY_COOLDOWN = 25 * SECOND
 BridgeGardening.FEED_WORK_SAY_CHANCE = 30
 BridgeGardening.FEED_XP = 0
 
+BridgeGardening.TEND_RANGE = 1.45
+BridgeGardening.CURE_TIME = 100
+BridgeGardening.CURE_SETTLE = 21
+BridgeGardening.MAX_TEND_PLANTS = 80
+BridgeGardening.PEST_LEVEL = 3
+BridgeGardening.TEND_WORK_SAY_COOLDOWN = 25 * SECOND
+BridgeGardening.TEND_WORK_SAY_CHANCE = 30
+BridgeGardening.TEND_ROUND_CAP = 6
+BridgeGardening.CURES = {
+    { lvl = "mildewLvl", cure = "Mildew", item = "GardeningSprayMilk", need = "cureMildew" },
+    { lvl = "fliesLvl", cure = "Flies", item = "GardeningSprayCigarettes", need = "cureFlies" },
+    { lvl = "slugsLvl", cure = "Slugs", item = "SlugRepellent", need = "cureSlugs" },
+    { lvl = "aphidLvl", cure = "Aphids", item = "GardeningSprayAphids", need = "cureAphids" },
+}
+BridgeGardening.SEASON_TTL = 600
+BridgeGardening.CURE_BY_TYPE = {}
+for i = 1, #BridgeGardening.CURES do
+    local entry = BridgeGardening.CURES[i]
+    BridgeGardening.CURE_BY_TYPE[entry.item] = entry
+end
+
 BridgeGardening.serverSeen = BridgeGardening.serverSeen or {}
 BridgeGardening.weighed = BridgeGardening.weighed or {}
+BridgeGardening.weights = BridgeGardening.weights or {}
 
 local function log(text)
     if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeGardening] " .. tostring(text)) end
@@ -425,6 +447,9 @@ function BridgeGardening.xpFor(plant)
 end
 
 local function itemWeight(typeName)
+    if type(typeName) ~= "string" then return 1.0 end
+    local known = BridgeGardening.weights[typeName]
+    if known ~= nil then return known end
     local w = nil
     pcall(function()
         local item = instanceItem(typeName)
@@ -434,12 +459,13 @@ local function itemWeight(typeName)
         if item ~= nil then w = item:getUnequippedWeight() end
     end)
     if type(w) ~= "number" or w <= 0 then
-        if type(typeName) == "string" and BridgeGardening.weighed[typeName] == nil then
+        if BridgeGardening.weighed[typeName] == nil then
             BridgeGardening.weighed[typeName] = true
             log("weight fallback for " .. tostring(typeName))
         end
         return 1.0
     end
+    BridgeGardening.weights[typeName] = w
     return w
 end
 
@@ -488,12 +514,12 @@ function BridgeGardening.freeCapacity(cont, chr)
     return free
 end
 
-function BridgeGardening.roomFor(cont, plant, skill, chr)
-    if cont == nil then return false end
-    local plan = BridgeGardening.itemPlan(plant, skill)
-    local need = BridgeGardening.planWeight(plan)
+function BridgeGardening.roomFor(cont, plant, skill, chr, plan, need)
+    if cont == nil then return false, 0, 0 end
+    plan = plan or BridgeGardening.itemPlan(plant, skill)
+    if need == nil then need = BridgeGardening.planWeight(plan) end
     local free = BridgeGardening.freeCapacity(cont, chr)
-    return need <= free + 0.001
+    return need <= free + 0.001, free, need
 end
 
 function BridgeGardening.pickDest(body, plant, skill)
@@ -501,16 +527,14 @@ function BridgeGardening.pickDest(body, plant, skill)
     local dests = nil
     pcall(function() dests = BridgeTask.lootDests(body) end)
     if dests == nil or #dests == 0 then return nil end
-    local chr = nil
-    if BridgeData ~= nil and type(BridgeData.owner) == "function" then
-        pcall(function() chr = BridgeData.owner() end)
-    end
+    local chr = body
+    local plan = BridgeGardening.itemPlan(plant, skill)
+    local need = BridgeGardening.planWeight(plan)
     for i = 1, #dests do
-        if BridgeGardening.roomFor(dests[i], plant, skill, chr) then
+        local ok, free = BridgeGardening.roomFor(dests[i], plant, skill, chr, plan, need)
+        if ok then
             log(string.format("dest pick %s free=%.2f need=%.2f slot=%d/%d",
-                tostring(i == #dests and "main" or "bag"),
-                BridgeGardening.freeCapacity(dests[i], chr),
-                BridgeGardening.planWeight(BridgeGardening.itemPlan(plant, skill)), i, #dests))
+                tostring(i == #dests and "main" or "bag"), free, need, i, #dests))
             return dests[i], i == #dests
         end
     end
@@ -619,10 +643,7 @@ function BridgeGardening.receiveHarvest(body, args)
         if not ok then dest = nil end
     end
     if dest == nil then
-        local chr = nil
-        if BridgeData ~= nil and type(BridgeData.owner) == "function" then
-            pcall(function() chr = BridgeData.owner() end)
-        end
+        local chr = body
         dest = BridgeGardening.destForRecs(body, recs, chr)
     end
     if dest == nil then pcall(function() dest = body:getInventory() end) end
@@ -656,10 +677,7 @@ end
 
 function BridgeGardening.harvestLocal(body, plant, dest, skill)
     if plant == nil or dest == nil then return false, "gone", 0 end
-    local chr = nil
-    if BridgeData ~= nil and type(BridgeData.owner) == "function" then
-        pcall(function() chr = BridgeData.owner() end)
-    end
+    local chr = body
     if not BridgeGardening.roomFor(dest, plant, skill, chr) then return false, "bagfull", 0 end
     return BridgeGardening.harvestWithBag(plant, dest, skill)
 end
@@ -860,6 +878,14 @@ function BridgeGardening.kindUpdate(body)
         return dropCrop(body)
     end
 
+    local skill = 0
+    pcall(function() skill = BridgeSkills.level("Agriculture") end)
+    if BridgeGardening.pickDest(body, plant, skill) == nil then
+        T.info = "no room"
+        sayLine("EvHarvestingFull", "HarvestFull")
+        return T.finish()
+    end
+
     if not T.harvestSaid then
         if (Bridge.time - (T.harvestSayCheck or 0)) >= SECOND then
             T.harvestSayCheck = Bridge.time
@@ -882,6 +908,11 @@ function BridgeGardening.kindUpdate(body)
         local walk, why = T.walkTo(body, target, BridgeGardening.HARVEST_RANGE, true)
         if walk == "unreachable" then return T.dropTarget(why) end
         if walk ~= "arrived" then return true end
+        if BridgeGardening.pickDest(body, plant, skill) == nil then
+            T.info = "no room"
+            sayLine("EvHarvestingFull", "HarvestFull")
+            return T.finish()
+        end
         beginHarvest(body, target, plant)
         return true
     end
@@ -910,8 +941,6 @@ function BridgeGardening.kindUpdate(body)
 
     BridgeGardening.stopSound(body)
 
-    local skill = 0
-    pcall(function() skill = BridgeSkills.level("Agriculture") end)
     local dest = BridgeGardening.pickDest(body, plant, skill)
     if dest == nil then
         T.info = "no room"
@@ -1450,18 +1479,59 @@ function BridgeGardening.plantableCount(kind)
     return math.floor(tonumber(counts.plantable) or 0)
 end
 
+local bagCacheBody, bagCacheTick, bagCacheSeq, bagCacheGen, bagCacheList = nil, nil, nil, nil, nil
+
 function BridgeGardening.bagLists(body)
+    local tick = nil
+    local seq, gen = 0, 0
+    if Bridge ~= nil then
+        tick = tonumber(Bridge.tick)
+        seq = tonumber(Bridge.itemsChangedSeq) or 0
+    end
+    if BridgeInventory ~= nil then gen = tonumber(BridgeInventory.wornBagGen) or 0 end
+    if body ~= nil and tick ~= nil and bagCacheBody == body and bagCacheTick == tick
+            and bagCacheSeq == seq and bagCacheGen == gen and bagCacheList ~= nil then
+        return bagCacheList
+    end
     local lists = {}
     if body == nil then return lists end
-    pcall(function() lists[#lists + 1] = body:getInventory() end)
+    local seen = {}
+    local function add(cont)
+        if cont == nil or seen[cont] then return end
+        seen[cont] = true
+        lists[#lists + 1] = cont
+    end
+    local function walk(cont, depth)
+        add(cont)
+        if cont == nil or depth >= 3 then return end
+        local items = nil
+        pcall(function() items = cont:getItems() end)
+        if items == nil then return end
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            if it ~= nil then
+                local inner = nil
+                pcall(function()
+                    if it:IsInventoryContainer() then inner = it:getInventory() end
+                end)
+                if inner ~= nil then walk(inner, depth + 1) end
+            end
+        end
+    end
+    local main = nil
+    pcall(function() main = body:getInventory() end)
+    walk(main, 0)
     if BridgeInventory ~= nil and type(BridgeInventory.wornBags) == "function" then
         pcall(function()
             for _, bag in ipairs(BridgeInventory.wornBags(body)) do
                 local inv = nil
                 pcall(function() inv = bag:getInventory() end)
-                if inv ~= nil then lists[#lists + 1] = inv end
+                if inv ~= nil then walk(inv, 1) end
             end
         end)
+    end
+    if tick ~= nil then
+        bagCacheBody, bagCacheTick, bagCacheSeq, bagCacheGen, bagCacheList = body, tick, seq, gen, lists
     end
     return lists
 end
@@ -1478,7 +1548,7 @@ local function itemId(item)
     return id
 end
 
-function BridgeGardening.looseCount(body, seedTypes)
+function BridgeGardening.looseCount(body, seedTypes, limit)
     local total = 0
     local lists = BridgeGardening.bagLists(body)
     local want = {}
@@ -1494,6 +1564,7 @@ function BridgeGardening.looseCount(body, seedTypes)
                     local n = 1
                     pcall(function() n = it:getCount() or 1 end)
                     total = total + math.max(1, math.floor(tonumber(n) or 1))
+                    if limit ~= nil and total >= limit then return total end
                 end
             end
         end
@@ -1923,6 +1994,9 @@ function BridgeGardening.sowReturn(body)
             if stillHers(items[i]) then pending = true break end
         end
         if not pending then
+            pcall(function()
+                if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+            end)
             log("return seeds done")
             return T.finish()
         end
@@ -1992,7 +2066,7 @@ function BridgeGardening.sowUpdate(body)
 
     if T.current == nil then
         if #T.queue == 0 then return BridgeGardening.sowFinishStep(body, false) end
-        if BridgeGardening.looseCount(body, entry.seeds) <= 0 then
+        if BridgeGardening.looseCount(body, entry.seeds, 1) <= 0 then
             local packetId, packetType = BridgeGardening.firstPacket(body, entry)
             if packetId ~= nil then
                 return BridgeGardening.openPacketStep(body, packetId, packetType)
@@ -2352,7 +2426,7 @@ end
 function BridgeGardening.onWaterResult(args)
     local T = BridgeTask
     if T == nil or args == nil then return end
-    if T.active ~= true or T.kind ~= "waterPlants" then return end
+    if T.active ~= true or (T.kind ~= "waterPlants" and T.kind ~= "tendCrops") then return end
     local pending = T.waterPending
     if pending == nil then return end
     if tonumber(args.x) ~= pending.x or tonumber(args.y) ~= pending.y then return end
@@ -2369,6 +2443,8 @@ function BridgeGardening.onWaterResult(args)
         T.phase = nil
         T.waterNeed = nil
         T.waterApproachFor = nil
+        T.waterRetryTarget = nil
+        T.tendHave = nil
         T.markDone()
         return
     end
@@ -2390,16 +2466,27 @@ function BridgeGardening.feedSay(event, slot)
 end
 
 function BridgeGardening.feedSeasonOk()
+    local now = Bridge ~= nil and tonumber(Bridge.time) or nil
+    if now ~= nil and BridgeGardening.seasonOk ~= nil
+            and (now - (BridgeGardening.seasonAt or 0)) < (BridgeGardening.SEASON_TTL or 600) then
+        return BridgeGardening.seasonOk
+    end
     local seasons = false
     pcall(function()
         local opt = getSandboxOptions():getOptionByName("PlantGrowingSeasons")
         if opt ~= nil then seasons = opt:getValue() == true end
     end)
-    if not seasons then return true end
-    local season = nil
-    pcall(function() season = getClimateManager():getSeasonName() end)
-    if season == nil then return true end
-    return tostring(season) ~= "Winter"
+    local ok = true
+    if seasons then
+        local season = nil
+        pcall(function() season = getClimateManager():getSeasonName() end)
+        if season ~= nil then ok = tostring(season) ~= "Winter" end
+    end
+    if now ~= nil then
+        BridgeGardening.seasonOk = ok
+        BridgeGardening.seasonAt = now
+    end
+    return ok
 end
 
 function BridgeGardening.needsFeed(plant)
@@ -2574,7 +2661,7 @@ end
 function BridgeGardening.onFertilizeResult(args)
     local T = BridgeTask
     if T == nil or args == nil then return end
-    if T.active ~= true or T.kind ~= "fertilizePlants" then return end
+    if T.active ~= true or (T.kind ~= "fertilizePlants" and T.kind ~= "tendCrops") then return end
     local job = T.feedJob
     if job == nil or job.pending == nil then return end
     if tonumber(args.x) ~= job.pending.x or tonumber(args.y) ~= job.pending.y then return end
@@ -2583,7 +2670,12 @@ function BridgeGardening.onFertilizeResult(args)
     job.pending = nil
     job.pendingAt = nil
     if args.ok == true then
-        BridgeTask.feedCommit(body, job)
+        if T.kind == "tendCrops" then
+            BridgeTask.feedApply(body, job)
+            T.tendHave = nil
+        else
+            BridgeTask.feedCommit(body, job)
+        end
         return
     end
     local why = tostring(args.why)
@@ -2596,6 +2688,597 @@ function BridgeGardening.onFertilizeResult(args)
     if why == "gone" or why == "noplant" then
         pcall(function() Bridge.speak("CantFeedCrop") end)
     end
+end
+
+function BridgeGardening.diseaseOf(plant)
+    if plant == nil then return nil end
+    for i = 1, #BridgeGardening.CURES do
+        local entry = BridgeGardening.CURES[i]
+        local lvl = 0
+        pcall(function() lvl = tonumber(plant[entry.lvl]) or 0 end)
+        if lvl > 0 then return entry, lvl end
+    end
+    return nil
+end
+
+function BridgeGardening.needsCure(plant)
+    if plant == nil then return false end
+    local ok = false
+    pcall(function()
+        local alive = plant:isAlive() == true
+        local state = plant.state
+        local seed = plant.typeOfSeed
+        ok = alive and seed ~= nil and seed ~= "none"
+            and state ~= "plow" and state ~= "harvested" and state ~= "destroyed"
+    end)
+    if not ok then return false end
+    return BridgeGardening.diseaseOf(plant) ~= nil
+end
+
+function BridgeGardening.isCureItem(item, entry)
+    if item == nil or entry == nil then return false end
+    local ok = false
+    pcall(function()
+        ok = item:getType() == entry.item and (tonumber(item:getCurrentUses()) or 0) > 0
+    end)
+    return ok
+end
+
+function BridgeGardening.findCures(body)
+    local out = {}
+    if body == nil then return out end
+    local best = {}
+    local function consider(it)
+        if it == nil then return end
+        for i = 1, #BridgeGardening.CURES do
+            local entry = BridgeGardening.CURES[i]
+            if BridgeGardening.isCureItem(it, entry) then
+                local uses = 0
+                pcall(function() uses = tonumber(it:getCurrentUses()) or 0 end)
+                if out[entry.need] == nil or uses > (best[entry.need] or 0) then
+                    out[entry.need] = it
+                    best[entry.need] = uses
+                end
+            end
+        end
+    end
+    local hand = nil
+    pcall(function() hand = body:getPrimaryHandItem() end)
+    consider(hand)
+    pcall(function() hand = body:getSecondaryHandItem() end)
+    consider(hand)
+    local lists = BridgeGardening.bagLists(body)
+    for i = 1, #lists do
+        local items = nil
+        pcall(function() items = lists[i]:getItems() end)
+        if items ~= nil then
+            for j = 0, items:size() - 1 do consider(items:get(j)) end
+        end
+    end
+    return out
+end
+
+function BridgeGardening.findCure(body, entry)
+    if entry == nil then return nil end
+    local map = BridgeGardening.findCures(body)
+    return map[entry.need]
+end
+
+function BridgeGardening.cureAt(target, entry, uses, server)
+    if target == nil or entry == nil then return false, "notarget" end
+    local n = math.floor(tonumber(uses) or 0)
+    if n < 1 then return false, "nouses" end
+    local sq = BridgeGardening.squareAt(target)
+    local plant = BridgeGardening.plantAt(sq, true)
+    if plant == nil and server ~= true then plant = BridgeGardening.plantAt(sq, false) end
+    if plant == nil then return false, "noplant" end
+    local lvl = 0
+    pcall(function() lvl = tonumber(plant[entry.lvl]) or 0 end)
+    if lvl <= 0 then return false, "nocure" end
+    local fn = nil
+    pcall(function() fn = plant["cure" .. entry.cure] end)
+    if type(fn) ~= "function" then return false, "nocure" end
+    local skill = 0
+    pcall(function() skill = BridgeSkills.level("Agriculture") end)
+    local ok, err = pcall(fn, plant, nil, n, skill)
+    if not ok then
+        warn("cure failed: " .. tostring(err))
+        return false, "error"
+    end
+    pcall(function() plant:saveData() end)
+    return true, nil
+end
+
+function BridgeGardening.requestCure(target, entry, uses)
+    if target == nil or entry == nil then return false end
+    if Bridge == nil or Bridge.mp ~= true or BridgeData == nil then return false end
+    local red = nil
+    pcall(function() red = BridgeData.owner() end)
+    if red == nil then return false end
+    local ok = pcall(function()
+        sendClientCommand(red, "Bridge", "curePlants",
+            { x = target.x, y = target.y, z = target.z, cure = entry.cure, uses = math.floor(tonumber(uses) or 1) })
+    end)
+    return ok == true
+end
+
+function BridgeGardening.cureClearTarget(job)
+    if job == nil then return end
+    if BridgeTask ~= nil and type(BridgeTask.cureSoundStop) == "function" then
+        pcall(BridgeTask.cureSoundStop, Bridge.body)
+    end
+    pcall(function() BridgeGardening.clearAnim(Bridge.body) end)
+    job.target = nil
+    job.entry = nil
+    job.item = nil
+    job.phase = nil
+    job.startAt = nil
+    job.animAt = nil
+    job.restarts = nil
+    job.pending = nil
+    job.pendingAt = nil
+    job.retryTarget = nil
+    job.pourType = nil
+    job.settled = nil
+    job.settleAt = nil
+    if BridgeTask ~= nil then
+        BridgeTask.phase = nil
+        BridgeTask.info = "cure target cleared"
+    end
+end
+
+function BridgeGardening.cureApply(body, job)
+    if job == nil then return false end
+    local item = job.item
+    if item == nil then return false end
+    local cure = job.entry ~= nil and job.entry.cure or nil
+    BridgeGardening.feedSpend(job)
+    BridgeTask.markDone()
+    job.target = nil
+    job.entry = nil
+    job.item = nil
+    job.phase = nil
+    job.startAt = nil
+    job.animAt = nil
+    job.restarts = nil
+    job.pourType = nil
+    job.pending = nil
+    job.pendingAt = nil
+    BridgeTask.phase = nil
+    BridgeTask.info = "cured"
+    local left = 0
+    pcall(function() left = tonumber(item:getCurrentUses()) or 0 end)
+    log(string.format("cure done cure=%s item=%s uses left %.2f", tostring(cure), tostring(item:getName()), left))
+    return true
+end
+
+function BridgeGardening.onCureResult(args)
+    local T = BridgeTask
+    if T == nil or args == nil then return end
+    if T.active ~= true or T.kind ~= "tendCrops" then return end
+    local job = T.cureJob
+    if job == nil or job.pending == nil then return end
+    if tonumber(args.x) ~= job.pending.x or tonumber(args.y) ~= job.pending.y then return end
+    if BridgeTask.cureSoundStop ~= nil then pcall(BridgeTask.cureSoundStop, Bridge.body) end
+    job.pending = nil
+    job.pendingAt = nil
+    if args.ok == true then
+        BridgeGardening.cureApply(Bridge.body, job)
+        T.tendHave = nil
+        return
+    end
+    log("cure refused: " .. tostring(args.why))
+    BridgeGardening.cureClearTarget(job)
+    pcall(function() Bridge.speak("CantCureCrop") end)
+end
+
+function BridgeGardening.needsWeed(sq, plant)
+    if plant == nil or sq == nil then return false end
+    local weeds = false
+    pcall(function() weeds = plant.hasWeeds == true end)
+    if not weeds then return false end
+    return BridgePlants ~= nil and BridgePlants.squareGrass(sq) == true
+end
+
+function BridgeGardening.supplyScan(body)
+    local out = { water = nil, compost = nil, fertilizer = nil, cures = {} }
+    if body == nil then return out end
+    local waterRank, waterUses = nil, nil
+    local feedUses = {}
+    local cureUses = {}
+    local function consider(it)
+        if it == nil then return end
+        local uses = 0
+        pcall(function() uses = tonumber(it:getCurrentUses()) or 0 end)
+        if BridgeGardening.isWaterContainer(it) then
+            local rank = BridgeGardening.waterContainerRank(it)
+            local u = BridgeGardening.containerUses(it)
+            if out.water == nil or rank < waterRank or (rank == waterRank and u > waterUses) then
+                out.water, waterRank, waterUses = it, rank, u
+            end
+        end
+        if uses > 0 and BridgeGardening.isFeedItem(it) then
+            local kind = BridgeGardening.feedKindOf(it)
+            if kind ~= nil and (out[kind] == nil or uses > (feedUses[kind] or 0)) then
+                out[kind] = it
+                feedUses[kind] = uses
+            end
+        end
+        if uses > 0 then
+            local kind = nil
+            pcall(function() kind = it:getType() end)
+            local entry = kind ~= nil and BridgeGardening.CURE_BY_TYPE[kind] or nil
+            if entry ~= nil and (out.cures[entry.need] == nil or uses > (cureUses[entry.need] or 0)) then
+                out.cures[entry.need] = it
+                cureUses[entry.need] = uses
+            end
+        end
+    end
+    local hand = nil
+    pcall(function() hand = body:getPrimaryHandItem() end)
+    consider(hand)
+    pcall(function() hand = body:getSecondaryHandItem() end)
+    consider(hand)
+    local lists = BridgeGardening.bagLists(body)
+    for i = 1, #lists do
+        local items = nil
+        pcall(function() items = lists[i]:getItems() end)
+        if items ~= nil then
+            for j = 0, items:size() - 1 do consider(items:get(j)) end
+        end
+    end
+    return out
+end
+
+function BridgeGardening.tendContext(body, level)
+    local T = BridgeTask
+    local now = Bridge.time or 0
+    local cached = T ~= nil and T.tendHave or nil
+    if cached ~= nil and (now - (cached.at or 0)) < SECOND then
+        if level ~= nil then cached.level = level end
+        return cached
+    end
+    local ctx = { at = now, level = level or 0, water = nil, compost = nil, fertilizer = nil, cures = {} }
+    pcall(function()
+        local s = BridgeGardening.supplyScan(body)
+        ctx.water, ctx.compost, ctx.fertilizer, ctx.cures = s.water, s.compost, s.fertilizer, s.cures
+    end)
+    if T ~= nil then T.tendHave = ctx end
+    return ctx
+end
+
+function BridgeGardening.tendActionFor(plant, sq, ctx)
+    if plant == nil then return nil, "noplant" end
+    ctx = ctx or {}
+    local alive = false
+    pcall(function() alive = plant:isAlive() == true end)
+    if not alive then return nil, "dead" end
+
+    local advice, entry = nil, BridgeGardening.diseaseOf(plant)
+    if entry ~= nil then
+        if (ctx.level or 0) < (BridgeGardening.PEST_LEVEL or 3) then
+            advice = "dontknow"
+        else
+            local item = ctx.cures ~= nil and ctx.cures[entry.need] or nil
+            if item ~= nil then return "cure", nil, entry, nil end
+            advice = "pests"
+        end
+    end
+
+    if BridgeGardening.needsWeed(sq, plant) then return "weed", nil, entry, advice end
+
+    if BridgeGardening.needsFeed(plant) then
+        local kind = BridgeGardening.feedKindFor(plant, ctx.compost ~= nil, ctx.fertilizer ~= nil)
+        if kind ~= nil then return "feed", kind, entry, advice end
+        advice = advice or "nofeed"
+    end
+
+    if BridgeGardening.needsWater(plant) then
+        if ctx.water ~= nil then return "water", nil, entry, advice end
+        advice = advice or "nowater"
+    end
+
+    return nil, advice or "none", entry, advice
+end
+
+function BridgeGardening.tendSpots(b)
+    local list = {}
+    if b == nil then return list end
+    local cap = BridgeGardening.MAX_TEND_PLANTS or 80
+    for x = b.x1, b.x2 do
+        for y = b.y1, b.y2 do
+            if #list >= cap then return list end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
+            if sq ~= nil then
+                local plant = BridgeGardening.plantAt(sq, false)
+                if BridgeGardening.needsCure(plant) or BridgeGardening.needsWeed(sq, plant)
+                        or BridgeGardening.needsFeed(plant) or BridgeGardening.needsWater(plant) then
+                    list[#list + 1] = { x = x, y = y, z = b.z }
+                end
+            end
+        end
+    end
+    return list
+end
+
+function BridgeGardening.tendNeedScan(body, targets, ctx)
+    local needs = { feed = false, water = false, spray = false, skill = false, cures = {} }
+    if targets == nil then return needs end
+    local level = 0
+    pcall(function() level = BridgeSkills.level("Agriculture") end)
+    ctx = ctx or BridgeGardening.tendContext(body, level)
+    for i = 1, #targets do
+        local t = targets[i]
+        local sq = BridgeGardening.squareAt(t)
+        local plant = BridgeGardening.plantAt(sq, false)
+        if plant ~= nil then
+            local entry = BridgeGardening.diseaseOf(plant)
+            if entry ~= nil then
+                if level < (BridgeGardening.PEST_LEVEL or 3) then
+                    needs.skill = true
+                elseif ctx.cures == nil or ctx.cures[entry.need] == nil then
+                    needs.spray = true
+                    needs.cures[entry.need] = true
+                end
+            end
+            if BridgeGardening.needsFeed(plant) then
+                local kind = BridgeGardening.feedKindFor(plant, ctx.compost ~= nil, ctx.fertilizer ~= nil)
+                if kind == nil then needs.feed = true end
+            end
+            if BridgeGardening.needsWater(plant) and ctx.water == nil then
+                needs.water = true
+            end
+        end
+    end
+    return needs
+end
+
+function BridgeGardening.tendNeeds(body, targets)
+    local out = {}
+    local needs = BridgeGardening.tendNeedScan(body, targets, nil)
+    if needs.water then out[#out + 1] = "waterContainer" end
+    if needs.feed then out[#out + 1] = "cropFeed" end
+    if needs.spray then
+        for i = 1, #BridgeGardening.CURES do
+            local entry = BridgeGardening.CURES[i]
+            if needs.cures[entry.need] then out[#out + 1] = entry.need end
+        end
+    end
+    return out
+end
+
+function BridgeGardening.tendMissing(body)
+    local T = BridgeTask
+    local targets = nil
+    if T ~= nil then
+        if T.pendingStart ~= nil and T.pendingStart.targets ~= nil then
+            targets = T.pendingStart.targets
+        else
+            targets = T.queue
+        end
+    end
+    local list = BridgeGardening.tendNeeds(body, targets or {})
+    return list[1]
+end
+
+function BridgeGardening.tendSay(event, slot, cooldown)
+    local said = false
+    pcall(function()
+        said = BridgeMoments ~= nil
+            and BridgeMoments.say(event, cooldown or BridgeGardening.SAY_COOLDOWN, true, slot) == true
+    end)
+    return said
+end
+
+local function tendPlantInfo(plant)
+    if plant == nil then return "-" end
+    local s = "?"
+    pcall(function()
+        s = string.format("st=%s grow=%s comp=%s fert=%s wat=%s weed=%s",
+            tostring(plant.state), tostring(plant.nbOfGrow), tostring(plant.compost),
+            tostring(plant.fertilizer), tostring(plant.waterLvl), tostring(plant.hasWeeds))
+    end)
+    return s
+end
+
+function BridgeGardening.tendUpdate(body)
+    local T = BridgeTask
+    if T == nil or body == nil then return false end
+    if T.TEND_ENABLED ~= 1 then return T.finish() end
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
+    if T.cureJob == nil then T.cureJob = {} end
+    if T.feedJob == nil then T.feedJob = {} end
+
+    local cj = T.cureJob
+    if cj.pending ~= nil then
+        if (Bridge.time - (cj.pendingAt or Bridge.time)) > (BridgeGardening.PENDING_TIMEOUT or (20 * SECOND)) then
+            cj.pending = nil
+            cj.pendingAt = nil
+            if type(T.cureSoundStop) == "function" then pcall(T.cureSoundStop, body) end
+            BridgeGardening.cureClearTarget(cj)
+            T.phase = nil
+            pcall(function() Bridge.speak("CantCureCrop") end)
+        end
+        return true
+    end
+    local fj = T.feedJob
+    if fj.pending ~= nil then
+        if (Bridge.time - (fj.pendingAt or Bridge.time)) > (BridgeGardening.PENDING_TIMEOUT or (20 * SECOND)) then
+            fj.pending = nil
+            fj.pendingAt = nil
+            T.feedSoundStop(body)
+            T.feedClearTarget(fj)
+            T.phase = nil
+            pcall(function() Bridge.speak("CantFeedCrop") end)
+        end
+        return true
+    end
+    if type(T.waterPendingWait) == "function" and T.waterPendingWait() then return true end
+
+    local level = 0
+    pcall(function() level = BridgeSkills.level("Agriculture") end)
+    local ctx = BridgeGardening.tendContext(body, level)
+
+    if T.current == nil then
+        local i = 1
+        while i <= #T.queue do
+            local t = T.queue[i]
+            local sq = BridgeGardening.squareAt(t)
+            local plant = BridgeGardening.plantAt(sq, false)
+            local action, reason, entry, advice = BridgeGardening.tendActionFor(plant, sq, ctx)
+            local keep = action ~= nil or advice ~= nil or reason == "nofeed" or reason == "nowater"
+            if keep then i = i + 1 else table.remove(T.queue, i) end
+        end
+        if #T.queue == 0 then
+            if (T.doneCount or 0) > 0 then
+                BridgeGardening.tendSay("EvTendingDone", "TendDone")
+            elseif not (T.tendNeedFeed or T.tendNeedWater or T.tendNeedSpray or T.tendNeedSkill) then
+                pcall(function() Bridge.speak("JobNoTendSpots") end)
+            end
+            return T.finish()
+        end
+        local picked = BridgeGardening.nextTarget(body)
+        if picked == nil then return T.finish() end
+        T.resetWalkDest()
+        T.current = picked
+        T.tendAction = nil
+        T.tendRounds = 0
+        T.phase = nil
+        T.info = "tend target"
+        if T.tendSaid ~= true then
+            if BridgeGardening.tendSay("EvTending", "Tend") then T.tendSaid = true end
+        end
+    end
+
+    local target = T.current
+    if target == nil then return T.finish() end
+    local sq = BridgeGardening.squareAt(target)
+    local plant = BridgeGardening.plantAt(sq, false)
+    if plant == nil then
+        T.current = nil
+        T.phase = nil
+        T.resetWalkDest()
+        return true
+    end
+
+    local action, reason, entry, advice = BridgeGardening.tendActionFor(plant, sq, ctx)
+    if advice == "dontknow" and T.tendSkillSaid ~= true then
+        T.tendSkillSaid = true
+        pcall(function() Bridge.speak("JobNoCureSkill") end)
+    end
+    T.recordTendNeeds(reason, advice)
+
+    if action == nil then
+        T.current = nil
+        T.tendAction = nil
+        T.phase = nil
+        T.resetWalkDest()
+        return true
+    end
+
+    if T.tendAction ~= action then
+        T.tendAction = action
+        T.phase = nil
+        T.waterApproachFor = nil
+        T.waterRetryTarget = nil
+        T.clearStart = nil
+        T.swingStart = nil
+        T.animLogged = false
+        T.waterGoSaid = nil
+        T.resetWalkDest()
+        log(string.format("tend action=%s reason=%s advice=%s wp=%s %s",
+            tostring(action), tostring(reason), tostring(advice),
+            tostring(T.waterPhase), tendPlantInfo(plant)))
+        if action == "cure" then
+            BridgeGardening.tendSay("EvCuring", "Cure")
+        elseif action == "weed" then
+            BridgeGardening.tendSay("EvWeeding", "Weed")
+        end
+    end
+
+    if (Bridge.time - (T.tendWorkSayCheck or 0)) >= SECOND then
+        T.tendWorkSayCheck = Bridge.time
+        if (Bridge.time - (T.tendWorkSay or -99999)) >= (BridgeGardening.TEND_WORK_SAY_COOLDOWN or 0)
+                and ZombRand(100) < (BridgeGardening.TEND_WORK_SAY_CHANCE or 30) then
+            if BridgeGardening.tendSay("EvTendingWork", "TendWork", BridgeGardening.TEND_WORK_SAY_COOLDOWN) then
+                T.tendWorkSay = Bridge.time
+            end
+        end
+    end
+
+    local res, why
+    if action == "cure" then
+        if T.cureJob.entry ~= entry then
+            T.cureJob.entry = entry
+            T.cureJob.item = nil
+        end
+        if T.cureJob.item == nil then
+            T.cureJob.item = ctx.cures ~= nil and ctx.cures[entry.need] or nil
+        end
+        res, why = T.curePlantStep(body, T.cureJob, target)
+    elseif action == "weed" then
+        res, why = T.clearPlantStep(body, target, "grass", { sayEvent = "EvWeeding", saySlot = "Weed" })
+    elseif action == "feed" then
+        res, why = T.feedPlantStep(body, T.feedJob, target)
+    elseif action == "water" then
+        if T.waterContainer == nil or not BridgeGardening.isWaterContainer(T.waterContainer) then
+            T.waterContainer = ctx.water
+        end
+        if T.waterContainer == nil then
+            T.recordTendNeeds("nowater", nil)
+            T.current = nil
+            T.tendAction = nil
+            T.phase = nil
+            T.resetWalkDest()
+            return true
+        end
+        res, why = T.waterPlantStep(body, target)
+    end
+
+    if res == "done" then
+        T.tendHave = nil
+        T.tendRounds = (T.tendRounds or 0) + 1
+        if action == "water" then
+            T.current = nil
+            T.phase = nil
+            T.resetWalkDest()
+        end
+        if (T.tendRounds or 0) >= (BridgeGardening.TEND_ROUND_CAP or 6) then
+            T.current = nil
+            T.tendAction = nil
+            T.phase = nil
+            T.resetWalkDest()
+        end
+        return true
+    end
+    if res == "busy" then return true end
+    if res == "unreachable" then
+        T.current = nil
+        T.tendAction = nil
+        T.phase = nil
+        T.resetWalkDest()
+        return T.dropTarget(why)
+    end
+    if res == "skip" then
+        T.recordTendNeeds(reason, advice)
+        T.current = nil
+        T.tendAction = nil
+        T.phase = nil
+        T.resetWalkDest()
+        return true
+    end
+    return res
+end
+
+function BridgeGardening.tendLeave(body)
+    local T = BridgeTask
+    if T == nil then return end
+    if type(T.cureSoundStop) == "function" then pcall(T.cureSoundStop, body) end
+    if type(T.waterLeave) == "function" then pcall(T.waterLeave, body) end
+    if type(T.feedLeave) == "function" then pcall(T.feedLeave, body) end
+    if BridgeGardening.clearAnim ~= nil then pcall(function() BridgeGardening.clearAnim(body) end) end
+    T.clearTendState()
 end
 
 local function install()
@@ -2643,6 +3326,12 @@ local function install()
             update = function(body) return BridgeTask.feedUpdate(body) end,
             leave = function(body) return BridgeTask.feedLeave(body) end,
         }
+        BridgeTask.kinds.tendCrops = {
+            available = function(body) return BridgeTask.TEND_ENABLED == 1 end,
+            missing = function(body) return BridgeGardening.tendMissing(body) end,
+            update = function(body) return BridgeGardening.tendUpdate(body) end,
+            leave = function(body) return BridgeGardening.tendLeave(body) end,
+        }
     end
     if BridgeWorkSelect ~= nil and BridgeWorkSelect.kinds ~= nil then
         BridgeWorkSelect.kinds.harvestCrops = {
@@ -2677,6 +3366,13 @@ local function install()
             maxSide = 8,
             min = 1,
             noneSay = "JobNoFeedSpots",
+        }
+        BridgeWorkSelect.kinds.tendCrops = {
+            collect = function(b) return BridgeGardening.tendSpots(b) end,
+            max = BridgeGardening.MAX_TEND_PLANTS,
+            maxSide = 8,
+            min = 1,
+            noneSay = "JobNoTendSpots",
         }
     end
     log("kinds registered")

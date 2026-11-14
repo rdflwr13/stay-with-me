@@ -2551,6 +2551,7 @@ function BridgeGunRules.removeItemById(body, id)
         end
     else
         container:Remove(item)
+        BridgeGunRules.bumpItems()
         if BridgeGunRules.canSync(container) then
             pcall(function() sendRemoveItemFromContainer(container, item) end)
         end

@@ -4,6 +4,7 @@ BridgeFetch = BridgeFetch or {}
 
 local MARGIN = 6
 local PENDING_TIMEOUT = 240
+BridgeFetch.RECHECK_TICKS = 30
 BridgeFetch.AMMO_SCAN_CAP = 240
 BridgeFetch.AMMO_CACHE_TTL = 120
 BridgeFetch.ammoCache = BridgeFetch.ammoCache or {}
@@ -179,6 +180,14 @@ local function splintSheetOk(it)
 end
 
 
+local function cureMatchAt(index)
+    return function(it)
+        if BridgeGardening == nil or BridgeGardening.CURES == nil then return false end
+        return BridgeGardening.isCureItem(it, BridgeGardening.CURES[index]) == true
+    end
+end
+
+
 BridgeFetch.NEEDS = {
     { id = "axe",            matches = usableAxe },
     { id = "cutTool",        matches = usableCutTool },
@@ -191,6 +200,10 @@ BridgeFetch.NEEDS = {
     { id = "cropFeed", matches = function(it)
         return BridgeGardening ~= nil and BridgeGardening.isFeedItem(it) == true
     end },
+    { id = "cureMildew", matches = cureMatchAt(1) },
+    { id = "cureFlies", matches = cureMatchAt(2) },
+    { id = "cureSlugs", matches = cureMatchAt(3) },
+    { id = "cureAphids", matches = cureMatchAt(4) },
     { id = "ashTool",        matches = ashToolItem },
     { id = "cleanImplement", matches = cleanStainItem },
     { id = "cleanerFluid",   fluid = true, matches = cleanerFluidAmt },
@@ -224,6 +237,13 @@ function BridgeFetch.has(id)
             ok = BridgeGardening ~= nil and BridgeGardening.findWaterContainer(b) ~= nil
         elseif id == "cropFeed" then
             ok = BridgeGardening ~= nil and BridgeGardening.findFeed(b) ~= nil
+        elseif id == "cureMildew" or id == "cureFlies" or id == "cureSlugs" or id == "cureAphids" then
+            if BridgeGardening ~= nil and BridgeGardening.CURES ~= nil then
+                for i = 1, #BridgeGardening.CURES do
+                    local entry = BridgeGardening.CURES[i]
+                    if entry.need == id then ok = BridgeGardening.findCure(b, entry) ~= nil break end
+                end
+            end
         elseif id == "ashTool" then ok = BridgeTask.findAshTool(b) ~= nil
         elseif id == "cleanImplement" then ok = BridgeTask.findCleanStainItem(b) ~= nil
         elseif id == "cleanerFluid" then ok = BridgeTask.findStainCleaner(b) ~= nil
@@ -1075,6 +1095,7 @@ local function jobEnabled(kind)
         elseif kind == "sowSeeds" then ok = BridgeTask.SOWING_ENABLED == 1
         elseif kind == "waterPlants" then ok = BridgeTask.WATER_PLANTS_ENABLED == 1
         elseif kind == "fertilizePlants" then ok = BridgeTask.FEED_PLANTS_ENABLED == 1
+        elseif kind == "tendCrops" then ok = BridgeTask.TEND_ENABLED == 1
         end
     end)
     return ok == true
@@ -1125,6 +1146,16 @@ function BridgeFetch.jobMissing(kind, targets)
                         end
                     end
                 end
+            end
+        elseif kind == "tendCrops" then
+            if BridgeGardening == nil then return end
+            local more = BridgeGardening.tendNeeds(b, targets) or {}
+            for i = 1, #more do
+                local dup = false
+                for j = 1, #out do
+                    if out[j] == more[i] then dup = true break end
+                end
+                if not dup then out[#out + 1] = more[i] end
             end
         elseif kind == "clearPlants" then
             local needCut = false
@@ -1217,19 +1248,28 @@ function BridgeFetch.tick()
     local now = 0
     pcall(function() now = tonumber(Bridge.time) or 0 end)
     if (now - (ps.since or now)) > PENDING_TIMEOUT then
-        BridgeTask.pendingStart = nil
         log("home fetch timed out for " .. tostring(ps.kind))
         pcall(function() BridgeTask.speakMissing(ps.kind) end)
+        BridgeTask.pendingStart = nil
         return
     end
-    local danger = false
-    pcall(function() danger = BridgeTask.dangerNear ~= nil and BridgeTask.dangerNear(Bridge.body) end)
-    if danger then
+    if ps.danger == nil or (now - (ps.dangerAt or -99999)) >= 6 then
+        local danger = false
+        pcall(function() danger = BridgeTask.dangerNear ~= nil and BridgeTask.dangerNear(Bridge.body) == true end)
+        ps.danger = danger
+        ps.dangerAt = now
+    end
+    if ps.danger then
         BridgeTask.pendingStart = nil
         log("home fetch aborted (danger) for " .. tostring(ps.kind))
         return
     end
-    local still = BridgeFetch.jobMissing(ps.kind, ps.targets)
+    local still = ps.still
+    if still == nil or (now - (ps.stillAt or -99999)) >= (BridgeFetch.RECHECK_TICKS or 30) then
+        still = BridgeFetch.jobMissing(ps.kind, ps.targets)
+        ps.still = still
+        ps.stillAt = now
+    end
     if #still == 0 then
         BridgeTask.pendingStart = nil
         log("home supplies arrived, starting " .. tostring(ps.kind))

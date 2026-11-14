@@ -3852,6 +3852,59 @@ BridgeServer.Commands.fertilizePlants = function(player, args)
         tostring(args.x), tostring(args.y), tostring(compost)))
 end
 
+BridgeServer.Commands.curePlants = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local result = { x = args.x, y = args.y, z = args.z, cure = args.cure, ok = false, why = nil }
+    local function reply(why)
+        result.why = why
+        sendServerCommand(player, "Bridge", "curePlantResult", result)
+    end
+    if body == nil or sq == nil then
+        log("curePlants: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    if BridgeGardening == nil or BridgeGardening.CURES == nil then return reply("notloaded") end
+    local entry = nil
+    for i = 1, #BridgeGardening.CURES do
+        if BridgeGardening.CURES[i].cure == args.cure then
+            entry = BridgeGardening.CURES[i]
+            break
+        end
+    end
+    if entry == nil then return reply("badcure") end
+    local uses = math.floor(tonumber(args.uses) or 0)
+    if uses < 1 then uses = 1 end
+    if uses > 10 then uses = 10 end
+    result.uses = uses
+    local plant = BridgeGardening.plantAt(sq, true)
+    if plant == nil then return reply("noplant") end
+    local lvl = 0
+    pcall(function() lvl = tonumber(plant[entry.lvl]) or 0 end)
+    if lvl <= 0 then return reply("nocure") end
+    local rec = record(who)
+    local stored = 0
+    pcall(function()
+        local skills = BridgeData.skillsOf(rec)
+        stored = tonumber(skills.Agriculture) or 0
+    end)
+    local skill = 0
+    pcall(function() skill = BridgeData.levelFromXp("Agriculture", stored) end)
+    local fn = nil
+    pcall(function() fn = plant["cure" .. entry.cure] end)
+    if type(fn) ~= "function" then return reply("nocure") end
+    local done, err = pcall(fn, plant, nil, uses, skill)
+    if not done then
+        log("curePlants: cure failed for " .. tostring(who) .. ": " .. tostring(err))
+        return reply("error")
+    end
+    pcall(function() plant:saveData() end)
+    result.ok = true
+    reply(nil)
+    log(string.format("curePlants: %s %s,%s cure=%s uses=%d ok=true", tostring(who),
+        tostring(args.x), tostring(args.y), tostring(entry.cure), uses))
+end
+
 BridgeServer.Commands.openSeedPacket = function(player, args)
     local who = player:getUsername()
     local rec = record(who)

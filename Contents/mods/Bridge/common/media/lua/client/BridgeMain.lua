@@ -243,6 +243,7 @@ end
 function Bridge.itemsChanged()
     Bridge.itemsDirty = true
     Bridge.itemsDirtyAt = Bridge.time
+    Bridge.itemsChangedSeq = (Bridge.itemsChangedSeq or 0) + 1
     if BridgeBackup ~= nil then
         BridgeBackup.counter = (tonumber(BridgeBackup.counter) or 0) + 1
     end
@@ -5127,18 +5128,16 @@ local function updateZombieBody(body)
 
 
 
-        local snapshotDue
-        if BridgePerf ~= nil and type(BridgePerf.every) == "function" then
-            snapshotDue = BridgePerf.every("snapshot", 60)
-        else
-            snapshotDue = Bridge.zombieTicks % 30 == 15
-        end
+        local zt = Bridge.zombieTicks or 0
+        local fullDue = (zt - (Bridge.snapshotFullAt or 0)) >= 300
+        if fullDue then Bridge.snapshotFullAt = zt end
+        local seq = Bridge.itemsChangedSeq or 0
+        local changed = seq ~= (Bridge.snapshotSeq or -1)
         local transferActive = BridgeTask ~= nil and BridgeTask.active == true
             and (BridgeTask.kind == "deposit" or BridgeTask.kind == "lootArea")
         local transferSnap = false
         if transferActive then
             Bridge.transferSnapPending = true
-            snapshotDue = false
         elseif Bridge.transferSnapPending == true then
             Bridge.transferSnapPending = nil
             transferSnap = true
@@ -5146,8 +5145,10 @@ local function updateZombieBody(body)
         local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
         local transferBusy = type(BridgeInventory.herTransferBusy) == "function" and BridgeInventory.herTransferBusy()
         local busy = showering or transferBusy
+        local wantSnap = transferSnap or itemsDirtyDue or changed or fullDue
+        if transferActive then wantSnap = false end
         local okSnap, list = nil, nil
-        if snapshotDue or transferSnap or itemsDirtyDue then
+        if wantSnap then
             Bridge.itemsDirty = nil
             Bridge.itemsDirtyAt = nil
             if busy then
@@ -5157,6 +5158,7 @@ local function updateZombieBody(body)
             end
         end
         if okSnap then
+            Bridge.snapshotSeq = seq
             local sign = BridgeItems.signature(list)
             if sign ~= Bridge.itemsSign then
                 Bridge.itemsSign = sign
@@ -10184,6 +10186,10 @@ function Bridge.onServerCommand(module, command, args)
     elseif command == "fertilizePlantResult" then
         if BridgeGardening ~= nil then pcall(function() BridgeGardening.onFertilizeResult(args) end) end
         Bridge.result = "feed: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
+    elseif command == "curePlantResult" then
+        if BridgeGardening ~= nil then pcall(function() BridgeGardening.onCureResult(args) end) end
+        Bridge.result = "cure: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
         log(Bridge.result)
     elseif command == "say" and args.text ~= nil then
         local name = args.name or BridgeData.DEFAULT_NAME

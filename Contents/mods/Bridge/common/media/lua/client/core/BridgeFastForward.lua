@@ -205,7 +205,7 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
                 or BridgeTask.kind == "shower" or BridgeTask.kind == "deposit"
                 or BridgeTask.kind == "lootArea" or BridgeTask.kind == "harvestCrops"
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
-                or BridgeTask.kind == "waterPlants")
+                or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops")
         end
     end)
     if job and not seated and not ffJob then return "job" end
@@ -500,7 +500,7 @@ function BridgeFastForward.holdStand(b)
                 or BridgeTask.kind == "emptyFluid" or BridgeTask.kind == "pryDoor"
                 or BridgeTask.kind == "harvestCrops"
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
-                or BridgeTask.kind == "waterPlants") then
+                or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops") then
         local isExerciseAnim = bump == BridgeTask.EXERCISE_ANIM
         if BridgeExercise ~= nil and BridgeExercise.isAnim ~= nil then
             pcall(function() isExerciseAnim = isExerciseAnim or BridgeExercise.isAnim(bump) end)
@@ -749,7 +749,7 @@ function BridgeFastForward.tick()
                 or BridgeTask.kind == "shower" or BridgeTask.kind == "deposit"
                 or BridgeTask.kind == "lootArea" or BridgeTask.kind == "harvestCrops"
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
-                or BridgeTask.kind == "waterPlants") then
+                or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops") then
         if BridgeTask.lastUpdateTick ~= Bridge.tick then pcall(BridgeTask.update, Bridge.body) end
         if Bridge.every(120) then
             log("ff drive: " .. tostring(BridgeTask.kind) .. " time=" .. string.format("%.1f", Bridge.time or 0))

@@ -40,6 +40,10 @@ local MISSING_KEY = {
     cut = "Need_Cut",
     crowbar = "Need_Crowbar",
     cropFeed = "Need_Feed",
+    cureMildew = "Need_Spray",
+    cureFlies = "Need_Spray",
+    cureSlugs = "Need_Spray",
+    cureAphids = "Need_Spray",
 }
 
 
@@ -637,24 +641,18 @@ local function addGardeningMenu(jobs)
     local hasDig = BridgeTask.FURROWS_ENABLED == 1
     local hasSow = BridgeTask.SOWING_ENABLED == 1
         and BridgeTask.kinds ~= nil and BridgeTask.kinds.sowSeeds ~= nil
-    local hasWater = BridgeTask.WATER_PLANTS_ENABLED == 1
-        and BridgeTask.kinds ~= nil and BridgeTask.kinds.waterPlants ~= nil
-    local hasFeed = BridgeTask.FEED_PLANTS_ENABLED == 1
-        and BridgeTask.kinds ~= nil and BridgeTask.kinds.fertilizePlants ~= nil
-    if not hasHarvest and not hasDig and not hasSow and not hasWater and not hasFeed then return end
+    local hasTend = BridgeTask.TEND_ENABLED == 1
+        and BridgeTask.kinds ~= nil and BridgeTask.kinds.tendCrops ~= nil
+    if not hasHarvest and not hasDig and not hasSow and not hasTend then return end
     local gardenOpt = jobs:addOption(tr("Gardening"))
     local garden = ISContextMenu:getNew(jobs)
     jobs:addSubMenu(gardenOpt, garden)
     if hasSow then
         addSowSubMenu(garden, "JobPlantSeeds", BridgeMenu.onJobSowSeeds)
     end
-    if hasWater then
-        local water = garden:addOption(tr("WaterPlants"), nil, BridgeMenu.onJobWaterPlants)
-        if BridgeTask.active then water.notAvailable = true end
-    end
-    if hasFeed then
-        local feed = garden:addOption(tr("FeedCrops"), nil, BridgeMenu.onJobFeedCrops)
-        if BridgeTask.active then feed.notAvailable = true end
+    if hasTend then
+        local tend = garden:addOption(tr("TendCrops"), nil, BridgeMenu.onJobTendCrops)
+        if BridgeTask.active then tend.notAvailable = true end
     end
     if hasHarvest then
         local harvest = garden:addOption(tr("JobHarvestCrops"), nil, BridgeMenu.onJobHarvestCrops)
@@ -1458,6 +1456,19 @@ function BridgeMenu.onJobSowSeeds(kind)
     BridgeWorkSelect.begin(BridgeData.owner(), "sowSeeds")
 end
 
+function BridgeMenu.onJobTendCrops()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if BridgeGardening == nil then return end
+    if not Bridge.alive() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "tendCrops")
+end
+
+function BridgeMenu.onTendCrop(target)
+    if BridgeTask == nil or BridgeGardening == nil or target == nil then return end
+    local res = BridgeTask.start("tendCrops", { target })
+    log("tend crop from menu: " .. tostring(res))
+end
+
 function BridgeMenu.onJobWaterPlants()
     if BridgeTask == nil or BridgeWorkSelect == nil then return end
     if BridgeGardening == nil then return end
@@ -1804,29 +1815,21 @@ function BridgeMenu.onCropMenu(playerNum, context, worldobjects, test)
         end
         return
     end
-    if BridgeTask.WATER_PLANTS_ENABLED == 1 and BridgeTask.kinds ~= nil
-            and BridgeTask.kinds.waterPlants ~= nil
-            and sub:getOptionFromName(tr("WaterPlants")) == nil then
+    if BridgeTask.TEND_ENABLED == 1 and BridgeTask.kinds ~= nil
+            and BridgeTask.kinds.tendCrops ~= nil
+            and sub:getOptionFromName(tr("TendCrop")) == nil then
         local plant = nil
         pcall(function()
             plant = BridgeGardening.plantAt(BridgeGardening.squareAt(target), false)
         end)
-        if BridgeGardening.needsWater(plant) then
-            local opt = sub:addOption(tr("WaterPlants"), target, BridgeMenu.onWaterPlant)
-            if BridgeTask.active then opt.notAvailable = true end
-        end
-    end
-    if BridgeTask.FEED_PLANTS_ENABLED == 1 and BridgeTask.kinds ~= nil
-            and BridgeTask.kinds.fertilizePlants ~= nil
-            and sub:getOptionFromName(tr("FeedCrop")) == nil then
-        local plant = nil
-        pcall(function()
-            plant = BridgeGardening.plantAt(BridgeGardening.squareAt(target), false)
-        end)
-        local haveCompost = BridgeGardening.findFeed(Bridge.body, "compost") ~= nil
-        local haveFertilizer = BridgeGardening.findFeed(Bridge.body, "fertilizer") ~= nil
-        if BridgeGardening.feedKindFor(plant, haveCompost, haveFertilizer) ~= nil then
-            local opt = sub:addOption(tr("FeedCrop"), target, BridgeMenu.onFeedCrop)
+        local sq = nil
+        pcall(function() sq = BridgeGardening.squareAt(target) end)
+        local want = BridgeGardening.needsCure(plant)
+            or BridgeGardening.needsWeed(sq, plant)
+            or BridgeGardening.needsFeed(plant)
+            or BridgeGardening.needsWater(plant)
+        if want then
+            local opt = sub:addOption(tr("TendCrop"), target, BridgeMenu.onTendCrop)
             if BridgeTask.active then opt.notAvailable = true end
         end
     end

@@ -1491,6 +1491,7 @@ local wornBagBody, wornBagAt, wornBagList = nil, -1, nil
 function BridgeInventory.resetWornBags(b)
     if b == nil or wornBagBody == b then
         wornBagBody, wornBagAt, wornBagList = nil, -1, nil
+        BridgeInventory.wornBagGen = (BridgeInventory.wornBagGen or 0) + 1
     end
 end
 
