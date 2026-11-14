@@ -982,6 +982,7 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "harvestCrops" and BridgeTask.HARVESTING_ENABLED ~= 1 then return nil end
     if kind == "digFurrows" and BridgeTask.FURROWS_ENABLED ~= 1 then return nil end
     if kind == "sowSeeds" and (BridgeTask.SOWING_ENABLED ~= 1 or BridgeGardening == nil) then return nil end
+    if kind == "fertilizePlants" and BridgeTask.FEED_PLANTS_ENABLED ~= 1 then return nil end
     if (kind == "openDoors" or kind == "closeDoors") and BridgeTask.DOORS_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)

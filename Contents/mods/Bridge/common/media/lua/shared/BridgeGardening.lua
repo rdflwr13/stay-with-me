@@ -37,6 +37,16 @@ BridgeGardening.WATER_MAX_USES = 10
 BridgeGardening.WATER_PER_USE_ML = 200
 BridgeGardening.MAX_WATER_PLANTS = 80
 
+BridgeGardening.FEED_TIME = 100
+BridgeGardening.FEED_SETTLE = 21
+BridgeGardening.FEED_RANGE = 1.45
+BridgeGardening.MAX_FEED_PLANTS = 80
+BridgeGardening.FEED_YOUNG_GROWTH = 3
+BridgeGardening.FEED_SAY_COOLDOWN = 30 * SECOND
+BridgeGardening.FEED_WORK_SAY_COOLDOWN = 25 * SECOND
+BridgeGardening.FEED_WORK_SAY_CHANCE = 30
+BridgeGardening.FEED_XP = 0
+
 BridgeGardening.serverSeen = BridgeGardening.serverSeen or {}
 BridgeGardening.weighed = BridgeGardening.weighed or {}
 
@@ -2375,6 +2385,219 @@ function BridgeGardening.waterSay(event, slot)
     return sayLine(event, slot)
 end
 
+function BridgeGardening.feedSay(event, slot)
+    return sayLine(event, slot, BridgeGardening.FEED_SAY_COOLDOWN)
+end
+
+function BridgeGardening.feedSeasonOk()
+    local seasons = false
+    pcall(function()
+        local opt = getSandboxOptions():getOptionByName("PlantGrowingSeasons")
+        if opt ~= nil then seasons = opt:getValue() == true end
+    end)
+    if not seasons then return true end
+    local season = nil
+    pcall(function() season = getClimateManager():getSeasonName() end)
+    if season == nil then return true end
+    return tostring(season) ~= "Winter"
+end
+
+function BridgeGardening.needsFeed(plant)
+    if plant == nil then return false end
+    local ok = false
+    pcall(function()
+        local alive = plant:isAlive() == true
+        local state = plant.state
+        local seed = plant.typeOfSeed
+        local grow = tonumber(plant.nbOfGrow) or 0
+        local cursed = plant.cursed == true
+        local composted = plant.compost == true
+        local fert = tonumber(plant.fertilizer) or 0
+        local fed = composted and fert >= 1
+        ok = alive and seed ~= nil and seed ~= "none"
+            and state == "seeded" and grow <= (BridgeGardening.FEED_YOUNG_GROWTH or 3)
+            and not cursed and not fed
+    end)
+    if not ok then return false end
+    return BridgeGardening.feedSeasonOk()
+end
+
+function BridgeGardening.isFeedItem(item)
+    if item == nil then return false end
+    local ok = false
+    pcall(function()
+        local uses = tonumber(item:getCurrentUses()) or 0
+        if uses <= 0 then return end
+        if ItemTag ~= nil and ItemTag.COMPOST ~= nil and item:hasTag(ItemTag.COMPOST) then
+            ok = true
+            return
+        end
+        if ItemTag ~= nil and ItemTag.FERTILIZER ~= nil and item:hasTag(ItemTag.FERTILIZER) then
+            ok = true
+            return
+        end
+        local kind = item:getType()
+        if kind == "CompostBag" or kind == "Fertilizer" then ok = true end
+    end)
+    return ok
+end
+
+function BridgeGardening.feedKindOf(item)
+    if item == nil then return nil end
+    local kind = "fertilizer"
+    pcall(function()
+        if ItemTag ~= nil and ItemTag.COMPOST ~= nil and item:hasTag(ItemTag.COMPOST) then
+            kind = "compost"
+            return
+        end
+        if item:getType() == "CompostBag" then kind = "compost" end
+    end)
+    return kind
+end
+
+function BridgeGardening.findFeed(body, kind)
+    if body == nil then return nil end
+    local best, bestUses = nil, nil
+    local function consider(it)
+        if it == nil or not BridgeGardening.isFeedItem(it) then return end
+        if kind ~= nil and BridgeGardening.feedKindOf(it) ~= kind then return end
+        local uses = 0
+        pcall(function() uses = tonumber(it:getCurrentUses()) or 0 end)
+        if best == nil or uses > bestUses then
+            best, bestUses = it, uses
+        end
+    end
+    local hand = nil
+    pcall(function() hand = body:getPrimaryHandItem() end)
+    consider(hand)
+    pcall(function() hand = body:getSecondaryHandItem() end)
+    consider(hand)
+    local lists = BridgeGardening.bagLists(body)
+    for i = 1, #lists do
+        local items = nil
+        pcall(function() items = lists[i]:getItems() end)
+        if items ~= nil then
+            for j = 0, items:size() - 1 do consider(items:get(j)) end
+        end
+    end
+    return best
+end
+
+function BridgeGardening.feedKindFor(plant, haveCompost, haveFertilizer)
+    if plant == nil then return nil end
+    local composted, fert = false, 0
+    pcall(function()
+        composted = plant.compost == true
+        fert = tonumber(plant.fertilizer) or 0
+    end)
+    if haveCompost == true and not composted then return "compost" end
+    if haveFertilizer == true and fert == 0 then return "fertilizer" end
+    return nil
+end
+
+function BridgeGardening.feedSpots(b)
+    local list = {}
+    if b == nil then return list end
+    local cap = BridgeGardening.MAX_FEED_PLANTS or 80
+    for x = b.x1, b.x2 do
+        for y = b.y1, b.y2 do
+            if #list >= cap then return list end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
+            if sq ~= nil then
+                local plant = BridgeGardening.plantAt(sq, false)
+                if BridgeGardening.needsFeed(plant) then
+                    list[#list + 1] = { x = x, y = y, z = b.z }
+                end
+            end
+        end
+    end
+    return list
+end
+
+function BridgeGardening.fertilizeAt(target, compost, server)
+    if target == nil then return false, "notarget" end
+    local sq = BridgeGardening.squareAt(target)
+    local plant = BridgeGardening.plantAt(sq, true)
+    if plant == nil and server ~= true then plant = BridgeGardening.plantAt(sq, false) end
+    if plant == nil then return false, "noplant" end
+    if not BridgeGardening.needsFeed(plant) then return false, "nofeed" end
+    local useCompost = compost == true
+    local kind = BridgeGardening.feedKindFor(plant, useCompost, not useCompost)
+    if kind == nil then return false, "nofeed" end
+    local skill = 0
+    pcall(function() skill = BridgeSkills.level("Agriculture") end)
+    local ok, err = pcall(function()
+        plant:fertilize({ compost = useCompost, skill = skill })
+    end)
+    if not ok then
+        warn("fertilize failed: " .. tostring(err))
+        return false, "error"
+    end
+    pcall(function() plant:saveData() end)
+    return true, nil
+end
+
+function BridgeGardening.requestFertilize(target, compost)
+    if target == nil then return false end
+    if Bridge == nil or Bridge.mp ~= true or BridgeData == nil then return false end
+    local red = nil
+    pcall(function() red = BridgeData.owner() end)
+    if red == nil then return false end
+    local ok = pcall(function()
+        sendClientCommand(red, "Bridge", "fertilizePlants",
+            { x = target.x, y = target.y, z = target.z, compost = compost == true })
+    end)
+    return ok == true
+end
+
+function BridgeGardening.feedSpend(job)
+    local item = job ~= nil and job.item or nil
+    if item == nil then return false end
+    local spent = false
+    pcall(function()
+        spent = BridgeCare ~= nil and BridgeCare.consume(item, false) == true
+    end)
+    pcall(function()
+        if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+    end)
+    local saved = false
+    pcall(function()
+        if Bridge ~= nil and type(Bridge.saveOutfit) == "function" then
+            saved = Bridge.saveOutfit() == true
+        end
+    end)
+    if not saved and Bridge ~= nil then Bridge.itemsSpentAt = Bridge.time end
+    return spent
+end
+
+function BridgeGardening.onFertilizeResult(args)
+    local T = BridgeTask
+    if T == nil or args == nil then return end
+    if T.active ~= true or T.kind ~= "fertilizePlants" then return end
+    local job = T.feedJob
+    if job == nil or job.pending == nil then return end
+    if tonumber(args.x) ~= job.pending.x or tonumber(args.y) ~= job.pending.y then return end
+    local body = Bridge.body
+    T.feedSoundStop(body)
+    job.pending = nil
+    job.pendingAt = nil
+    if args.ok == true then
+        BridgeTask.feedCommit(body, job)
+        return
+    end
+    local why = tostring(args.why)
+    log("fertilize refused: " .. why)
+    T.feedClearTarget(job)
+    if why == "error" then
+        T.cancel("feed error")
+        return
+    end
+    if why == "gone" or why == "noplant" then
+        pcall(function() Bridge.speak("CantFeedCrop") end)
+    end
+end
+
 local function install()
     if BridgeTask ~= nil and BridgeTask.kinds ~= nil then
         BridgeTask.kinds.harvestCrops = {
@@ -2411,6 +2634,15 @@ local function install()
             update = function(body) return BridgeTask.waterUpdate(body) end,
             leave = function(body) return BridgeTask.waterLeave(body) end,
         }
+        BridgeTask.kinds.fertilizePlants = {
+            available = function(body) return BridgeTask.FEED_PLANTS_ENABLED == 1 end,
+            missing = function(body)
+                if BridgeGardening.findFeed(body) == nil then return "cropFeed" end
+                return nil
+            end,
+            update = function(body) return BridgeTask.feedUpdate(body) end,
+            leave = function(body) return BridgeTask.feedLeave(body) end,
+        }
     end
     if BridgeWorkSelect ~= nil and BridgeWorkSelect.kinds ~= nil then
         BridgeWorkSelect.kinds.harvestCrops = {
@@ -2438,6 +2670,13 @@ local function install()
             maxSide = 8,
             min = 1,
             noneSay = "JobNoWaterPlants",
+        }
+        BridgeWorkSelect.kinds.fertilizePlants = {
+            collect = function(b) return BridgeGardening.feedSpots(b) end,
+            max = BridgeGardening.MAX_FEED_PLANTS,
+            maxSide = 8,
+            min = 1,
+            noneSay = "JobNoFeedSpots",
         }
     end
     log("kinds registered")

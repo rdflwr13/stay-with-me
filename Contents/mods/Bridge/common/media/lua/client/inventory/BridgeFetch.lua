@@ -188,6 +188,9 @@ BridgeFetch.NEEDS = {
     { id = "waterContainer", matches = function(it)
         return BridgeGardening ~= nil and BridgeGardening.isWaterContainer(it) == true
     end },
+    { id = "cropFeed", matches = function(it)
+        return BridgeGardening ~= nil and BridgeGardening.isFeedItem(it) == true
+    end },
     { id = "ashTool",        matches = ashToolItem },
     { id = "cleanImplement", matches = cleanStainItem },
     { id = "cleanerFluid",   fluid = true, matches = cleanerFluidAmt },
@@ -219,6 +222,8 @@ function BridgeFetch.has(id)
         elseif id == "digTool" then ok = BridgeTask.findDigTool(b) ~= nil
         elseif id == "waterContainer" then
             ok = BridgeGardening ~= nil and BridgeGardening.findWaterContainer(b) ~= nil
+        elseif id == "cropFeed" then
+            ok = BridgeGardening ~= nil and BridgeGardening.findFeed(b) ~= nil
         elseif id == "ashTool" then ok = BridgeTask.findAshTool(b) ~= nil
         elseif id == "cleanImplement" then ok = BridgeTask.findCleanStainItem(b) ~= nil
         elseif id == "cleanerFluid" then ok = BridgeTask.findStainCleaner(b) ~= nil
@@ -1069,6 +1074,7 @@ local function jobEnabled(kind)
         elseif kind == "digFurrows" then ok = BridgeTask.FURROWS_ENABLED == 1
         elseif kind == "sowSeeds" then ok = BridgeTask.SOWING_ENABLED == 1
         elseif kind == "waterPlants" then ok = BridgeTask.WATER_PLANTS_ENABLED == 1
+        elseif kind == "fertilizePlants" then ok = BridgeTask.FEED_PLANTS_ENABLED == 1
         end
     end)
     return ok == true
@@ -1089,6 +1095,36 @@ function BridgeFetch.jobMissing(kind, targets)
         elseif kind == "waterPlants" then
             if BridgeGardening == nil or BridgeGardening.findWaterContainer(b) == nil then
                 out[#out + 1] = "waterContainer"
+            end
+        elseif kind == "fertilizePlants" then
+            local haveCompost, haveFertilizer = false, false
+            local want = false
+            if BridgeGardening ~= nil then
+                haveCompost = BridgeGardening.findFeed(b, "compost") ~= nil
+                haveFertilizer = BridgeGardening.findFeed(b, "fertilizer") ~= nil
+                for i = 1, #targets do
+                    local t = targets[i]
+                    local plant = BridgeGardening.plantAt(BridgeGardening.squareAt(t), false)
+                    if BridgeGardening.needsFeed(plant)
+                            and BridgeGardening.feedKindFor(plant, haveCompost, haveFertilizer) ~= nil then
+                        want = true
+                        break
+                    end
+                end
+            end
+            if not want then
+                if haveCompost or haveFertilizer then
+                    out[#out + 1] = "cropFeed"
+                elseif BridgeGardening ~= nil then
+                    for i = 1, #targets do
+                        local t = targets[i]
+                        local plant = BridgeGardening.plantAt(BridgeGardening.squareAt(t), false)
+                        if BridgeGardening.needsFeed(plant) then
+                            out[#out + 1] = "cropFeed"
+                            break
+                        end
+                    end
+                end
             end
         elseif kind == "clearPlants" then
             local needCut = false

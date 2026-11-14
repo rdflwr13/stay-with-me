@@ -3812,6 +3812,46 @@ BridgeServer.Commands.waterPlants = function(player, args)
     log(string.format("waterPlants: %s %s,%s uses=%d", tostring(who), tostring(args.x), tostring(args.y), uses))
 end
 
+BridgeServer.Commands.fertilizePlants = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local result = { x = args.x, y = args.y, z = args.z, ok = false, why = nil }
+    local function reply(why)
+        result.why = why
+        sendServerCommand(player, "Bridge", "fertilizePlantResult", result)
+    end
+    if body == nil or sq == nil then
+        log("fertilizePlants: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    if BridgeGardening == nil then return reply("notloaded") end
+    local compost = args.compost == true
+    local plant = BridgeGardening.plantAt(sq, true)
+    if plant == nil then return reply("noplant") end
+    local okKind = BridgeGardening.feedKindFor(plant, compost, not compost) ~= nil
+    if not BridgeGardening.needsFeed(plant) or not okKind then return reply("nofeed") end
+    local rec = record(who)
+    local stored = 0
+    pcall(function()
+        local skills = BridgeData.skillsOf(rec)
+        stored = tonumber(skills.Agriculture) or 0
+    end)
+    local skill = 0
+    pcall(function() skill = BridgeData.levelFromXp("Agriculture", stored) end)
+    local done, err = pcall(function()
+        plant:fertilize({ compost = compost, skill = skill })
+    end)
+    if not done then
+        log("fertilizePlants: fertilize failed for " .. tostring(who) .. ": " .. tostring(err))
+        return reply("error")
+    end
+    pcall(function() plant:saveData() end)
+    result.ok = true
+    reply(nil)
+    log(string.format("fertilizePlants: %s %s,%s compost=%s ok=true", tostring(who),
+        tostring(args.x), tostring(args.y), tostring(compost)))
+end
+
 BridgeServer.Commands.openSeedPacket = function(player, args)
     local who = player:getUsername()
     local rec = record(who)

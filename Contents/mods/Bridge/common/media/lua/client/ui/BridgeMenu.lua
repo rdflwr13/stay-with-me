@@ -39,6 +39,7 @@ local MISSING_KEY = {
     both = "Need_CleanSupplies",
     cut = "Need_Cut",
     crowbar = "Need_Crowbar",
+    cropFeed = "Need_Feed",
 }
 
 
@@ -638,7 +639,9 @@ local function addGardeningMenu(jobs)
         and BridgeTask.kinds ~= nil and BridgeTask.kinds.sowSeeds ~= nil
     local hasWater = BridgeTask.WATER_PLANTS_ENABLED == 1
         and BridgeTask.kinds ~= nil and BridgeTask.kinds.waterPlants ~= nil
-    if not hasHarvest and not hasDig and not hasSow and not hasWater then return end
+    local hasFeed = BridgeTask.FEED_PLANTS_ENABLED == 1
+        and BridgeTask.kinds ~= nil and BridgeTask.kinds.fertilizePlants ~= nil
+    if not hasHarvest and not hasDig and not hasSow and not hasWater and not hasFeed then return end
     local gardenOpt = jobs:addOption(tr("Gardening"))
     local garden = ISContextMenu:getNew(jobs)
     jobs:addSubMenu(gardenOpt, garden)
@@ -648,6 +651,10 @@ local function addGardeningMenu(jobs)
     if hasWater then
         local water = garden:addOption(tr("WaterPlants"), nil, BridgeMenu.onJobWaterPlants)
         if BridgeTask.active then water.notAvailable = true end
+    end
+    if hasFeed then
+        local feed = garden:addOption(tr("FeedCrops"), nil, BridgeMenu.onJobFeedCrops)
+        if BridgeTask.active then feed.notAvailable = true end
     end
     if hasHarvest then
         local harvest = garden:addOption(tr("JobHarvestCrops"), nil, BridgeMenu.onJobHarvestCrops)
@@ -1464,6 +1471,19 @@ function BridgeMenu.onWaterPlant(target)
     log("water plant from menu: " .. tostring(res))
 end
 
+function BridgeMenu.onJobFeedCrops()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if BridgeGardening == nil then return end
+    if not Bridge.alive() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "fertilizePlants")
+end
+
+function BridgeMenu.onFeedCrop(target)
+    if BridgeTask == nil or BridgeGardening == nil or target == nil then return end
+    local res = BridgeTask.start("fertilizePlants", { target })
+    log("feed crop from menu: " .. tostring(res))
+end
+
 function BridgeMenu.onPlantSeedFurrow(target, kind)
     if BridgeTask == nil or BridgeGardening == nil then return end
     if target == nil or kind == nil then return end
@@ -1793,6 +1813,20 @@ function BridgeMenu.onCropMenu(playerNum, context, worldobjects, test)
         end)
         if BridgeGardening.needsWater(plant) then
             local opt = sub:addOption(tr("WaterPlants"), target, BridgeMenu.onWaterPlant)
+            if BridgeTask.active then opt.notAvailable = true end
+        end
+    end
+    if BridgeTask.FEED_PLANTS_ENABLED == 1 and BridgeTask.kinds ~= nil
+            and BridgeTask.kinds.fertilizePlants ~= nil
+            and sub:getOptionFromName(tr("FeedCrop")) == nil then
+        local plant = nil
+        pcall(function()
+            plant = BridgeGardening.plantAt(BridgeGardening.squareAt(target), false)
+        end)
+        local haveCompost = BridgeGardening.findFeed(Bridge.body, "compost") ~= nil
+        local haveFertilizer = BridgeGardening.findFeed(Bridge.body, "fertilizer") ~= nil
+        if BridgeGardening.feedKindFor(plant, haveCompost, haveFertilizer) ~= nil then
+            local opt = sub:addOption(tr("FeedCrop"), target, BridgeMenu.onFeedCrop)
             if BridgeTask.active then opt.notAvailable = true end
         end
     end
