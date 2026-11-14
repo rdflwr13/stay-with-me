@@ -249,7 +249,7 @@
     "Sandbox_StayWithMe_MaxSpeechLines": "Maximale Sprachzeilen",
     "Sandbox_StayWithMe_MaxSpeechLines_tooltip": "Wie viele Sprachzeilen zu Fuß der Begleiter gleichzeitig sichtbar behält. 1 behält die bisherige einzelne Zeile. Bis zu 5. Jede Zeile bleibt für die normale Sprachdauer. Begrenzt auch die Untertitelzeilen, wenn Untertitel an sind. Auto-Zeilen beachten dies nur bei aktivierten Untertiteln. Standard: 5.",
     "Sandbox_StayWithMe_BreathingVolume": "Atemlautstärke",
-    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Steuert die Lautstärke des Atems des Begleiters, wenn er außer Atem ist. „Aus“ deaktiviert ihn. „Leise“ ist 50 % leiser als Normal. „Laut“ ist 50 % lauter. Standard: Normal.",
+    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Steuert die Lautstärke des Atems des Begleiters, wenn er außer Atem ist. „Aus“ deaktiviert ihn. „Leise“ ist 50 %% leiser als Normal. „Laut“ ist 50 %% lauter. Standard: Normal.",
     "Sandbox_StayWithMe_BreathingVolume_Values_option1": "Aus",
     "Sandbox_StayWithMe_BreathingVolume_Values_option2": "Leise",
     "Sandbox_StayWithMe_BreathingVolume_Values_option3": "Normal (Standard)",

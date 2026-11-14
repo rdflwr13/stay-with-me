@@ -247,7 +247,7 @@
     "Sandbox_StayWithMe_SpeechLanguage_Values_option8": "Russo",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Mod di traduzione (automatica)",
     "Sandbox_StayWithMe_BreathingVolume": "Volume della respirazione",
-    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Regola il volume della respirazione del compagno quando è senza fiato. Disattivato elimina il suono. Basso è più silenzioso del 50% rispetto a Normale. Alto è più forte del 50%. Predefinito: Normale.",
+    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Regola il volume della respirazione del compagno quando è senza fiato. Disattivato elimina il suono. Basso è più silenzioso del 50%% rispetto a Normale. Alto è più forte del 50%%. Predefinito: Normale.",
     "Sandbox_StayWithMe_BreathingVolume_Values_option1": "Disattivato",
     "Sandbox_StayWithMe_BreathingVolume_Values_option2": "Basso",
     "Sandbox_StayWithMe_BreathingVolume_Values_option3": "Normale (predefinito)",

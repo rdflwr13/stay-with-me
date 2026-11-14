@@ -1067,6 +1067,22 @@ function BridgeGunRules.describe(item)
         end)
         if not ok then diag("gunsmith-describe", "Gunsmith describe hook failed") end
     end
+    local xanny = rawget(_G, "XannyArmsCore")
+    if xanny ~= nil and type(xanny.peek) == "function"
+            and type(xanny.getMagazineOptions) == "function" then
+        local weapon = nil
+        pcall(function() weapon = xanny.peek("weapon", out.fullType) end)
+        if weapon ~= nil and weapon.magazineInterfaces ~= nil then
+            local ok, list = pcall(xanny.getMagazineOptions, out.fullType)
+            if ok and type(list) == "table" then
+                for _, entry in ipairs(list) do
+                    if type(entry) == "table" and type(entry.fullType) == "string" then
+                        addMag(entry.fullType)
+                    end
+                end
+            end
+        end
+    end
     out.hasMagazineProfile = #out.magazineTypes > 0
     out.hasClipProfile = #out.clipTypes > 0
     out.external = out.hasMagazineProfile

@@ -2856,7 +2856,6 @@ end
 
 local function speechOverlayApplies(z)
     if z == nil or z ~= Bridge.body then return false end
-    if Bridge.mp then return false end
     if BridgeCar ~= nil and type(BridgeCar.withRed) == "function" then
         local ok, inCar = pcall(BridgeCar.withRed, BridgeData.owner())
         if ok and inCar then return false end
@@ -3004,6 +3003,7 @@ local function speechWrapMeasured(font, text, maxWidth, hardSplit)
 end
 
 function Bridge.speechOverlayDraw()
+    if Bridge == nil then return end
     if not Bridge.speechBubblesOn() then
         if #Bridge.speechLines > 0 then Bridge.clearSpeechOverlay() end
         return
@@ -3013,7 +3013,6 @@ function Bridge.speechOverlayDraw()
     if body == nil or owner == nil then return end
     Bridge.speechOverlayPrune()
     if #Bridge.speechLines == 0 then return end
-    if Bridge.mp then return end
     if Bridge.speechMaxLines() <= 1 then Bridge.clearSpeechOverlay() return end
     if BridgeCar ~= nil and type(BridgeCar.withRed) == "function" then
         local carOK, inCar = pcall(BridgeCar.withRed, owner)
@@ -3132,6 +3131,7 @@ end
 
 
 function Bridge.subtitleDraw()
+    if Bridge == nil then return end
     if not Bridge.subtitlesOn() then
         if #Bridge.subtitleLines > 0 then Bridge.clearSubtitles() end
         return
@@ -3282,12 +3282,12 @@ function Bridge.speechInfo()
     local typeName = typeFace ~= nil and typeFace.name or "Default"
     local cr, cg, cb = Bridge.speechColor()
     if Bridge.subtitlesOn() then Bridge.subtitlePrune() end
-    return string.format("font=%s type=%s color=%d,%d,%d seconds=%s remaining=%dms mode=%d subtitles=%d",
+    return string.format("font=%s type=%s color=%d,%d,%d seconds=%s remaining=%dms mode=%d subtitles=%d overlay=%d",
         tostring(SPEECH.FONT_NAMES[Bridge.speechFontIndex()] or "Dialogue"),
         tostring(typeName),
         math.floor(cr * 255 + 0.5), math.floor(cg * 255 + 0.5), math.floor(cb * 255 + 0.5),
         tostring(Bridge.speechSeconds()), remaining,
-        Bridge.companionSpeechMode(), #Bridge.subtitleLines)
+        Bridge.companionSpeechMode(), #Bridge.subtitleLines, #Bridge.speechLines)
 end
 
 

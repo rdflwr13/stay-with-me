@@ -1788,7 +1788,9 @@ function BridgeWindow.neededSize()
         w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr("OptHomeAllFloors")) + PAD)
         w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("MarkAllHome")))
         w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("ClearMarks")))
-        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("MarkedCount")))
+        local marks = 0
+        if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then marks = BridgeDeposit.markedCount() end
+        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("MarkedCount", marks)))
     end
     return math.max(BridgeWindow.WIDTH, math.ceil(w))
 end

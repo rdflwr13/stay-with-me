@@ -775,8 +775,15 @@ function BridgeDeposit.resolveStoredRef(ref)
         local objs = nil
         pcall(function() objs = sq:getObjects() end)
         if objs == nil then return nil end
+        local n = 0
+        pcall(function() n = objs:size() end)
+        local idx = tonumber(ref.o)
+        if idx == nil or idx < 0 or idx >= n then
+            log(string.format("stale mark %d,%d,%d o=%s size=%d", tx, ty, tz, tostring(ref.o), n))
+            return nil
+        end
         local o = nil
-        pcall(function() o = objs:get(tonumber(ref.o) or -1) end)
+        pcall(function() o = objs:get(idx) end)
         if o == nil then return nil end
         if tonumber(ref.c) ~= nil and tonumber(ref.c) >= 0 then
             pcall(function() cont = o:getContainerByIndex(tonumber(ref.c)) end)
