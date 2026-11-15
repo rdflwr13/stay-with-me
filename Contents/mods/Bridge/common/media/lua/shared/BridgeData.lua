@@ -1940,7 +1940,7 @@ if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeData] loaded") end
 
 
 
-BridgeData.SKILL_KEYS = { "Strength", "Axe", "Blunt", "SmallBlunt", "LongBlade", "SmallBlade", "Spear", "Maintenance", "Fitness", "Aiming", "Reloading", "Doctor", "Agriculture" }
+BridgeData.SKILL_KEYS = { "Strength", "Axe", "Blunt", "SmallBlunt", "LongBlade", "SmallBlade", "Spear", "Maintenance", "Fitness", "Aiming", "Reloading", "Doctor", "Agriculture", "Husbandry" }
 
 BridgeData.SKILL_PERK = { Agriculture = "Farming" }
 

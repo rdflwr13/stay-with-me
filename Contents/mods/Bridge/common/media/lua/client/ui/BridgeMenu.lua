@@ -664,6 +664,24 @@ local function addGardeningMenu(jobs)
     end
 end
 
+local function addAnimalMenu(jobs)
+    if jobs == nil or BridgeTask == nil or BridgeTask.kinds == nil then return end
+    local pet = BridgeTask.PET_ANIMALS_ENABLED == 1 and BridgeTask.kinds.petAnimals ~= nil
+    local trough = BridgeTask.TROUGHS_ENABLED == 1 and BridgeTask.kinds.fillTroughs ~= nil
+    if not pet and not trough then return end
+    local animalOpt = jobs:addOption(tr("Animals"))
+    local animals = ISContextMenu:getNew(jobs)
+    jobs:addSubMenu(animalOpt, animals)
+    if pet then
+        local opt = animals:addOption(tr("JobPetAnimals"), nil, BridgeMenu.onJobPetAnimals)
+        if BridgeTask.active then opt.notAvailable = true end
+    end
+    if trough then
+        local opt = animals:addOption(tr("JobFillTroughs"), nil, BridgeMenu.onJobFillTroughs)
+        if BridgeTask.active then opt.notAvailable = true end
+    end
+end
+
 local function buildJobs(context, playerNum, env)
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
     local jobsOption = context:addOption(tr("Jobs"))
@@ -671,6 +689,7 @@ local function buildJobs(context, playerNum, env)
     context:addSubMenu(jobsOption, jobs)
     addLootWorkMenu(jobs)
     addGardeningMenu(jobs)
+    addAnimalMenu(jobs)
     if BridgeTask.DOORS_ENABLED == 1 then
         local doorsOption = jobs:addOption(tr("Doors"))
         local doors = ISContextMenu:getNew(jobs)
@@ -1422,6 +1441,24 @@ function BridgeMenu.onJobMoveCorpses()
     BridgeWorkSelect.begin(BridgeData.owner(), "moveCorpses")
 end
 
+function BridgeMenu.onJobPetAnimals()
+    if BridgeTask == nil or BridgeWorkSelect == nil or BridgeData == nil then return end
+    if BridgeAnimalCare == nil then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "petAnimals")
+end
+
+function BridgeMenu.onJobFillTroughs()
+    if BridgeTask == nil or BridgeWorkSelect == nil or BridgeData == nil then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "fillTroughs")
+end
+
+function BridgeMenu.onPetAnimalOrder(a)
+    if BridgeTask == nil or BridgeAnimalCare == nil then return end
+    local target = BridgeAnimalCare.targetFor(a)
+    if target == nil then return end
+    BridgeTask.start("petAnimals", { target })
+end
+
 function BridgeMenu.onJobOpenDoors()
     if BridgeTask == nil or BridgeWorkSelect == nil then return end
     if not Bridge.alive() and not (BridgeCar ~= nil and BridgeCar.isInside()) then return end
@@ -1569,6 +1606,7 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     sub:addSubMenu(jobsOption, jobs)
     addLootWorkMenu(jobs)
     addGardeningMenu(jobs)
+    addAnimalMenu(jobs)
     if BridgeTask.DOORS_ENABLED == 1 then
         local doorsOption = jobs:addOption(tr("Doors"))
         local doors = ISContextMenu:getNew(jobs)
@@ -1727,6 +1765,45 @@ local function rinTopMenu(context)
     sub = ISContextMenu:getNew(context)
     context:addSubMenu(parent, sub)
     return sub
+end
+BridgeMenu.rinTopMenu = rinTopMenu
+
+function BridgeMenu.onAnimalMenu(playerNum, context, animalsList, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.kinds == nil or BridgeTask.kinds.petAnimals == nil then return end
+    if BridgeTask.PET_ANIMALS_ENABLED ~= 1 then return end
+    if BridgeAnimalCare == nil then return end
+    if not present() then return end
+    if type(animalsList) ~= "table" then return end
+    for i = 1, #animalsList do
+        local a = animalsList[i]
+        local isAnimal = false
+        pcall(function() isAnimal = instanceof(a, "IsoAnimal") == true end)
+        if isAnimal and BridgeAnimalCare.isTended(a) then
+            local label = nil
+            pcall(function() label = a:getFullName() end)
+            local parent = nil
+            if label ~= nil then pcall(function() parent = context:getOptionFromName(label) end) end
+            local verified = parent ~= nil and parent.subOption ~= nil
+                and parent.onHighlightParams ~= nil and parent.onHighlightParams[1] == a
+            if verified then
+                local animalSub = nil
+                pcall(function() animalSub = context:getSubMenu(parent.subOption) end)
+                if animalSub ~= nil then
+                    local sub = rinTopMenu(animalSub)
+                    if sub ~= nil then
+                        local opt = sub:addOption(tr("JobPetAnimal"), a, BridgeMenu.onPetAnimalOrder)
+                        tip(opt, tr("JobPetAnimalTip"))
+                        if BridgeTask.active or not BridgeAnimalCare.canPet(a) then
+                            opt.notAvailable = true
+                            tip(opt, tr("JobPetNotReadyTip"))
+                        end
+                    end
+                end
+            end
+        end
+    end
 end
 
 local function addCompanion(context, obj, label, target, fn)
@@ -2616,6 +2693,103 @@ function BridgeMenu.addWashTo(menu, worldobjects, playerNum)
     BridgeMenu.addRinActions(menu, sink)
 end
 
+function BridgeMenu.onFillTrough(lua, iso)
+    if BridgeTask == nil or BridgeTask.kinds.fillTroughs == nil then return end
+    if lua == nil or iso == nil then return end
+    local x, y, z = tonumber(lua.x), tonumber(lua.y), tonumber(lua.z)
+    if x == nil or y == nil or z == nil then
+        pcall(function()
+            local sq = iso:getSquare()
+            if sq ~= nil then x, y, z = sq:getX(), sq:getY(), sq:getZ() end
+        end)
+    end
+    if x == nil or y == nil or z == nil then return end
+    BridgeTask.start("fillTroughs", { { x = x, y = y, z = z, trough = iso, lua = lua } })
+end
+
+function BridgeMenu.onTroughMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+    if BridgeTask.TROUGHS_ENABLED ~= 1 or BridgeTask.kinds.fillTroughs == nil then return end
+    if CFeedingTroughSystem == nil or CFeedingTroughSystem.instance == nil then return end
+    if not present() then return end
+    if not BridgeMenu.inTalkRange() then return end
+    local lua, iso = nil, nil
+    for _, o in ipairs(worldobjects or {}) do
+        local sq = nil
+        pcall(function() sq = o:getSquare() end)
+        if sq ~= nil then
+            pcall(function() lua = CFeedingTroughSystem.instance:getLuaObjectOnSquare(sq) end)
+            if lua ~= nil then
+                pcall(function() iso = lua:getIsoObject() end)
+                break
+            end
+        end
+    end
+    if lua == nil or iso == nil then return end
+    local water, maxWater = nil, nil
+    pcall(function() water = tonumber(iso:getWater()) end)
+    pcall(function() maxWater = tonumber(iso:getMaxWater()) end)
+    if water == nil and lua.water ~= nil then water = tonumber(lua.water) end
+    if maxWater == nil and lua.maxWater ~= nil then maxWater = tonumber(lua.maxWater) end
+    local feed, maxFeed = 0, 0
+    pcall(function() feed = iso:getCurrentFeedAmount() or 0 end)
+    pcall(function() maxFeed = iso:getMaxFeed() or 0 end)
+    local lowWater = maxWater ~= nil and maxWater > 0 and water ~= nil and water < maxWater * 0.5
+    local lowFeed = maxFeed ~= nil and maxFeed > 0 and feed < maxFeed * 0.5
+    if not lowWater and not lowFeed then return end
+    local sub = context.troughSubmenu
+    if sub == nil then
+        local names = {}
+        pcall(function()
+            local n = ISWorldObjectContextMenu.getMoveableDisplayName(iso)
+            if n ~= nil then names[#names + 1] = n end
+        end)
+        pcall(function()
+            local n = iso:getFluidUiName()
+            if n ~= nil then names[#names + 1] = n end
+        end)
+        names[#names + 1] = getText("ContextMenu_FeedingTrough")
+        for i = 1, #names do
+            local nm = names[i]
+            if type(nm) == "string" and nm ~= "" then
+                local parent = nil
+                pcall(function() parent = context:getOptionFromName(nm) end)
+                if parent ~= nil and parent.subOption ~= nil then
+                    pcall(function() sub = context:getSubMenu(parent.subOption) end)
+                    if sub ~= nil then break end
+                end
+            end
+        end
+    end
+    local rin = nil
+    if sub ~= nil then
+        local rinOpt = nil
+        pcall(function() rinOpt = sub:getOptionFromName(name()) end)
+        if rinOpt == nil then
+            pcall(function()
+                rinOpt = sub:addOption(name())
+                local rinSub = ISContextMenu:getNew(sub)
+                sub:addSubMenu(rinOpt, rinSub)
+                rin = rinSub
+            end)
+        else
+            pcall(function() rin = sub:getSubMenu(rinOpt.subOption) end)
+        end
+    end
+    if rin == nil then rin = BridgeMenu.rinTopMenu(context) end
+    if rin == nil then return end
+    local dupe = nil
+    pcall(function()
+        dupe = rin:getOptionFromName(tr("JobFillTrough"))
+            or rin:getOptionFromName(tr("JobFillTroughs"))
+    end)
+    if dupe ~= nil then return end
+    local opt = rin:addOption(tr("JobFillTrough"), lua, BridgeMenu.onFillTrough, iso)
+    if BridgeTask.active then opt.notAvailable = true end
+end
+
 local function onCarDoorMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -2653,7 +2827,11 @@ Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onSitMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLayMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onPryMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWashSinkMenu)
+Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onTroughMenu)
 Events.OnFillWorldObjectContextMenu.Add(onCarDoorMenu)
+if Events.OnClickedAnimalForContext ~= nil then
+    Events.OnClickedAnimalForContext.Add(BridgeMenu.onAnimalMenu)
+end
 
 Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
     if Bridge ~= nil and Bridge.claimMenuFix ~= nil then pcall(Bridge.claimMenuFix, playerNum, context, worldobjects, test) end

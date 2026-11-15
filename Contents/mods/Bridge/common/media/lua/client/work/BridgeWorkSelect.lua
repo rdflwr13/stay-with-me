@@ -846,6 +846,68 @@ function BridgeWorkSelect.doorsIn(b, mode)
     return list
 end
 
+function BridgeWorkSelect.troughsIn(b)
+    local out = {}
+    if type(b) ~= "table" then return out end
+    if CFeedingTroughSystem == nil or CFeedingTroughSystem.instance == nil then return out end
+    local seen = {}
+    local z = math.floor(tonumber(b.z) or 0)
+    local max = 10
+    for x = b.x1, b.x2 do
+        if #out >= max then return out end
+        for y = b.y1, b.y2 do
+            if #out >= max then return out end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+            if sq ~= nil then
+                local lua = nil
+                pcall(function() lua = CFeedingTroughSystem.instance:getLuaObjectOnSquare(sq) end)
+                if lua ~= nil then
+                    local master = nil
+                    pcall(function()
+                        local lx, ly = tonumber(lua.linkedX), tonumber(lua.linkedY)
+                        if lx ~= nil and ly ~= nil and lx > 0 and ly > 0 then
+                            local msq = getCell():getGridSquare(lx, ly, z)
+                            if msq ~= nil then
+                                master = CFeedingTroughSystem.instance:getLuaObjectOnSquare(msq)
+                            end
+                        end
+                    end)
+                    local use = master or lua
+                    if seen[use] ~= true then
+                        seen[use] = true
+                        local iso = nil
+                        pcall(function() iso = use:getIsoObject() end)
+                        if iso ~= nil then
+                            local water, maxWater = nil, nil
+                            pcall(function() water = tonumber(iso:getWater()) end)
+                            pcall(function() maxWater = tonumber(iso:getMaxWater()) end)
+                            if water == nil and use.water ~= nil then water = tonumber(use.water) end
+                            if maxWater == nil and use.maxWater ~= nil then maxWater = tonumber(use.maxWater) end
+                            local feed, maxFeed = 0, 0
+                            pcall(function() feed = iso:getCurrentFeedAmount() or 0 end)
+                            pcall(function() maxFeed = iso:getMaxFeed() or 0 end)
+                            local lowWater = maxWater ~= nil and maxWater > 0
+                                and water ~= nil and water < maxWater * 0.5
+                            local lowFeed = maxFeed ~= nil and maxFeed > 0 and feed < maxFeed * 0.5
+                            if lowWater or lowFeed then
+                                out[#out + 1] = {
+                                    x = tonumber(use.x) or x,
+                                    y = tonumber(use.y) or y,
+                                    z = tonumber(use.z) or z,
+                                    trough = iso,
+                                    lua = use,
+                                }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
 function BridgeWorkSelect.isDestinationValid(sq)
     if sq == nil then return false end
     local floor = nil
@@ -929,6 +991,13 @@ BridgeWorkSelect.kinds = {
         min = 1,
         noneSay = "JobNoSowSpots",
     },
+    fillTroughs = {
+        collect = function(b) return BridgeWorkSelect.troughsIn(b) end,
+        max = 10,
+        maxSide = 40,
+        min = 1,
+        noneSay = "JobNoTroughs",
+    },
 }
 
 function BridgeWorkSelect.sortTargets(targets)
@@ -984,6 +1053,7 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "sowSeeds" and (BridgeTask.SOWING_ENABLED ~= 1 or BridgeGardening == nil) then return nil end
     if kind == "fertilizePlants" and BridgeTask.FEED_PLANTS_ENABLED ~= 1 then return nil end
     if kind == "tendCrops" and BridgeTask.TEND_ENABLED ~= 1 then return nil end
+    if kind == "fillTroughs" and BridgeTask.TROUGHS_ENABLED ~= 1 then return nil end
     if (kind == "openDoors" or kind == "closeDoors") and BridgeTask.DOORS_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)

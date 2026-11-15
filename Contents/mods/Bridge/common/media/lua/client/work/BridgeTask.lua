@@ -15,6 +15,8 @@ BridgeTask.SOWING_ENABLED = 1
 BridgeTask.WATER_PLANTS_ENABLED = 1
 BridgeTask.FEED_PLANTS_ENABLED = 1
 BridgeTask.TEND_ENABLED = 1
+BridgeTask.PET_ANIMALS_ENABLED = 1
+BridgeTask.TROUGHS_ENABLED = 1
 
 
 
@@ -29,6 +31,17 @@ local function ffMult()
     return m
 end
 BridgeTask.ffMult = ffMult
+
+function BridgeTask.troughSay(base)
+    local pick = 1
+    pcall(function() pick = ZombRand(1, 4) end)
+    if pick < 1 or pick > 3 then pick = 1 end
+    if pick == BridgeTask.troughLastLine then pick = pick % 3 + 1 end
+    BridgeTask.troughLastLine = pick
+    local key = base
+    if pick == 2 then key = base .. "2" elseif pick == 3 then key = base .. "3" end
+    if Bridge ~= nil and Bridge.speak ~= nil then pcall(Bridge.speak, key) end
+end
 
 local function exhaustionProfile()
     local bf = rawget(_G, "BridgeFight")
@@ -57,6 +70,12 @@ BridgeTask.ATTACK_AT = 0.5 * SECOND
 BridgeTask.CHOP_TIMEOUT = 30 * SECOND
 BridgeTask.WALK_TIMEOUT = 20 * SECOND
 BridgeTask.HOME_WATER_TTL = 600
+BridgeTask.TROUGH_LOW = 0.5
+BridgeTask.TROUGH_REACH = 1.45
+BridgeTask.TROUGH_MAX_TRIPS = 60
+BridgeTask.TROUGH_FEED_TRIP = 20
+BridgeTask.TROUGH_GRASS_RADIUS = 12
+BridgeTask.TROUGH_PENDING_TIMEOUT = 20 * SECOND
 BridgeTask.LOOT_DESTS_TTL = 30
 BridgeTask.LOOT_SRC_TTL = 120
 
@@ -2832,6 +2851,17 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     if type(targets) ~= "table" then return "no targets" end
     if #targets == 0 and def.noTargets ~= true then return "no targets" end
 
+    if kind == "fillTroughs" and type(BridgeTask.troughsNeedWork) == "function" then
+        local anyNeed = false
+        for i = 1, #targets do
+            if BridgeTask.troughsNeedWork(targets[i]) then anyNeed = true break end
+        end
+        if not anyNeed then
+            Bridge.speak("JobTroughFull")
+            return "unavailable"
+        end
+    end
+
     BridgeTask.pendingStart = nil
 
     if BridgeFetch ~= nil and type(BridgeFetch.primeJob) == "function" then
@@ -2960,6 +2990,52 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     BridgeTask.windowTries, BridgeTask.windowSeen, BridgeTask.windowLoopKey = nil, nil, nil
     BridgeTask.doneCount = 0
     BridgeTask.failCount = 0
+    if kind == "petAnimals" then
+        BridgeTask.petPending = nil
+        BridgeTask.petPendingAt = nil
+        BridgeTask.petHeld = nil
+        BridgeTask.petStart = nil
+        BridgeTask.petTicks = nil
+        BridgeTask.petRetargets = 0
+        BridgeTask.petRetryTarget = nil
+        BridgeTask.petFarRetries = 0
+        BridgeTask.petSaid = nil
+        BridgeTask.petFailSaid = nil
+        BridgeTask.petIdSeq = nil
+    end
+    if kind == "fillTroughs" then
+        BridgeTask.troughPhase = nil
+        BridgeTask.troughTrip = 0
+        BridgeTask.troughTripFeed = 0
+        BridgeTask.troughPending = nil
+        BridgeTask.troughPendingAt = nil
+        BridgeTask.troughFeedItem = nil
+        BridgeTask.troughFeedPending = nil
+        BridgeTask.troughFeedAt = nil
+        BridgeTask.troughFeedStart = nil
+        BridgeTask.troughGrassTarget = nil
+        BridgeTask.troughGrassWaitAt = nil
+        BridgeTask.troughClear = nil
+        BridgeTask.troughFeedApproachFor = nil
+        BridgeTask.troughFeedRetryTarget = nil
+        BridgeTask.troughFeedPulled = nil
+        BridgeTask.troughWaterApproachFor = nil
+        BridgeTask.troughSaidWater = false
+        BridgeTask.troughSaidRefill = false
+        BridgeTask.troughSaidPour = false
+        BridgeTask.troughSaidFeed = false
+        BridgeTask.troughSaidGrass = false
+        BridgeTask.troughSaidNoWater = false
+        BridgeTask.troughSaidNoFeed = false
+        BridgeTask.troughSaidFull = false
+        BridgeTask.troughFailed = false
+        BridgeTask.troughLastLine = nil
+        BridgeTask.troughSeq = 0
+        BridgeTask.troughSig = nil
+        BridgeTask.troughSigAt = nil
+        BridgeTask.troughRefillAt = nil
+        BridgeTask.troughWater = setmetatable({}, { __index = BridgeTask })
+    end
     BridgeTask.spokeNoPath = false
     BridgeTask.spokeUnreachable = false
     BridgeTask.blockedReason = nil
@@ -3196,6 +3272,10 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         Bridge.speak("DoorsCloseStart")
     elseif kind == "deposit" then
         Bridge.speak("JobDepositStart")
+    elseif kind == "petAnimals" then
+        Bridge.speak("JobPetStart")
+    elseif kind == "fillTroughs" then
+        Bridge.speak("JobTroughStart")
     elseif startText ~= nil then
         Bridge.speakText(startText)
     else
@@ -3424,6 +3504,10 @@ function BridgeTask.finish()
                 or finishKind == "shower" or finishKind == "anim" or finishKind == "harvestCrops"
                 or finishKind == "digFurrows" or finishKind == "sowSeeds"
                 or finishKind == "fertilizePlants" or finishKind == "tendCrops" then
+        elseif finishKind == "petAnimals" then
+            if (BridgeTask.doneCount or 0) > 0 then Bridge.speak("JobPetDone") end
+        elseif finishKind == "fillTroughs" then
+            if (BridgeTask.doneCount or 0) > 0 then BridgeTask.troughSay("JobTroughDone") end
         elseif depositFull then
             Bridge.speak("JobLootFull")
         elseif wasLootFull then
@@ -3446,6 +3530,39 @@ end
 function BridgeTask.progress()
     if not BridgeTask.active or BridgeTask.state ~= "running" then return nil end
     local t = Bridge.time
+    if BridgeTask.kind == "fillTroughs" then
+        local T = BridgeTask.troughWater
+        if T ~= nil and T.waterFill ~= nil and T.waterFill.fillTicks ~= nil
+                and T.waterFill.fillSince ~= nil then
+            local span = T.waterFill.fillTicks
+            if span <= 0 then span = 1 end
+            local p = (Bridge.time - T.waterFill.fillSince) * ffMult() / span
+            if p < 0 then p = 0 elseif p > 1 then p = 1 end
+            return p
+        end
+        if T ~= nil and T.waterPourStart ~= nil and T.waterPourSpan ~= nil then
+            local span = T.waterPourSpan
+            if span <= 0 then span = 1 end
+            local p = (Bridge.time - T.waterPourStart) * ffMult() / span
+            if p < 0 then p = 0 elseif p > 1 then p = 1 end
+            return p
+        end
+        if BridgeTask.troughFeedStart ~= nil then
+            local span = BridgeTask.LOOT_ITEM_TIME or 30
+            if span <= 0 then span = 1 end
+            local p = (Bridge.time - BridgeTask.troughFeedStart) * ffMult() / span
+            if p < 0 then p = 0 elseif p > 1 then p = 1 end
+            return p
+        end
+    end
+    if BridgeTask.kind == "petAnimals" and BridgeTask.phase == "pose"
+            and BridgeTask.petStart ~= nil and BridgeTask.petTicks ~= nil then
+        local span = BridgeTask.petTicks
+        if span <= 0 then span = 1 end
+        local p = (t - BridgeTask.petStart) * ffMult() / span
+        if p < 0 then p = 0 elseif p > 1 then p = 1 end
+        return p
+    end
     if BridgeTask.phase == "scrub" and BridgeTask.scrubStart ~= nil then
         local span = BridgeTask.cleanSpan or BridgeTask.SCRUB_TIME or 1
         if span <= 0 then span = 1 end
@@ -3609,6 +3726,8 @@ function BridgeTask.bodyLine()
         tostring(pathing), tostring(moving), tostring(steering), tostring(hold), tostring(pd))
 end
 
+local troughLevels
+
 function BridgeTask.diag()
     if not BridgeTask.active then return end
     local now = Bridge.time
@@ -3641,6 +3760,25 @@ function BridgeTask.diag()
     BridgeTask.diagNextAt = now + BridgeTask.DIAG_GAP
     BridgeTask.diagLastAt = now
     log("taskdiag " .. BridgeTask.statusLine() .. " " .. BridgeTask.bodyLine())
+    if BridgeTask.kind == "fillTroughs" then
+        local w = BridgeTask.troughWater
+        local contName = "-"
+        if w ~= nil and w.waterContainer ~= nil then
+            pcall(function() contName = w.waterContainer:getName() end)
+        end
+        local water, maxWater, feed, maxFeed = 0, 0, 0, 0
+        if type(BridgeTask.current) == "table" then
+            water, maxWater, feed, maxFeed = troughLevels(BridgeTask.current)
+        end
+        log(string.format("troughdiag phase=%s wphase=%s pending=%s age=%.1f fill=%s cont=%s feedPending=%s trips=%d/%d water=%.1f/%.1f feed=%.1f/%.1f",
+            tostring(BridgeTask.troughPhase), tostring(w and w.waterPhase),
+            tostring(BridgeTask.troughPending ~= nil),
+            BridgeTask.troughPendingAt ~= nil and (Bridge.time - BridgeTask.troughPendingAt) or -1,
+            tostring(w ~= nil and w.waterFill ~= nil),
+            tostring(contName), tostring(BridgeTask.troughFeedPending ~= nil),
+            BridgeTask.troughTrip or 0, BridgeTask.troughTripFeed or 0,
+            water or 0, maxWater or 0, feed or 0, maxFeed or 0))
+    end
 end
 
 function BridgeTask.watchdog(body, def)
@@ -3736,7 +3874,10 @@ function BridgeTask.update(body)
     if BridgeProgress ~= nil and BridgeTask.progress ~= nil then
         local okP, p = pcall(BridgeTask.progress)
         if okP and p ~= nil then
-            local force = (BridgeTask.kind == "waterPlants" and BridgeTask.waterFill ~= nil) or nil
+            local force = (BridgeTask.kind == "waterPlants" and BridgeTask.waterFill ~= nil)
+                or (BridgeTask.kind == "fillTroughs" and BridgeTask.troughWater ~= nil
+                    and (BridgeTask.troughWater.waterFill ~= nil
+                        or BridgeTask.troughWater.waterPhase == "pour")) or nil
             pcall(BridgeProgress.show, p, force)
         end
     end
@@ -4901,6 +5042,12 @@ function BridgeTask.kinds.washSink.leave(body)
 end
 
 
+BridgeTask.kinds.fillTroughs = {}
+function BridgeTask.kinds.fillTroughs.available(body) return BridgeTask.TROUGHS_ENABLED == 1 end
+function BridgeTask.kinds.fillTroughs.missing(body) return nil end
+function BridgeTask.kinds.fillTroughs.update(body) return BridgeTask.troughUpdate(body) end
+function BridgeTask.kinds.fillTroughs.leave(body) BridgeTask.troughLeave(body) end
+
 BridgeTask.kinds.fillWater = {}
 BridgeTask.kinds.fillWater.unavailableSpeech = "JobFillNothing"
 
@@ -5253,8 +5400,8 @@ function BridgeTask.kinds.fillWater.leave(body)
     end
 end
 
-local function waterStopSound(body)
-    local T = BridgeTask
+local function waterStopSound(body, T)
+    T = T or BridgeTask
     local id, emitter = T.waterSoundId, T.waterEmitter
     T.waterSoundId, T.waterEmitter = nil, nil
     if id == nil or emitter == nil or id == 0 then return end
@@ -5338,7 +5485,7 @@ local function waterApplied(T)
     T.markDone()
 end
 
-local function waterPourStep(body, T)
+local function waterPourStep(body, T, apply)
     local target = T.current
     if target == nil then
         T.waterPhase = nil
@@ -5368,10 +5515,11 @@ local function waterPourStep(body, T)
     local age = (Bridge.time - (T.waterPourStart or Bridge.time)) * T.ffMult()
     if age < (T.waterPourSpan or 20) then return true end
 
-    waterStopSound(body)
+    waterStopSound(body, T)
     BridgeGardening.clearAnim(body)
     local uses = T.waterUses or 1
     T.waterRestarts = nil
+    if apply ~= nil then return apply(body, T) end
     if Bridge ~= nil and Bridge.mp == true then
         BridgeGardening.requestWater(target, uses)
         T.waterPending = { x = target.x, y = target.y, z = target.z, uses = uses, need = T.waterNeed }
@@ -5398,14 +5546,19 @@ local function waterPourStep(body, T)
     return "skip"
 end
 
-local function waterRefill(body, T, need, plant)
+local function waterRefill(body, T, need, opts)
+    opts = opts or {}
     if T.waterPhase ~= "refill" then
         T.waterPhase = "refill"
         T.waterFill = nil
         T.waterSources = nil
         T.waterSourceI = nil
         T.waterTried = {}
-        pcall(function() BridgeGardening.waterSay("EvWaterRefill", "WaterRefill") end)
+        if opts.say ~= nil then
+            pcall(opts.say)
+        else
+            pcall(function() BridgeGardening.waterSay("EvWaterRefill", "WaterRefill") end)
+        end
         T.info = "water refill"
     end
     if T.waterFill == nil then
@@ -5418,6 +5571,7 @@ local function waterRefill(body, T, need, plant)
                 T.waterForcePour = true
                 return true
             end
+            if opts.noSource ~= nil then return opts.noSource(T) end
             pcall(function() Bridge.speak("NoWater") end)
             return T.finish()
         end
@@ -5466,6 +5620,39 @@ local function waterRefill(body, T, need, plant)
     return true
 end
 
+local function waterPourStart(body, T, target, soundKey)
+    if body == nil or T == nil or target == nil then return end
+    T.waterPhase = "pour"
+    T.phase = "pour"
+    waterHands(body, T.waterContainer)
+    pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+    pcall(function()
+        body:setVariable("BumpAnimFinished", false)
+        local pour = "Bottle"
+        if T.waterContainer ~= nil then
+            pcall(function() pour = T.waterContainer:getPourType() or "Bottle" end)
+        end
+        body:setVariable("PourType", pour)
+        body:setBumpType("pourFluid")
+    end)
+    local id = nil
+    pcall(function()
+        if BridgeSound ~= nil and type(BridgeSound.event) == "function" then
+            id = BridgeSound.event(body, soundKey or "WaterCrops")
+        end
+    end)
+    T.waterSoundId = id
+    local emitter = nil
+    pcall(function() emitter = body:getEmitter() end)
+    T.waterEmitter = emitter
+    T.waterPourStart = Bridge.time
+    T.waterAnimStart = Bridge.time
+    T.waterPourSpan = 20 + 6 * (T.waterUses or 1)
+    T.waterRestarts = nil
+    T.info = "watering"
+    log(string.format("water start %d,%d uses=%d", target.x, target.y, T.waterUses or 1))
+end
+
 function BridgeTask.waterPendingWait()
     local T = BridgeTask
     if T.waterPending == nil then return false end
@@ -5506,11 +5693,11 @@ function BridgeTask.waterPlantStep(body, target)
     end
 
     if T.waterPhase == "refill" then
-        local res = waterRefill(body, T, need, plant)
+        local res = waterRefill(body, T, need, nil)
         if type(res) == "string" then return "cancelled" end
         return "busy"
     end
-    if T.waterPhase == "pour" then return waterPourStep(body, T) end
+    if T.waterPhase == "pour" then return waterPourStep(body, T, nil) end
 
     if T.waterContainer == nil or not BridgeGardening.isWaterContainer(T.waterContainer) then
         T.waterContainer = BridgeGardening.findWaterContainer(body)
@@ -5523,7 +5710,7 @@ function BridgeTask.waterPlantStep(body, target)
 
     local have = BridgeGardening.containerUses(T.waterContainer)
     if have < need and T.waterForcePour ~= true then
-        local res = waterRefill(body, T, need, plant)
+        local res = waterRefill(body, T, need, nil)
         if type(res) == "string" then return "cancelled" end
         return "busy"
     end
@@ -5555,33 +5742,9 @@ function BridgeTask.waterPlantStep(body, target)
         T.waterGoSaid = true
         pcall(function() BridgeGardening.waterSay("EvWaterGo", "WaterGo") end)
     end
-    T.waterPhase = "pour"
     T.waterUses = math.min(have, need)
     T.waterNeed = need
-    T.waterPourStart = Bridge.time
-    T.waterAnimStart = Bridge.time
-    T.waterPourSpan = 20 + 6 * T.waterUses
-    T.waterRestarts = nil
-    T.phase = "pour"
-    waterHands(body, T.waterContainer)
-    pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
-    pcall(function()
-        body:setVariable("BumpAnimFinished", false)
-        body:setVariable("PourType", T.waterContainer:getPourType() or "Bottle")
-        body:setBumpType("pourFluid")
-    end)
-    local id = nil
-    pcall(function()
-        if BridgeSound ~= nil and type(BridgeSound.event) == "function" then
-            id = BridgeSound.event(body, "WaterCrops")
-        end
-    end)
-    T.waterSoundId = id
-    local emitter = nil
-    pcall(function() emitter = body:getEmitter() end)
-    T.waterEmitter = emitter
-    T.info = "watering"
-    log(string.format("water start %d,%d uses=%d", target.x, target.y, T.waterUses))
+    waterPourStart(body, T, target, "WaterCrops")
     return "busy"
 end
 
@@ -5687,6 +5850,824 @@ function BridgeTask.waterLeave(body)
             body:setVariable("PourType", "")
             body:setVariable("PerformingAction", "")
         end)
+    end
+end
+
+local function troughTargetLua(target)
+    if target == nil then return nil end
+    if target.lua ~= nil then return target.lua end
+    local lua = nil
+    pcall(function()
+        if CFeedingTroughSystem ~= nil and CFeedingTroughSystem.instance ~= nil then
+            local sq = getCell():getGridSquare(target.x, target.y, target.z)
+            if sq ~= nil then lua = CFeedingTroughSystem.instance:getLuaObjectOnSquare(sq) end
+        end
+    end)
+    return lua
+end
+
+local function troughIso(target)
+    if target == nil then return nil end
+    if target.trough ~= nil then return target.trough end
+    local lua = troughTargetLua(target)
+    local iso = nil
+    if lua ~= nil then pcall(function() iso = lua:getIsoObject() end) end
+    return iso
+end
+
+function troughLevels(target)
+    if type(target) ~= "table" then return 0, 0, 0, 0 end
+    local lua = troughTargetLua(target)
+    local iso = troughIso(target)
+    local liveWater, maxWater = nil, nil
+    if iso ~= nil then
+        pcall(function() liveWater = tonumber(iso:getWater()) end)
+        pcall(function() maxWater = tonumber(iso:getMaxWater()) end)
+    end
+    if liveWater == nil and lua ~= nil then liveWater = tonumber(lua.water) or 0 end
+    if maxWater == nil and lua ~= nil then maxWater = tonumber(lua.maxWater) or 0 end
+    local water = liveWater
+    if target.waterKnown ~= nil then
+        if water == nil or target.waterKnown > water then
+            water = target.waterKnown
+        elseif water >= target.waterKnown - 0.5 then
+            target.waterKnown = nil
+        end
+    end
+    local feed, maxFeed = 0, 0
+    if iso ~= nil then
+        pcall(function() feed = tonumber(iso:getCurrentFeedAmount()) or 0 end)
+        pcall(function() maxFeed = tonumber(iso:getMaxFeed()) or 0 end)
+    end
+    return water or 0, maxWater or 0, feed or 0, maxFeed or 0
+end
+
+local function troughNeeds(target)
+    local water, maxWater, feed, maxFeed = troughLevels(target)
+    local needWater = maxWater > 0 and water < maxWater * (BridgeTask.TROUGH_LOW or 0.5)
+    local needFeed = maxFeed > 0 and feed < maxFeed * (BridgeTask.TROUGH_LOW or 0.5)
+    return needWater, needFeed, water, maxWater, feed, maxFeed
+end
+
+function BridgeTask.troughsNeedWork(target)
+    if type(target) ~= "table" then return false end
+    local needWater, needFeed = troughNeeds(target)
+    return needWater == true or needFeed == true
+end
+
+local function troughServesChickens(iso)
+    local yes = false
+    if iso == nil then return false end
+    pcall(function()
+        local list = iso:getLinkedAnimals()
+        if list == nil then return end
+        for i = 0, list:size() - 1 do
+            local a = list:get(i)
+            local t = nil
+            pcall(function() t = a:getAnimalType() end)
+            local s = string.lower(tostring(t or ""))
+            if s == "chick" or s == "hen" or s == "cockerel" or s == "chicken"
+                    or s == "turkeypoult" or s == "turkeyhen" or s == "gobblers" then
+                yes = true
+                break
+            end
+        end
+    end)
+    return yes
+end
+
+local function troughFindGrass(target)
+    local best, bestD = nil, nil
+    if target == nil or BridgePlants == nil then return nil end
+    local r = BridgeTask.TROUGH_GRASS_RADIUS or 12
+    local z = target.z
+    for x = target.x - r, target.x + r do
+        for y = target.y - r, target.y + r do
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+            if sq ~= nil and BridgePlants.squareGrass(sq) then
+                local blocked = false
+                pcall(function()
+                    if BridgeGardening ~= nil and BridgeGardening.plantAt ~= nil then
+                        blocked = BridgeGardening.plantAt(sq, false) ~= nil
+                    end
+                end)
+                if not blocked then
+                    pcall(function() blocked = sq:isFarmPlot() == true end)
+                end
+                if not blocked then
+                    local d = (target.x - x) ^ 2 + (target.y - y) ^ 2
+                    if bestD == nil or d < bestD then
+                        best = { x = x, y = y, z = z }
+                        bestD = d
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function troughFindFeed(iso, body)
+    local found = nil
+    if iso == nil or body == nil then return nil end
+    local cont = nil
+    pcall(function() cont = iso:getContainer() end)
+    if cont == nil then return nil end
+    pcall(function()
+        local items = body:getInventory():getAllEvalRecurse(function(it)
+            local ok = false
+            pcall(function() ok = iso:isItemAllowedInContainer(cont, it) == true end)
+            return ok
+        end)
+        if items ~= nil and items:size() > 0 then found = items:get(0) end
+    end)
+    return found
+end
+
+local function troughPourApply(body, T)
+    local target = T.current
+    local bucket = T.waterContainer
+    if target == nil or bucket == nil then return "skip" end
+    local iso = troughIso(target)
+    if iso == nil then return "skip" end
+    local fc = nil
+    pcall(function() fc = bucket:getFluidContainer() end)
+    if fc == nil then return "skip" end
+    local have = tonumber(fc:getPrimaryFluidAmount()) or 0
+    local water, maxWater = troughLevels(target)
+    local free = math.max(0, (maxWater or 0) - (water or 0))
+    local amount = math.min(have, free)
+    if amount <= 0 then
+        T.waterPhase = nil
+        T.phase = nil
+        T.waterPourStart = nil
+        T.waterPourSpan = nil
+        return "done"
+    end
+    local tainted = false
+    pcall(function()
+        local f = fc:getPrimaryFluid()
+        if f ~= nil then tainted = f:getFluidType() == FluidType.TaintedWater end
+    end)
+    if Bridge ~= nil and Bridge.mp == true then
+        BridgeTask.troughSeq = (BridgeTask.troughSeq or 0) + 1
+        local id = BridgeTask.troughSeq
+        BridgeTask.troughPending = {
+            id = id,
+            trough = target,
+            bucket = bucket,
+            itemId = bucket:getID(),
+            amount = amount,
+            water = water,
+            at = Bridge.time,
+        }
+        BridgeTask.troughPendingAt = Bridge.time
+        local ok = false
+        pcall(function()
+            sendClientCommand(BridgeData.owner(), "Bridge", "troughWater",
+                { id = id, x = target.x, y = target.y, z = target.z, amount = amount, tainted = tainted })
+            ok = true
+        end)
+        if not ok then
+            BridgeTask.troughPending = nil
+            BridgeTask.troughPendingAt = nil
+            T.waterPhase = nil
+            T.phase = nil
+            T.waterPourStart = nil
+            T.waterPourSpan = nil
+            return "skip"
+        end
+        T.waterPhase = "wait"
+        T.waterPourStart = nil
+        T.waterPourSpan = nil
+        return "wait"
+    end
+    local before = tonumber(iso:getWater()) or water or 0
+    local fluidType = tainted and FluidType.TaintedWater or FluidType.Water
+    local ok = pcall(function() iso:addWater(fluidType, amount) end)
+    pcall(function() iso:sendSyncEntity(nil) end)
+    pcall(function() iso:checkOverlayAfterAnimalEat() end)
+    local after = tonumber(iso:getWater()) or before
+    local added = math.max(0, after - before)
+    T.waterPhase = nil
+    T.phase = nil
+    T.waterPourStart = nil
+    T.waterPourSpan = nil
+    if not ok or added <= 0 then
+        BridgeTask.troughFailed = true
+        if BridgeTask.troughSaidNoWater ~= true then
+            BridgeTask.troughSaidNoWater = true
+            Bridge.speak("JobTroughNoWater")
+        end
+        return "skip"
+    end
+    pcall(function() fc:removeFluid(added, false) end)
+    pcall(function() bucket:syncItemFields() end)
+    pcall(function() sendItemStats(bucket) end)
+    target.waterKnown = math.min(maxWater or (before + added), before + added)
+    return "done"
+end
+
+local function troughClearPose(body)
+    if body == nil then return end
+    pcall(function() BridgeTask.clearChop(body) end)
+    pcall(function() BridgeGardening.clearAnim(body) end)
+    pcall(function() body:changeState(ZombieIdleState.instance()) end)
+    pcall(function() body:setBumpType("") end)
+    pcall(function() body:setVariable("PourType", "") end)
+    pcall(function() body:setVariable("PerformingAction", "") end)
+    pcall(function() BridgeMove.stopPath(body) end)
+    pcall(function() BridgeTask.forceIdle(body) end)
+end
+
+local function troughWaterUpdate(body, target)
+    local T = BridgeTask.troughWater
+    if T == nil then return "feed" end
+    T.current = target
+    if BridgeTask.troughPending ~= nil then
+        if Bridge.time - (BridgeTask.troughPendingAt or Bridge.time) > BridgeTask.TROUGH_PENDING_TIMEOUT then
+            BridgeTask.troughPending = nil
+            BridgeTask.troughPendingAt = nil
+            if BridgeTask.troughSaidNoWater ~= true then
+                BridgeTask.troughSaidNoWater = true
+                BridgeTask.troughFailed = true
+                Bridge.speak("JobTroughNoWater")
+            end
+            T.waterPhase = nil
+            T.phase = nil
+            return "feed"
+        end
+        return "busy"
+    end
+    local needWater = troughNeeds(target)
+    if not needWater then return "feed" end
+    if T.waterPhase == "wait" then
+        if BridgeTask.troughPending == nil then
+            T.waterPhase = nil
+            T.phase = nil
+            return "busy"
+        end
+        return "busy"
+    end
+    if T.waterPhase == "refill" then
+        local res = waterRefill(body, T, 1, {
+            say = function()
+                if BridgeTask.troughSaidRefill ~= true then
+                    BridgeTask.troughSaidRefill = true
+                    Bridge.speak("JobTroughWater")
+                end
+            end,
+            noSource = function(state)
+                state.waterPhase = nil
+                state.phase = nil
+                return "nosource"
+            end,
+        })
+        if res == "nosource" then
+            if BridgeTask.troughSaidNoWater ~= true then
+                BridgeTask.troughSaidNoWater = true
+                BridgeTask.troughFailed = true
+                Bridge.speak("JobTroughNoWater")
+            end
+            return "feed"
+        end
+        if T.waterPhase ~= "refill" then
+            T.waterApproachFor = nil
+            BridgeTask.troughFailed = false
+        end
+        return "busy"
+    end
+    if T.waterPhase == "pour" then
+        local res = waterPourStep(body, T, troughPourApply)
+        if res == "wait" then return "busy" end
+        if res == "skip" then
+            T.waterPourStart = nil
+            T.waterPourSpan = nil
+            if BridgeTask.troughSaidNoWater ~= true then
+                BridgeTask.troughSaidNoWater = true
+                BridgeTask.troughFailed = true
+                Bridge.speak("JobTroughNoWater")
+            end
+            return "feed"
+        end
+        if res == "done" then
+            if not troughNeeds(target) then return "feed" end
+            local bucket = T.waterContainer
+            local have = 0
+            if bucket ~= nil then
+                pcall(function() have = tonumber(bucket:getFluidContainer():getPrimaryFluidAmount()) or 0 end)
+            end
+            if have <= 0 then
+                T.waterPhase = "refill"
+                return "busy"
+            end
+            return "busy"
+        end
+        return "busy"
+    end
+    if T.waterContainer == nil or (BridgeGardening ~= nil and BridgeGardening.isWaterContainer ~= nil
+            and not BridgeGardening.isWaterContainer(T.waterContainer)) then
+        T.waterContainer = BridgeGardening.findWaterContainer(body)
+    end
+    if T.waterContainer == nil then
+        if BridgeTask.troughSaidNoWater ~= true then
+            BridgeTask.troughSaidNoWater = true
+            Bridge.speak("JobTroughNoWater")
+        end
+        return "feed"
+    end
+    local have = 0
+    pcall(function() have = tonumber(T.waterContainer:getFluidContainer():getPrimaryFluidAmount()) or 0 end)
+    if have <= 0 then
+        if BridgeTask.troughSaidRefill ~= true then
+            BridgeTask.troughSaidRefill = true
+            Bridge.speak("JobTroughWater")
+        end
+        T.waterPhase = "refill"
+        return "busy"
+    end
+    if BridgeTask.troughTrip >= (BridgeTask.TROUGH_MAX_TRIPS or 60) then
+        if BridgeTask.troughSaidNoWater ~= true then
+            BridgeTask.troughSaidNoWater = true
+            Bridge.speak("JobTroughNoWater")
+        end
+        return "feed"
+    end
+    if T.waterApproachFor ~= target then
+        T.waterApproachFor = target
+        T.waterPourStart = nil
+        T.waterPourSpan = nil
+        troughClearPose(body)
+        BridgeTask.resetWalkDest()
+    end
+    local walk = T.walkTo(body, { x = target.x, y = target.y, z = target.z },
+        BridgeTask.TROUGH_REACH or 1.45, false)
+    if walk == "unreachable" then
+        if T.waterRetryTarget ~= target then
+            T.waterRetryTarget = target
+            T.waterApproachFor = nil
+            BridgeTask.resetWalkDest()
+            T.info = "trough water retry"
+            return "busy"
+        end
+        T.waterRetryTarget = nil
+        if BridgeTask.troughSaidNoWater ~= true then
+            BridgeTask.troughSaidNoWater = true
+            Bridge.speak("JobTroughNoWater")
+        end
+        return "feed"
+    end
+    if walk ~= "arrived" then return "busy" end
+    T.waterRetryTarget = nil
+    pcall(function() BridgeMove.stopPath(body) end)
+    T.forceIdle(body)
+    T.waterUses = have
+    BridgeTask.troughFailed = false
+    waterPourStart(body, T, target, "AnimalFeederAddWater")
+    T.waterPourSpan = 30 + 15 * math.max(1, have)
+    BridgeTask.troughTrip = (BridgeTask.troughTrip or 0) + 1
+    if BridgeTask.troughSaidWater ~= true then
+        BridgeTask.troughSaidWater = true
+        BridgeTask.troughSay("JobTroughPour")
+    end
+    return "busy"
+end
+
+local function troughFeedUpdate(body, target)
+    local iso = troughIso(target)
+    if iso == nil then return "done" end
+    local _, _, feed, maxFeed = troughLevels(target)
+    if maxFeed <= 0 or feed >= maxFeed then return "done" end
+    local cont = nil
+    pcall(function() cont = iso:getContainer() end)
+    if cont == nil then return "done" end
+    if BridgeTask.troughGrassWaitAt ~= nil then
+        local waiting = troughFindFeed(iso, body)
+        if waiting ~= nil then
+            BridgeTask.troughGrassWaitAt = nil
+        elseif Bridge.time - BridgeTask.troughGrassWaitAt < 2 * SECOND then
+            return "busy"
+        else
+            BridgeTask.troughGrassWaitAt = nil
+        end
+    end
+    if BridgeTask.troughFeedPending ~= nil then
+        local have = BridgeFetch ~= nil and type(BridgeFetch.has) == "function"
+            and BridgeFetch.has("animalFeed") == true
+        if have then
+            BridgeTask.troughFeedPending = nil
+            BridgeTask.troughFeedAt = nil
+        elseif Bridge.time - (BridgeTask.troughFeedAt or Bridge.time) > BridgeTask.TROUGH_PENDING_TIMEOUT then
+            BridgeTask.troughFeedPending = nil
+            BridgeTask.troughFeedAt = nil
+        else
+            return "busy"
+        end
+    end
+    if BridgeTask.lootPending ~= nil then
+        local here = false
+        pcall(function() here = BridgeTask.lootSrc ~= nil and BridgeTask.lootSrc:contains(BridgeTask.lootPending) end)
+        if (not here) or (Bridge.time - (BridgeTask.lootPendingAt or Bridge.time)) > BridgeTask.LOOT_TRANSFER_WAIT then
+            BridgeTask.lootPending = nil
+            BridgeTask.lootPendingAt = nil
+            BridgeTask.lootNextAt = nil
+            if not here then
+                BridgeTask.lootAct = nil
+                BridgeTask.lootSrc = nil
+                pcall(function() iso:onFoodAdded() end)
+                BridgeTask.troughTripFeed = (BridgeTask.troughTripFeed or 0) + 1
+                if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+            else
+                pcall(BridgeTask.lootAbortAct)
+            end
+        end
+        return "busy"
+    end
+    if BridgeTask.lootNextAt ~= nil and Bridge.time < BridgeTask.lootNextAt then return "busy" end
+    local item = troughFindFeed(iso, body)
+    if item == nil and BridgeTask.troughFeedPulled ~= true then
+        BridgeTask.troughFeedPulled = true
+        local res = "unavailable"
+        if BridgeFetch ~= nil and type(BridgeFetch.pull) == "function" then res = BridgeFetch.pull("animalFeed") end
+        if res == "requested" then
+            BridgeTask.troughFeedPending = true
+            BridgeTask.troughFeedAt = Bridge.time
+            return "busy"
+        end
+        if res == "moved" then item = troughFindFeed(iso, body) end
+    end
+    if item == nil then
+        if troughServesChickens(iso) then
+            local grass = BridgeTask.troughGrassTarget
+            if grass == nil then
+                grass = troughFindGrass(target)
+                BridgeTask.troughGrassTarget = grass
+            end
+            if grass ~= nil then
+                if BridgeTask.troughClear == nil then
+                    BridgeTask.troughClear = setmetatable({
+                        phase = nil,
+                        since = Bridge.time,
+                        swings = 0,
+                        swingStart = nil,
+                        swingHit = false,
+                        animHold = 0,
+                        animLogged = false,
+                        lastClearSayCheck = 0,
+                        lastClearSay = -99999,
+                        markDone = function() end,
+                    }, { __index = BridgeTask })
+                end
+                local res = BridgeTask.clearPlantStep(body, grass, "grass", nil, BridgeTask.troughClear)
+                if res == "done" then
+                    BridgeTask.troughClear = nil
+                    BridgeTask.troughGrassTarget = nil
+                    BridgeTask.troughGrassWaitAt = Bridge.time
+                    BridgeTask.troughTripFeed = (BridgeTask.troughTripFeed or 0) + 1
+                    if BridgeTask.troughSaidGrass ~= true then
+                        BridgeTask.troughSaidGrass = true
+                        Bridge.speak("JobTroughGrass")
+                    end
+                elseif res == "unreachable" then
+                    BridgeTask.troughClear = nil
+                    BridgeTask.troughGrassTarget = nil
+                    BridgeTask.troughTripFeed = (BridgeTask.troughTripFeed or 0) + 1
+                end
+                return "busy"
+            end
+        end
+        if BridgeTask.troughSaidNoFeed ~= true then
+            BridgeTask.troughSaidNoFeed = true
+            BridgeTask.troughFailed = true
+            Bridge.speak("JobTroughNoFeed")
+        end
+        return "done"
+    end
+    if (BridgeTask.troughTripFeed or 0) >= (BridgeTask.TROUGH_FEED_TRIP or 20) then
+        if BridgeTask.troughSaidNoFeed ~= true then
+            BridgeTask.troughSaidNoFeed = true
+            BridgeTask.troughFailed = true
+            Bridge.speak("JobTroughNoFeed")
+        end
+        return "done"
+    end
+    if BridgeTask.troughFeedApproachFor ~= target then
+        BridgeTask.troughFeedApproachFor = target
+        troughClearPose(body)
+        BridgeTask.resetWalkDest()
+    end
+    local walk = BridgeTask.walkTo(body, { x = target.x, y = target.y, z = target.z },
+        BridgeTask.TROUGH_REACH or 1.45, false)
+    if walk == "unreachable" then
+        if BridgeTask.troughFeedRetryTarget ~= target then
+            BridgeTask.troughFeedRetryTarget = target
+            BridgeTask.troughFeedApproachFor = nil
+            BridgeTask.resetWalkDest()
+            return "busy"
+        end
+        BridgeTask.troughFeedRetryTarget = nil
+        if BridgeTask.troughSaidNoFeed ~= true then
+            BridgeTask.troughSaidNoFeed = true
+            BridgeTask.troughFailed = true
+            Bridge.speak("JobTroughNoFeed")
+        end
+        return "done"
+    end
+    if walk ~= "arrived" then return "busy" end
+    BridgeTask.troughFeedRetryTarget = nil
+    pcall(function() BridgeMove.stopPath(body) end)
+    BridgeTask.forceIdle(body)
+    if BridgeTask.lootTake(body, nil, item, cont) then
+        BridgeTask.lootPending = item
+        BridgeTask.lootPendingAt = Bridge.time
+        BridgeTask.lootNextAt = Bridge.time + (BridgeTask.LOOT_ITEM_TIME or 30) / BridgeTask.ffMult()
+        BridgeTask.troughFeedStart = Bridge.time
+        if BridgeTask.troughSaidFeed ~= true then
+            BridgeTask.troughSaidFeed = true
+            BridgeTask.troughSay("JobTroughFeed")
+        end
+        return "busy"
+    end
+    if BridgeTask.troughSaidNoFeed ~= true then
+        BridgeTask.troughSaidNoFeed = true
+        Bridge.speak("JobTroughNoFeed")
+    end
+    return "done"
+end
+
+function BridgeTask.troughWaterResult(args)
+    local pending = BridgeTask.troughPending
+    if pending == nil or args == nil then return end
+    if tostring(args.id) ~= tostring(pending.id) then return end
+    BridgeTask.troughPending = nil
+    BridgeTask.troughPendingAt = nil
+    local T = BridgeTask.troughWater
+    if T == nil then return end
+    local target = pending.trough
+    if args.why == "troughfeed" then
+        BridgeTask.troughFailed = true
+        if BridgeTask.troughSaidNoWater ~= true then
+            BridgeTask.troughSaidNoWater = true
+            Bridge.speak("JobTroughNoWater")
+        end
+        T.waterPhase = nil
+        T.phase = nil
+        T.waterPourStart = nil
+        T.waterPourSpan = nil
+        BridgeTask.troughPhase = "feed"
+        return
+    end
+    if args.ok ~= true then
+        if args.why == "full" and target ~= nil then
+            local _, maxWater = troughLevels(target)
+            if maxWater ~= nil and maxWater > 0 then target.waterKnown = maxWater end
+        else
+            BridgeTask.troughFailed = true
+            if BridgeTask.troughSaidNoWater ~= true then
+                BridgeTask.troughSaidNoWater = true
+                Bridge.speak("JobTroughNoWater")
+            end
+            BridgeTask.troughPhase = "feed"
+        end
+        T.waterPhase = nil
+        T.phase = nil
+        T.waterPourStart = nil
+        T.waterPourSpan = nil
+        return
+    end
+    local added = tonumber(args.added) or 0
+    if added > 0 then
+        BridgeTask.troughFailed = false
+        local bucket = pending.bucket
+        local item = nil
+        if bucket ~= nil and (pending.itemId == nil or bucket:getID() == pending.itemId) then
+            item = bucket
+        end
+        if item == nil and pending.itemId ~= nil and Bridge.body ~= nil then
+            pcall(function() item = Bridge.body:getInventory():getItemWithIDRecursiv(pending.itemId) end)
+        end
+        if item ~= nil then
+            pcall(function() item:getFluidContainer():removeFluid(added, false) end)
+            pcall(function() item:syncItemFields() end)
+            pcall(function() sendItemStats(item) end)
+        end
+        if target ~= nil then
+            local _, maxWater = troughLevels(target)
+            target.waterKnown = math.min(maxWater or ((pending.water or 0) + added),
+                (pending.water or 0) + added)
+        end
+    elseif args.why == "full" and target ~= nil then
+        local _, maxWater = troughLevels(target)
+        if maxWater ~= nil and maxWater > 0 then target.waterKnown = maxWater end
+    end
+    T.waterPhase = nil
+    T.phase = nil
+    T.waterPourStart = nil
+    T.waterPourSpan = nil
+end
+
+function BridgeTask.troughUpdate(body)
+    if body == nil then return false end
+    if BridgeTask.TROUGHS_ENABLED ~= 1 then return BridgeTask.finish() end
+    local target = BridgeTask.current
+    if target == nil then
+        local picked = nil
+        while #BridgeTask.queue > 0 do
+            local t = table.remove(BridgeTask.queue, 1)
+            if type(t) == "table" and t.trough ~= nil then
+                local needW, needF = troughNeeds(t)
+                if needW or needF then picked = t; break end
+            end
+        end
+        if picked == nil then return BridgeTask.finish() end
+        BridgeTask.current = picked
+        BridgeTask.troughPhase = "check"
+        BridgeTask.troughTrip = 0
+        BridgeTask.troughTripFeed = 0
+        BridgeTask.troughPending = nil
+        BridgeTask.troughPendingAt = nil
+        BridgeTask.troughFeedPending = nil
+        BridgeTask.troughFeedAt = nil
+        BridgeTask.troughFeedStart = nil
+        BridgeTask.troughGrassTarget = nil
+        BridgeTask.troughGrassWaitAt = nil
+        BridgeTask.troughClear = nil
+        BridgeTask.troughFeedApproachFor = nil
+        BridgeTask.troughFeedRetryTarget = nil
+        BridgeTask.troughFeedPulled = nil
+        BridgeTask.troughSaidWater = false
+        BridgeTask.troughSaidRefill = false
+        BridgeTask.troughSaidFeed = false
+        BridgeTask.troughSaidGrass = false
+        BridgeTask.troughSaidNoWater = false
+        BridgeTask.troughSaidNoFeed = false
+        BridgeTask.troughFailed = false
+        BridgeTask.troughWater = setmetatable({}, { __index = BridgeTask })
+        BridgeTask.troughWater.current = picked
+        BridgeTask.resetWalkDest()
+        BridgeTask.troughSig = nil
+        BridgeTask.troughSigAt = nil
+        BridgeTask.troughRefillAt = nil
+        target = picked
+    end
+    local w = BridgeTask.troughWater
+    local sig = tostring(BridgeTask.troughPhase) .. ":" .. tostring(w and w.waterPhase)
+    if BridgeTask.troughSig ~= sig then
+        BridgeTask.troughSig = sig
+        BridgeTask.troughSigAt = Bridge.time
+    end
+    if w ~= nil and w.waterPhase == "refill" then
+        if BridgeTask.troughRefillAt == nil then BridgeTask.troughRefillAt = Bridge.time end
+        if Bridge.time - BridgeTask.troughRefillAt > (30 * SECOND) then
+            log("trough refill timeout " .. tostring(BridgeTask.troughPhase))
+            w.waterPhase = nil
+            w.waterFill = nil
+            w.phase = nil
+            BridgeTask.troughPhase = "feed"
+            BridgeTask.troughRefillAt = nil
+            BridgeTask.troughFailed = true
+            if BridgeTask.troughSaidNoWater ~= true then
+                BridgeTask.troughSaidNoWater = true
+                BridgeTask.troughFailed = true
+                Bridge.speak("JobTroughNoWater")
+            end
+            BridgeTask.resetWalkDest()
+        end
+    else
+        BridgeTask.troughRefillAt = nil
+    end
+    local moving = BridgeMove ~= nil
+        and (BridgeMove.moving == true or BridgeMove.pathing == true or BridgeMove.steering == true)
+    local busy = BridgeTask.troughPending ~= nil or BridgeTask.lootPending ~= nil
+        or (w ~= nil and (w.waterFill ~= nil or w.waterPhase == "pour"))
+    if not moving and not busy and BridgeTask.troughSigAt ~= nil
+            and (Bridge.time - BridgeTask.troughSigAt) > (5 * SECOND) then
+        log("trough stuck phase " .. sig .. " age=" .. string.format("%.1f", Bridge.time - BridgeTask.troughSigAt))
+        local nw, nf = troughNeeds(target)
+        local waterFailed = BridgeTask.troughPhase == "water" and nw
+        local feedFailed = BridgeTask.troughPhase == "feed" and nf
+        if waterFailed or feedFailed or BridgeTask.troughPhase == "check" then
+            BridgeTask.troughFailed = true
+            if waterFailed and BridgeTask.troughSaidNoWater ~= true then
+                BridgeTask.troughSaidNoWater = true
+                BridgeTask.troughFailed = true
+                Bridge.speak("JobTroughNoWater")
+            elseif feedFailed and BridgeTask.troughSaidNoFeed ~= true then
+                BridgeTask.troughSaidNoFeed = true
+                Bridge.speak("JobTroughNoFeed")
+            end
+        end
+        if w ~= nil then
+            w.waterPhase = nil
+            w.waterFill = nil
+            w.phase = nil
+        end
+        if BridgeTask.troughPhase == "water" then
+            BridgeTask.troughPhase = "feed"
+        else
+            BridgeTask.troughPhase = "done"
+        end
+        BridgeTask.troughSig = nil
+        BridgeTask.troughSigAt = nil
+        BridgeTask.resetWalkDest()
+    end
+    local needWater, needFeed = troughNeeds(target)
+    if not needWater and not needFeed then
+        if BridgeTask.troughPhase ~= "check" and BridgeTask.troughFailed ~= true then
+            BridgeTask.markDone()
+        end
+        BridgeTask.current = nil
+        BridgeTask.troughPhase = nil
+        BridgeTask.resetWalkDest()
+        return true
+    end
+    if BridgeTask.troughPhase == "water" then
+        if needWater then
+            local res = troughWaterUpdate(body, target)
+            if res == "feed" then
+                BridgeTask.troughPhase = "feed"
+                BridgeTask.troughWater = setmetatable({}, { __index = BridgeTask })
+                BridgeTask.troughWater.current = target
+                BridgeTask.resetWalkDest()
+            end
+            return true
+        end
+        BridgeTask.troughPhase = "feed"
+        BridgeTask.resetWalkDest()
+        return true
+    end
+    if BridgeTask.troughPhase == "feed" then
+        if needFeed then
+            local res = troughFeedUpdate(body, target)
+            if res == "done" then BridgeTask.troughPhase = "done" end
+            return true
+        end
+        BridgeTask.troughPhase = "done"
+        return true
+    end
+    if BridgeTask.troughPhase == "done" then
+        if BridgeTask.troughFailed ~= true then BridgeTask.markDone() end
+        BridgeTask.current = nil
+        BridgeTask.troughPhase = nil
+        BridgeTask.resetWalkDest()
+        return true
+    end
+    if needWater then
+        BridgeTask.troughPhase = "water"
+    else
+        BridgeTask.troughPhase = "feed"
+    end
+    BridgeTask.resetWalkDest()
+    return true
+end
+
+function BridgeTask.troughLeave(body)
+    local T = BridgeTask.troughWater
+    if T ~= nil then
+        waterStopSound(body, T)
+        if T.waterFill ~= nil then fillSoundStop(body, T.waterFill) end
+    end
+    pcall(function() BridgeGardening.clearAnim(body) end)
+    pcall(function() BridgeTask.clearChop(body) end)
+    pcall(BridgeTask.lootAbortAct)
+    BridgeTask.troughWater = nil
+    BridgeTask.troughClear = nil
+    BridgeTask.troughPending = nil
+    BridgeTask.troughPendingAt = nil
+    BridgeTask.troughFeedPending = nil
+    BridgeTask.troughFeedAt = nil
+    BridgeTask.troughFeedStart = nil
+    BridgeTask.troughFeedItem = nil
+    BridgeTask.troughGrassTarget = nil
+    BridgeTask.troughGrassWaitAt = nil
+    BridgeTask.troughPhase = nil
+    BridgeTask.troughTrip = nil
+    BridgeTask.troughTripFeed = nil
+    BridgeTask.troughFeedApproachFor = nil
+    BridgeTask.troughFeedRetryTarget = nil
+    BridgeTask.troughFeedPulled = nil
+    BridgeTask.troughWaterApproachFor = nil
+    BridgeTask.troughSig = nil
+    BridgeTask.troughSigAt = nil
+    BridgeTask.troughRefillAt = nil
+    BridgeTask.troughFailed = nil
+    BridgeTask.troughSaidWater = nil
+    BridgeTask.troughSaidRefill = nil
+    BridgeTask.troughSaidPour = nil
+    BridgeTask.troughSaidFeed = nil
+    BridgeTask.troughSaidGrass = nil
+    BridgeTask.troughSaidNoWater = nil
+    BridgeTask.troughSaidNoFeed = nil
+    BridgeTask.troughSaidFull = nil
+    BridgeTask.waterHandsSet = nil
+    BridgeTask.waterSavedPrimary = nil
+    BridgeTask.waterSavedSecondary = nil
+    BridgeTask.waterSoundId = nil
+    BridgeTask.waterEmitter = nil
+    if body ~= nil then
+        pcall(function() body:setVariable("PourType", "") end)
+        pcall(function() body:setVariable("PerformingAction", "") end)
     end
 end
 
@@ -6425,8 +7406,8 @@ function BridgeTask.kinds.clearPlants.missing(body)
     return nil
 end
 
-function BridgeTask.clearPlantStep(body, target, kind, opts)
-    local T = BridgeTask
+function BridgeTask.clearPlantStep(body, target, kind, opts, state)
+    local T = state or BridgeTask
     if T == nil or body == nil or target == nil or kind == nil then return "skip" end
     opts = opts or {}
     local square = getCell():getGridSquare(target.x, target.y, target.z)

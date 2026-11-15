@@ -10191,6 +10191,16 @@ function Bridge.onServerCommand(module, command, args)
         if BridgeGardening ~= nil then pcall(function() BridgeGardening.onCureResult(args) end) end
         Bridge.result = "cure: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
         log(Bridge.result)
+    elseif command == "petAnimalsResult" then
+        if BridgeAnimalCare ~= nil then pcall(function() BridgeAnimalCare.onPetResult(args) end) end
+        Bridge.result = "pet: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
+    elseif command == "troughWaterResult" then
+        if BridgeTask ~= nil and type(BridgeTask.troughWaterResult) == "function" then
+            pcall(function() BridgeTask.troughWaterResult(args) end)
+        end
+        Bridge.result = "trough water: " .. tostring(args.ok) .. " " .. tostring(args.added) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
     elseif command == "say" and args.text ~= nil then
         local name = args.name or BridgeData.DEFAULT_NAME
         if args.chat ~= false then

@@ -3580,6 +3580,34 @@ BridgeServer.Commands.clearPlants = function(player, args)
         log("clearPlants: BridgePlants not loaded")
         return
     end
+    if kind == "grass" then
+        if not BridgePlants.squareGrass(sq) then return end
+        if BridgeItems == nil then return end
+        local rec = record(player:getUsername())
+        if rec == nil or rec.bodyId == nil then return end
+        local item = InventoryItemFactory.CreateItem("Base.GrassTuft")
+        if item == nil then return end
+        pcall(function() item:setCount(ZombRand(2, 4)) end)
+        local one = BridgeItems.record(item, true)
+        local list = BridgeItems.decode(rec.items or "")
+        flatten(one, nil, list)
+        local encoded = BridgeItems.encode(list)
+        if BridgeItems.overBlock() or #BridgeItems.decode(encoded) ~= #list then
+            log("clearPlants: snapshot full, clipping skipped")
+            return
+        end
+        local ok, err = pcall(function() BridgePlants.applyPlant(sq, "grass", nil) end)
+        if not ok then
+            log("clearPlants: applyPlant failed: " .. tostring(err))
+            return
+        end
+        BridgeItems.set(rec, encoded)
+        rec.iseq = (rec.iseq or 0) + 1
+        transmit()
+        sendServerCommand(player, "Bridge", "gave", { id = -rec.iseq, rec = one, iseq = rec.iseq })
+        log("clearPlants: grass clipping for " .. tostring(player:getUsername()))
+        return
+    end
     local ok, err = pcall(function() BridgePlants.applyPlant(sq, kind, body) end)
     if not ok then log("clearPlants: applyPlant failed: " .. tostring(err)) end
 end
@@ -3810,6 +3838,132 @@ BridgeServer.Commands.waterPlants = function(player, args)
     end
     reply(nil)
     log(string.format("waterPlants: %s %s,%s uses=%d", tostring(who), tostring(args.x), tostring(args.y), uses))
+end
+
+BridgeServer.Commands.petAnimals = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local result = { id = args.id, ok = false, why = nil }
+    local function reply(why)
+        result.why = why
+        sendServerCommand(player, "Bridge", "petAnimalsResult", result)
+    end
+    if body == nil or sq == nil then
+        log("petAnimals: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    local id = tonumber(args.id)
+    if id == nil then return reply("noanimal") end
+    local animal = nil
+    pcall(function()
+        local list = getCell():getAnimals()
+        if list == nil then return end
+        for i = 0, list:size() - 1 do
+            local a = list:get(i)
+            if a ~= nil and a:getOnlineID() == id then
+                animal = a
+                break
+            end
+        end
+    end)
+    if animal == nil then return reply("noanimal") end
+    local petFn = animal.petAnimal
+    if petFn == nil then
+        log("petAnimals: IsoAnimal.petAnimal missing")
+        return reply("noapi")
+    end
+    if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.canPet) == "function" then
+        if not BridgeAnimalCare.canPet(animal) then return reply("notready") end
+    end
+    local d = dist(body, animal:getX(), animal:getY())
+    if d > 6 then
+        log(string.format("petAnimals: far %s d=%.2f body=%.2f,%.2f animal=%.2f,%.2f id=%s",
+            tostring(who), d, body:getX(), body:getY(), animal:getX(), animal:getY(), tostring(id)))
+        return reply("far")
+    end
+    pcall(function() animal:getBehavior():setBlockMovement(true) end)
+    local before = nil
+    pcall(function() before = animal:getStress() end)
+    local ok, err = pcall(petFn, animal, player)
+    local after = nil
+    pcall(function() after = animal:getStress() end)
+    pcall(function() animal:getBehavior():setBlockMovement(false) end)
+    if not ok then
+        log("petAnimals: petAnimal failed for " .. tostring(who) .. ": " .. tostring(err))
+        return reply("error")
+    end
+    if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.notePet) == "function" then
+        BridgeAnimalCare.notePet(animal)
+    end
+    result.ok = true
+    reply(nil)
+    log(string.format("petAnimals: %s id=%s stress %s->%s d=%.2f",
+        tostring(who), tostring(id), tostring(before), tostring(after), d))
+end
+
+BridgeServer.Commands.troughWater = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local result = { id = args.id, ok = false, added = 0, why = nil, x = args.x, y = args.y, z = args.z }
+    local function reply(why, added, ok)
+        result.why = why
+        result.added = added or 0
+        result.ok = ok == true
+        sendServerCommand(player, "Bridge", "troughWaterResult", result)
+    end
+    if body == nil or sq == nil then
+        log("troughWater: no companion/square for " .. tostring(who))
+        return reply("nobody", 0, false)
+    end
+    if dist(body, args.x + 0.5, args.y + 0.5) > 6 then
+        log(string.format("troughWater: far %s body=%.2f,%.2f trough=%s,%s",
+            tostring(who), body:getX(), body:getY(), tostring(args.x), tostring(args.y)))
+        return reply("far", 0, false)
+    end
+    local iso = nil
+    pcall(function()
+        local sq2 = getCell():getGridSquare(args.x, args.y, args.z)
+        if sq2 ~= nil then
+            local objects = sq2:getObjects()
+            if objects ~= nil then
+                for i = 0, objects:size() - 1 do
+                    local o = objects:get(i)
+                    if o ~= nil and instanceof(o, "IsoFeedingTrough") then iso = o break end
+                end
+            end
+        end
+    end)
+    if iso == nil then
+        log("troughWater: no trough at " .. tostring(args.x) .. "," .. tostring(args.y))
+        return reply("gone", 0, false)
+    end
+    local fc = nil
+    pcall(function() fc = iso:getFluidContainer() end)
+    if fc == nil then return reply("troughfeed", 0, false) end
+    local water = tonumber(iso:getWater()) or 0
+    local maxWater = tonumber(iso:getMaxWater()) or 0
+    local free = math.max(0, maxWater - water)
+    local want = math.min(tonumber(args.amount) or 0, free)
+    if want <= 0 then
+        if maxWater <= 0 then return reply("notready", 0, false) end
+        return reply("full", 0, true)
+    end
+    local before = water
+    local fluidType = args.tainted == true and FluidType.TaintedWater or FluidType.Water
+    local ok, err = pcall(function() iso:addWater(fluidType, want) end)
+    pcall(function() iso:sendSyncEntity(nil) end)
+    pcall(function() iso:checkOverlayAfterAnimalEat() end)
+    local after = tonumber(iso:getWater()) or before
+    local added = math.max(0, after - before)
+    if not ok then
+        log("troughWater: addWater failed for " .. tostring(who) .. ": " .. tostring(err))
+        return reply("error", 0, false)
+    end
+    local why = nil
+    if added <= 0 then why = "full" end
+    reply(why, added, added > 0)
+    log(string.format("troughWater: %s %s,%s asked=%.2f added=%.2f water=%.2f",
+        tostring(who), tostring(args.x), tostring(args.y), want, added, after))
 end
 
 BridgeServer.Commands.fertilizePlants = function(player, args)

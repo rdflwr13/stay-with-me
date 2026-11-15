@@ -188,6 +188,15 @@ local function cureMatchAt(index)
 end
 
 
+local function animalFeedItem(it)
+    local t = nil
+    pcall(function() t = it:getAnimalFeedType() end)
+    if type(t) == "string" and t ~= "" then return true end
+    local full = nil
+    pcall(function() full = it:getFullType() end)
+    return full == "Base.GrassTuft" or full == "Base.HayTuft"
+end
+
 BridgeFetch.NEEDS = {
     { id = "axe",            matches = usableAxe },
     { id = "cutTool",        matches = usableCutTool },
@@ -220,6 +229,7 @@ BridgeFetch.NEEDS = {
     { id = "splintPlank",    matches = splintPlankOk },
     { id = "splintSheet",    matches = splintSheetOk },
     { id = "battery",        matches = isBattery },
+    { id = "animalFeed",     matches = animalFeedItem },
 }
 BridgeFetch.BY_ID = {}
 for _, n in ipairs(BridgeFetch.NEEDS) do BridgeFetch.BY_ID[n.id] = n end
@@ -260,6 +270,10 @@ function BridgeFetch.has(id)
         elseif id == "splintPlank" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "plank") == true
         elseif id == "splintSheet" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "sheet") == true
         elseif id == "battery" then ok = BridgeTorchShared.findBattery(b) ~= nil
+        elseif id == "animalFeed" then
+            local items = nil
+            pcall(function() items = b:getInventory():getAllEvalRecurse(animalFeedItem) end)
+            ok = items ~= nil and items:size() > 0
         end
     end)
     return ok == true

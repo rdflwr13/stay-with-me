@@ -1165,6 +1165,7 @@ BridgeWindow.SKILLS = {
     { category = "IGUI_perks_Survivalist", rows = {
         { perk = "Doctor" },
         { perk = "Agriculture" },
+        { perk = "Husbandry" },
     }},
     { category = "IGUI_perks_PhysicalCategory", rows = {
         { perk = "Strength" },
