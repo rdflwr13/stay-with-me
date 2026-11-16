@@ -777,16 +777,20 @@ function BridgeDeposit.resolveStoredRef(ref)
         if objs == nil then return nil end
         local n = 0
         pcall(function() n = objs:size() end)
-        local idx = tonumber(ref.o)
-        if idx == nil or idx < 0 or idx >= n then
+        local o = BridgeData.objAtIndex(objs, ref.o)
+        if o == nil then
             log(string.format("stale mark %d,%d,%d o=%s size=%d", tx, ty, tz, tostring(ref.o), n))
             return nil
         end
-        local o = nil
-        pcall(function() o = objs:get(idx) end)
-        if o == nil then return nil end
-        if tonumber(ref.c) ~= nil and tonumber(ref.c) >= 0 then
-            pcall(function() cont = o:getContainerByIndex(tonumber(ref.c)) end)
+        local cidx = tonumber(ref.c)
+        if cidx ~= nil and cidx >= 0 then
+            cont = BridgeData.containerAtIndex(o, cidx)
+            if cont == nil then
+                local cn = 0
+                pcall(function() cn = o:getContainerCount() end)
+                log(string.format("stale mark %d,%d,%d o=%s c=%s containers=%d", tx, ty, tz, tostring(ref.o), tostring(ref.c), cn))
+                return nil
+            end
         else
             pcall(function() cont = o:getContainer() end)
         end

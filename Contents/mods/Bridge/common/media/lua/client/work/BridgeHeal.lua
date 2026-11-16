@@ -941,11 +941,9 @@ local function apply(body, red, step)
     end
     local change = { kind = step.kind, part = p:getIndex() }
 
-    if step.kind == "unbandage" then
-        local bag = nil
-        pcall(function() bag = body:getInventory() end)
-        if bag == nil and BridgeParked ~= nil and BridgeParked.active then bag = BridgeParked.main end
-        BridgeCare.returnBandage(bag, p)
+    local returnRec = nil
+    if step.kind == "unbandage" and not isClient() then
+        returnRec = BridgeCare.bandageReturnRecord(p)
     end
     if step.kind == "bullet" then
         change.level = lvl
@@ -978,6 +976,9 @@ local function apply(body, red, step)
     end
     local part, why = BridgeCare.apply(red, change)
     if part == nil then return why end
+    if returnRec ~= nil and BridgeInventory ~= nil and type(BridgeInventory.receive) == "function" then
+        BridgeInventory.receive({ ids = { -1 }, recs = { returnRec } })
+    end
     for _, it in ipairs(spent(step)) do BridgeCare.consume(it, false) end
     return nil
 end

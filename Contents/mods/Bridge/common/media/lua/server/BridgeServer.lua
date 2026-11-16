@@ -67,6 +67,29 @@ local function record(who)
     return md.players[who]
 end
 
+local function addHerRecord(player, rec, one, why)
+    if one == nil or rec == nil then return false, "no record" end
+    if BridgeItems == nil or type(BridgeItems.decode) ~= "function" then return false, "no record" end
+    local list = BridgeItems.decode(rec.items or "")
+    list[#list + 1] = one
+    local encoded = BridgeItems.encode(list)
+    if BridgeItems.overBlock() then
+        log("her record add skipped (" .. tostring(why) .. "): carrying too much")
+        return false, "carrying too much"
+    end
+    if #BridgeItems.decode(encoded) ~= #list then
+        log("her record add skipped (" .. tostring(why) .. "): snapshot full")
+        return false, "snapshot full"
+    end
+    BridgeItems.set(rec, encoded)
+    rec.saved = 1
+    rec.iseq = (rec.iseq or 0) + 1
+    transmit()
+    local oneId = -(rec.iseq or 0)
+    sendServerCommand(player, "Bridge", "gave", { id = oneId, rec = one, iseq = rec.iseq })
+    return true
+end
+
 
 
 
@@ -890,12 +913,29 @@ BridgeServer.Commands.care = function(player, args)
             .. " for " .. tostring(player:getUsername()))
         return
     end
+    local returnRec = nil
+    if change.kind == "unbandage" and type(BridgeCare) == "table"
+            and type(BridgeCare.bandageReturnRecord) == "function" then
+        local bp = BridgeCare.part(player, math.floor(tonumber(change.part) or -1))
+        if bp ~= nil then returnRec = BridgeCare.bandageReturnRecord(bp) end
+    end
     local part, why = BridgeCare.apply(player, change)
     if part == nil then
         log("care " .. tostring(change.kind) .. " failed: " .. tostring(why))
         return
     end
     pcall(function() syncBodyPart(part, BridgeCare.SYNC[change.kind]) end)
+    if returnRec ~= nil then
+        local rec = record(player:getUsername())
+        local ok, failWhy = addHerRecord(player, rec, returnRec, "care unbandage")
+        if not ok then
+            pcall(function()
+                sendServerCommand(player, "Bridge", "giveFailed", { why = failWhy })
+            end)
+        else
+            log("care unbandage returned " .. tostring(returnRec.t))
+        end
+    end
     if type(args.items) == "table" then
         for i, id in ipairs(args.items) do
             if i > 2 then break end
@@ -4674,9 +4714,24 @@ function BridgeServer.resolveRef(sq, ref, player)
                 end
             end
         else
-            local o = sq:getObjects():get(ref.o)
+            local objs = nil
+            pcall(function() objs = sq:getObjects() end)
+            local o = BridgeData.objAtIndex(objs, ref.o)
             if o ~= nil then
-                if ref.c == nil or ref.c == -1 then c = o:getContainer() else c = o:getContainerByIndex(ref.c) end
+                local cidx = tonumber(ref.c)
+                if cidx == nil or cidx < 0 then
+                    pcall(function() c = o:getContainer() end)
+                else
+                    c = BridgeData.containerAtIndex(o, cidx)
+                end
+            end
+            if c == nil then
+                local on, cn = 0, 0
+                pcall(function() if objs ~= nil then on = objs:size() end end)
+                pcall(function() if o ~= nil then cn = o:getContainerCount() end end)
+                log(string.format("ref rejected: kind=%s x=%s y=%s z=%s o=%s c=%s objects=%d containers=%d",
+                    tostring(ref.kind), tostring(ref.x), tostring(ref.y), tostring(ref.z),
+                    tostring(ref.o), tostring(ref.c), on, cn))
             end
         end
     end)

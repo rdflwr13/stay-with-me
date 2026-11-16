@@ -801,6 +801,34 @@ function BridgeData.storeRefKey(ref)
     return string.format("veh:%s:%s", tostring(ref.v), tostring(ref.p))
 end
 
+function BridgeData.objAtIndex(objs, index)
+    if objs == nil then return nil end
+    local i = tonumber(index)
+    if i == nil or i ~= i then return nil end
+    i = math.floor(i)
+    if i < 0 then return nil end
+    local n = 0
+    pcall(function() n = objs:size() end)
+    if i >= n then return nil end
+    local o = nil
+    pcall(function() o = objs:get(i) end)
+    return o
+end
+
+function BridgeData.containerAtIndex(o, index)
+    if o == nil then return nil end
+    local i = tonumber(index)
+    if i == nil or i ~= i then return nil end
+    i = math.floor(i)
+    if i < 0 then return nil end
+    local n = 0
+    pcall(function() n = o:getContainerCount() end)
+    if i >= n then return nil end
+    local c = nil
+    pcall(function() c = o:getContainerByIndex(i) end)
+    return c
+end
+
 function BridgeData.cleanStoreRefs(value)
     if type(value) ~= "table" then return nil end
     local out, seen = {}, {}

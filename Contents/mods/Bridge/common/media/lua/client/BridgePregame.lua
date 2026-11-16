@@ -2772,15 +2772,28 @@ function BridgePregameScreen:playVoice(voice)
         end
         local emitter = nil
         pcall(function() emitter = getSoundManager():getUIEmitter() end)
-        if emitter == nil then return end
         local player = nil
         pcall(function() player = IsoPlayer.getInstance() end)
-        if player == nil then
+        if emitter ~= nil and player == nil then
             pcall(function() emitter:setPos(0, 0, 0) end)
         end
         getSoundManager():setMusicState("InGame")
         getSoundManager():resumeSoundAndMusic()
         self.voiceSound = getSoundManager():playUISound(tostring(voice.prefix) .. "ShoutHey")
+        if self.voiceSound ~= nil and self.voiceSound ~= 0 and emitter ~= nil then
+            local maxType = (BridgeData ~= nil and type(BridgeData.VOICE_TYPE_MAX) == "number") and BridgeData.VOICE_TYPE_MAX or 15
+            local minPitch = (BridgeData ~= nil and type(BridgeData.VOICE_PITCH_MIN) == "number") and BridgeData.VOICE_PITCH_MIN or -100
+            local maxPitch = (BridgeData ~= nil and type(BridgeData.VOICE_PITCH_MAX) == "number") and BridgeData.VOICE_PITCH_MAX or 100
+            local voiceType = math.floor(tonumber(voice.type) or 0)
+            if voiceType < 0 then voiceType = 0 end
+            if voiceType > maxType then voiceType = maxType end
+            local pitch = math.floor((tonumber(voice.pitch) or 0) + 0.5)
+            if pitch < minPitch then pitch = minPitch end
+            if pitch > maxPitch then pitch = maxPitch end
+            pcall(function() emitter:setParameterValueByName(self.voiceSound, "CharacterVoiceType", voiceType) end)
+            pcall(function() emitter:setParameterValueByName(self.voiceSound, "CharacterVoicePitch", pitch) end)
+            pcall(function() emitter:tick() end)
+        end
     end)
 end
 

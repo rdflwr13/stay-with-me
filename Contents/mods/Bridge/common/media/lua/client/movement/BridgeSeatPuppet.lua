@@ -205,7 +205,7 @@ local function capture()
 end
 
 local function seatFree(car, seat)
-    if car == nil or seat == nil or seat == 0 then return false end
+    if car == nil or seat == nil then return false end
     local pos = nil
     pcall(function() pos = car:getPassengerPosition(seat, "inside") end)
     if pos == nil then return false end
@@ -223,6 +223,7 @@ local function freeSeat(car, avoid)
     for i = 1, max - 1 do
         if i ~= avoid and seatFree(car, i) then return i end
     end
+    if 0 ~= avoid and seatFree(car, 0) then return 0 end
     return nil
 end
 
