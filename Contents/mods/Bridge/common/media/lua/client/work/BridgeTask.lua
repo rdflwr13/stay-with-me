@@ -17,6 +17,7 @@ BridgeTask.FEED_PLANTS_ENABLED = 1
 BridgeTask.TEND_ENABLED = 1
 BridgeTask.PET_ANIMALS_ENABLED = 1
 BridgeTask.TROUGHS_ENABLED = 1
+BridgeTask.HUTCHCARE_ENABLED = 1
 
 
 
@@ -76,6 +77,13 @@ BridgeTask.TROUGH_MAX_TRIPS = 60
 BridgeTask.TROUGH_FEED_TRIP = 20
 BridgeTask.TROUGH_GRASS_RADIUS = 12
 BridgeTask.TROUGH_PENDING_TIMEOUT = 20 * SECOND
+BridgeTask.HUTCH_REACH = 1.45
+BridgeTask.HUTCH_DIRT = 10
+BridgeTask.HUTCH_PENDING_TIMEOUT = 20 * SECOND
+BridgeTask.HUTCH_POSE_PER_POINT = 8
+BridgeTask.HUTCH_CHECK_POINT = 0.001
+BridgeTask.HUTCH_WATER_POINT = 0.01
+BridgeTask.HUTCH_WATER_POINT_CLEAN = 0.005
 BridgeTask.LOOT_DESTS_TTL = 30
 BridgeTask.LOOT_SRC_TTL = 120
 
@@ -2648,6 +2656,10 @@ function BridgeTask.speakMissing(kind)
         Bridge.speak("JobNoSeeds")
         return
     end
+    if kind == "animalCare" then
+        Bridge.speak("JobNoHutches")
+        return
+    end
     if kind == "tendCrops" then
         if missing == "waterContainer" then
             Bridge.speak("JobNoBucket")
@@ -2862,6 +2874,35 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         end
     end
 
+    if kind == "animalCare" and BridgeWorkSelect ~= nil
+            and type(BridgeWorkSelect.hutchInfo) == "function" then
+        local keep, anyNeed, needEggs = {}, false, false
+        for i = 1, #targets do
+            local t = targets[i]
+            local info = nil
+            if type(t) == "table" and t.hutch ~= nil then
+                pcall(function() info = BridgeWorkSelect.hutchInfo(t.hutch) end)
+            end
+            if info ~= nil and info.needsWork == true then
+                keep[#keep + 1] = t
+                anyNeed = true
+                if info.needsEggs == true then needEggs = true end
+            end
+        end
+        if not anyNeed then
+            Bridge.speak("JobNoHutches")
+            return "unavailable"
+        end
+        if needEggs then
+            local room = BridgeTask.hutchEggCapacity(Bridge.body)
+            if room == nil or room <= 0 then
+                Bridge.speak("JobHutchFull")
+                return "unavailable"
+            end
+        end
+        targets = keep
+    end
+
     BridgeTask.pendingStart = nil
 
     if BridgeFetch ~= nil and type(BridgeFetch.primeJob) == "function" then
@@ -3035,6 +3076,38 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         BridgeTask.troughSigAt = nil
         BridgeTask.troughRefillAt = nil
         BridgeTask.troughWater = setmetatable({}, { __index = BridgeTask })
+    end
+    if kind == "animalCare" then
+        BridgeTask.hutchPhase = nil
+        BridgeTask.hutchAfter = nil
+        BridgeTask.hutchOpenedHatch = false
+        BridgeTask.hutchOpenedDoor = false
+        BridgeTask.hutchPending = nil
+        BridgeTask.hutchPendingAt = nil
+        BridgeTask.hutchResult = nil
+        BridgeTask.hutchLastOp = nil
+        BridgeTask.hutchWater = nil
+        BridgeTask.hutchInfoCache = nil
+        BridgeTask.hutchEggs = 0
+        BridgeTask.hutchEggsDone = false
+        BridgeTask.hutchEggBatch = nil
+        BridgeTask.hutchNestDone = false
+        BridgeTask.hutchFloorDone = false
+        BridgeTask.hutchFloorPlan = nil
+        BridgeTask.hutchPoseStart = nil
+        BridgeTask.hutchPoseSpan = nil
+        BridgeTask.hutchPosePhase = nil
+        BridgeTask.hutchEggTypes = {}
+        BridgeTask.hutchSaidTool = false
+        BridgeTask.hutchSaidWater = false
+        BridgeTask.hutchSaidFull = false
+        BridgeTask.hutchFailSaid = false
+        BridgeTask.hutchDepositPhase = nil
+        BridgeTask.hutchDepositAct = nil
+        BridgeTask.hutchDepositAt = nil
+        BridgeTask.hutchDepositTarget = nil
+        BridgeTask.hutchDidWork = false
+        BridgeTask.hutchDirtApplied = 0
     end
     BridgeTask.spokeNoPath = false
     BridgeTask.spokeUnreachable = false
@@ -3276,6 +3349,8 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         Bridge.speak("JobPetStart")
     elseif kind == "fillTroughs" then
         Bridge.speak("JobTroughStart")
+    elseif kind == "animalCare" then
+        Bridge.speak("JobAnimalCareStart")
     elseif startText ~= nil then
         Bridge.speakText(startText)
     else
@@ -3508,6 +3583,8 @@ function BridgeTask.finish()
             if (BridgeTask.doneCount or 0) > 0 then Bridge.speak("JobPetDone") end
         elseif finishKind == "fillTroughs" then
             if (BridgeTask.doneCount or 0) > 0 then BridgeTask.troughSay("JobTroughDone") end
+        elseif finishKind == "animalCare" then
+            if (BridgeTask.doneCount or 0) > 0 then Bridge.speak("JobAnimalCareDone") end
         elseif depositFull then
             Bridge.speak("JobLootFull")
         elseif wasLootFull then
@@ -3530,6 +3607,31 @@ end
 function BridgeTask.progress()
     if not BridgeTask.active or BridgeTask.state ~= "running" then return nil end
     local t = Bridge.time
+    if BridgeTask.kind == "animalCare" then
+        local W = BridgeTask.hutchWater
+        if W ~= nil and W.waterFill ~= nil and W.waterFill.fillTicks ~= nil
+                and W.waterFill.fillSince ~= nil then
+            local span = W.waterFill.fillTicks
+            if span <= 0 then span = 1 end
+            local p = (Bridge.time - W.waterFill.fillSince) * ffMult() / span
+            if p < 0 then p = 0 elseif p > 1 then p = 1 end
+            return p
+        end
+        if BridgeTask.hutchPoseStart ~= nil and BridgeTask.hutchPoseSpan ~= nil then
+            local span = BridgeTask.hutchPoseSpan
+            if span <= 0 then span = 1 end
+            local p = (Bridge.time - BridgeTask.hutchPoseStart) * ffMult() / span
+            if p < 0 then p = 0 elseif p > 1 then p = 1 end
+            return p
+        end
+        if BridgeTask.hutchDepositAt ~= nil then
+            local span = BridgeTask.LOOT_ITEM_TIME or 30
+            if span <= 0 then span = 1 end
+            local p = (Bridge.time - BridgeTask.hutchDepositAt) * ffMult() / span
+            if p < 0 then p = 0 elseif p > 1 then p = 1 end
+            return p
+        end
+    end
     if BridgeTask.kind == "fillTroughs" then
         local T = BridgeTask.troughWater
         if T ~= nil and T.waterFill ~= nil and T.waterFill.fillTicks ~= nil
@@ -3779,6 +3881,28 @@ function BridgeTask.diag()
             BridgeTask.troughTrip or 0, BridgeTask.troughTripFeed or 0,
             water or 0, maxWater or 0, feed or 0, maxFeed or 0))
     end
+    if BridgeTask.kind == "animalCare" then
+        local w = BridgeTask.hutchWater
+        local info = BridgeTask.hutchInfoCache
+        local contName = "-"
+        if w ~= nil and w.waterContainer ~= nil then
+            pcall(function() contName = w.waterContainer:getName() end)
+        end
+        local entry = BridgeTask.current
+        log(string.format("hutchdiag phase=%s icoords=%s,%s,%s dirt=%s nest=%s eggs=%s hatched=%s door=%s noToolSaid=%s noWaterSaid=%s wphase=%s fill=%s pending=%s age=%.1f cont=%s",
+            tostring(BridgeTask.hutchPhase),
+            tostring(entry ~= nil and entry.x or "-"), tostring(entry ~= nil and entry.y or "-"),
+            tostring(entry ~= nil and entry.z or "-"),
+            tostring(info ~= nil and info.floorDirt or "-"), tostring(info ~= nil and info.nestDirt or "-"),
+            tostring(info ~= nil and info.eggs or "-"),
+            tostring(BridgeTask.hutchOpenedHatch), tostring(BridgeTask.hutchOpenedDoor),
+            tostring(BridgeTask.hutchSaidTool == true),
+            tostring(BridgeTask.hutchSaidWater == true),
+            tostring(w ~= nil and w.waterPhase), tostring(w ~= nil and w.waterFill ~= nil),
+            tostring(BridgeTask.hutchPending ~= nil),
+            BridgeTask.hutchPendingAt ~= nil and (Bridge.time - BridgeTask.hutchPendingAt) or -1,
+            tostring(contName)))
+    end
 end
 
 function BridgeTask.watchdog(body, def)
@@ -3877,7 +4001,11 @@ function BridgeTask.update(body)
             local force = (BridgeTask.kind == "waterPlants" and BridgeTask.waterFill ~= nil)
                 or (BridgeTask.kind == "fillTroughs" and BridgeTask.troughWater ~= nil
                     and (BridgeTask.troughWater.waterFill ~= nil
-                        or BridgeTask.troughWater.waterPhase == "pour")) or nil
+                        or BridgeTask.troughWater.waterPhase == "pour"))
+                or (BridgeTask.kind == "animalCare"
+                    and ((BridgeTask.hutchWater ~= nil and BridgeTask.hutchWater.waterFill ~= nil)
+                        or BridgeTask.hutchPoseStart ~= nil
+                        or BridgeTask.hutchDepositAt ~= nil)) or nil
             pcall(BridgeProgress.show, p, force)
         end
     end
@@ -11026,6 +11154,1103 @@ function BridgeTask.kinds.moveCorpses.leave(body)
     restoreForcedWalk()
 end
 
+
+BridgeTask.hutchResolve = function(target)
+    target = target or BridgeTask.current
+    if target == nil then return nil end
+    local h = target.hutch
+    if h ~= nil then
+        local gone = false
+        pcall(function() gone = h:getSquare() == nil end)
+        if not gone then return h end
+    end
+    local sq = nil
+    pcall(function() sq = getCell():getGridSquare(target.x, target.y, target.z) end)
+    if sq == nil then return nil end
+    local found = nil
+    pcall(function() found = sq:getHutch() end)
+    if found ~= nil then
+        pcall(function()
+            local up = found:getHutch()
+            if up ~= nil then found = up end
+        end)
+    end
+    target.hutch = found
+    return found
+end
+
+BridgeTask.hutchInfo = function(h)
+    if BridgeWorkSelect == nil or type(BridgeWorkSelect.hutchInfo) ~= "function" then return nil end
+    local info = nil
+    pcall(function() info = BridgeWorkSelect.hutchInfo(h) end)
+    return info
+end
+
+BridgeTask.hutchPose = function(body, bump)
+    if body == nil then return end
+    pcall(function()
+        body:setVariable("LootPosition", bump == "LootLow" and "Low" or "")
+        if tostring(body:getBumpType()) ~= bump then body:setBumpType(bump) end
+    end)
+end
+
+BridgeTask.hutchClearPose = function(body)
+    if body == nil then return end
+    pcall(function()
+        local bump = tostring(body:getBumpType())
+        if bump == "Loot" or bump == "LootLow" then body:setBumpType("") end
+        body:setVariable("LootPosition", "")
+    end)
+end
+
+BridgeTask.hutchFluidAmount = function(item, cleaner)
+    local amount = 0
+    if item == nil then return 0 end
+    pcall(function()
+        local fc = item:getFluidContainer()
+        if fc == nil then return end
+        local ok = false
+        if cleaner then
+            ok = fc:contains(Fluid.Bleach) == true
+                or (Fluid.CleaningLiquid ~= nil and fc:contains(Fluid.CleaningLiquid) == true)
+        else
+            ok = fc:contains(Fluid.Water) == true
+                or (Fluid.TaintedWater ~= nil and fc:contains(Fluid.TaintedWater) == true)
+        end
+        if ok then amount = tonumber(fc:getAmount()) or 0 end
+    end)
+    return amount
+end
+
+BridgeTask.hutchSpend = function(item, litres)
+    local used = 0
+    if item == nil or litres == nil or litres <= 0 then return 0 end
+    pcall(function()
+        local fc = item:getFluidContainer()
+        if fc == nil then return end
+        local amount = tonumber(fc:getAmount()) or 0
+        used = math.min(amount, litres)
+        if used <= 0 then return end
+        fc:adjustAmount(amount - used)
+        item:syncItemFields()
+        pcall(function() sendItemStats(item) end)
+    end)
+    if used > 0 and Bridge ~= nil then
+        if type(Bridge.itemsChanged) == "function" then pcall(Bridge.itemsChanged) end
+        if type(Bridge.saveOutfit) == "function" then pcall(Bridge.saveOutfit) end
+    end
+    return used
+end
+
+BridgeTask.hutchHoldTool = function(body)
+    local tool = nil
+    pcall(function() tool = BridgeTask.findCleanStainItem(body) end)
+    if tool == nil then return end
+    pcall(function()
+        if BridgeWeapon ~= nil and type(BridgeWeapon.putAway) == "function" then
+            BridgeWeapon.putAway(body)
+        end
+    end)
+    ensureInMain(body, tool)
+    pcall(function()
+        body:setPrimaryHandItem(tool)
+        body:setSecondaryHandItem(nil)
+        body:resetModelNextFrame()
+    end)
+    pcall(function()
+        if BridgeInventory ~= nil and type(BridgeInventory.redress) == "function" then
+            BridgeInventory.redress(body)
+        end
+    end)
+end
+
+BridgeTask.hutchCollectEggs = function(body, h, max)
+    local got = 0
+    if h == nil or body == nil then return false, "nobody", 0 end
+    max = math.floor(tonumber(max) or 0)
+    if max <= 0 then return true, nil, 0 end
+    local maxNest = nil
+    pcall(function() maxNest = tonumber(h:getMaxNestBox()) end)
+    if maxNest == nil or maxNest < 0 then return true, nil, 0 end
+    local inv = nil
+    pcall(function() inv = body:getInventory() end)
+    if inv == nil then return false, "noinv", 0 end
+    if BridgeTask.hutchEggTypes == nil then BridgeTask.hutchEggTypes = {} end
+    for i = 0, maxNest do
+        if got >= max then break end
+        local animal = nil
+        pcall(function() animal = h:getAnimalInNestBox(i) end)
+        if animal == nil then
+            local nest = nil
+            pcall(function() nest = h:getNestBox(i) end)
+            if nest ~= nil then
+                local n = 0
+                pcall(function() n = tonumber(nest:getEggsNb()) or 0 end)
+                for j = n - 1, 0, -1 do
+                    if got >= max then break end
+                    local egg = nil
+                    local read = pcall(function() egg = nest:getEgg(j) end)
+                    if read and egg ~= nil then
+                        local fert = nil
+                        pcall(function() fert = egg:isFertilized() == true end)
+                        if fert == false then
+                            local removed = nil
+                            pcall(function() removed = nest:removeEgg(j) end)
+                            if removed ~= nil then
+                                local added = nil
+                                pcall(function() added = inv:AddItem(removed) end)
+                                if added ~= nil then
+                                    got = got + 1
+                                    local full = nil
+                                    pcall(function() full = added:getFullType() end)
+                                    if full ~= nil then BridgeTask.hutchEggTypes[full] = true end
+                                else
+                                    pcall(function() nest:addEgg(removed) end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    pcall(function() h:sync() end)
+    if got > 0 and Bridge ~= nil then
+        if type(Bridge.itemsChanged) == "function" then pcall(Bridge.itemsChanged) end
+        if type(Bridge.saveOutfit) == "function" then pcall(Bridge.saveOutfit) end
+    end
+    return true, nil, got
+end
+
+BridgeTask.hutchApply = function(body, h, op, extra)
+    if h == nil then return false, "nohutch", 0 end
+    extra = extra or {}
+    if op == "openHatch" then
+        pcall(function()
+            if h:isEggHatchDoorOpen() ~= true then h:toggleEggHatchDoor() end
+            h:sync()
+        end)
+        return true, nil, 0
+    elseif op == "closeHatch" then
+        pcall(function()
+            if h:isEggHatchDoorOpen() == true then h:toggleEggHatchDoor() end
+            h:sync()
+        end)
+        return true, nil, 0
+    elseif op == "openDoor" then
+        pcall(function()
+            if h:isOpen() ~= true then h:toggleDoor() end
+            h:sync()
+        end)
+        return true, nil, 0
+    elseif op == "closeDoor" then
+        pcall(function()
+            if h:isOpen() == true then h:toggleDoor() end
+            h:sync()
+        end)
+        return true, nil, 0
+    elseif op == "eggs" then
+        return BridgeTask.hutchCollectEggs(body, h, extra.max)
+    elseif op == "cleanNest" then
+        pcall(function()
+            h:setNestBoxDirt(0)
+            h:sync()
+        end)
+        return true, nil, 1
+    elseif op == "cleanFloor" then
+        local points = math.floor(tonumber(extra.points) or 0)
+        local dirt = 0
+        pcall(function() dirt = tonumber(h:getHutchDirt()) or 0 end)
+        if points > dirt then points = dirt end
+        if points > 0 then
+            pcall(function()
+                h:setHutchDirt(math.max(0, dirt - points))
+                h:sync()
+            end)
+        end
+        return true, nil, points
+    end
+    return false, "badop", 0
+end
+
+BridgeTask.hutchSend = function(body, h, op, extra)
+    extra = extra or {}
+    BridgeTask.hutchAfter = extra.after
+    BridgeTask.hutchLastOp = extra
+    local target = BridgeTask.current
+    if target == nil or h == nil then return false end
+    if Bridge ~= nil and Bridge.mp == true then
+        local red = nil
+        pcall(function() red = BridgeData.owner() end)
+        if red == nil then
+            BridgeTask.hutchResult = { op = op, ok = false, why = "nobody", count = 0 }
+            return true
+        end
+        local sent = pcall(function()
+            sendClientCommand(red, "Bridge", "hutchCare", {
+                op = op, x = target.x, y = target.y, z = target.z,
+                max = extra.max, points = extra.points })
+        end)
+        if sent then
+            BridgeTask.hutchPending = { op = op }
+            BridgeTask.hutchPendingAt = Bridge.time
+            return true
+        end
+        BridgeTask.hutchPending = nil
+        BridgeTask.hutchPendingAt = nil
+    end
+    local ok, why, count = BridgeTask.hutchApply(body, h, op, extra)
+    local open, hatch = false, false
+    pcall(function() open = h:isOpen() == true end)
+    pcall(function() hatch = h:isEggHatchDoorOpen() == true end)
+    BridgeTask.hutchResult = { op = op, ok = ok == true, why = why, count = count or 0,
+        open = open, hatch = hatch }
+    return true
+end
+
+BridgeTask.hutchCareResult = function(args)
+    if not BridgeTask.active or BridgeTask.kind ~= "animalCare" then return end
+    if type(args) ~= "table" then return end
+    local pending = BridgeTask.hutchPending
+    if pending == nil or pending.op ~= args.op then return end
+    BridgeTask.hutchPending = nil
+    BridgeTask.hutchPendingAt = nil
+    BridgeTask.hutchResult = args
+end
+
+BridgeTask.hutchEggCapacity = function(body)
+    if body == nil then return 0, 0 end
+    local w = 0.1
+    local tmpl = nil
+    pcall(function() tmpl = instanceItem("Base.Egg") end)
+    if tmpl ~= nil then pcall(function() w = tonumber(tmpl:getActualWeight()) or 0.1 end) end
+    if w < 0.001 then w = 0.001 end
+    local main = nil
+    pcall(function() main = body:getInventory() end)
+    local dests = nil
+    pcall(function() dests = BridgeTask.lootDests(body) end)
+    local total, largest = 0, 0
+    for i = 1, #(dests or {}) do
+        local dest = dests[i]
+        local free = 0
+        if dest == main and BridgeInventory ~= nil and type(BridgeInventory.herCapacity) == "function" then
+            local cap = 0
+            local load = 0
+            pcall(function() cap = tonumber(BridgeInventory.herCapacity()) or 0 end)
+            pcall(function() load = tonumber(BridgeInventory.mainLoad(body)) or 0 end)
+            free = cap - load
+        elseif BridgeGardening ~= nil and type(BridgeGardening.freeCapacity) == "function" then
+            pcall(function() free = BridgeGardening.freeCapacity(dest, body) end)
+        else
+            pcall(function() free = BridgeTask.remainingCapacity(dest, body) end)
+        end
+        if type(free) ~= "number" or free < 0 then free = 0 end
+        if free == math.huge then free = 1000 end
+        local fit = math.floor(free / w)
+        if fit > 0 then
+            total = total + fit
+            if fit > largest then largest = fit end
+        end
+    end
+    return total, largest
+end
+
+BridgeTask.hutchEggRoom = function(body, info)
+    local count = info ~= nil and (tonumber(info.eggs) or 0) or 0
+    if count <= 0 or body == nil then return 0 end
+    local _, largest = BridgeTask.hutchEggCapacity(body)
+    if largest == nil or largest <= 0 then return 0 end
+    return math.min(count, largest)
+end
+
+BridgeTask.hutchFloorPlanFor = function(body, h, info)
+    if h == nil or info == nil then return nil end
+    local dirt = tonumber(info.floorDirt) or 0
+    if dirt <= 0 then return nil end
+    local w = BridgeTask.hutchWater
+    local waterItem = w ~= nil and w.waterContainer or nil
+    if waterItem == nil then return nil end
+    local cleaner = nil
+    pcall(function() cleaner = BridgeTask.findStainCleaner(body) end)
+    local available = BridgeTask.hutchFluidAmount(waterItem, false)
+    local cleanerAvail = cleaner ~= nil and BridgeTask.hutchFluidAmount(cleaner, true) or 0
+    local points, waterUse, cleanerUse = 0, 0, 0
+    while points < dirt do
+        local useCleaner = cleaner ~= nil and cleanerAvail >= BridgeTask.HUTCH_CHECK_POINT
+        local per = useCleaner and BridgeTask.HUTCH_WATER_POINT_CLEAN or BridgeTask.HUTCH_WATER_POINT
+        if available < per then break end
+        available = available - per
+        waterUse = waterUse + per
+        if useCleaner then
+            cleanerAvail = cleanerAvail - BridgeTask.HUTCH_CHECK_POINT
+            cleanerUse = cleanerUse + BridgeTask.HUTCH_CHECK_POINT
+        end
+        points = points + 1
+    end
+    if points <= 0 then return nil end
+    return { points = points, waterUse = waterUse, cleanerUse = cleanerUse,
+        waterItem = waterItem, cleanerItem = cleaner }
+end
+
+BridgeTask.hutchDepositPick = function(body)
+    if body == nil or BridgeDeposit == nil or type(BridgeDeposit.homeTargets) ~= "function" then return nil end
+    local list = nil
+    pcall(function() list = BridgeDeposit.homeTargets() end)
+    if type(list) ~= "table" then return nil end
+    local bx, by = body:getX(), body:getY()
+    local best, bestD = nil, nil
+    for i = 1, #list do
+        local t = list[i]
+        local usable = false
+        if type(t) == "table" and type(t.x) == "number" and type(t.y) == "number" then
+            pcall(function() usable = BridgeDeposit.destUsable(t) == true end)
+        end
+        if usable then
+            local dx, dy = t.x - bx, t.y - by
+            local d = dx * dx + dy * dy
+            if bestD == nil or d < bestD then best, bestD = t, d end
+        end
+    end
+    return best
+end
+
+BridgeTask.hutchEggItems = function(body)
+    local out = {}
+    local want = math.floor(tonumber(BridgeTask.hutchEggs) or 0)
+    if want <= 0 or body == nil then return out end
+    local types = BridgeTask.hutchEggTypes or {}
+    local any = false
+    for _ in pairs(types) do any = true break end
+    if not any then types = { ["Base.Egg"] = true, ["Base.TurkeyEgg"] = true } end
+    local dests = nil
+    pcall(function() dests = BridgeTask.lootDests(body) end)
+    if type(dests) ~= "table" or #dests == 0 then return out end
+    local cand = {}
+    for d = 1, #dests do
+        local items = nil
+        pcall(function() items = dests[d]:getItems() end)
+        if items ~= nil then
+            for i = 0, items:size() - 1 do
+                local it = items:get(i)
+                if it ~= nil then
+                    local full = nil
+                    pcall(function() full = it:getFullType() end)
+                    if full ~= nil and types[full] == true then
+                        local id = 0
+                        pcall(function() id = tonumber(it:getID()) or 0 end)
+                        cand[#cand + 1] = { it = it, id = id }
+                    end
+                end
+            end
+        end
+    end
+    table.sort(cand, function(a, b) return a.id > b.id end)
+    local take = math.min(want, #cand)
+    for i = 1, take do out[#out + 1] = cand[i].it end
+    return out
+end
+
+BridgeTask.hutchDepositTick = function(body)
+    local T = BridgeTask
+    local phase = T.hutchDepositPhase
+    if phase == "pick" then
+        local target = T.hutchDepositPick(body)
+        if target == nil then
+            T.hutchDepositPhase = nil
+            return T.finish()
+        end
+        T.hutchDepositTarget = target
+        T.hutchDepositPhase = "walk"
+        T.resetWalkDest()
+        return true
+    end
+    if phase == "walk" then
+        local target = T.hutchDepositTarget
+        if target == nil then
+            T.hutchDepositPhase = nil
+            return T.finish()
+        end
+        local walk = T.walkTo(body, { x = target.x, y = target.y, z = target.z }, T.HUTCH_REACH, true)
+        if walk == "unreachable" then
+            T.hutchDepositTarget = nil
+            T.hutchDepositPhase = nil
+            T.resetWalkDest()
+            return T.finish()
+        end
+        if walk ~= "arrived" then return true end
+        pcall(function() BridgeMove.stopPath(body) end)
+        T.forceIdle(body)
+        local eggs = T.hutchEggItems(body)
+        if #eggs == 0 then
+            T.hutchDepositPhase = nil
+            return T.finish()
+        end
+        local act = nil
+        pcall(function() act = BridgeDeposit.depositItems(body, eggs, target) end)
+        if act == nil then
+            T.hutchDepositPhase = nil
+            return T.finish()
+        end
+        T.hutchDepositAct = act
+        T.hutchDepositAt = Bridge.time
+        T.hutchDepositPhase = "wait"
+        return true
+    end
+    if phase == "wait" then
+        local done = false
+        if T.hutchDepositAct == nil then
+            done = true
+        elseif BridgeInventory ~= nil and type(BridgeInventory.actionQueued) == "function" then
+            local queued = true
+            pcall(function() queued = BridgeInventory.actionQueued(T.hutchDepositAct) == true end)
+            if not queued then done = true end
+        end
+        if (Bridge.time - (T.hutchDepositAt or Bridge.time)) > (T.LOOT_TRANSFER_WAIT or 1200) then done = true end
+        if done then
+            T.hutchDepositAct = nil
+            T.hutchDepositAt = nil
+            T.hutchDepositPhase = nil
+            T.hutchDepositTarget = nil
+            T.lootAct = nil
+            T.lootSrc = nil
+            return T.finish()
+        end
+        return true
+    end
+    T.hutchDepositPhase = nil
+    return T.finish()
+end
+
+BridgeTask.hutchUpdate = function(body)
+    local T = BridgeTask
+    if T.HUTCHCARE_ENABLED ~= 1 or body == nil then return T.finish() end
+
+    if T.hutchPending ~= nil then
+        if (Bridge.time - (T.hutchPendingAt or Bridge.time)) > T.HUTCH_PENDING_TIMEOUT then
+            T.hutchPending = nil
+            T.hutchPendingAt = nil
+            T.hutchResult = nil
+            T.hutchAfter = nil
+            T.hutchLastOp = nil
+            local h = T.hutchResolve(T.current)
+            if h ~= nil then
+                local target = T.current
+                local red = nil
+                if Bridge ~= nil and Bridge.mp == true then
+                    pcall(function() red = BridgeData.owner() end)
+                end
+                if T.hutchOpenedHatch then
+                    if red ~= nil and target ~= nil then
+                        pcall(function()
+                            sendClientCommand(red, "Bridge", "hutchCare",
+                                { op = "closeHatch", x = target.x, y = target.y, z = target.z })
+                        end)
+                    else
+                        pcall(function()
+                            if h:isEggHatchDoorOpen() == true then h:toggleEggHatchDoor() end
+                            h:sync()
+                        end)
+                    end
+                    T.hutchOpenedHatch = false
+                end
+                if T.hutchOpenedDoor then
+                    if red ~= nil and target ~= nil then
+                        pcall(function()
+                            sendClientCommand(red, "Bridge", "hutchCare",
+                                { op = "closeDoor", x = target.x, y = target.y, z = target.z })
+                        end)
+                    else
+                        pcall(function()
+                            if h:isOpen() == true then h:toggleDoor() end
+                            h:sync()
+                        end)
+                    end
+                    T.hutchOpenedDoor = false
+                end
+            end
+            if T.hutchFailSaid ~= true then
+                T.hutchFailSaid = true
+                Bridge.speak("JobHutchOpenFail")
+            end
+            T.hutchPhase = "done"
+        else
+            return true
+        end
+    end
+
+    if T.hutchResult ~= nil then
+        local res = T.hutchResult
+        local last = T.hutchLastOp
+        T.hutchResult = nil
+        T.hutchLastOp = nil
+        if res.op == "openHatch" or res.op == "closeHatch" then
+            T.hutchOpenedHatch = res.hatch == true
+        elseif res.op == "openDoor" or res.op == "closeDoor" then
+            T.hutchOpenedDoor = (res.op == "openDoor" and res.open == true)
+        elseif res.op == "eggs" then
+            local n = math.floor(tonumber(res.count) or 0)
+            if n > 0 then
+                T.hutchEggs = (T.hutchEggs or 0) + n
+                T.hutchDidWork = true
+                if BridgeSkills ~= nil and type(BridgeSkills.add) == "function" then
+                    pcall(BridgeSkills.add, "Husbandry", n, "hutchcare.eggs")
+                end
+            end
+            T.hutchInfoCache = nil
+        elseif res.op == "cleanNest" then
+            if res.ok then
+                T.hutchDidWork = true
+                T.hutchInfoCache = nil
+            end
+        elseif res.op == "cleanFloor" then
+            local n = math.floor(tonumber(res.count) or 0)
+            if res.ok and last ~= nil then
+                local expect = tonumber(last.points) or 0
+                if expect > 0 and n > 0 then
+                    local scale = n / expect
+                    T.hutchSpend(last.waterItem, (tonumber(last.waterUse) or 0) * scale)
+                    T.hutchSpend(last.cleanerItem, (tonumber(last.cleanerUse) or 0) * scale)
+                end
+                if n > 0 then
+                    T.hutchDidWork = true
+                    T.hutchDirtApplied = (T.hutchDirtApplied or 0) + n
+                end
+            end
+            T.hutchInfoCache = nil
+        end
+        T.hutchPhase = T.hutchAfter or T.hutchPhase
+        T.hutchAfter = nil
+        return true
+    end
+
+    local target = T.current
+    if target == nil then
+        if T.hutchDepositPhase ~= nil then return T.hutchDepositTick(body) end
+        while #T.queue > 0 do
+            local t = table.remove(T.queue, 1)
+            if type(t) == "table" and t.hutch ~= nil then target = t break end
+        end
+        if target == nil then
+            if (T.hutchEggs or 0) > 0 and T.DEPOSIT_ENABLED == 1
+                    and BridgeDeposit ~= nil and type(BridgeDeposit.homeTargets) == "function" then
+                T.hutchDepositPhase = "pick"
+                return T.hutchDepositTick(body)
+            end
+            return T.finish()
+        end
+        T.current = target
+        T.hutchPhase = "approach"
+        T.hutchOpenedHatch, T.hutchOpenedDoor = false, false
+        T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
+        T.hutchEggsDone, T.hutchNestDone, T.hutchFloorDone = false, false, false
+        T.hutchEggBatch = nil
+        T.hutchInfoCache, T.hutchFloorPlan = nil, nil
+        T.hutchDidWork, T.hutchDirtApplied = false, 0
+        T.hutchFailSaid = false
+        T.hutchWater = nil
+        T.resetWalkDest()
+    end
+
+    local h = T.hutchResolve(target)
+    if h == nil then
+        T.current = nil
+        T.resetWalkDest()
+        return true
+    end
+    local phase = T.hutchPhase or "approach"
+
+    if phase == "approach" then
+        local entry = nil
+        pcall(function() entry = h:getEntrySq() end)
+        if entry == nil then
+            T.current = nil
+            T.resetWalkDest()
+            return true
+        end
+        local walk = T.walkTo(body, { x = entry:getX(), y = entry:getY(), z = entry:getZ() },
+            T.HUTCH_REACH, true)
+        if walk == "unreachable" then
+            T.current = nil
+            T.resetWalkDest()
+            return T.dropTarget("hutch")
+        end
+        if walk ~= "arrived" then return true end
+        pcall(function() BridgeMove.stopPath(body) end)
+        T.forceIdle(body)
+        T.hutchPhase = "open"
+        T.hutchInfoCache = nil
+        T.resetWalkDest()
+        return true
+    end
+
+    local info = T.hutchInfoCache
+    if info == nil then
+        info = T.hutchInfo(h)
+        T.hutchInfoCache = info
+    end
+    if info == nil then
+        T.current = nil
+        T.resetWalkDest()
+        return true
+    end
+
+    local refilling = T.hutchWater ~= nil
+        and (T.hutchWater.waterPhase == "refill" or T.hutchWater.waterFill ~= nil)
+    if phase ~= "doorOpen" and not refilling then
+        T.hutchPose(body, "LootLow")
+    end
+
+    if phase == "open" then
+        local needWork = info.needsEggs == true or info.needsNest == true
+        if not needWork then
+            T.hutchPhase = "hatchClose"
+            return true
+        end
+        local open = false
+        pcall(function() open = h:isEggHatchDoorOpen() == true end)
+        if open then
+            T.hutchOpenedHatch = true
+            T.hutchPhase = "eggs"
+            return true
+        end
+        if T.hutchPoseStart == nil then
+            T.hutchPoseStart = Bridge.time
+            T.hutchPoseSpan = 30
+            T.hutchPosePhase = "openHatch"
+            pcall(function() body:faceThisObject(h) end)
+            pcall(function() body:playSound("ChickenCoopMetalOpen") end)
+            return true
+        end
+        if ((Bridge.time - T.hutchPoseStart) * T.ffMult()) < (T.hutchPoseSpan or 0) then return true end
+        T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
+        T.hutchOpenedHatch = true
+        T.hutchSend(body, h, "openHatch", { after = "eggs" })
+        return true
+    end
+
+    if phase == "eggs" then
+        if T.hutchEggsDone or info.needsEggs ~= true then
+            T.hutchPhase = "nest"
+            return true
+        end
+        local max = T.hutchEggBatch or T.hutchEggRoom(body, info)
+        if max <= 0 then
+            T.hutchEggsDone = true
+            if T.hutchSaidFull ~= true then
+                T.hutchSaidFull = true
+                Bridge.speak("JobHutchFull")
+            end
+            T.hutchPhase = "nest"
+            return true
+        end
+        if T.hutchPoseStart == nil then
+            T.hutchEggBatch = max
+            T.hutchPoseStart = Bridge.time
+            local span = max * 40
+            if span < 60 then span = 60 end
+            if span > 600 then span = 600 end
+            T.hutchPoseSpan = span
+            T.hutchPosePhase = "eggs"
+            pcall(function() body:faceThisObject(h) end)
+            pcall(function() body:playSound("GrabEggs") end)
+            return true
+        end
+        if ((Bridge.time - T.hutchPoseStart) * T.ffMult()) < (T.hutchPoseSpan or 0) then return true end
+        T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
+        T.hutchEggsDone = true
+        T.hutchSend(body, h, "eggs", { max = T.hutchEggBatch or max, after = "nest" })
+        return true
+    end
+
+    if phase == "nest" then
+        if T.hutchNestDone or info.nestDirt < T.HUTCH_DIRT then
+            T.hutchPhase = "hatchClose"
+            return true
+        end
+        local span = math.floor((info.nestDirt or 0) * T.HUTCH_POSE_PER_POINT)
+        if span < 40 then span = 40 end
+        if span > 400 then span = 400 end
+        if T.hutchPoseStart == nil then
+            T.hutchPoseStart = Bridge.time
+            T.hutchPoseSpan = span
+            T.hutchPosePhase = "nest"
+            pcall(function() body:faceThisObject(h) end)
+            return true
+        end
+        if ((Bridge.time - T.hutchPoseStart) * T.ffMult()) < T.hutchPoseSpan then return true end
+        T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
+        T.hutchNestDone = true
+        T.hutchSend(body, h, "cleanNest", { after = "hatchClose" })
+        return true
+    end
+
+    if phase == "hatchClose" then
+        if T.hutchOpenedHatch then
+            local open = false
+            pcall(function() open = h:isEggHatchDoorOpen() == true end)
+            if open then
+                if T.hutchPoseStart == nil then
+                    T.hutchPoseStart = Bridge.time
+                    T.hutchPoseSpan = 30
+                    T.hutchPosePhase = "closeHatch"
+                    pcall(function() body:faceThisObject(h) end)
+                    pcall(function() body:playSound("ChickenCoopMetalClose") end)
+                    return true
+                end
+                if ((Bridge.time - T.hutchPoseStart) * T.ffMult()) < (T.hutchPoseSpan or 0) then
+                    return true
+                end
+                T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
+                T.hutchSend(body, h, "closeHatch", { after = "hatchClose" })
+                return true
+            end
+            T.hutchOpenedHatch = false
+        end
+        T.hutchPhase = info.needsFloor == true and "floorCheck" or "done"
+        return true
+    end
+
+    if phase == "floorCheck" then
+        if T.hutchFloorDone or info.needsFloor ~= true then
+            T.hutchPhase = "done"
+            return true
+        end
+        if T.findCleanStainItem(body) == nil then
+            T.hutchFloorDone = true
+            if T.hutchSaidTool ~= true then
+                T.hutchSaidTool = true
+                Bridge.speak("JobHutchNoTool")
+            end
+            T.hutchPhase = "done"
+            return true
+        end
+        local w = T.hutchWater
+        if w == nil then
+            w = setmetatable({}, { __index = T })
+            T.hutchWater = w
+        end
+        if w.waterContainer == nil or BridgeGardening == nil
+                or BridgeGardening.isWaterContainer(w.waterContainer) ~= true then
+            w.waterContainer = nil
+            pcall(function() w.waterContainer = BridgeGardening.findWaterContainer(body) end)
+        end
+        if w.waterContainer == nil then
+            T.hutchFloorDone = true
+            if T.hutchSaidWater ~= true then
+                T.hutchSaidWater = true
+                Bridge.speak("JobHutchNoWater")
+            end
+            T.hutchPhase = "done"
+            return true
+        end
+        local cleaner = nil
+        pcall(function() cleaner = T.findStainCleaner(body) end)
+        local cleanerAmt = cleaner ~= nil and T.hutchFluidAmount(cleaner, true) or 0
+        local per = cleanerAmt >= T.HUTCH_CHECK_POINT and T.HUTCH_WATER_POINT_CLEAN or T.HUTCH_WATER_POINT
+        local avail = T.hutchFluidAmount(w.waterContainer, false)
+        if avail < per then
+            if w.waterForcePour == true then
+                T.hutchFloorDone = true
+                if T.hutchSaidWater ~= true then
+                    T.hutchSaidWater = true
+                    Bridge.speak("JobHutchNoWater")
+                end
+                T.hutchPhase = "done"
+                return true
+            end
+            local use = (BridgeGardening ~= nil and BridgeGardening.WATER_PER_USE_ML or 200) / 1000
+            local needL = (info.floorDirt or 0) * T.HUTCH_WATER_POINT
+            local needUses = math.max(1, math.ceil(needL / use))
+            if w.waterPhase == nil and w.waterFill == nil then
+                w.waterSources, w.waterSourceI, w.waterTried = nil, nil, nil
+            end
+            local res = waterRefill(body, w, needUses, { noSource = function() return "nosource" end })
+            if type(res) == "string" then
+                T.hutchFloorDone = true
+                if T.hutchSaidWater ~= true then
+                    T.hutchSaidWater = true
+                    Bridge.speak("JobHutchNoWater")
+                end
+                T.hutchPhase = "done"
+                return true
+            end
+            if w.waterFill ~= nil or w.waterPhase ~= nil then return true end
+            T.resetWalkDest()
+            return true
+        end
+        T.hutchPhase = "doorOpen"
+        return true
+    end
+
+    if phase == "doorOpen" then
+        local entry = nil
+        pcall(function() entry = h:getEntrySq() end)
+        if entry ~= nil then
+            local dx = body:getX() - (entry:getX() + 0.5)
+            local dy = body:getY() - (entry:getY() + 0.5)
+            if math.sqrt(dx * dx + dy * dy) > T.HUTCH_REACH then
+                local walk = T.walkTo(body, { x = entry:getX(), y = entry:getY(), z = entry:getZ() },
+                    T.HUTCH_REACH, true)
+                if walk == "unreachable" then
+                    T.hutchFloorDone = true
+                    T.hutchPhase = "done"
+                    T.resetWalkDest()
+                    return true
+                end
+                if walk ~= "arrived" then return true end
+                pcall(function() BridgeMove.stopPath(body) end)
+                T.forceIdle(body)
+                T.resetWalkDest()
+            end
+        end
+        T.hutchPose(body, "LootLow")
+        local open = false
+        pcall(function() open = h:isOpen() == true end)
+        if open then
+            T.hutchOpenedDoor = true
+            T.hutchPhase = "floor"
+            return true
+        end
+        if T.hutchPoseStart == nil then
+            T.hutchPoseStart = Bridge.time
+            T.hutchPoseSpan = 20
+            T.hutchPosePhase = "openFloorDoor"
+            pcall(function() body:faceThisObject(h) end)
+            pcall(function() body:playSound("ChickenCoopWoodOpen") end)
+            return true
+        end
+        if ((Bridge.time - T.hutchPoseStart) * T.ffMult()) < (T.hutchPoseSpan or 0) then return true end
+        T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
+        T.hutchOpenedDoor = true
+        T.hutchSend(body, h, "openDoor", { after = "floor" })
+        return true
+    end
+
+    if phase == "floor" then
+        if T.hutchFloorDone then
+            T.hutchPhase = "doorClose"
+            return true
+        end
+        local plan = T.hutchFloorPlan
+        if plan == nil then
+            plan = T.hutchFloorPlanFor(body, h, info)
+            T.hutchFloorPlan = plan
+            if plan == nil or plan.points <= 0 then
+                T.hutchFloorDone = true
+                if T.hutchSaidWater ~= true then
+                    T.hutchSaidWater = true
+                    Bridge.speak("JobHutchNoWater")
+                end
+                T.hutchPhase = "doorClose"
+                return true
+            end
+            T.hutchPoseStart = Bridge.time
+            local span = math.floor(plan.points * T.HUTCH_POSE_PER_POINT)
+            if span < 60 then span = 60 end
+            if span > 900 then span = 900 end
+            T.hutchPoseSpan = span
+            T.hutchPosePhase = "floor"
+            pcall(function() body:faceThisObject(h) end)
+            T.hutchHoldTool(body)
+            return true
+        end
+        if T.hutchPoseStart ~= nil
+                and ((Bridge.time - T.hutchPoseStart) * T.ffMult()) < (T.hutchPoseSpan or 0) then
+            return true
+        end
+        T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
+        T.hutchFloorDone = true
+        T.hutchSend(body, h, "cleanFloor", {
+            points = plan.points, waterUse = plan.waterUse, cleanerUse = plan.cleanerUse,
+            waterItem = plan.waterItem, cleanerItem = plan.cleanerItem, after = "doorClose",
+        })
+        return true
+    end
+
+    if phase == "doorClose" then
+        if T.hutchOpenedDoor then
+            local open = false
+            pcall(function() open = h:isOpen() == true end)
+            if open then
+                if T.hutchPoseStart == nil then
+                    T.hutchPoseStart = Bridge.time
+                    T.hutchPoseSpan = 20
+                    T.hutchPosePhase = "closeFloorDoor"
+                    pcall(function() body:faceThisObject(h) end)
+                    pcall(function() body:playSound("ChickenCoopWoodClose") end)
+                    return true
+                end
+                if ((Bridge.time - T.hutchPoseStart) * T.ffMult()) < (T.hutchPoseSpan or 0) then
+                    return true
+                end
+                T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
+                T.hutchSend(body, h, "closeDoor", { after = "doorClose" })
+                return true
+            end
+            T.hutchOpenedDoor = false
+        end
+        T.hutchPhase = "done"
+        return true
+    end
+
+    if phase == "done" then
+        T.hutchClearPose(body)
+        if T.hutchWater ~= nil and T.hutchWater.waterFill ~= nil then
+            fillSoundStop(body, T.hutchWater.waterFill)
+        end
+        if T.hutchDidWork then T.markDone() end
+        T.current = nil
+        T.hutchPhase = nil
+        T.hutchOpenedHatch, T.hutchOpenedDoor = false, false
+        T.hutchInfoCache, T.hutchWater, T.hutchFloorPlan = nil, nil, nil
+        T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
+        T.hutchEggBatch = nil
+        T.resetWalkDest()
+        return true
+    end
+    return true
+end
+
+BridgeTask.hutchLeave = function(body)
+    local T = BridgeTask
+    local h = T.hutchResolve(T.current)
+    if h ~= nil then
+        local target = T.current
+        if T.hutchOpenedHatch then
+            if Bridge ~= nil and Bridge.mp == true then
+                local red = nil
+                pcall(function() red = BridgeData.owner() end)
+                if red ~= nil and target ~= nil then
+                    pcall(function()
+                        sendClientCommand(red, "Bridge", "hutchCare",
+                            { op = "closeHatch", x = target.x, y = target.y, z = target.z })
+                    end)
+                end
+            else
+                pcall(function()
+                    if h:isEggHatchDoorOpen() == true then h:toggleEggHatchDoor() end
+                    h:sync()
+                end)
+            end
+        end
+        if T.hutchOpenedDoor then
+            if Bridge ~= nil and Bridge.mp == true then
+                local red = nil
+                pcall(function() red = BridgeData.owner() end)
+                if red ~= nil and target ~= nil then
+                    pcall(function()
+                        sendClientCommand(red, "Bridge", "hutchCare",
+                            { op = "closeDoor", x = target.x, y = target.y, z = target.z })
+                    end)
+                end
+            else
+                pcall(function()
+                    if h:isOpen() == true then h:toggleDoor() end
+                    h:sync()
+                end)
+            end
+        end
+    end
+    T.hutchClearPose(body)
+    if T.hutchWater ~= nil and T.hutchWater.waterFill ~= nil then
+        fillSoundStop(body, T.hutchWater.waterFill)
+    end
+    T.hutchWater = nil
+    T.hutchPending = nil
+    T.hutchPendingAt = nil
+    T.hutchResult = nil
+    T.hutchAfter = nil
+    T.hutchLastOp = nil
+    T.hutchInfoCache = nil
+    T.hutchFloorPlan = nil
+    T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
+    T.hutchEggBatch = nil
+    T.hutchDepositPhase = nil
+    T.hutchDepositAct = nil
+    T.hutchDepositAt = nil
+    T.hutchDepositTarget = nil
+    T.hutchOpenedHatch, T.hutchOpenedDoor = false, false
+end
+
+BridgeTask.hutchFillEggs = function(h)
+    local added = 0
+    if h == nil then return 0 end
+    local maxNest = nil
+    pcall(function() maxNest = tonumber(h:getMaxNestBox()) end)
+    if maxNest == nil or maxNest < 0 then return 0 end
+    for i = 0, maxNest do
+        local animal = nil
+        pcall(function() animal = h:getAnimalInNestBox(i) end)
+        if animal == nil then
+            local nest = nil
+            pcall(function() nest = h:getNestBox(i) end)
+            if nest ~= nil then
+                local before = 0
+                pcall(function() before = tonumber(nest:getEggsNb()) or 0 end)
+                for _ = 1, 2 do
+                    local egg = nil
+                    pcall(function() egg = instanceItem("Base.Egg") end)
+                    if egg ~= nil then
+                        pcall(function() egg:setFertilized(false) end)
+                        pcall(function() nest:addEgg(egg) end)
+                    end
+                end
+                local after = before
+                pcall(function() after = tonumber(nest:getEggsNb()) or before end)
+                if after > before then added = added + (after - before) end
+            end
+        end
+    end
+    return added
+end
+
+BridgeTask.hutchDebugSend = function(op, target)
+    if Bridge == nil or Bridge.mp ~= true then return false end
+    local red = nil
+    pcall(function() red = BridgeData.owner() end)
+    if red == nil or target == nil then return false end
+    local ok = pcall(function()
+        sendClientCommand(red, "Bridge", "hutchCare",
+            { op = op, x = target.x, y = target.y, z = target.z })
+    end)
+    return ok == true
+end
+
+BridgeTask.hutchDebugEggs = function(target)
+    local h = BridgeTask.hutchResolve(target)
+    if h == nil then return 0 end
+    if BridgeTask.hutchDebugSend("debugEggs", target) then return 0 end
+    local n = BridgeTask.hutchFillEggs(h)
+    pcall(function() h:sync() end)
+    log("hutch debug eggs " .. tostring(n))
+    return n
+end
+
+BridgeTask.hutchDebugDirty = function(target)
+    local h = BridgeTask.hutchResolve(target)
+    if h == nil then return end
+    if BridgeTask.hutchDebugSend("debugDirty", target) then return end
+    pcall(function()
+        h:setHutchDirt(100)
+        h:setNestBoxDirt(100)
+        h:sync()
+    end)
+    log("hutch debug dirt 100")
+end
+
+BridgeTask.kinds.animalCare = {}
+BridgeTask.kinds.animalCare.available = function(body)
+    return BridgeTask.HUTCHCARE_ENABLED == 1
+end
+BridgeTask.kinds.animalCare.missing = function(body)
+    return nil
+end
+BridgeTask.kinds.animalCare.update = function(body)
+    return BridgeTask.hutchUpdate(body)
+end
+BridgeTask.kinds.animalCare.leave = function(body)
+    BridgeTask.hutchLeave(body)
+end
 
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeTask] loaded") end
 

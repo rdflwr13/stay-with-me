@@ -3966,6 +3966,245 @@ BridgeServer.Commands.troughWater = function(player, args)
         tostring(who), tostring(args.x), tostring(args.y), want, added, after))
 end
 
+BridgeServer.Commands.hutchCare = function(player, args)
+    local who = player:getUsername()
+    local op = tostring(args.op or "")
+    local result = { op = op, ok = false, why = nil, count = 0, open = false, hatch = false,
+        waterUsed = 0, cleanerUsed = 0, x = args.x, y = args.y, z = args.z }
+    local function reply(why, ok)
+        result.why = why
+        result.ok = ok == true
+        sendServerCommand(player, "Bridge", "hutchCareResult", result)
+    end
+    if op == "debugEggs" or op == "debugDirty" then
+        local x, y, z = tonumber(args.x), tonumber(args.y), tonumber(args.z)
+        if x == nil or y == nil then return reply("badargs") end
+        z = z or 0
+        local px, py = player:getX(), player:getY()
+        if (px - x) ^ 2 + (py - y) ^ 2 > 225 then return reply("far") end
+        local sq = nil
+        pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+        local hutch = nil
+        pcall(function()
+            local h = sq ~= nil and sq:getHutch() or nil
+            if h ~= nil then
+                local up = h:getHutch()
+                hutch = up or h
+            end
+        end)
+        if hutch == nil then return reply("hutch") end
+        if op == "debugEggs" then
+            local added = 0
+            local maxNest = nil
+            pcall(function() maxNest = tonumber(hutch:getMaxNestBox()) end)
+            if maxNest ~= nil and maxNest >= 0 then
+                for i = 0, maxNest do
+                    local animal = nil
+                    pcall(function() animal = hutch:getAnimalInNestBox(i) end)
+                    if animal == nil then
+                        local nest = nil
+                        pcall(function() nest = hutch:getNestBox(i) end)
+                        if nest ~= nil then
+                            local before = 0
+                            pcall(function() before = tonumber(nest:getEggsNb()) or 0 end)
+                            for _ = 1, 2 do
+                                local egg = nil
+                                pcall(function() egg = instanceItem("Base.Egg") end)
+                                if egg ~= nil then
+                                    pcall(function() egg:setFertilized(false) end)
+                                    pcall(function() nest:addEgg(egg) end)
+                                end
+                            end
+                            local after = before
+                            pcall(function() after = tonumber(nest:getEggsNb()) or before end)
+                            if after > before then added = added + (after - before) end
+                        end
+                    end
+                end
+            end
+            pcall(function() hutch:sync() end)
+            result.count = added
+            log("hutchCare debugEggs " .. tostring(added) .. " for " .. tostring(who))
+            return reply(nil, true)
+        end
+        pcall(function()
+            hutch:setHutchDirt(100)
+            hutch:setNestBoxDirt(100)
+            hutch:sync()
+        end)
+        result.count = 1
+        log("hutchCare debugDirty for " .. tostring(who))
+        return reply(nil, true)
+    end
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("hutchCare: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    if dist(body, args.x + 0.5, args.y + 0.5) > 6 then
+        log("hutchCare: far " .. tostring(who))
+        return reply("far")
+    end
+    local hutch = nil
+    pcall(function()
+        local h = sq:getHutch()
+        if h ~= nil then
+            local up = h:getHutch()
+            hutch = up or h
+        end
+    end)
+    if hutch == nil then return reply("hutch") end
+    pcall(function() result.open = hutch:isOpen() == true end)
+    pcall(function() result.hatch = hutch:isEggHatchDoorOpen() == true end)
+
+    if op == "openHatch" then
+        pcall(function()
+            if hutch:isEggHatchDoorOpen() ~= true then hutch:toggleEggHatchDoor() end
+            hutch:sync()
+        end)
+        pcall(function() result.hatch = hutch:isEggHatchDoorOpen() == true end)
+        return reply(nil, true)
+    end
+    if op == "closeHatch" then
+        pcall(function()
+            if hutch:isEggHatchDoorOpen() == true then hutch:toggleEggHatchDoor() end
+            hutch:sync()
+        end)
+        pcall(function() result.hatch = hutch:isEggHatchDoorOpen() == true end)
+        return reply(nil, true)
+    end
+    if op == "openDoor" then
+        pcall(function()
+            if hutch:isOpen() ~= true then hutch:toggleDoor() end
+            hutch:sync()
+        end)
+        pcall(function() result.open = hutch:isOpen() == true end)
+        return reply(nil, true)
+    end
+    if op == "closeDoor" then
+        pcall(function()
+            if hutch:isOpen() == true then hutch:toggleDoor() end
+            hutch:sync()
+        end)
+        pcall(function() result.open = hutch:isOpen() == true end)
+        return reply(nil, true)
+    end
+    if op == "cleanNest" then
+        local before = 0
+        pcall(function() before = tonumber(hutch:getNestBoxDirt()) or 0 end)
+        pcall(function()
+            hutch:setNestBoxDirt(0)
+            hutch:sync()
+        end)
+        result.count = before > 0 and 1 or 0
+        return reply(nil, true)
+    end
+    if op == "cleanFloor" then
+        local points = math.floor(tonumber(args.points) or 0)
+        local dirt = 0
+        pcall(function() dirt = tonumber(hutch:getHutchDirt()) or 0 end)
+        if points > dirt then points = dirt end
+        if points < 0 then points = 0 end
+        if points > 0 then
+            pcall(function()
+                hutch:setHutchDirt(math.max(0, dirt - points))
+                hutch:sync()
+            end)
+        end
+        result.count = points
+        return reply(nil, true)
+    end
+    if op == "eggs" then
+        local max = math.floor(tonumber(args.max) or 0)
+        if max <= 0 then return reply(nil, true) end
+        local rec = record(who)
+        local list = BridgeItems.decode(rec.items or "")
+        local picks = {}
+        local maxNest = nil
+        pcall(function() maxNest = tonumber(hutch:getMaxNestBox()) end)
+        if maxNest ~= nil and maxNest >= 0 then
+            for i = 0, maxNest do
+                if #picks >= max then break end
+                local animal = nil
+                pcall(function() animal = hutch:getAnimalInNestBox(i) end)
+                if animal == nil then
+                    local nest = nil
+                    pcall(function() nest = hutch:getNestBox(i) end)
+                    if nest ~= nil then
+                        local n = 0
+                        pcall(function() n = tonumber(nest:getEggsNb()) or 0 end)
+                        for j = n - 1, 0, -1 do
+                            if #picks >= max then break end
+                            local egg = nil
+                            local read = pcall(function() egg = nest:getEgg(j) end)
+                            if read and egg ~= nil then
+                                local fert = nil
+                                pcall(function() fert = egg:isFertilized() == true end)
+                                if fert == false then
+                                    picks[#picks + 1] = { nest = nest, index = j }
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if #picks == 0 then return reply("noeggs", true) end
+        local taken = {}
+        for i = 1, #picks do
+            local egg = nil
+            pcall(function() egg = picks[i].nest:removeEgg(picks[i].index) end)
+            if egg ~= nil then
+                local r = nil
+                pcall(function() r = BridgeItems.record(egg, true) end)
+                if r ~= nil then
+                    taken[#taken + 1] = { egg = egg, rec = r, nest = picks[i].nest }
+                else
+                    pcall(function() picks[i].nest:addEgg(egg) end)
+                end
+            end
+        end
+        if #taken == 0 then return reply("noeggs", true) end
+        local temp, flat = {}, {}
+        for i = 1, #list do temp[i] = list[i] end
+        for i = 1, #taken do
+            local added = {}
+            flatten(taken[i].rec, nil, added)
+            for j = 1, #added do temp[#temp + 1] = added[j] end
+            flat[i] = added
+        end
+        local items = BridgeItems.encode(temp)
+        if BridgeItems.overBlock() or #BridgeItems.decode(items) ~= #temp then
+            for i = #taken, 1, -1 do
+                pcall(function() taken[i].nest:addEgg(taken[i].egg) end)
+            end
+            pcall(function() hutch:sync() end)
+            return reply("full")
+        end
+        pcall(function() hutch:sync() end)
+        BridgeItems.set(rec, items)
+        rec.saved = 1
+        rec.iseq = (rec.iseq or 0) + 1
+        transmit()
+        local recs, ids = {}, {}
+        for i = 1, #taken do
+            recs[i] = taken[i].rec
+            local id = nil
+            pcall(function() id = taken[i].egg:getID() end)
+            if id == nil then id = 0 - i end
+            ids[i] = id
+            journalNote("G", who, rec, id, flat[i])
+        end
+        result.count = #taken
+        sendServerCommand(player, "Bridge", "gave",
+            { ids = ids, recs = recs, iseq = rec.iseq, jobDest = "records" })
+        reply(nil, true)
+        log("hutchCare eggs " .. tostring(#taken) .. " for " .. tostring(who))
+        return
+    end
+    return reply("badop")
+end
+
 BridgeServer.Commands.fertilizePlants = function(player, args)
     local who = player:getUsername()
     local body, sq = companionAtRelaxed(player, args, 6)

@@ -908,6 +908,135 @@ function BridgeWorkSelect.troughsIn(b)
     return out
 end
 
+BridgeWorkSelect.MAX_HUTCHES = 10
+
+function BridgeWorkSelect.hutchMaster(h)
+    if h == nil then return nil end
+    local m = h
+    pcall(function()
+        local up = h:getHutch()
+        if up ~= nil then m = up end
+    end)
+    return m
+end
+
+function BridgeWorkSelect.hutchInfo(h)
+    local m = BridgeWorkSelect.hutchMaster(h)
+    if m == nil then return nil end
+    local info = { hutch = m, eggs = 0, eggTypes = {}, floorDirt = 0, nestDirt = 0 }
+    pcall(function() info.floorDirt = tonumber(m:getHutchDirt()) or 0 end)
+    pcall(function() info.nestDirt = tonumber(m:getNestBoxDirt()) or 0 end)
+    local maxNest = nil
+    pcall(function() maxNest = tonumber(m:getMaxNestBox()) end)
+    if maxNest ~= nil and maxNest >= 0 then
+        for i = 0, maxNest do
+            local animal = nil
+            pcall(function() animal = m:getAnimalInNestBox(i) end)
+            if animal == nil then
+                local nest = nil
+                pcall(function() nest = m:getNestBox(i) end)
+                if nest ~= nil then
+                    local n = 0
+                    pcall(function() n = tonumber(nest:getEggsNb()) or 0 end)
+                    local free = {}
+                    for j = n - 1, 0, -1 do
+                        local egg = nil
+                        local read = pcall(function() egg = nest:getEgg(j) end)
+                        if read and egg ~= nil then
+                            local fert = nil
+                            pcall(function() fert = egg:isFertilized() == true end)
+                            if fert == false then
+                                free[#free + 1] = j
+                                local full = nil
+                                pcall(function() full = egg:getFullType() end)
+                                if full ~= nil then info.eggTypes[full] = true end
+                            end
+                        end
+                    end
+                    if #free > 0 then
+                        info.eggs = info.eggs + #free
+                    end
+                end
+            end
+        end
+    end
+    info.needsEggs = info.eggs > 0
+    local threshold = (BridgeTask ~= nil and BridgeTask.HUTCH_DIRT) or 10
+    info.needsNest = info.nestDirt >= threshold
+    info.needsFloor = info.floorDirt >= threshold
+    info.needsWork = info.needsEggs or info.needsNest or info.needsFloor
+    return info
+end
+
+function BridgeWorkSelect.hutchTarget(h)
+    local m = BridgeWorkSelect.hutchMaster(h)
+    if m == nil then return nil end
+    local x, y, z = nil, nil, nil
+    pcall(function() x, y, z = m:getX(), m:getY(), m:getZ() end)
+    if x == nil or y == nil or z == nil then return nil end
+    local t = { x = x, y = y, z = z, hutch = m }
+    local entry = nil
+    pcall(function() entry = m:getEntrySq() end)
+    if entry ~= nil then
+        t.entryX, t.entryY, t.entryZ = entry:getX(), entry:getY(), entry:getZ()
+    end
+    return t
+end
+
+function BridgeWorkSelect.hutchNeedsWork(h)
+    local info = BridgeWorkSelect.hutchInfo(h)
+    return info ~= nil and info.needsWork == true
+end
+
+function BridgeWorkSelect.hutchNeedsFloor(h)
+    local info = BridgeWorkSelect.hutchInfo(h)
+    return info ~= nil and info.needsFloor == true
+end
+
+function BridgeWorkSelect.hutchesIn(b)
+    local out = {}
+    if type(b) ~= "table" then return out end
+    local seen = {}
+    local z = math.floor(tonumber(b.z) or 0)
+    for x = b.x1, b.x2 do
+        if #out >= BridgeWorkSelect.MAX_HUTCHES then return out end
+        for y = b.y1, b.y2 do
+            if #out >= BridgeWorkSelect.MAX_HUTCHES then return out end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+            if sq ~= nil then
+                local h = nil
+                pcall(function() h = sq:getHutch() end)
+                if h == nil then
+                    pcall(function()
+                        local objs = sq:getObjects()
+                        if objs == nil then return end
+                        for i = 0, objs:size() - 1 do
+                            local o = objs:get(i)
+                            if o ~= nil and instanceof(o, "IsoHutch") then h = o break end
+                        end
+                    end)
+                end
+                local m = BridgeWorkSelect.hutchMaster(h)
+                if m ~= nil then
+                    local mx, my, mz = nil, nil, nil
+                    pcall(function() mx, my, mz = m:getX(), m:getY(), m:getZ() end)
+                    local key = tostring(mx) .. "," .. tostring(my) .. "," .. tostring(mz)
+                    if seen[key] ~= true then
+                        seen[key] = true
+                        local info = BridgeWorkSelect.hutchInfo(m)
+                        if info ~= nil and info.needsWork then
+                            local t = BridgeWorkSelect.hutchTarget(m)
+                            if t ~= nil then out[#out + 1] = t end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
 function BridgeWorkSelect.isDestinationValid(sq)
     if sq == nil then return false end
     local floor = nil
@@ -998,6 +1127,13 @@ BridgeWorkSelect.kinds = {
         min = 1,
         noneSay = "JobNoTroughs",
     },
+    animalCare = {
+        collect = function(b) return BridgeWorkSelect.hutchesIn(b) end,
+        max = BridgeWorkSelect.MAX_HUTCHES,
+        maxSide = 40,
+        min = 1,
+        noneSay = "JobNoHutches",
+    },
 }
 
 function BridgeWorkSelect.sortTargets(targets)
@@ -1054,6 +1190,7 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "fertilizePlants" and BridgeTask.FEED_PLANTS_ENABLED ~= 1 then return nil end
     if kind == "tendCrops" and BridgeTask.TEND_ENABLED ~= 1 then return nil end
     if kind == "fillTroughs" and BridgeTask.TROUGHS_ENABLED ~= 1 then return nil end
+    if kind == "animalCare" and BridgeTask.HUTCHCARE_ENABLED ~= 1 then return nil end
     if (kind == "openDoors" or kind == "closeDoors") and BridgeTask.DOORS_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)

@@ -4321,19 +4321,33 @@ function BridgeInventory.receive(args)
         answer(false, "no body")
         return "no body, returned"
     end
+    local jobDest = nil
+    if args.jobDest == "records" and type(recs) == "table" and #recs > 0
+            and BridgeGardening ~= nil and type(BridgeGardening.destForRecs) == "function" then
+        pcall(function() jobDest = BridgeGardening.destForRecs(b, recs, b) end)
+    end
     local failed = nil
+    local failedAt = nil
     local ok, err = pcall(function()
         for i = 1, #ids do
             local p = pend[i]
             local dest = b:getInventory()
-            if p ~= nil and p.dest ~= nil and BridgeInventory.inBody(p.dest) then dest = p.dest end
+            if p ~= nil and p.dest ~= nil and BridgeInventory.inBody(p.dest) then
+                dest = p.dest
+            elseif p == nil and jobDest ~= nil and recs[i] ~= nil then
+                dest = jobDest
+            end
             local obj = p and p.item or nil
             if obj ~= nil then
                 local old = obj:getContainer()
                 if old ~= nil then old:Remove(obj) end
                 dest:AddItem(obj)
             elseif recs[i] ~= nil then
-                BridgeItems.make(dest, recs[i])
+                if BridgeItems.make(dest, recs[i]) == nil then
+                    failed = "no room"
+                    failedAt = i
+                    break
+                end
             else
                 failed = "nothing to put"
             end
@@ -4342,8 +4356,13 @@ function BridgeInventory.receive(args)
     if failed ~= nil then ok, err = false, failed end
     note("receive " .. tostring(#ids) .. " item(s)")
     if not ok then
-        if #recs > 0 then
-            pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "take", { recs = recs, token = -1, returnId = args.id }) end)
+        local rest = recs
+        if failedAt ~= nil then
+            rest = {}
+            for i = failedAt, #recs do rest[#rest + 1] = recs[i] end
+        end
+        if #rest > 0 then
+            pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "take", { recs = rest, token = -1, returnId = args.id }) end)
         end
         answer(false, tostring(err))
         return "receive failed, returned: " .. tostring(err)

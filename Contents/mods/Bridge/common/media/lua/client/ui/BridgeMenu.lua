@@ -668,7 +668,8 @@ local function addAnimalMenu(jobs)
     if jobs == nil or BridgeTask == nil or BridgeTask.kinds == nil then return end
     local pet = BridgeTask.PET_ANIMALS_ENABLED == 1 and BridgeTask.kinds.petAnimals ~= nil
     local trough = BridgeTask.TROUGHS_ENABLED == 1 and BridgeTask.kinds.fillTroughs ~= nil
-    if not pet and not trough then return end
+    local care = BridgeTask.HUTCHCARE_ENABLED == 1 and BridgeTask.kinds.animalCare ~= nil
+    if not pet and not trough and not care then return end
     local animalOpt = jobs:addOption(tr("Animals"))
     local animals = ISContextMenu:getNew(jobs)
     jobs:addSubMenu(animalOpt, animals)
@@ -678,6 +679,11 @@ local function addAnimalMenu(jobs)
     end
     if trough then
         local opt = animals:addOption(tr("JobFillTroughs"), nil, BridgeMenu.onJobFillTroughs)
+        if BridgeTask.active then opt.notAvailable = true end
+    end
+    if care then
+        local opt = animals:addOption(tr("JobAnimalCare"), nil, BridgeMenu.onJobAnimalCare)
+        tip(opt, tr("JobAnimalCareTip"))
         if BridgeTask.active then opt.notAvailable = true end
     end
 end
@@ -1450,6 +1456,27 @@ end
 function BridgeMenu.onJobFillTroughs()
     if BridgeTask == nil or BridgeWorkSelect == nil or BridgeData == nil then return end
     BridgeWorkSelect.begin(BridgeData.owner(), "fillTroughs")
+end
+
+function BridgeMenu.onJobAnimalCare()
+    if BridgeTask == nil or BridgeWorkSelect == nil or BridgeData == nil then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "animalCare")
+end
+
+function BridgeMenu.onTendHutch(target)
+    if BridgeTask == nil or BridgeTask.kinds == nil or BridgeTask.kinds.animalCare == nil then return end
+    if type(target) ~= "table" or target.hutch == nil then return end
+    BridgeTask.start("animalCare", { target })
+end
+
+function BridgeMenu.onDebugHutchEggs(target)
+    if BridgeTask == nil or type(BridgeTask.hutchDebugEggs) ~= "function" then return end
+    BridgeTask.hutchDebugEggs(target)
+end
+
+function BridgeMenu.onDebugHutchDirty(target)
+    if BridgeTask == nil or type(BridgeTask.hutchDebugDirty) ~= "function" then return end
+    BridgeTask.hutchDebugDirty(target)
 end
 
 function BridgeMenu.onPetAnimalOrder(a)
@@ -2790,6 +2817,79 @@ function BridgeMenu.onTroughMenu(playerNum, context, worldobjects, test)
     if BridgeTask.active then opt.notAvailable = true end
 end
 
+function BridgeMenu.onHutchMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
+    if BridgeTask.HUTCHCARE_ENABLED ~= 1 or BridgeTask.kinds == nil or BridgeTask.kinds.animalCare == nil then return end
+    if BridgeWorkSelect == nil or type(BridgeWorkSelect.hutchNeedsWork) ~= "function" then return end
+    if not present() then return end
+    local hutch = nil
+    for _, o in ipairs(worldobjects or {}) do
+        if o ~= nil and instanceof(o, "IsoHutch") then
+            pcall(function() hutch = o:getHutch() end)
+            if hutch ~= nil then break end
+        end
+    end
+    if hutch == nil then return end
+    local info = nil
+    pcall(function() info = BridgeWorkSelect.hutchInfo(hutch) end)
+    local need = info ~= nil and info.needsWork == true
+    local noRoom = false
+    if need and info.needsEggs == true then
+        local room = 0
+        pcall(function() room = BridgeTask.hutchEggCapacity(Bridge.body) end)
+        if room == nil or room <= 0 then noRoom = true end
+    end
+    local target = BridgeWorkSelect.hutchTarget(hutch)
+    if target == nil then return end
+    local sub = nil
+    pcall(function()
+        local parent = context:getOptionFromName(getText("ContextMenu_Hutch"))
+        if parent ~= nil and parent.subOption ~= nil then sub = context:getSubMenu(parent.subOption) end
+    end)
+    local rin = nil
+    if sub ~= nil then
+        local rinOpt = nil
+        pcall(function() rinOpt = sub:getOptionFromName(name()) end)
+        if rinOpt == nil then
+            pcall(function()
+                rinOpt = sub:addOption(name())
+                local rinSub = ISContextMenu:getNew(sub)
+                sub:addSubMenu(rinOpt, rinSub)
+                rin = rinSub
+            end)
+        else
+            pcall(function() rin = sub:getSubMenu(rinOpt.subOption) end)
+        end
+    end
+    if rin == nil then rin = BridgeMenu.rinTopMenu(context) end
+    if rin == nil then return end
+    local tend = nil
+    pcall(function() tend = rin:getOptionFromName(tr("JobTendHutch")) end)
+    if tend == nil then
+        tend = rin:addOption(tr("JobTendHutch"), target, BridgeMenu.onTendHutch)
+        if BridgeTask.active or not need or noRoom then tend.notAvailable = true end
+        local tipKey = "JobTendHutchTip"
+        if not need then
+            tipKey = "JobTendHutchNone"
+        elseif noRoom then
+            tipKey = "JobHutchNoRoomTip"
+        end
+        tip(tend, tr(tipKey))
+    end
+    local eggs = nil
+    pcall(function() eggs = rin:getOptionFromName(tr("DebugHutchEggs")) end)
+    if eggs == nil then
+        rin:addOption(tr("DebugHutchEggs"), target, BridgeMenu.onDebugHutchEggs)
+    end
+    local dirty = nil
+    pcall(function() dirty = rin:getOptionFromName(tr("DebugHutchDirty")) end)
+    if dirty == nil then
+        rin:addOption(tr("DebugHutchDirty"), target, BridgeMenu.onDebugHutchDirty)
+    end
+end
+
 local function onCarDoorMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -2828,6 +2928,7 @@ Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLayMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onPryMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWashSinkMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onTroughMenu)
+Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onHutchMenu)
 Events.OnFillWorldObjectContextMenu.Add(onCarDoorMenu)
 if Events.OnClickedAnimalForContext ~= nil then
     Events.OnClickedAnimalForContext.Add(BridgeMenu.onAnimalMenu)

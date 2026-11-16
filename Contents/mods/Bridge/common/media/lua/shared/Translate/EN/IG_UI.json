@@ -4767,5 +4767,22 @@
     "IGUI_NotAlone_Say_JobNoTroughs": "No troughs need filling.",
     "IGUI_NotAlone_Say_JobTroughNoWater": "I can't get water to these.",
     "IGUI_NotAlone_Say_JobTroughNoFeed": "I've no feed for these.",
-    "IGUI_NotAlone_Say_JobTroughFull": "These are already full."
+    "IGUI_NotAlone_Say_JobTroughFull": "These are already full.",
+    "IGUI_NotAlone_JobAnimalCare": "Animal care",
+    "IGUI_NotAlone_JobAnimalCareTip": "Collect eggs and clean the hutches and nest boxes.",
+    "IGUI_NotAlone_JobTendHutch": "Tend hutch",
+    "IGUI_NotAlone_JobTendHutchTip": "Collect eggs and clean this hutch.",
+    "IGUI_NotAlone_JobTendHutchNone": "Nothing needs doing in this hutch.",
+    "IGUI_NotAlone_JobHutchNoRoomTip": "No room for more eggs.",
+    "IGUI_NotAlone_DebugHutchEggs": "Debug: fill eggs",
+    "IGUI_NotAlone_DebugHutchDirty": "Debug: make dirty",
+    "IGUI_NotAlone_Say_JobNoHutches": "No hutches need tending.",
+    "IGUI_NotAlone_Say_JobAnimalCareStart": "I'll see to the hutches.",
+    "IGUI_NotAlone_Say_JobAnimalCareDone": "Hutches are sorted.",
+    "IGUI_NotAlone_Say_JobHutchNoTool": "I need a mop, broom, or towel for the hutch floor.",
+    "IGUI_NotAlone_Say_JobHutchNoWater": "I can't get water to the hutch.",
+    "IGUI_NotAlone_Say_JobHutchOpenFail": "I can't get the hutch open.",
+    "IGUI_NotAlone_Say_JobHutchEggs": "Got the eggs.",
+    "IGUI_NotAlone_Say_JobHutchClean": "Hutch is cleaned up.",
+    "IGUI_NotAlone_Say_JobHutchFull": "I've no room for more eggs."
 }

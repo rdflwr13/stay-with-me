@@ -10201,6 +10201,12 @@ function Bridge.onServerCommand(module, command, args)
         end
         Bridge.result = "trough water: " .. tostring(args.ok) .. " " .. tostring(args.added) .. " " .. tostring(args.why or "")
         log(Bridge.result)
+    elseif command == "hutchCareResult" then
+        if BridgeTask ~= nil and type(BridgeTask.hutchCareResult) == "function" then
+            pcall(function() BridgeTask.hutchCareResult(args) end)
+        end
+        Bridge.result = "hutch: " .. tostring(args.op) .. " " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
     elseif command == "say" and args.text ~= nil then
         local name = args.name or BridgeData.DEFAULT_NAME
         if args.chat ~= false then

@@ -1110,6 +1110,7 @@ local function jobEnabled(kind)
         elseif kind == "waterPlants" then ok = BridgeTask.WATER_PLANTS_ENABLED == 1
         elseif kind == "fertilizePlants" then ok = BridgeTask.FEED_PLANTS_ENABLED == 1
         elseif kind == "tendCrops" then ok = BridgeTask.TEND_ENABLED == 1
+        elseif kind == "animalCare" then ok = BridgeTask.HUTCHCARE_ENABLED == 1
         end
     end)
     return ok == true
@@ -1213,6 +1214,21 @@ function BridgeFetch.jobMissing(kind, targets)
             if need.petrol then out[#out + 1] = "petrol" end
             if need.ash then out[#out + 1] = "ashTool" end
             if need.cut then out[#out + 1] = "cutTool" end
+        elseif kind == "animalCare" then
+            if BridgeTask.findCleanStainItem(b) == nil
+                    and BridgeWorkSelect ~= nil and type(BridgeWorkSelect.hutchNeedsFloor) == "function" then
+                local needFloor = false
+                for i = 1, #targets do
+                    local t = targets[i]
+                    if type(t) == "table" and t.hutch ~= nil then
+                        pcall(function()
+                            needFloor = BridgeWorkSelect.hutchNeedsFloor(t.hutch) == true
+                        end)
+                    end
+                    if needFloor then break end
+                end
+                if needFloor then out[#out + 1] = "cleanImplement" end
+            end
         end
     end)
     if #out > 0 then BridgeFetch.invalidateAmmoCache() end
