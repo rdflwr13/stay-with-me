@@ -1134,6 +1134,25 @@ BridgeWorkSelect.kinds = {
         min = 1,
         noneSay = "JobNoHutches",
     },
+    tendAnimals = {
+        collect = function(b)
+            local out = {}
+            if BridgeTask ~= nil and BridgeTask.HUTCHCARE_ENABLED == 1 then
+                local list = BridgeWorkSelect.hutchesIn(b)
+                for i = 1, #list do out[#out + 1] = list[i] end
+            end
+            if BridgeTask ~= nil and BridgeTask.PET_ANIMALS_ENABLED == 1
+                    and BridgeAnimalCare ~= nil and type(BridgeAnimalCare.targetsIn) == "function" then
+                local list = BridgeAnimalCare.targetsIn(b)
+                for i = 1, #list do out[#out + 1] = list[i] end
+            end
+            return out
+        end,
+        max = (BridgeWorkSelect.MAX_HUTCHES or 10) + 10,
+        maxSide = 40,
+        min = 1,
+        noneSay = "JobNoAnimals",
+    },
 }
 
 function BridgeWorkSelect.sortTargets(targets)
@@ -1191,6 +1210,8 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "tendCrops" and BridgeTask.TEND_ENABLED ~= 1 then return nil end
     if kind == "fillTroughs" and BridgeTask.TROUGHS_ENABLED ~= 1 then return nil end
     if kind == "animalCare" and BridgeTask.HUTCHCARE_ENABLED ~= 1 then return nil end
+    if kind == "tendAnimals" and BridgeTask.HUTCHCARE_ENABLED ~= 1
+            and BridgeTask.PET_ANIMALS_ENABLED ~= 1 then return nil end
     if (kind == "openDoors" or kind == "closeDoors") and BridgeTask.DOORS_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)

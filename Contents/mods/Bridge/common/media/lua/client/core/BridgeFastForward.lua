@@ -206,7 +206,7 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
                 or BridgeTask.kind == "lootArea" or BridgeTask.kind == "harvestCrops"
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
                 or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops"
-                or BridgeTask.kind == "petAnimals" or BridgeTask.kind == "fillTroughs"
+                or BridgeTask.kind == "petAnimals" or BridgeTask.kind == "tendAnimals" or BridgeTask.kind == "fillTroughs"
                 or BridgeTask.kind == "animalCare")
         end
     end)
@@ -503,7 +503,7 @@ function BridgeFastForward.holdStand(b)
                 or BridgeTask.kind == "harvestCrops"
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
                 or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops"
-                or BridgeTask.kind == "petAnimals" or BridgeTask.kind == "fillTroughs"
+                or BridgeTask.kind == "petAnimals" or BridgeTask.kind == "tendAnimals" or BridgeTask.kind == "fillTroughs"
                 or BridgeTask.kind == "animalCare") then
         local isExerciseAnim = bump == BridgeTask.EXERCISE_ANIM
         if BridgeExercise ~= nil and BridgeExercise.isAnim ~= nil then
@@ -754,7 +754,7 @@ function BridgeFastForward.tick()
                 or BridgeTask.kind == "lootArea" or BridgeTask.kind == "harvestCrops"
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
                 or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops"
-                or BridgeTask.kind == "petAnimals" or BridgeTask.kind == "fillTroughs"
+                or BridgeTask.kind == "petAnimals" or BridgeTask.kind == "tendAnimals" or BridgeTask.kind == "fillTroughs"
                 or BridgeTask.kind == "animalCare") then
         if BridgeTask.lastUpdateTick ~= Bridge.tick then pcall(BridgeTask.update, Bridge.body) end
         if Bridge.every(120) then

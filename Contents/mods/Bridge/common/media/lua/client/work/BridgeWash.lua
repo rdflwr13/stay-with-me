@@ -385,6 +385,13 @@ function BridgeWash.waterOn(square)
 end
 
 
+function BridgeWash.isFeedingTrough(o)
+    if o == nil then return false end
+    local yes = false
+    pcall(function() yes = instanceof(o, "IsoFeedingTrough") == true end)
+    return yes
+end
+
 function BridgeWash.waterRank(o)
     if o == nil then return 4 end
     if type(o.getFluidContainer) ~= "function" then return 4 end
@@ -431,14 +438,14 @@ function BridgeWash.waterList(body, centre, radius, rect)
         if rect ~= nil then
             key = "r|" .. tostring(rect.x1) .. ":" .. tostring(rect.y1) .. ":"
                 .. tostring(rect.x2) .. ":" .. tostring(rect.y2) .. ":" .. tostring(rect.z)
-                .. "|" .. tostring(r) .. "|" .. bx .. ":" .. by
+                .. "|" .. tostring(r)
         else
             local cx, cy = bx, by
             if centre ~= nil then
                 cx = math.floor(tonumber(centre.x) or bx)
                 cy = math.floor(tonumber(centre.y) or by)
             end
-            key = "c|" .. cx .. ":" .. cy .. "|" .. tostring(r) .. "|" .. bx .. ":" .. by
+            key = "c|" .. cx .. ":" .. cy .. "|" .. tostring(r)
         end
         if nowTick ~= nil and waterListBody == body and waterListKey == key
                 and waterListTick ~= nil and (nowTick - waterListTick) < WATER_LIST_TTL
@@ -479,11 +486,16 @@ function BridgeWash.waterList(body, centre, radius, rect)
                     local added = false
                     for i = 0, objects:size() - 1 do
                         local o = objects:get(i)
+                        local trough = BridgeWash.isFeedingTrough(o)
                         local wet = false
-                        pcall(function()
-                            wet = BridgeWash.isWaterObject(o) and (o:getFluidAmount() or 0) > 0
-                        end)
-                        if wet then
+                        if not trough then
+                            pcall(function()
+                                wet = BridgeWash.isWaterObject(o) and (o:getFluidAmount() or 0) > 0
+                            end)
+                        else
+                            added = true
+                        end
+                        if wet and not trough then
                             local d = (x - bx) ^ 2 + (y - by) ^ 2
                             local house = nil
                             pcall(function() house = sq:getBuilding() end)

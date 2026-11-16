@@ -673,17 +673,13 @@ local function addAnimalMenu(jobs)
     local animalOpt = jobs:addOption(tr("Animals"))
     local animals = ISContextMenu:getNew(jobs)
     jobs:addSubMenu(animalOpt, animals)
-    if pet then
-        local opt = animals:addOption(tr("JobPetAnimals"), nil, BridgeMenu.onJobPetAnimals)
+    if pet or care then
+        local opt = animals:addOption(tr("JobTendAnimals"), nil, BridgeMenu.onJobTendAnimals)
+        tip(opt, tr("JobTendAnimalsTip"))
         if BridgeTask.active then opt.notAvailable = true end
     end
     if trough then
         local opt = animals:addOption(tr("JobFillTroughs"), nil, BridgeMenu.onJobFillTroughs)
-        if BridgeTask.active then opt.notAvailable = true end
-    end
-    if care then
-        local opt = animals:addOption(tr("JobAnimalCare"), nil, BridgeMenu.onJobAnimalCare)
-        tip(opt, tr("JobAnimalCareTip"))
         if BridgeTask.active then opt.notAvailable = true end
     end
 end
@@ -1453,6 +1449,11 @@ function BridgeMenu.onJobPetAnimals()
     BridgeWorkSelect.begin(BridgeData.owner(), "petAnimals")
 end
 
+function BridgeMenu.onJobTendAnimals()
+    if BridgeTask == nil or BridgeWorkSelect == nil or BridgeData == nil then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "tendAnimals")
+end
+
 function BridgeMenu.onJobFillTroughs()
     if BridgeTask == nil or BridgeWorkSelect == nil or BridgeData == nil then return end
     BridgeWorkSelect.begin(BridgeData.owner(), "fillTroughs")
@@ -1481,9 +1482,54 @@ end
 
 function BridgeMenu.onPetAnimalOrder(a)
     if BridgeTask == nil or BridgeAnimalCare == nil then return end
-    local target = BridgeAnimalCare.targetFor(a)
+    local target = BridgeAnimalCare.targetFor(a, "pet")
     if target == nil then return end
     BridgeTask.start("petAnimals", { target })
+end
+
+function BridgeMenu.onMilkAnimalOrder(a)
+    if BridgeTask == nil or BridgeAnimalCare == nil then return end
+    if not BridgeAnimalCare.readyForTask(a, "milk") then
+        if BridgeAnimalCare.stressOf(a) > 40 then
+            Bridge.speak("JobProductStress", BridgeAnimalCare.nameOf(a))
+        else
+            Bridge.speak("JobPetNotReady")
+        end
+        return
+    end
+    local target = BridgeAnimalCare.targetFor(a, "milk")
+    if target == nil then return end
+    BridgeTask.start("petAnimals", { target })
+end
+
+function BridgeMenu.onShearAnimalOrder(a)
+    if BridgeTask == nil or BridgeAnimalCare == nil then return end
+    if not BridgeAnimalCare.readyForTask(a, "shear") then
+        if BridgeAnimalCare.stressOf(a) > 40 then
+            Bridge.speak("JobProductStress", BridgeAnimalCare.nameOf(a))
+        else
+            Bridge.speak("JobPetNotReady")
+        end
+        return
+    end
+    local target = BridgeAnimalCare.targetFor(a, "shear")
+    if target == nil then return end
+    BridgeTask.start("petAnimals", { target })
+end
+
+function BridgeMenu.onDebugAnimalMilk(a)
+    if BridgeAnimalCare == nil or type(BridgeAnimalCare.debugAnimal) ~= "function" then return end
+    BridgeAnimalCare.debugAnimal(a, "milk")
+end
+
+function BridgeMenu.onDebugAnimalWool(a)
+    if BridgeAnimalCare == nil or type(BridgeAnimalCare.debugAnimal) ~= "function" then return end
+    BridgeAnimalCare.debugAnimal(a, "wool")
+end
+
+function BridgeMenu.onDebugAnimalCalm(a)
+    if BridgeAnimalCare == nil or type(BridgeAnimalCare.debugAnimal) ~= "function" then return end
+    BridgeAnimalCare.debugAnimal(a, "calm")
 end
 
 function BridgeMenu.onJobOpenDoors()
@@ -1825,6 +1871,55 @@ function BridgeMenu.onAnimalMenu(playerNum, context, animalsList, test)
                         if BridgeTask.active or not BridgeAnimalCare.canPet(a) then
                             opt.notAvailable = true
                             tip(opt, tr("JobPetNotReadyTip"))
+                        end
+                        if BridgeTask.ANIMAL_PRODUCTS_ENABLED == 1 then
+                            local milkReady, milkType = BridgeAnimalCare.milkInfo(a)
+                            if milkReady then
+                                local milk = sub:addOption(tr("JobMilkAnimal"), a, BridgeMenu.onMilkAnimalOrder)
+                                tip(milk, tr("JobMilkAnimalTip"))
+                                local hasMilkContainer = BridgeAnimalCare.findMilkContainer(Bridge.body, milkType) ~= nil
+                                if BridgeTask.active or not hasMilkContainer then
+                                    milk.notAvailable = true
+                                    tip(milk, tr("JobNoMilkContainerTip"))
+                                end
+                                if not BridgeAnimalCare.readyForTask(a, "milk") then
+                                    milk.notAvailable = true
+                                    tip(milk, tr("JobProductStressTip"))
+                                end
+                            end
+                            local shearReady = BridgeAnimalCare.shearInfo(a)
+                            if shearReady then
+                                local shear = sub:addOption(tr("JobShearAnimal"), a, BridgeMenu.onShearAnimalOrder)
+                                tip(shear, tr("JobShearAnimalTip"))
+                                local hasShears = BridgeAnimalCare.findShears(Bridge.body) ~= nil
+                                if BridgeTask.active or not hasShears then
+                                    shear.notAvailable = true
+                                    tip(shear, tr("JobNoShearsTip"))
+                                end
+                                if not BridgeAnimalCare.readyForTask(a, "shear") then
+                                    shear.notAvailable = true
+                                    tip(shear, tr("JobProductStressTip"))
+                                end
+                            end
+                            local data = nil
+                            pcall(function() data = a:getData() end)
+                            if data ~= nil then
+                                local canHaveMilk = false
+                                pcall(function() canHaveMilk = data:canHaveMilk() == true end)
+                                if canHaveMilk then
+                                    sub:addOption(tr("DebugAnimalMilk"), a, BridgeMenu.onDebugAnimalMilk)
+                                end
+                            end
+                            local canBeSheared = false
+                            pcall(function() canBeSheared = a:canBeSheared() == true end)
+                            if canBeSheared then
+                                sub:addOption(tr("DebugAnimalWool"), a, BridgeMenu.onDebugAnimalWool)
+                            end
+                            local stress = 0
+                            pcall(function() stress = tonumber(a:getStress()) or 0 end)
+                            if stress > 0 then
+                                sub:addOption(tr("DebugAnimalCalm"), a, BridgeMenu.onDebugAnimalCalm)
+                            end
                         end
                     end
                 end

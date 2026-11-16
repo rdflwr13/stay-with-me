@@ -11,6 +11,52 @@ local XP_MIN, XP_MAX = 5, 10
 local MAX_TARGETS = 10
 local MAX_SIDE = 40
 local PENDING_TIMEOUT = 20 * SECOND
+local MILK_PER_UNIT = 0.1
+local MILK_TICKS = 48
+local SHEAR_TICKS = 100
+local SHEAR_ELECTRIC_TICKS = 60
+local SHEAR_MIN_TICKS = 40
+local STRESS_LIMIT = 40
+local PRODUCT_SLACK = 4 * SECOND
+
+local function ffMult()
+    local m = 1
+    if BridgeTask ~= nil and type(BridgeTask.ffMult) == "function" then
+        pcall(function() m = BridgeTask.ffMult() end)
+    end
+    if type(m) ~= "number" or m < 1 then m = 1 end
+    return m
+end
+
+local function productsOn()
+    return BridgeTask == nil or BridgeTask.ANIMAL_PRODUCTS_ENABLED ~= 0
+end
+
+local function dataOf(a)
+    local d = nil
+    if a ~= nil then pcall(function() d = a:getData() end) end
+    return d
+end
+
+local function breedOf(a)
+    local b = nil
+    local d = dataOf(a)
+    if d ~= nil then pcall(function() b = d:getBreed() end) end
+    if b == nil and a ~= nil then pcall(function() b = a:getBreed() end) end
+    return b
+end
+
+local function stressOf(a)
+    local s = 0
+    if a ~= nil then pcall(function() s = tonumber(a:getStress()) or 0 end) end
+    return s
+end
+
+local function invOf(body)
+    local inv = nil
+    if body ~= nil then pcall(function() inv = body:getInventory() end) end
+    return inv
+end
 
 local function sqOf(a)
     local sq = nil
@@ -41,7 +87,7 @@ local function addPetXp()
     end
 end
 
-function BridgeAnimalCare.isTended(a)
+local function isTendedRaw(a)
     if a == nil then return false end
     local dead = false
     pcall(function() dead = a:isDead() == true end)
@@ -79,6 +125,18 @@ function BridgeAnimalCare.isTended(a)
     return true
 end
 
+local tendedMemo = setmetatable({}, { __mode = "k" })
+
+function BridgeAnimalCare.isTended(a)
+    if a == nil then return false end
+    local tick = Bridge ~= nil and tonumber(Bridge.tick) or 0
+    local e = tendedMemo[a]
+    if e ~= nil and e.tick == tick then return e.v end
+    local v = isTendedRaw(a) == true
+    tendedMemo[a] = { tick = tick, v = v }
+    return v
+end
+
 function BridgeAnimalCare.cooldownLeft(a)
     if a == nil then return 0 end
     local last = nil
@@ -108,6 +166,196 @@ function BridgeAnimalCare.canPet(a)
     pcall(function() can = a:canBePet() == true end)
     pcall(function() done = a:petTimerDone() == true end)
     return can and done and BridgeAnimalCare.cooldownLeft(a) <= 0
+end
+
+function BridgeAnimalCare.shearUsable(it)
+    if it == nil then return false end
+    local tag = false
+    pcall(function() tag = it:hasTag(ItemTag.SHEAR) == true end)
+    if not tag then return false end
+    local drain = false
+    pcall(function() drain = instanceof(it, "DrainableComboItem") == true end)
+    if drain then
+        local uses = 0
+        pcall(function() uses = tonumber(it:getCurrentUsesFloat()) or 0 end)
+        return uses > 0
+    end
+    local cond = 0
+    pcall(function() cond = tonumber(it:getCondition()) or 0 end)
+    return cond > 0
+end
+
+function BridgeAnimalCare.milkContainerItem(it)
+    if it == nil then return false end
+    local fc = nil
+    pcall(function() fc = it:getFluidContainer() end)
+    if fc == nil then return false end
+    local cap, free = 0, 0
+    pcall(function() cap = tonumber(fc:getCapacity()) or 0 end)
+    pcall(function() free = tonumber(fc:getFreeCapacity()) or 0 end)
+    if cap <= 0 or free <= 0 then return false end
+    local empty = false
+    pcall(function() empty = fc:isEmpty() == true end)
+    if empty then return true end
+    local name = nil
+    pcall(function() name = fc:getPrimaryFluid():getFluidTypeString() end)
+    return name == "CowMilk" or name == "SheepMilk"
+end
+
+function BridgeAnimalCare.findShears(body)
+    local inv = invOf(body)
+    if inv == nil then return nil end
+    local list = nil
+    pcall(function() list = inv:getAllEvalRecurse(BridgeAnimalCare.shearUsable) end)
+    if list == nil then return nil end
+    local n = 0
+    pcall(function() n = list:size() end)
+    for i = 0, n - 1 do
+        local it = nil
+        pcall(function() it = list:get(i) end)
+        if it ~= nil then return it end
+    end
+    return nil
+end
+
+local function milkFits(it, milkType)
+    if it == nil then return false end
+    local fc = nil
+    pcall(function() fc = it:getFluidContainer() end)
+    if fc == nil then return false end
+    local free = 0
+    pcall(function() free = tonumber(fc:getFreeCapacity()) or 0 end)
+    if free < MILK_PER_UNIT - 0.000001 then return false end
+    local empty = false
+    pcall(function() empty = fc:isEmpty() == true end)
+    if empty then return true end
+    if milkType == nil then return false end
+    local pure = false
+    pcall(function()
+        local f = Fluid.Get(milkType)
+        if f ~= nil then pure = fc:isPureFluid(f) == true end
+    end)
+    return pure
+end
+BridgeAnimalCare.milkFits = milkFits
+
+function BridgeAnimalCare.findMilkContainer(body, milkType)
+    local inv = invOf(body)
+    if inv == nil then return nil end
+    local list = nil
+    pcall(function() list = inv:getAvailableFluidContainer(milkType) end)
+    if list ~= nil then
+        local n = 0
+        pcall(function() n = list:size() end)
+        for i = 0, n - 1 do
+            local it = nil
+            pcall(function() it = list:get(i) end)
+            if it ~= nil and milkFits(it, milkType) then return it end
+        end
+    end
+    local all = nil
+    pcall(function() all = inv:getAllEvalRecurse(BridgeAnimalCare.milkContainerItem) end)
+    if all == nil then return nil end
+    local n = 0
+    pcall(function() n = all:size() end)
+    for i = 0, n - 1 do
+        local it = nil
+        pcall(function() it = all:get(i) end)
+        if it ~= nil and milkFits(it, milkType) then return it end
+    end
+    return nil
+end
+
+function BridgeAnimalCare.findMilkContainerAny(body)
+    local it = BridgeAnimalCare.findMilkContainer(body, "CowMilk")
+    if it ~= nil then return it end
+    return BridgeAnimalCare.findMilkContainer(body, "SheepMilk")
+end
+
+function BridgeAnimalCare.milkInfo(a)
+    if not BridgeAnimalCare.isTended(a) then return false, nil, 0, 0 end
+    local can, have = false, false
+    local qty, max = 0, 0
+    pcall(function() can = a:canBeMilked() == true end)
+    local d = dataOf(a)
+    if d ~= nil then
+        pcall(function() have = d:canHaveMilk() == true end)
+        pcall(function() qty = tonumber(d:getMilkQuantity()) or 0 end)
+        pcall(function() max = tonumber(d:getMaxMilk()) or 0 end)
+    end
+    local milkType = nil
+    local b = breedOf(a)
+    if b ~= nil then pcall(function() milkType = b:getMilkType() end) end
+    local ready = can and have and qty > MILK_PER_UNIT
+        and milkType ~= nil and milkType ~= ""
+    return ready, milkType, qty, max
+end
+
+function BridgeAnimalCare.shearInfo(a)
+    if not BridgeAnimalCare.isTended(a) then return false, nil, 0, 0 end
+    local can = false
+    local qty, max = 0, 0
+    pcall(function() can = a:canBeSheared() == true end)
+    local d = dataOf(a)
+    if d ~= nil then
+        pcall(function() qty = tonumber(d:getWoolQuantity()) or 0 end)
+        pcall(function() max = tonumber(d:getMaxWool()) or 0 end)
+    end
+    local woolType = nil
+    local b = breedOf(a)
+    if b ~= nil then pcall(function() woolType = b:getWoolType() end) end
+    if woolType == nil or woolType == "" then woolType = "Base.WoolRaw" end
+    local ready = can and qty > 1
+    return ready, woolType, qty, max
+end
+
+local function taskForRaw(a)
+    if a == nil then return nil end
+    if productsOn() then
+        local shear = BridgeAnimalCare.shearInfo(a)
+        if shear then return "shear" end
+        local milk = BridgeAnimalCare.milkInfo(a)
+        if milk then return "milk" end
+    end
+    if BridgeAnimalCare.canPet(a) then return "pet" end
+    return nil
+end
+
+local taskMemo = setmetatable({}, { __mode = "k" })
+
+function BridgeAnimalCare.taskFor(a)
+    if a == nil then return nil end
+    local tick = Bridge ~= nil and tonumber(Bridge.tick) or 0
+    local e = taskMemo[a]
+    if e ~= nil and e.tick == tick then
+        if e.v == false then return nil end
+        return e.v
+    end
+    local v = taskForRaw(a)
+    taskMemo[a] = { tick = tick, v = v == nil and false or v }
+    return v
+end
+
+function BridgeAnimalCare.canTend(a)
+    return BridgeAnimalCare.taskFor(a) ~= nil
+end
+
+function BridgeAnimalCare.taskReady(a, task)
+    if task == nil then return false end
+    if task == "shear" then return (BridgeAnimalCare.shearInfo(a)) end
+    if task == "milk" then return (BridgeAnimalCare.milkInfo(a)) end
+    if task == "pet" then return BridgeAnimalCare.canPet(a) end
+    return false
+end
+
+BridgeAnimalCare.stressOf = stressOf
+BridgeAnimalCare.nameOf = animalName
+
+function BridgeAnimalCare.readyForTask(a, task)
+    if task == nil or a == nil then return false end
+    if task == "pet" then return BridgeAnimalCare.canPet(a) end
+    if not BridgeAnimalCare.taskReady(a, task) then return false end
+    return stressOf(a) <= STRESS_LIMIT
 end
 
 function BridgeAnimalCare.refOf(a)
@@ -194,7 +442,10 @@ function BridgeAnimalCare.clearPose(body)
     if body == nil then return end
     local bump = ""
     pcall(function() bump = tostring(body:getBumpType()) end)
-    if string.sub(bump, 1, 6) ~= "NA_Pet" then return end
+    local pet = string.sub(bump, 1, 6) == "NA_Pet"
+    local milk = string.sub(bump, 1, 7) == "NA_Milk"
+    local shear = string.sub(bump, 1, 8) == "NA_Shear"
+    if not (pet or milk or shear) then return end
     pcall(function() body:setVariable("BumpAnimFinished", true) end)
     pcall(function()
         if ZombieIdleState ~= nil and ZombieIdleState.instance ~= nil then
@@ -202,6 +453,83 @@ function BridgeAnimalCare.clearPose(body)
         end
     end)
     pcall(function() body:setBumpType("") end)
+end
+
+local function milkSide(body, a)
+    if body == nil or a == nil then return false end
+    local right = false
+    pcall(function()
+        local vr = a:getAttachmentWorldPos("rightmilk")
+        local vl = a:getAttachmentWorldPos("leftmilk")
+        if vr ~= nil and vl ~= nil then
+            local dr = body:DistToSquared(vr:x(), vr:y())
+            local dl = body:DistToSquared(vl:x(), vl:y())
+            right = dr < dl
+        end
+    end)
+    return right
+end
+
+function BridgeAnimalCare.productPose(body, a, task, milkType)
+    if task == "shear" then return "NA_Shear" end
+    local cow = tostring(milkType or "") == "CowMilk"
+    local right = milkSide(body, a)
+    if cow then return right and "NA_MilkCowR" or "NA_MilkCowL" end
+    return right and "NA_MilkSheepR" or "NA_MilkSheepL"
+end
+
+local function setAnimalSize(body, a)
+    if body == nil then return end
+    local d = dataOf(a)
+    if d == nil then return end
+    local minS, maxS, size = nil, nil, nil
+    pcall(function() minS = tonumber(d:getMinSize()) end)
+    pcall(function() maxS = tonumber(d:getMaxSize()) end)
+    pcall(function() size = tonumber(d:getSize()) end)
+    local ratio = 0
+    if minS ~= nil and maxS ~= nil and size ~= nil and maxS > minS then
+        local cur = size - minS
+        if cur <= 0.001 then cur = 0.001 end
+        ratio = cur / (maxS - minS)
+    end
+    pcall(function() body:setVariable("AnimalSizeX", 0.01) end)
+    pcall(function() body:setVariable("AnimalSizeY", ratio) end)
+end
+
+local function startProductSound(body, task, tool)
+    if body == nil then return end
+    local name = "MilkAnimal"
+    if task == "shear" then
+        name = "AnimalFoleyShearSheepManual"
+        local drain = false
+        if tool ~= nil then
+            pcall(function() drain = instanceof(tool, "DrainableComboItem") == true end)
+        end
+        if drain then name = "AnimalFoleyShearSheepElectric" end
+    end
+    local emitter = nil
+    pcall(function() emitter = body:getEmitter() end)
+    local id = nil
+    if emitter ~= nil then pcall(function() id = emitter:playSound(name) end) end
+    if id == nil then pcall(function() id = body:playSound(name) end) end
+    BridgeTask.petSoundEmitter = emitter
+    BridgeTask.petSoundHandle = id
+    BridgeTask.petSound = name
+end
+
+local function stopProductSound(body)
+    if BridgeTask == nil then return end
+    local id = BridgeTask.petSoundHandle
+    local emitter = BridgeTask.petSoundEmitter
+    BridgeTask.petSoundHandle = nil
+    BridgeTask.petSoundEmitter = nil
+    BridgeTask.petSound = nil
+    if id == nil then return end
+    if emitter ~= nil then
+        pcall(function() emitter:stopOrTriggerSound(id) end)
+    elseif body ~= nil then
+        pcall(function() body:stopOrTriggerSound(id) end)
+    end
 end
 
 function BridgeAnimalCare.targetsIn(b, cap)
@@ -220,12 +548,12 @@ function BridgeAnimalCare.targetsIn(b, cap)
         if #out >= cap then break end
         local a = nil
         pcall(function() a = list:get(i) end)
-        if a ~= nil and BridgeAnimalCare.canPet(a) then
+        if a ~= nil then
             local sq = sqOf(a)
             if sq ~= nil then
                 local ax, ay, az = sq:getX(), sq:getY(), sq:getZ()
                 if ax >= b.x1 and ax <= b.x2 and ay >= b.y1 and ay <= b.y2
-                        and math.abs(az - b.z) < 1 then
+                        and math.abs(az - b.z) < 1 and BridgeAnimalCare.canTend(a) then
                     local fx, fy = ax, ay
                     pcall(function() fx, fy = a:getX(), a:getY() end)
                     out[#out + 1] = {
@@ -244,8 +572,12 @@ function BridgeAnimalCare.targetsIn(b, cap)
     return out
 end
 
-function BridgeAnimalCare.targetFor(a)
-    if not BridgeAnimalCare.canPet(a) then return nil end
+function BridgeAnimalCare.targetFor(a, task)
+    if task ~= nil then
+        if not BridgeAnimalCare.readyForTask(a, task) then return nil end
+    elseif not BridgeAnimalCare.canTend(a) then
+        return nil
+    end
     local sq = sqOf(a)
     if sq == nil then return nil end
     local fx, fy = sq:getX(), sq:getY()
@@ -256,6 +588,7 @@ function BridgeAnimalCare.targetFor(a)
         z = sq:getZ(),
         animal = a,
         ref = BridgeAnimalCare.refOf(a),
+        task = task or BridgeAnimalCare.taskFor(a),
         fx = fx,
         fy = fy,
     }
@@ -290,6 +623,70 @@ local function clearIdleAction(a)
     if v == "petting" then pcall(function() a:clearVariable("idleAction") end) end
 end
 
+local function releaseAnimal(a)
+    if BridgeTask == nil then return end
+    a = a or BridgeTask.petHoldAnimal
+    local id = BridgeTask.petHoldId
+    local x, y, z = BridgeTask.petHoldX, BridgeTask.petHoldY, BridgeTask.petHoldZ
+    local action = BridgeTask.petHoldAction
+    local on = BridgeTask.petHoldOn == true
+    BridgeTask.petHoldOn = nil
+    BridgeTask.petHoldAnimal = nil
+    BridgeTask.petHoldId = nil
+    BridgeTask.petHoldX, BridgeTask.petHoldY, BridgeTask.petHoldZ = nil, nil, nil
+    BridgeTask.petHoldAction = nil
+    if a ~= nil then
+        blockAnimal(a, false)
+        if action == "pet" then clearIdleAction(a) end
+    end
+    if not on or Bridge == nil or Bridge.mp ~= true or id == nil then return end
+    local red = nil
+    if BridgeData ~= nil and BridgeData.owner ~= nil then red = BridgeData.owner() end
+    if red == nil then return end
+    pcall(function()
+        sendClientCommand(red, "Bridge", "animalHold", {
+            on = false, id = id, x = x, y = y, z = z, action = action,
+        })
+    end)
+end
+
+local function holdAnimal(a, action)
+    if a == nil or BridgeTask == nil then return end
+    if BridgeTask.petHoldOn == true and BridgeTask.petHoldAnimal == a then return end
+    if BridgeTask.petHoldOn == true then releaseAnimal(BridgeTask.petHoldAnimal) end
+    local id, x, y, z = nil, nil, nil, nil
+    pcall(function()
+        id = a:getOnlineID()
+        x, y, z = a:getX(), a:getY(), a:getZ()
+    end)
+    local bx, by, bz = nil, nil, nil
+    if Bridge ~= nil and Bridge.body ~= nil then
+        pcall(function() bx, by, bz = Bridge.body:getX(), Bridge.body:getY(), Bridge.body:getZ() end)
+    end
+    BridgeTask.petHoldAnimal = a
+    BridgeTask.petHoldId = id
+    BridgeTask.petHoldX, BridgeTask.petHoldY, BridgeTask.petHoldZ = x, y, z
+    BridgeTask.petHoldAction = action
+    BridgeTask.petHoldOn = true
+    pcall(function() a:stopAllMovementNow() end)
+    blockAnimal(a, true)
+    if action == "pet" then pcall(function() a:setVariable("idleAction", "petting") end) end
+    if Bridge == nil or Bridge.mp ~= true or id == nil then return end
+    local red = nil
+    if BridgeData ~= nil and BridgeData.owner ~= nil then red = BridgeData.owner() end
+    if red == nil then return end
+    local opId = (BridgeTask.petHoldSeq or 0) + 1
+    BridgeTask.petHoldSeq = opId
+    pcall(function()
+        sendClientCommand(red, "Bridge", "animalHold", {
+            on = true, id = id, x = x, y = y, z = z, bx = bx, by = by, bz = bz,
+            action = action, opId = opId,
+        })
+    end)
+end
+BridgeAnimalCare.holdAnimal = holdAnimal
+BridgeAnimalCare.releaseAnimal = releaseAnimal
+
 local function faceAnimal(body, a)
     if body == nil or a == nil then return end
     local ax, ay = nil, nil
@@ -308,28 +705,44 @@ end
 local function finishPose(a, body)
     local b = body
     if b == nil and Bridge ~= nil then b = Bridge.body end
+    stopProductSound(b)
+    if b ~= nil then
+        pcall(function() b:setVariable("AnimalSizeX", 0.01) end)
+        pcall(function() b:setVariable("AnimalSizeY", 0) end)
+    end
     BridgeAnimalCare.clearPose(b)
     clearIdleAction(a)
-    blockAnimal(a, false)
+    releaseAnimal(a)
     if BridgeTask ~= nil then
         BridgeTask.petHeld = nil
+        BridgeTask.petValidRef = nil
+        BridgeTask.petValidAt = nil
         BridgeTask.petPending = nil
         BridgeTask.petPendingAt = nil
         BridgeTask.petStart = nil
         BridgeTask.petTicks = nil
+        BridgeTask.petTicksPerUnit = nil
+        BridgeTask.petUnitsWanted = nil
+        BridgeTask.petUnitsDone = nil
+        BridgeTask.petMilkType = nil
+        BridgeTask.petWoolType = nil
+        BridgeTask.petTool = nil
+        BridgeTask.petTask = nil
+        BridgeTask.petDidWork = nil
+        BridgeTask.petSound = nil
     end
 end
 
 local function beginPose(body, a)
     faceAnimal(body, a)
     clearHands(body)
-    blockAnimal(a, true)
-    pcall(function() a:setVariable("idleAction", "petting") end)
+    holdAnimal(a, "pet")
     pcall(function() body:setVariable("BumpAnimFinished", false) end)
     local pose = BridgeAnimalCare.poseFor(a)
     pcall(function() body:setBumpType(pose) end)
     if BridgeTask ~= nil then
         BridgeTask.phase = "pose"
+        BridgeTask.petTask = "pet"
         BridgeTask.petStart = Bridge.time
         BridgeTask.petTicks = POSE_TICKS
         BridgeTask.petHeld = a
@@ -347,6 +760,30 @@ local function beginPose(body, a)
     end
 end
 
+local function beginProductPose(body, a, task, units, ticksPerUnit)
+    faceAnimal(body, a)
+    clearHands(body)
+    holdAnimal(a, task)
+    setAnimalSize(body, a)
+    pcall(function() body:setVariable("BumpAnimFinished", false) end)
+    local pose = BridgeAnimalCare.productPose(body, a, task, BridgeTask.petMilkType)
+    pcall(function() body:setBumpType(pose) end)
+    startProductSound(body, task, BridgeTask.petTool)
+    BridgeTask.phase = "pose"
+    BridgeTask.petStart = Bridge.time
+    BridgeTask.petTicksPerUnit = ticksPerUnit
+    BridgeTask.petUnitsWanted = units
+    BridgeTask.petUnitsDone = 0
+    BridgeTask.petTicks = units * ticksPerUnit
+    BridgeTask.petHeld = a
+    BridgeTask.petDidWork = false
+    if task == "milk" then
+        speak("JobMilkStart", animalName(a))
+    else
+        speak("JobShearStart", animalName(a))
+    end
+end
+
 local function requestPet(a)
     if Bridge == nil or Bridge.mp ~= true then return false end
     if BridgeTask == nil then return false end
@@ -359,10 +796,16 @@ local function requestPet(a)
     local x, y, z = nil, nil, nil
     pcall(function() x, y, z = a:getX(), a:getY(), a:getZ() end)
     if x == nil or y == nil or z == nil then return false end
+    local bx, by, bz = nil, nil, nil
+    if Bridge ~= nil and Bridge.body ~= nil then
+        pcall(function() bx, by, bz = Bridge.body:getX(), Bridge.body:getY(), Bridge.body:getZ() end)
+    end
     BridgeTask.petPending = { id = id, animal = a }
     BridgeTask.petPendingAt = Bridge.time
     local ok = pcall(function()
-        sendClientCommand(red, "Bridge", "petAnimals", { id = id, x = x, y = y, z = z })
+        sendClientCommand(red, "Bridge", "petAnimals", {
+            id = id, x = x, y = y, z = z, bx = bx, by = by, bz = bz,
+        })
     end)
     if not ok then
         BridgeTask.petPending = nil
@@ -388,10 +831,298 @@ local function applyPet(a, body)
     return true
 end
 
+local function wearShears(body, tool)
+    if tool == nil then return end
+    local drain = false
+    pcall(function() drain = instanceof(tool, "DrainableComboItem") == true end)
+    if drain then
+        pcall(function() tool:Use() end)
+    else
+        local cond = 0
+        pcall(function() cond = tonumber(tool:getCondition()) or 0 end)
+        pcall(function() tool:setCondition(math.max(0, cond - 1)) end)
+    end
+end
+BridgeAnimalCare.wearShears = wearShears
+
+local function syncItems()
+    if Bridge ~= nil then
+        if Bridge.itemsChanged ~= nil then pcall(Bridge.itemsChanged) end
+        if Bridge.saveOutfit ~= nil then pcall(Bridge.saveOutfit) end
+    end
+end
+
+local function addWoolItem(body, woolType)
+    if body == nil or woolType == nil then return false end
+    if BridgeItems == nil or type(BridgeItems.record) ~= "function"
+            or type(BridgeItems.make) ~= "function" then return false end
+    local item = nil
+    pcall(function() item = instanceItem(woolType) end)
+    if item == nil then return false end
+    local rec = nil
+    pcall(function() rec = BridgeItems.record(item, true) end)
+    if rec == nil then return false end
+    local dests = nil
+    pcall(function() dests = BridgeTask.lootDests(body) end)
+    if type(dests) ~= "table" then return false end
+    local dest = nil
+    pcall(function() dest = BridgeTask.lootDestFor(body, item, dests) end)
+    if dest == nil then return false end
+    local made = nil
+    pcall(function() made = BridgeItems.make(dest, rec) end)
+    if made == nil then return false end
+    syncItems()
+    return true
+end
+BridgeAnimalCare.addWoolItem = addWoolItem
+
+local function fillMilkUnit(body, milkType)
+    if body == nil or milkType == nil then return false, "nofluid" end
+    local item = BridgeTask.petTool
+    if item == nil or not milkFits(item, milkType) then
+        item = BridgeAnimalCare.findMilkContainer(body, milkType)
+        BridgeTask.petTool = item
+    end
+    if item == nil then return false, "noroom" end
+    local fc = nil
+    pcall(function() fc = item:getFluidContainer() end)
+    if fc == nil then return false, "noroom" end
+    local before = 0
+    pcall(function() before = tonumber(fc:getAmount()) or 0 end)
+    local fluid = nil
+    pcall(function() fluid = Fluid.Get(milkType) end)
+    if fluid == nil then return false, "nofluid" end
+    pcall(function() fc:addFluid(fluid, MILK_PER_UNIT) end)
+    local after = before
+    pcall(function() after = tonumber(fc:getAmount()) or before end)
+    if after - before < MILK_PER_UNIT - 0.0001 then return false, "noroom" end
+    pcall(function() item:sendSyncEntity(nil) end)
+    syncItems()
+    return true
+end
+BridgeAnimalCare.fillMilkUnit = fillMilkUnit
+
+local function applyProductUnit(body, a, task)
+    if task == "milk" then
+        local d = dataOf(a)
+        if d == nil then return false, "notready" end
+        local qty = 0
+        pcall(function() qty = tonumber(d:getMilkQuantity()) or 0 end)
+        if qty < MILK_PER_UNIT then return false, "notready" end
+        local ok, why = fillMilkUnit(body, BridgeTask.petMilkType)
+        if not ok then return false, why or "noroom" end
+        pcall(function() d:setMilkQuantity(math.max(0, qty - MILK_PER_UNIT)) end)
+        if BridgeSkills ~= nil and type(BridgeSkills.add) == "function" then
+            pcall(BridgeSkills.add, "Husbandry", 0.1, "animalcare.milk")
+        end
+        return true
+    end
+    local tool = BridgeTask.petTool
+    if tool == nil or not BridgeAnimalCare.shearUsable(tool) then return false, "notool" end
+    local d = dataOf(a)
+    if d == nil then return false, "notready" end
+    local qty = 0
+    pcall(function() qty = tonumber(d:getWoolQuantity()) or 0 end)
+    if qty < 1 then return false, "notready" end
+    if not addWoolItem(body, BridgeTask.petWoolType or "Base.WoolRaw") then return false, "noroom" end
+    pcall(function() d:setWoolQuantity(math.max(0, qty - 1), true) end)
+    wearShears(body, tool)
+    if BridgeSkills ~= nil and type(BridgeSkills.add) == "function" then
+        pcall(BridgeSkills.add, "Husbandry", 1, "animalcare.shear")
+    end
+    return true
+end
+BridgeAnimalCare.applyProductUnit = applyProductUnit
+
+local function finishProduct(body, a, why, sayKey)
+    local T = BridgeTask
+    local task = T.petTask
+    local done = tonumber(T.petUnitsDone) or 0
+    if done > 0 and task == "shear" then
+        T.petWoolGot = (T.petWoolGot or 0) + done
+        if T.petWoolType ~= nil then
+            T.petWoolTypes = T.petWoolTypes or {}
+            T.petWoolTypes[T.petWoolType] = true
+        end
+    elseif done > 0 and task == "milk" then
+        T.petMilkGot = (T.petMilkGot or 0) + done
+    end
+    finishPose(a, body)
+    if sayKey ~= nil then
+        speak(sayKey, animalName(a))
+    elseif done > 0 then
+        if task == "milk" then speak("JobMilkDone") else speak("JobShearDone") end
+    end
+    if done > 0 and T.markDone ~= nil then T.markDone() end
+    T.current = nil
+    T.phase = nil
+    T.resetWalkDest()
+end
+
+local function releaseCurrent(body, a, sayKey)
+    finishPose(a, body)
+    BridgeTask.current = nil
+    BridgeTask.phase = nil
+    BridgeTask.resetWalkDest()
+    if sayKey ~= nil then speak(sayKey, animalName(a)) end
+end
+
+local function sayNeedOnce(key, flag)
+    if BridgeTask == nil or key == nil then return end
+    if BridgeTask[flag] == true then return end
+    BridgeTask[flag] = true
+    speak(key)
+end
+
+local function beginPetFallback(body, a, target)
+    if not BridgeAnimalCare.canPet(a) then return false end
+    target.task = "pet"
+    beginPose(body, a)
+    if not applyPet(a, body) then
+        releaseCurrent(body, a, "JobPetNoReach")
+    end
+    return true
+end
+
+local function requestProduct(a, task)
+    if Bridge == nil or Bridge.mp ~= true or BridgeTask == nil then return false end
+    local red = nil
+    if BridgeData ~= nil and BridgeData.owner ~= nil then red = BridgeData.owner() end
+    if red == nil then return false end
+    local id = nil
+    pcall(function() id = a:getOnlineID() end)
+    if id == nil then return false end
+    local x, y, z = nil, nil, nil
+    pcall(function() x, y, z = a:getX(), a:getY(), a:getZ() end)
+    if x == nil or y == nil or z == nil then return false end
+    local bx, by, bz = nil, nil, nil
+    if Bridge ~= nil and Bridge.body ~= nil then
+        pcall(function() bx, by, bz = Bridge.body:getX(), Bridge.body:getY(), Bridge.body:getZ() end)
+    end
+    local opId = (BridgeTask.petOpSeq or 0) + 1
+    local ok = pcall(function()
+        sendClientCommand(red, "Bridge", "petAnimals", {
+            id = id, x = x, y = y, z = z, bx = bx, by = by, bz = bz,
+            task = task, units = 1, opId = opId,
+        })
+    end)
+    if not ok then return false end
+    BridgeTask.petOpSeq = opId
+    BridgeTask.petPending = {
+        opId = opId,
+        product = task,
+        animal = a,
+        at = Bridge.time,
+        milkType = BridgeTask.petMilkType,
+    }
+    BridgeTask.petPendingAt = Bridge.time
+    return true
+end
+
+local function setupProduct(body, a, task)
+    local T = BridgeTask
+    T.petTask = task
+    T.petUnitsDone = 0
+    T.petTool = nil
+    T.petMilkType = nil
+    T.petWoolType = nil
+    T.petDidWork = false
+    local husbandry = 0
+    if BridgeSkills ~= nil and type(BridgeSkills.level) == "function" then
+        pcall(function() husbandry = math.floor(tonumber(BridgeSkills.level("Husbandry")) or 0) end)
+    end
+    if task == "milk" then
+        local ready, milkType, qty = BridgeAnimalCare.milkInfo(a)
+        if not ready then return false, "JobPetNotReady" end
+        local tool = BridgeAnimalCare.findMilkContainer(body, milkType)
+        if tool == nil then return false, "JobNoMilkContainer" end
+        local free = 0
+        pcall(function() free = tonumber(tool:getFluidContainer():getFreeCapacity()) or 0 end)
+        local units = math.floor((qty + 0.000001) / MILK_PER_UNIT)
+        local cap = math.floor((free + 0.000001) / MILK_PER_UNIT)
+        if units > cap then units = cap end
+        if units < 1 then return false, "JobNoMilkContainer" end
+        T.petMilkType = milkType
+        T.petTool = tool
+        beginProductPose(body, a, task, units, MILK_TICKS)
+        return true
+    end
+    local ready, woolType, qty = BridgeAnimalCare.shearInfo(a)
+    if not ready then return false, "JobPetNotReady" end
+    local tool = BridgeAnimalCare.findShears(body)
+    if tool == nil then return false, "JobNoShears" end
+    local units = math.floor(qty - 1) + 1
+    local drain = false
+    pcall(function() drain = instanceof(tool, "DrainableComboItem") == true end)
+    if not drain then
+        local cond = nil
+        pcall(function() cond = tonumber(tool:getCondition()) end)
+        if cond ~= nil and units > cond then units = cond end
+    end
+    if units < 1 then return false, "JobNoShears" end
+    local ticks = SHEAR_TICKS
+    if drain then ticks = SHEAR_ELECTRIC_TICKS end
+    ticks = ticks - 2 * husbandry
+    if ticks < SHEAR_MIN_TICKS then ticks = SHEAR_MIN_TICKS end
+    T.petWoolType = woolType
+    T.petTool = tool
+    beginProductPose(body, a, task, units, ticks)
+    return true
+end
+
+local function onProductResult(args, pending)
+    local T = BridgeTask
+    local body = nil
+    if Bridge ~= nil then body = Bridge.body end
+    T.petPending = nil
+    T.petPendingAt = nil
+    local a = pending.animal
+    if args.ok ~= true then
+        local why = tostring(args.why or "")
+        local sayKey = "JobPetNoReach"
+        if why == "notready" then
+            sayKey = "JobProductStress"
+        elseif why == "full" or why == "noitem" then
+            sayKey = "JobProductNoRoom"
+        end
+        finishProduct(body, a, why, sayKey)
+        return
+    end
+    local n = math.floor(tonumber(args.count) or 0)
+    if n < 1 then n = 1 end
+    if pending.product == "milk" then
+        local milkType = args.milkType or pending.milkType or T.petMilkType
+        for _ = 1, n do
+            local ok = fillMilkUnit(body, milkType)
+            if not ok then
+                finishProduct(body, a, "noroom", "JobProductNoRoom")
+                return
+            end
+        end
+        if BridgeSkills ~= nil and type(BridgeSkills.add) == "function" then
+            pcall(BridgeSkills.add, "Husbandry", 0.1 * n, "animalcare.milk")
+        end
+    else
+        for _ = 1, n do wearShears(body, T.petTool) end
+        if BridgeSkills ~= nil and type(BridgeSkills.add) == "function" then
+            pcall(BridgeSkills.add, "Husbandry", n, "animalcare.shear")
+        end
+    end
+    T.petUnitsDone = (T.petUnitsDone or 0) + n
+    T.petDidWork = true
+end
+
 function BridgeAnimalCare.onPetResult(args)
-    if BridgeTask == nil or not BridgeTask.active or BridgeTask.kind ~= "petAnimals" then return end
+    local animalPart = BridgeTask ~= nil and (BridgeTask.kind == "petAnimals"
+        or (BridgeTask.kind == "tendAnimals" and BridgeTask.tendPart == "animal"))
+    if BridgeTask == nil or not BridgeTask.active or not animalPart then return end
     local pending = BridgeTask.petPending
     if pending == nil then return end
+    if pending.opId ~= nil then
+        if args == nil or tostring(args.opId) ~= tostring(pending.opId) then return end
+        onProductResult(args, pending)
+        return
+    end
     if args == nil or tostring(args.id) ~= tostring(pending.id) then return end
     local a = pending.animal
     BridgeTask.petPending = nil
@@ -448,6 +1179,32 @@ local function petPendingWait()
         local a = pending.animal
         local body = nil
         if Bridge ~= nil then body = Bridge.body end
+        if pending.opId ~= nil then
+            local done = tonumber(BridgeTask.petUnitsDone) or 0
+            local task = BridgeTask.petTask
+            if done > 0 and task == "shear" then
+                BridgeTask.petWoolGot = (BridgeTask.petWoolGot or 0) + done
+                if BridgeTask.petWoolType ~= nil then
+                    BridgeTask.petWoolTypes = BridgeTask.petWoolTypes or {}
+                    BridgeTask.petWoolTypes[BridgeTask.petWoolType] = true
+                end
+            elseif done > 0 and task == "milk" then
+                BridgeTask.petMilkGot = (BridgeTask.petMilkGot or 0) + done
+            end
+            finishPose(a, body)
+            if done > 0 then
+                if task == "milk" then speak("JobMilkDone") else speak("JobShearDone") end
+                if BridgeTask.markDone ~= nil then BridgeTask.markDone() end
+            end
+            BridgeTask.current = nil
+            BridgeTask.phase = nil
+            BridgeTask.resetWalkDest()
+            if BridgeTask.petFailSaid ~= true then
+                BridgeTask.petFailSaid = true
+                speak("JobPetNoReach")
+            end
+            return true
+        end
         finishPose(a, body)
         BridgeTask.current = nil
         BridgeTask.phase = nil
@@ -469,7 +1226,20 @@ local function leave(body)
     BridgeTask.petSaid = nil
     BridgeTask.petLastLine = nil
     BridgeTask.petFailSaid = nil
+    BridgeTask.petValidRef = nil
+    BridgeTask.petValidAt = nil
+    BridgeTask.petSaidShears = nil
+    BridgeTask.petSaidMilk = nil
+    BridgeTask.petHoldSeq = nil
     BridgeTask.petIdSeq = nil
+    BridgeTask.petOpSeq = nil
+    BridgeTask.petWoolGot = nil
+    BridgeTask.petWoolTypes = nil
+    BridgeTask.petMilkGot = nil
+    BridgeTask.petDepositPhase = nil
+    BridgeTask.petDepositAct = nil
+    BridgeTask.petDepositAt = nil
+    BridgeTask.petDepositTarget = nil
 end
 
 local function dropWithSpeech(body, reason)
@@ -487,8 +1257,144 @@ local function dropWithSpeech(body, reason)
     return res
 end
 
+local function petDepositItems(body)
+    local T = BridgeTask
+    local out = {}
+    local dests = nil
+    pcall(function() dests = T.lootDests(body) end)
+    if type(dests) ~= "table" then return out end
+    local woolLeft = tonumber(T.petWoolGot) or 0
+    if woolLeft > 0 then
+        local types = T.petWoolTypes or {}
+        local cand = {}
+        for d = 1, #dests do
+            local items = nil
+            pcall(function() items = dests[d]:getItems() end)
+            if items ~= nil then
+                for i = 0, items:size() - 1 do
+                    local it = items:get(i)
+                    if it ~= nil then
+                        local full = nil
+                        pcall(function() full = it:getFullType() end)
+                        if full ~= nil and types[full] == true then
+                            local id = 0
+                            pcall(function() id = tonumber(it:getID()) or 0 end)
+                            cand[#cand + 1] = { it = it, id = id }
+                        end
+                    end
+                end
+            end
+        end
+        table.sort(cand, function(x, y) return x.id > y.id end)
+        local take = math.min(woolLeft, #cand)
+        for i = 1, take do out[#out + 1] = cand[i].it end
+    end
+    for d = 1, #dests do
+        local items = nil
+        pcall(function() items = dests[d]:getItems() end)
+        if items ~= nil then
+            for i = 0, items:size() - 1 do
+                local it = items:get(i)
+                if it ~= nil then
+                    local fc = nil
+                    pcall(function() fc = it:getFluidContainer() end)
+                    if fc ~= nil then
+                        local free = 1
+                        local pure = false
+                        pcall(function() free = tonumber(fc:getFreeCapacity()) or 1 end)
+                        pcall(function()
+                            pure = fc:isPureFluid(Fluid.Get("CowMilk")) == true
+                                or fc:isPureFluid(Fluid.Get("SheepMilk")) == true
+                        end)
+                        if pure and free <= 0.001 then out[#out + 1] = it end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function petDepositWanted(body)
+    if (BridgeTask.petWoolGot or 0) > 0 or (BridgeTask.petMilkGot or 0) > 0 then return true end
+    return false
+end
+
+local function petDepositTick(body)
+    local T = BridgeTask
+    local phase = T.petDepositPhase
+    if phase == "pick" then
+        local target = nil
+        if type(T.hutchDepositPick) == "function" then target = T.hutchDepositPick(body) end
+        if target == nil then
+            T.petDepositPhase = nil
+            return T.finish()
+        end
+        T.petDepositTarget = target
+        T.petDepositPhase = "walk"
+        T.resetWalkDest()
+        return true
+    end
+    if phase == "walk" then
+        local target = T.petDepositTarget
+        if target == nil then
+            T.petDepositPhase = nil
+            return T.finish()
+        end
+        local walk = T.walkTo(body, { x = target.x, y = target.y, z = target.z }, T.HUTCH_REACH, true)
+        if walk == "unreachable" then
+            T.petDepositTarget = nil
+            T.petDepositPhase = nil
+            T.resetWalkDest()
+            return T.finish()
+        end
+        if walk ~= "arrived" then return true end
+        pcall(function() BridgeMove.stopPath(body) end)
+        T.forceIdle(body)
+        local items = petDepositItems(body)
+        if #items == 0 then
+            T.petDepositPhase = nil
+            return T.finish()
+        end
+        local act = nil
+        pcall(function() act = BridgeDeposit.depositItems(body, items, target) end)
+        if act == nil then
+            T.petDepositPhase = nil
+            return T.finish()
+        end
+        T.petDepositAct = act
+        T.petDepositAt = Bridge.time
+        T.petDepositPhase = "wait"
+        return true
+    end
+    if phase == "wait" then
+        local done = false
+        if T.petDepositAct == nil then
+            done = true
+        elseif BridgeInventory ~= nil and type(BridgeInventory.actionQueued) == "function" then
+            local queued = true
+            pcall(function() queued = BridgeInventory.actionQueued(T.petDepositAct) == true end)
+            if not queued then done = true end
+        end
+        if (Bridge.time - (T.petDepositAt or Bridge.time)) > (T.LOOT_TRANSFER_WAIT or 1200) then done = true end
+        if done then
+            T.petDepositAct = nil
+            T.petDepositAt = nil
+            T.petDepositPhase = nil
+            T.petDepositTarget = nil
+            T.lootAct = nil
+            T.lootSrc = nil
+            return T.finish()
+        end
+        return true
+    end
+    T.petDepositPhase = nil
+    return T.finish()
+end
+
 local function jobUpdate(body)
     if BridgeTask == nil then return false end
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
     if BridgeTask.PET_ANIMALS_ENABLED ~= 1 then return BridgeTask.finish() end
     if BridgeTask.petPending ~= nil then
         petPendingWait()
@@ -497,38 +1403,71 @@ local function jobUpdate(body)
 
     local target = BridgeTask.current
     if target == nil then
+        if BridgeTask.petDepositPhase ~= nil then return petDepositTick(body) end
         local picked = nil
         while #BridgeTask.queue > 0 do
             local t = table.remove(BridgeTask.queue, 1)
-            if type(t) == "table" and t.animal ~= nil and BridgeAnimalCare.canPet(t.animal) then
+            if type(t) == "table" and t.animal ~= nil and BridgeAnimalCare.canTend(t.animal) then
                 picked = t
                 break
             end
         end
-        if picked == nil then return BridgeTask.finish() end
+        if picked == nil then
+            if BridgeTask.DEPOSIT_ENABLED == 1 and BridgeDeposit ~= nil
+                    and type(BridgeDeposit.homeTargets) == "function"
+                    and petDepositWanted(body) then
+                BridgeTask.petDepositPhase = "pick"
+                return petDepositTick(body)
+            end
+            return BridgeTask.finish()
+        end
         BridgeTask.current = picked
         BridgeTask.phase = "walk"
         BridgeTask.petSaid = nil
         BridgeTask.petRetryTarget = nil
         BridgeTask.petRetargets = 0
         BridgeTask.petFarRetries = 0
+        BridgeTask.petTask = nil
+        BridgeTask.petValidRef = nil
+        BridgeTask.petValidAt = nil
+        BridgeTask.petUnitsDone = nil
+        BridgeTask.petUnitsWanted = nil
+        BridgeTask.petTicksPerUnit = nil
+        BridgeTask.petMilkType = nil
+        BridgeTask.petWoolType = nil
+        BridgeTask.petTool = nil
+        BridgeTask.petDidWork = false
         BridgeTask.resetWalkDest()
         target = picked
     end
 
     local a = target.animal
-    if a == nil or not BridgeAnimalCare.isTended(a) then
-        a = BridgeAnimalCare.resolve(target.ref)
-        if a ~= nil then
-            target.animal = a
-            local sq = sqOf(a)
-            if sq ~= nil then
-                target.x, target.y, target.z = sq:getX(), sq:getY(), sq:getZ()
+    local tick = Bridge ~= nil and tonumber(Bridge.tick) or 0
+    local valid = false
+    if a ~= nil and BridgeTask.petValidRef == a and BridgeTask.petValidAt ~= nil
+            and (tick - BridgeTask.petValidAt) < 6 then
+        valid = true
+    else
+        if a ~= nil and BridgeAnimalCare.isTended(a) then valid = true end
+        if not valid then
+            a = BridgeAnimalCare.resolve(target.ref)
+            if a ~= nil then
+                target.animal = a
+                local sq = sqOf(a)
+                if sq ~= nil then
+                    target.x, target.y, target.z = sq:getX(), sq:getY(), sq:getZ()
+                end
+                pcall(function() target.fx, target.fy = a:getX(), a:getY() end)
+                if BridgeAnimalCare.isTended(a) then valid = true end
             end
-            pcall(function() target.fx, target.fy = a:getX(), a:getY() end)
+        end
+        if valid then
+            BridgeTask.petValidRef, BridgeTask.petValidAt = a, tick
+        else
+            BridgeTask.petValidRef, BridgeTask.petValidAt = nil, nil
         end
     end
-    if a == nil or not BridgeAnimalCare.isTended(a) then
+    if a == nil or not valid then
         BridgeTask.current = nil
         BridgeTask.phase = nil
         BridgeTask.resetWalkDest()
@@ -547,6 +1486,31 @@ local function jobUpdate(body)
 
     if moved then
         if BridgeTask.phase == "pose" then
+            if BridgeTask.petTask ~= nil and BridgeTask.petTask ~= "pet" then
+                local done = tonumber(BridgeTask.petUnitsDone) or 0
+                if (BridgeTask.petRetargets or 0) < MOVE_LIMIT
+                        and BridgeAnimalCare.isTended(a) then
+                    if done > 0 and BridgeTask.petTask == "shear" then
+                        BridgeTask.petWoolGot = (BridgeTask.petWoolGot or 0) + done
+                        if BridgeTask.petWoolType ~= nil then
+                            BridgeTask.petWoolTypes = BridgeTask.petWoolTypes or {}
+                            BridgeTask.petWoolTypes[BridgeTask.petWoolType] = true
+                        end
+                    end
+                    finishPose(a, body)
+                    BridgeTask.petRetargets = (BridgeTask.petRetargets or 0) + 1
+                    local sq = sqOf(a)
+                    if sq ~= nil then
+                        target.x, target.y, target.z = sq:getX(), sq:getY(), sq:getZ()
+                    end
+                    pcall(function() target.fx, target.fy = a:getX(), a:getY() end)
+                    BridgeTask.phase = "walk"
+                    BridgeTask.resetWalkDest()
+                    return true
+                end
+                finishProduct(body, a, "moved", "JobProductMoved")
+                return true
+            end
             finishPose(a, body)
             BridgeTask.current = nil
             BridgeTask.phase = nil
@@ -580,16 +1544,50 @@ local function jobUpdate(body)
         if walk ~= "arrived" then return true end
         pcall(function() BridgeMove.stopPath(body) end)
         BridgeTask.forceIdle(body)
-        if not BridgeAnimalCare.canPet(a) then
-            BridgeTask.current = nil
-            BridgeTask.phase = nil
-            BridgeTask.resetWalkDest()
+        local task = target.task
+        if task ~= nil and not BridgeAnimalCare.taskReady(a, task) then task = nil end
+        if task == nil then task = BridgeAnimalCare.taskFor(a) end
+        if task == nil then
+            releaseCurrent(body, a, "JobPetNotReady")
             return true
         end
-        beginPose(body, a)
-        if not applyPet(a, body) then
-            return dropWithSpeech(body, "petfail")
+        target.task = task
+        if task == "pet" then
+            if not BridgeAnimalCare.canPet(a) then
+                releaseCurrent(body, a, "JobPetNotReady")
+                return true
+            end
+            beginPose(body, a)
+            if not applyPet(a, body) then
+                return dropWithSpeech(body, "petfail")
+            end
+            return true
         end
+        local ok, why = setupProduct(body, a, task)
+        if ok then return true end
+        if why == "JobNoShears" then
+            sayNeedOnce("JobNoShears", "petSaidShears")
+            if BridgeAnimalCare.milkInfo(a) then
+                local ok2, why2 = setupProduct(body, a, "milk")
+                if ok2 then
+                    target.task = "milk"
+                    return true
+                end
+                if why2 == "JobNoMilkContainer" then
+                    sayNeedOnce("JobNoMilkContainer", "petSaidMilk")
+                end
+            end
+            if beginPetFallback(body, a, target) then return true end
+            releaseCurrent(body, a, nil)
+            return true
+        end
+        if why == "JobNoMilkContainer" then
+            sayNeedOnce("JobNoMilkContainer", "petSaidMilk")
+            if beginPetFallback(body, a, target) then return true end
+            releaseCurrent(body, a, nil)
+            return true
+        end
+        releaseCurrent(body, a, why)
         return true
     end
 
@@ -600,26 +1598,147 @@ local function jobUpdate(body)
         BridgeTask.resetWalkDest()
         return true
     end
-    local age = Bridge.time - BridgeTask.petStart
-    if age < BridgeTask.petTicks and age < POSE_TIMEOUT then
+
+    if BridgeTask.petTask == nil or BridgeTask.petTask == "pet" then
+        local age = Bridge.time - BridgeTask.petStart
+        if age < BridgeTask.petTicks and age < POSE_TIMEOUT then
+            return true
+        end
+        finishPose(a, body)
+        BridgeTask.current = nil
+        BridgeTask.phase = nil
+        BridgeTask.resetWalkDest()
         return true
     end
-    finishPose(a, body)
-    BridgeTask.current = nil
-    BridgeTask.phase = nil
-    BridgeTask.resetWalkDest()
+
+    local task = BridgeTask.petTask
+    local ticks = tonumber(BridgeTask.petTicksPerUnit) or 1
+    if ticks < 1 then ticks = 1 end
+    local wanted = tonumber(BridgeTask.petUnitsWanted) or 0
+    local done = tonumber(BridgeTask.petUnitsDone) or 0
+    if done >= wanted then
+        finishProduct(body, a, "done", nil)
+        return true
+    end
+    if stressOf(a) > STRESS_LIMIT then
+        finishProduct(body, a, "stress", "JobProductStress")
+        return true
+    end
+    local age = (Bridge.time - BridgeTask.petStart) * ffMult()
+    if age < (done + 1) * ticks then
+        if age > BridgeTask.petTicks * 4 + PRODUCT_SLACK then
+            finishProduct(body, a, "timeout", nil)
+        end
+        return true
+    end
+    if task == "milk" then
+        if BridgeTask.petTool == nil or not milkFits(BridgeTask.petTool, BridgeTask.petMilkType) then
+            local nextItem = BridgeAnimalCare.findMilkContainer(body, BridgeTask.petMilkType)
+            if nextItem == nil then
+                finishProduct(body, a, "noroom", "JobProductNoRoom")
+                return true
+            end
+            BridgeTask.petTool = nextItem
+        end
+    elseif BridgeTask.petTool == nil or not BridgeAnimalCare.shearUsable(BridgeTask.petTool) then
+        finishProduct(body, a, "notool", "JobNoShears")
+        return true
+    end
+    if Bridge ~= nil and Bridge.mp == true then
+        if not requestProduct(a, task) then
+            finishProduct(body, a, "noreach", "JobPetNoReach")
+        end
+        return true
+    end
+    local ok, why = applyProductUnit(body, a, task)
+    if not ok then
+        local key = nil
+        if why == "noroom" then
+            key = "JobProductNoRoom"
+        elseif why == "notool" then
+            key = "JobNoShears"
+        elseif why == "notready" then
+            key = "JobProductStress"
+        end
+        finishProduct(body, a, why, key)
+        return true
+    end
+    BridgeTask.petUnitsDone = done + 1
+    BridgeTask.petDidWork = true
     return true
+end
+
+function BridgeAnimalCare.debugAnimal(a, op)
+    if a == nil or op == nil then return false end
+    if op == "calm" then pcall(function() a:setDebugStress(0) end) end
+    if Bridge ~= nil and Bridge.mp == true then
+        local red = nil
+        if BridgeData ~= nil and BridgeData.owner ~= nil then red = BridgeData.owner() end
+        if red == nil then return false end
+        local id = nil
+        pcall(function() id = a:getOnlineID() end)
+        if id == nil then return false end
+        local x, y, z = nil, nil, nil
+        pcall(function() x, y, z = a:getX(), a:getY(), a:getZ() end)
+        local ok = pcall(function()
+            sendClientCommand(red, "Bridge", "animalDebug", { op = op, id = id, x = x, y = y, z = z })
+        end)
+        return ok == true
+    end
+    local d = dataOf(a)
+    if d == nil then return false end
+    if op == "calm" then return true end
+    if op == "milk" then
+        local max = 0
+        pcall(function() max = tonumber(d:getMaxMilk()) or 0 end)
+        if max <= 0 then max = 10 end
+        pcall(function() d:setMaxMilkActual(max) end)
+        pcall(function() d:setMilkQuantity(max) end)
+        return true
+    end
+    if op == "wool" then
+        local max = 0
+        pcall(function() max = tonumber(d:getMaxWool()) or 0 end)
+        pcall(function() d:setWoolQuantity(max, true) end)
+        return true
+    end
+    return false
 end
 
 local function available(body)
     return BridgeTask ~= nil and BridgeTask.PET_ANIMALS_ENABLED == 1
 end
 
+function BridgeAnimalCare.petMissing(body)
+    if BridgeTask == nil then return nil end
+    local targets = {}
+    if BridgeTask.current ~= nil then targets[#targets + 1] = BridgeTask.current end
+    if type(BridgeTask.queue) == "table" then
+        for i = 1, #BridgeTask.queue do targets[#targets + 1] = BridgeTask.queue[i] end
+    end
+    local needShear, needMilk = false, false
+    for i = 1, #targets do
+        local t = targets[i]
+        local a = type(t) == "table" and t.animal or nil
+        if a ~= nil then
+            local task = t.task or BridgeAnimalCare.taskFor(a)
+            if task == "shear" then
+                needShear = true
+            elseif task == "milk" then
+                needMilk = true
+            end
+        end
+    end
+    if needShear and BridgeAnimalCare.findShears(body) == nil then return "shearTool" end
+    if needMilk and BridgeAnimalCare.findMilkContainerAny(body) == nil then return "milkContainer" end
+    return nil
+end
+
 function BridgeAnimalCare.install()
     if type(BridgeTask) == "table" and BridgeTask.kinds ~= nil then
         BridgeTask.kinds.petAnimals = {
             available = available,
-            missing = nil,
+            missing = BridgeAnimalCare.petMissing,
             update = jobUpdate,
             leave = leave,
         }

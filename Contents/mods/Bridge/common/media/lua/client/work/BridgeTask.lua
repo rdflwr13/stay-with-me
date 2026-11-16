@@ -16,6 +16,7 @@ BridgeTask.WATER_PLANTS_ENABLED = 1
 BridgeTask.FEED_PLANTS_ENABLED = 1
 BridgeTask.TEND_ENABLED = 1
 BridgeTask.PET_ANIMALS_ENABLED = 1
+BridgeTask.ANIMAL_PRODUCTS_ENABLED = 1
 BridgeTask.TROUGHS_ENABLED = 1
 BridgeTask.HUTCHCARE_ENABLED = 1
 
@@ -2634,10 +2635,14 @@ function BridgeTask.requireGlass(sq)
     return true
 end
 
-function BridgeTask.speakMissing(kind)
+function BridgeTask.speakMissing(kind, missingOverride)
     local def = kind ~= nil and BridgeTask.kinds[kind] or nil
     local missing = nil
-    if def ~= nil and def.missing ~= nil then
+    if type(missingOverride) == "table" then
+        if #missingOverride > 0 then missing = missingOverride[1] end
+    elseif missingOverride ~= nil then
+        missing = missingOverride
+    elseif def ~= nil and def.missing ~= nil then
         pcall(function() missing = def.missing(Bridge.body) end)
     end
 
@@ -2657,7 +2662,11 @@ function BridgeTask.speakMissing(kind)
         return
     end
     if kind == "animalCare" then
-        Bridge.speak("JobNoHutches")
+        if missing == "cleanImplement" then
+            Bridge.speak("JobHutchNoTool")
+        else
+            Bridge.speak("JobNoHutches")
+        end
         return
     end
     if kind == "tendCrops" then
@@ -2683,6 +2692,9 @@ function BridgeTask.speakMissing(kind)
     elseif missing == "broom" then key = "JobNeedBroom"
     elseif missing == "waterContainer" then key = "JobNoBucket"
     elseif missing == "cropFeed" then key = "JobNoFeed"
+    elseif missing == "shearTool" then key = "JobNoShears"
+    elseif missing == "milkContainer" then key = "JobNoMilkContainer"
+    elseif missing == "cleanImplement" then key = "JobHutchNoTool"
     elseif missing == "crowbar" then key = "JobNeedCrowbar" end
     Bridge.speak(key)
 end
@@ -2725,7 +2737,8 @@ function BridgeTask.dangerNear(body, radius)
         local list = nil
         if BridgeZS ~= nil then list = BridgeZS.nearUnion(bx, by, rx, ry, dr + 0.01, { tag = "task.danger" }) end
         if list == nil then list = getCell():getZombieList() end
-        for i = 0, list:size() - 1 do
+        local zl = list:size()
+        for i = 0, zl - 1 do
             local z = list:get(i)
             local nearEnough = false
             if z ~= nil and z ~= body then
@@ -2735,10 +2748,11 @@ function BridgeTask.dangerNear(body, radius)
                 end
                 if zx == nil then zx, zy, zz = z:getX(), z:getY(), z:getZ() end
                 local ddx, ddy = zx - bx, zy - by
-                local d = math.sqrt(ddx * ddx + ddy * ddy)
+                local d2 = ddx * ddx + ddy * ddy
                 local rdx, rdy = zx - rx, zy - ry
-                local dr2 = math.sqrt(rdx * rdx + rdy * rdy)
-                nearEnough = math.abs(zz - bz) < 0.8 and (d < dr or dr2 < dr)
+                local r2 = rdx * rdx + rdy * rdy
+                local dr2 = dr * dr
+                nearEnough = math.abs(zz - bz) < 0.8 and (d2 < dr2 or r2 < dr2)
             end
             if nearEnough then
                 local threat = false
@@ -2903,15 +2917,119 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         targets = keep
     end
 
+    if kind == "tendAnimals" and BridgeWorkSelect ~= nil
+            and type(BridgeWorkSelect.hutchInfo) == "function" then
+        local keep, hutchCount = {}, 0
+        local needEggs = false
+        local droppedAnimal = nil
+        for i = 1, #targets do
+            local t = targets[i]
+            if type(t) == "table" and t.hutch ~= nil then
+                local info = nil
+                pcall(function() info = BridgeWorkSelect.hutchInfo(t.hutch) end)
+                if info ~= nil and info.needsWork == true then
+                    keep[#keep + 1] = t
+                    hutchCount = hutchCount + 1
+                    if info.needsEggs == true then needEggs = true end
+                end
+            elseif type(t) == "table" and t.animal ~= nil then
+                local a = t.animal
+                local task = t.task
+                if task == nil and BridgeAnimalCare ~= nil
+                        and type(BridgeAnimalCare.taskFor) == "function" then
+                    task = BridgeAnimalCare.taskFor(a)
+                end
+                if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.readyForTask) == "function"
+                        and BridgeAnimalCare.readyForTask(a, task) then
+                    keep[#keep + 1] = t
+                elseif BridgeAnimalCare == nil then
+                    keep[#keep + 1] = t
+                elseif droppedAnimal == nil then
+                    droppedAnimal = a
+                end
+            else
+                keep[#keep + 1] = t
+            end
+        end
+        if needEggs then
+            local room = BridgeTask.hutchEggCapacity(Bridge.body)
+            if room == nil or room <= 0 then
+                local filtered = {}
+                for i = 1, #keep do
+                    local t = keep[i]
+                    local drop = false
+                    if type(t) == "table" and t.hutch ~= nil then
+                        local info = nil
+                        pcall(function() info = BridgeWorkSelect.hutchInfo(t.hutch) end)
+                        drop = info ~= nil and info.needsEggs == true
+                    end
+                    if not drop then filtered[#filtered + 1] = t end
+                end
+                keep = filtered
+            end
+        end
+        if #keep == 0 then
+            if droppedAnimal ~= nil then
+                if BridgeAnimalCare.stressOf(droppedAnimal) > 40 then
+                    Bridge.speak("JobProductStress", BridgeAnimalCare.nameOf(droppedAnimal))
+                else
+                    Bridge.speak("JobPetNotReady")
+                end
+            elseif hutchCount > 0 then
+                Bridge.speak("JobHutchFull")
+            else
+                Bridge.speak("JobNoAnimals")
+            end
+            return "unavailable"
+        end
+        targets = keep
+    end
+
+    if kind == "petAnimals" and BridgeAnimalCare ~= nil
+            and type(BridgeAnimalCare.readyForTask) == "function" then
+        local keep, droppedAnimal = {}, nil
+        for i = 1, #targets do
+            local t = targets[i]
+            if type(t) == "table" and t.animal ~= nil then
+                local a = t.animal
+                local task = t.task
+                if task == nil and type(BridgeAnimalCare.taskFor) == "function" then
+                    task = BridgeAnimalCare.taskFor(a)
+                end
+                if BridgeAnimalCare.readyForTask(a, task) then
+                    keep[#keep + 1] = t
+                elseif droppedAnimal == nil then
+                    droppedAnimal = a
+                end
+            else
+                keep[#keep + 1] = t
+            end
+        end
+        if #keep == 0 and droppedAnimal ~= nil then
+            if BridgeAnimalCare.stressOf(droppedAnimal) > 40 then
+                Bridge.speak("JobProductStress", BridgeAnimalCare.nameOf(droppedAnimal))
+            else
+                Bridge.speak("JobPetNotReady")
+            end
+            return "unavailable"
+        end
+        targets = keep
+    end
+
     BridgeTask.pendingStart = nil
 
     if BridgeFetch ~= nil and type(BridgeFetch.primeJob) == "function" then
-        local fetch = nil
-        pcall(function() fetch = BridgeFetch.primeJob(kind, targets) end)
+        local fetch, fetchMissing = nil, nil
+        pcall(function() fetch, fetchMissing = BridgeFetch.primeJob(kind, targets) end)
         if fetch == "pending" then
-            BridgeTask.pendingStart = { kind = kind, targets = targets, corpseDest = corpseDest, since = Bridge.time }
+            BridgeTask.pendingStart = { kind = kind, targets = targets, corpseDest = corpseDest,
+                missing = fetchMissing, since = Bridge.time }
             log("waiting for home supplies for " .. tostring(kind))
             return "fetching"
+        end
+        if fetch == "blocked" and (kind == "petAnimals" or kind == "tendAnimals" or kind == "animalCare") then
+            BridgeTask.speakMissing(kind, fetchMissing)
+            return "unavailable"
         end
     end
 
@@ -3031,7 +3149,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     BridgeTask.windowTries, BridgeTask.windowSeen, BridgeTask.windowLoopKey = nil, nil, nil
     BridgeTask.doneCount = 0
     BridgeTask.failCount = 0
-    if kind == "petAnimals" then
+    if kind == "petAnimals" or kind == "tendAnimals" then
         BridgeTask.petPending = nil
         BridgeTask.petPendingAt = nil
         BridgeTask.petHeld = nil
@@ -3042,7 +3160,42 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         BridgeTask.petFarRetries = 0
         BridgeTask.petSaid = nil
         BridgeTask.petFailSaid = nil
+        BridgeTask.petSaidShears = nil
+        BridgeTask.petSaidMilk = nil
+        BridgeTask.petHoldSeq = nil
+        BridgeTask.petHoldOn = nil
+        BridgeTask.petHoldAnimal = nil
+        BridgeTask.petHoldId = nil
+        BridgeTask.petHoldX, BridgeTask.petHoldY, BridgeTask.petHoldZ = nil, nil, nil
+        BridgeTask.petHoldAction = nil
         BridgeTask.petIdSeq = nil
+        BridgeTask.petValidRef = nil
+        BridgeTask.petValidAt = nil
+        BridgeTask.petTask = nil
+        BridgeTask.petUnitsWanted = nil
+        BridgeTask.petUnitsDone = nil
+        BridgeTask.petTicksPerUnit = nil
+        BridgeTask.petMilkType = nil
+        BridgeTask.petWoolType = nil
+        BridgeTask.petTool = nil
+        BridgeTask.petDidWork = false
+        BridgeTask.petSound = nil
+        BridgeTask.petSoundHandle = nil
+        BridgeTask.petSoundEmitter = nil
+        BridgeTask.petOpSeq = nil
+        BridgeTask.petWoolGot = 0
+        BridgeTask.petWoolTypes = {}
+        BridgeTask.petMilkGot = 0
+        BridgeTask.petDepositPhase = nil
+        BridgeTask.petDepositAct = nil
+        BridgeTask.petDepositAt = nil
+        BridgeTask.petDepositTarget = nil
+    end
+    if kind == "tendAnimals" then
+        BridgeTask.tendPart = nil
+        BridgeTask.tendHutch = nil
+        BridgeTask.tendAnimal = nil
+        BridgeTask.tendContinue = nil
     end
     if kind == "fillTroughs" then
         BridgeTask.troughPhase = nil
@@ -3077,7 +3230,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         BridgeTask.troughRefillAt = nil
         BridgeTask.troughWater = setmetatable({}, { __index = BridgeTask })
     end
-    if kind == "animalCare" then
+    if kind == "animalCare" or kind == "tendAnimals" then
         BridgeTask.hutchPhase = nil
         BridgeTask.hutchAfter = nil
         BridgeTask.hutchOpenedHatch = false
@@ -3347,6 +3500,8 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         Bridge.speak("JobDepositStart")
     elseif kind == "petAnimals" then
         Bridge.speak("JobPetStart")
+    elseif kind == "tendAnimals" then
+        Bridge.speak("JobTendAnimalsStart")
     elseif kind == "fillTroughs" then
         Bridge.speak("JobTroughStart")
     elseif kind == "animalCare" then
@@ -3453,6 +3608,11 @@ end
 
 function BridgeTask.finish()
     if not BridgeTask.active then return "idle" end
+    if BridgeTask.tendContinue ~= nil then
+        local nextPart = BridgeTask.tendContinue
+        if nextPart() == true then return "continue" end
+        BridgeTask.tendContinue = nil
+    end
     BridgeTask.chargeCleanSpend()
     local tendText = nil
     if BridgeTask.kind == "tendCrops" then
@@ -3486,6 +3646,10 @@ function BridgeTask.finish()
     BridgeTask.queue = {}
     BridgeTask.current = nil
     BridgeTask.phase = nil
+    BridgeTask.tendPart = nil
+    BridgeTask.tendHutch = nil
+    BridgeTask.tendAnimal = nil
+    BridgeTask.tendContinue = nil
     BridgeTask.cleanStowPending = false
     BridgeTask.washSink = nil
     BridgeTask.washPhase = nil
@@ -3581,6 +3745,8 @@ function BridgeTask.finish()
                 or finishKind == "fertilizePlants" or finishKind == "tendCrops" then
         elseif finishKind == "petAnimals" then
             if (BridgeTask.doneCount or 0) > 0 then Bridge.speak("JobPetDone") end
+        elseif finishKind == "tendAnimals" then
+            if (BridgeTask.doneCount or 0) > 0 then Bridge.speak("JobTendAnimalsDone") end
         elseif finishKind == "fillTroughs" then
             if (BridgeTask.doneCount or 0) > 0 then BridgeTask.troughSay("JobTroughDone") end
         elseif finishKind == "animalCare" then
@@ -3607,7 +3773,8 @@ end
 function BridgeTask.progress()
     if not BridgeTask.active or BridgeTask.state ~= "running" then return nil end
     local t = Bridge.time
-    if BridgeTask.kind == "animalCare" then
+    if BridgeTask.kind == "animalCare"
+            or (BridgeTask.kind == "tendAnimals" and BridgeTask.tendPart == "hutch") then
         local W = BridgeTask.hutchWater
         if W ~= nil and W.waterFill ~= nil and W.waterFill.fillTicks ~= nil
                 and W.waterFill.fillSince ~= nil then
@@ -3657,7 +3824,9 @@ function BridgeTask.progress()
             return p
         end
     end
-    if BridgeTask.kind == "petAnimals" and BridgeTask.phase == "pose"
+    if (BridgeTask.kind == "petAnimals"
+            or (BridgeTask.kind == "tendAnimals" and BridgeTask.tendPart == "animal"))
+            and BridgeTask.phase == "pose"
             and BridgeTask.petStart ~= nil and BridgeTask.petTicks ~= nil then
         local span = BridgeTask.petTicks
         if span <= 0 then span = 1 end
@@ -3881,7 +4050,8 @@ function BridgeTask.diag()
             BridgeTask.troughTrip or 0, BridgeTask.troughTripFeed or 0,
             water or 0, maxWater or 0, feed or 0, maxFeed or 0))
     end
-    if BridgeTask.kind == "animalCare" then
+    if BridgeTask.kind == "animalCare"
+            or (BridgeTask.kind == "tendAnimals" and BridgeTask.tendPart == "hutch") then
         local w = BridgeTask.hutchWater
         local info = BridgeTask.hutchInfoCache
         local contName = "-"
@@ -4002,7 +4172,8 @@ function BridgeTask.update(body)
                 or (BridgeTask.kind == "fillTroughs" and BridgeTask.troughWater ~= nil
                     and (BridgeTask.troughWater.waterFill ~= nil
                         or BridgeTask.troughWater.waterPhase == "pour"))
-                or (BridgeTask.kind == "animalCare"
+                or ((BridgeTask.kind == "animalCare"
+                    or (BridgeTask.kind == "tendAnimals" and BridgeTask.tendPart == "hutch"))
                     and ((BridgeTask.hutchWater ~= nil and BridgeTask.hutchWater.waterFill ~= nil)
                         or BridgeTask.hutchPoseStart ~= nil
                         or BridgeTask.hutchDepositAt ~= nil)) or nil
@@ -5242,6 +5413,8 @@ end
 
 local function fillApply(body, sink, item, amount)
     if body == nil or sink == nil or item == nil or amount == nil or amount <= 0 then return end
+    if BridgeWash ~= nil and type(BridgeWash.isFeedingTrough) == "function"
+            and BridgeWash.isFeedingTrough(sink) then return end
     local fc = nil
     pcall(function() fc = item:getFluidContainer() end)
     if fc == nil then return end
@@ -5583,7 +5756,11 @@ local function waterNextSource(body, T)
         local entry = T.waterSources[T.waterSourceI]
         T.waterSourceI = T.waterSourceI + 1
         local src = entry ~= nil and entry.o or nil
-        if src ~= nil and not T.waterTried[waterSourceKey(src)] then return src end
+        local trough = false
+        if src ~= nil and BridgeWash ~= nil and type(BridgeWash.isFeedingTrough) == "function" then
+            trough = BridgeWash.isFeedingTrough(src) == true
+        end
+        if src ~= nil and not trough and not T.waterTried[waterSourceKey(src)] then return src end
     end
     return nil
 end
@@ -6152,9 +6329,14 @@ local function troughPourApply(body, T)
         }
         BridgeTask.troughPendingAt = Bridge.time
         local ok = false
+        local bx, by, bz = nil, nil, nil
+        if Bridge ~= nil and Bridge.body ~= nil then
+            pcall(function() bx, by, bz = Bridge.body:getX(), Bridge.body:getY(), Bridge.body:getZ() end)
+        end
         pcall(function()
             sendClientCommand(BridgeData.owner(), "Bridge", "troughWater",
-                { id = id, x = target.x, y = target.y, z = target.z, amount = amount, tainted = tainted })
+                { id = id, x = target.x, y = target.y, z = target.z,
+                  bx = bx, by = by, bz = bz, amount = amount, tainted = tainted })
             ok = true
         end)
         if not ok then
@@ -11386,9 +11568,14 @@ BridgeTask.hutchSend = function(body, h, op, extra)
             BridgeTask.hutchResult = { op = op, ok = false, why = "nobody", count = 0 }
             return true
         end
+        local bx, by, bz = nil, nil, nil
+        if body ~= nil then
+            pcall(function() bx, by, bz = body:getX(), body:getY(), body:getZ() end)
+        end
         local sent = pcall(function()
             sendClientCommand(red, "Bridge", "hutchCare", {
                 op = op, x = target.x, y = target.y, z = target.z,
+                bx = bx, by = by, bz = bz,
                 max = extra.max, points = extra.points })
         end)
         if sent then
@@ -11409,7 +11596,9 @@ BridgeTask.hutchSend = function(body, h, op, extra)
 end
 
 BridgeTask.hutchCareResult = function(args)
-    if not BridgeTask.active or BridgeTask.kind ~= "animalCare" then return end
+    local hutchPart = BridgeTask.kind == "animalCare"
+        or (BridgeTask.kind == "tendAnimals" and BridgeTask.tendPart == "hutch")
+    if not BridgeTask.active or not hutchPart then return end
     if type(args) ~= "table" then return end
     local pending = BridgeTask.hutchPending
     if pending == nil or pending.op ~= args.op then return end
@@ -11623,6 +11812,7 @@ end
 
 BridgeTask.hutchUpdate = function(body)
     local T = BridgeTask
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
     if T.HUTCHCARE_ENABLED ~= 1 or body == nil then return T.finish() end
 
     if T.hutchPending ~= nil then
@@ -11654,17 +11844,6 @@ BridgeTask.hutchUpdate = function(body)
                     T.hutchOpenedHatch = false
                 end
                 if T.hutchOpenedDoor then
-                    if red ~= nil and target ~= nil then
-                        pcall(function()
-                            sendClientCommand(red, "Bridge", "hutchCare",
-                                { op = "closeDoor", x = target.x, y = target.y, z = target.z })
-                        end)
-                    else
-                        pcall(function()
-                            if h:isOpen() == true then h:toggleDoor() end
-                            h:sync()
-                        end)
-                    end
                     T.hutchOpenedDoor = false
                 end
             end
@@ -12028,7 +12207,7 @@ BridgeTask.hutchUpdate = function(body)
 
     if phase == "floor" then
         if T.hutchFloorDone then
-            T.hutchPhase = "doorClose"
+            T.hutchPhase = "done"
             return true
         end
         local plan = T.hutchFloorPlan
@@ -12062,33 +12241,13 @@ BridgeTask.hutchUpdate = function(body)
         T.hutchFloorDone = true
         T.hutchSend(body, h, "cleanFloor", {
             points = plan.points, waterUse = plan.waterUse, cleanerUse = plan.cleanerUse,
-            waterItem = plan.waterItem, cleanerItem = plan.cleanerItem, after = "doorClose",
+            waterItem = plan.waterItem, cleanerItem = plan.cleanerItem, after = "done",
         })
         return true
     end
 
     if phase == "doorClose" then
-        if T.hutchOpenedDoor then
-            local open = false
-            pcall(function() open = h:isOpen() == true end)
-            if open then
-                if T.hutchPoseStart == nil then
-                    T.hutchPoseStart = Bridge.time
-                    T.hutchPoseSpan = 20
-                    T.hutchPosePhase = "closeFloorDoor"
-                    pcall(function() body:faceThisObject(h) end)
-                    pcall(function() body:playSound("ChickenCoopWoodClose") end)
-                    return true
-                end
-                if ((Bridge.time - T.hutchPoseStart) * T.ffMult()) < (T.hutchPoseSpan or 0) then
-                    return true
-                end
-                T.hutchPoseStart, T.hutchPoseSpan, T.hutchPosePhase = nil, nil, nil
-                T.hutchSend(body, h, "closeDoor", { after = "doorClose" })
-                return true
-            end
-            T.hutchOpenedDoor = false
-        end
+        T.hutchOpenedDoor = false
         T.hutchPhase = "done"
         return true
     end
@@ -12134,21 +12293,7 @@ BridgeTask.hutchLeave = function(body)
             end
         end
         if T.hutchOpenedDoor then
-            if Bridge ~= nil and Bridge.mp == true then
-                local red = nil
-                pcall(function() red = BridgeData.owner() end)
-                if red ~= nil and target ~= nil then
-                    pcall(function()
-                        sendClientCommand(red, "Bridge", "hutchCare",
-                            { op = "closeDoor", x = target.x, y = target.y, z = target.z })
-                    end)
-                end
-            else
-                pcall(function()
-                    if h:isOpen() == true then h:toggleDoor() end
-                    h:sync()
-                end)
-            end
+            T.hutchOpenedDoor = false
         end
     end
     T.hutchClearPose(body)
@@ -12250,6 +12395,81 @@ BridgeTask.kinds.animalCare.update = function(body)
 end
 BridgeTask.kinds.animalCare.leave = function(body)
     BridgeTask.hutchLeave(body)
+end
+
+BridgeTask.kinds.tendAnimals = {}
+BridgeTask.kinds.tendAnimals.available = function(body)
+    return BridgeTask.HUTCHCARE_ENABLED == 1 or BridgeTask.PET_ANIMALS_ENABLED == 1
+end
+BridgeTask.kinds.tendAnimals.missing = function(body)
+    local T = BridgeTask
+    if BridgeFetch ~= nil and type(BridgeFetch.jobMissing) == "function" then
+        local targets = {}
+        if T.current ~= nil then targets[#targets + 1] = T.current end
+        for i = 1, #T.queue do targets[#targets + 1] = T.queue[i] end
+        local list = BridgeFetch.jobMissing("tendAnimals", targets)
+        if #list > 0 then return list[1] end
+    end
+    if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.petMissing) == "function" then
+        return BridgeAnimalCare.petMissing(body)
+    end
+    return nil
+end
+BridgeTask.kinds.tendAnimals.update = function(body)
+    local T = BridgeTask
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
+    if T.tendPart == nil then
+        local hutch, animal = {}, {}
+        for i = 1, #T.queue do
+            local t = T.queue[i]
+            if type(t) == "table" and t.hutch ~= nil then
+                hutch[#hutch + 1] = t
+            elseif type(t) == "table" and t.animal ~= nil then
+                animal[#animal + 1] = t
+            end
+        end
+        T.tendHutch, T.tendAnimal = hutch, animal
+        T.tendPart = #hutch > 0 and "hutch" or "animal"
+        T.queue = T.tendPart == "hutch" and hutch or animal
+        T.current = nil
+        T.phase = nil
+        T.tendContinue = function()
+            if T.tendPart == "hutch" and #T.tendAnimal > 0 then
+                T.tendPart = "animal"
+                T.queue = T.tendAnimal
+                T.tendAnimal = {}
+                T.current = nil
+                T.phase = nil
+                T.resetWalkDest()
+                return true
+            end
+            return false
+        end
+    end
+    if T.tendPart == "animal" then
+        local def = T.kinds.petAnimals
+        if def == nil or type(def.update) ~= "function" then return T.finish() end
+        return def.update(body)
+    end
+    return T.hutchUpdate(body)
+end
+BridgeTask.kinds.tendAnimals.leave = function(body)
+    local T = BridgeTask
+    local part = T.tendPart
+    T.tendPart = nil
+    T.tendHutch = nil
+    T.tendAnimal = nil
+    T.tendContinue = nil
+    if part == "animal" then
+        local def = T.kinds.petAnimals
+        if def ~= nil and type(def.leave) == "function" then def.leave(body) end
+    elseif part == "hutch" then
+        T.hutchLeave(body)
+    else
+        T.hutchLeave(body)
+        local def = T.kinds.petAnimals
+        if def ~= nil and type(def.leave) == "function" then def.leave(body) end
+    end
 end
 
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeTask] loaded") end

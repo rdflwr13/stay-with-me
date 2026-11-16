@@ -230,6 +230,12 @@ BridgeFetch.NEEDS = {
     { id = "splintSheet",    matches = splintSheetOk },
     { id = "battery",        matches = isBattery },
     { id = "animalFeed",     matches = animalFeedItem },
+    { id = "shearTool",      matches = function(it)
+        return BridgeAnimalCare ~= nil and BridgeAnimalCare.shearUsable(it) == true
+    end },
+    { id = "milkContainer",  matches = function(it)
+        return BridgeAnimalCare ~= nil and BridgeAnimalCare.milkContainerItem(it) == true
+    end },
 }
 BridgeFetch.BY_ID = {}
 for _, n in ipairs(BridgeFetch.NEEDS) do BridgeFetch.BY_ID[n.id] = n end
@@ -274,6 +280,10 @@ function BridgeFetch.has(id)
             local items = nil
             pcall(function() items = b:getInventory():getAllEvalRecurse(animalFeedItem) end)
             ok = items ~= nil and items:size() > 0
+        elseif id == "shearTool" then
+            ok = BridgeAnimalCare ~= nil and BridgeAnimalCare.findShears(b) ~= nil
+        elseif id == "milkContainer" then
+            ok = BridgeAnimalCare ~= nil and BridgeAnimalCare.findMilkContainerAny(b) ~= nil
         end
     end)
     return ok == true
@@ -1111,6 +1121,9 @@ local function jobEnabled(kind)
         elseif kind == "fertilizePlants" then ok = BridgeTask.FEED_PLANTS_ENABLED == 1
         elseif kind == "tendCrops" then ok = BridgeTask.TEND_ENABLED == 1
         elseif kind == "animalCare" then ok = BridgeTask.HUTCHCARE_ENABLED == 1
+        elseif kind == "petAnimals" then ok = BridgeTask.PET_ANIMALS_ENABLED == 1
+        elseif kind == "tendAnimals" then
+            ok = BridgeTask.HUTCHCARE_ENABLED == 1 or BridgeTask.PET_ANIMALS_ENABLED == 1
         end
     end)
     return ok == true
@@ -1214,6 +1227,31 @@ function BridgeFetch.jobMissing(kind, targets)
             if need.petrol then out[#out + 1] = "petrol" end
             if need.ash then out[#out + 1] = "ashTool" end
             if need.cut then out[#out + 1] = "cutTool" end
+        elseif kind == "tendAnimals" then
+            local hutch, animal = {}, {}
+            for i = 1, #targets do
+                local t = targets[i]
+                if type(t) == "table" and t.hutch ~= nil then
+                    hutch[#hutch + 1] = t
+                elseif type(t) == "table" and t.animal ~= nil then
+                    animal[#animal + 1] = t
+                end
+            end
+            local seen = {}
+            local function add(v)
+                if v ~= nil and seen[v] ~= true then
+                    seen[v] = true
+                    out[#out + 1] = v
+                end
+            end
+            if #hutch > 0 then
+                local hm = BridgeFetch.jobMissing("animalCare", hutch)
+                for i = 1, #hm do add(hm[i]) end
+            end
+            if #animal > 0 then
+                local am = BridgeFetch.jobMissing("petAnimals", animal)
+                for i = 1, #am do add(am[i]) end
+            end
         elseif kind == "animalCare" then
             if BridgeTask.findCleanStainItem(b) == nil
                     and BridgeWorkSelect ~= nil and type(BridgeWorkSelect.hutchNeedsFloor) == "function" then
@@ -1229,6 +1267,22 @@ function BridgeFetch.jobMissing(kind, targets)
                 end
                 if needFloor then out[#out + 1] = "cleanImplement" end
             end
+        elseif kind == "petAnimals" then
+            if BridgeAnimalCare == nil then return end
+            local needShear, needMilk = false, false
+            for i = 1, #targets do
+                local t = targets[i]
+                local a = type(t) == "table" and t.animal or nil
+                local task = type(t) == "table" and t.task or nil
+                if task == nil and a ~= nil then task = BridgeAnimalCare.taskFor(a) end
+                if task == "shear" then
+                    needShear = true
+                elseif task == "milk" then
+                    needMilk = true
+                end
+            end
+            if needShear and BridgeAnimalCare.findShears(b) == nil then out[#out + 1] = "shearTool" end
+            if needMilk and BridgeAnimalCare.findMilkContainerAny(b) == nil then out[#out + 1] = "milkContainer" end
         end
     end)
     if #out > 0 then BridgeFetch.invalidateAmmoCache() end
@@ -1237,9 +1291,9 @@ end
 
 
 function BridgeFetch.primeJob(kind, targets)
-    if not BridgeFetch.available() then return "skip" end
     local missing = BridgeFetch.jobMissing(kind, targets)
-    if #missing == 0 then return "skip" end
+    if #missing == 0 then return "skip", missing end
+    if not BridgeFetch.available() then return "blocked", missing end
     log("job " .. tostring(kind) .. " missing home supplies: " .. table.concat(missing, ","))
     local requested = 0
     for i = 1, #missing do
@@ -1257,17 +1311,17 @@ function BridgeFetch.primeJob(kind, targets)
         if res == "requested" then requested = requested + 1 end
         log("  " .. missing[i] .. " -> " .. tostring(res))
     end
-    local remaining = 0
+    local still = {}
     for i = 1, #missing do
         if missing[i] == "seeds" then
-            if BridgeFetch.sowNeed(#targets) > 0 then remaining = remaining + 1 end
+            if BridgeFetch.sowNeed(#targets) > 0 then still[#still + 1] = "seeds" end
         elseif not BridgeFetch.has(missing[i]) then
-            remaining = remaining + 1
+            still[#still + 1] = missing[i]
         end
     end
-    if remaining == 0 then return "ok" end
-    if requested > 0 then return "pending" end
-    return "blocked"
+    if #still == 0 then return "ok", missing end
+    if requested > 0 then return "pending", still end
+    return "blocked", still
 end
 
 
@@ -1279,7 +1333,7 @@ function BridgeFetch.tick()
     pcall(function() now = tonumber(Bridge.time) or 0 end)
     if (now - (ps.since or now)) > PENDING_TIMEOUT then
         log("home fetch timed out for " .. tostring(ps.kind))
-        pcall(function() BridgeTask.speakMissing(ps.kind) end)
+        pcall(function() BridgeTask.speakMissing(ps.kind, ps.missing) end)
         BridgeTask.pendingStart = nil
         return
     end

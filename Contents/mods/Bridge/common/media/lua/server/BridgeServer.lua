@@ -3289,6 +3289,8 @@ BridgeServer.Commands.water = function(player, args)
         local objects = sq:getObjects()
         for i = 0, objects:size() - 1 do
             local o = objects:get(i)
+            local trough = false
+            pcall(function() trough = instanceof(o, "IsoFeedingTrough") == true end)
             local wet = false
             pcall(function()
                 local flagged = o:hasWater() == true or o:hasFluid() == true
@@ -3302,7 +3304,7 @@ BridgeServer.Commands.water = function(player, args)
                     end
                 end
             end)
-            if wet then
+            if wet and not trough then
                 if o:useFluid(math.min(amount, o:getFluidAmount())) > 0 then
                     pcall(function() o:transmitModData() end)
                 end
@@ -3315,7 +3317,7 @@ BridgeServer.Commands.water = function(player, args)
                     and (fc:isWaterSource() or fc:contains(Fluid.Water)
                         or (Fluid.TaintedWater ~= nil and fc:contains(Fluid.TaintedWater)))
             end)
-            if wet and fc ~= nil then
+            if wet and fc ~= nil and not trough then
                 local spent = math.min(amount, fc:getAmount())
                 if spent > 0 then
                     fc:adjustAmount(fc:getAmount() - spent)
@@ -3840,21 +3842,9 @@ BridgeServer.Commands.waterPlants = function(player, args)
     log(string.format("waterPlants: %s %s,%s uses=%d", tostring(who), tostring(args.x), tostring(args.y), uses))
 end
 
-BridgeServer.Commands.petAnimals = function(player, args)
-    local who = player:getUsername()
-    local body, sq = companionAtRelaxed(player, args, 6)
-    local result = { id = args.id, ok = false, why = nil }
-    local function reply(why)
-        result.why = why
-        sendServerCommand(player, "Bridge", "petAnimalsResult", result)
-    end
-    if body == nil or sq == nil then
-        log("petAnimals: no companion/square for " .. tostring(who))
-        return reply("nobody")
-    end
-    local id = tonumber(args.id)
-    if id == nil then return reply("noanimal") end
+local function animalById(id)
     local animal = nil
+    if id == nil then return nil end
     pcall(function()
         local list = getCell():getAnimals()
         if list == nil then return end
@@ -3866,39 +3856,244 @@ BridgeServer.Commands.petAnimals = function(player, args)
             end
         end
     end)
+    return animal
+end
+
+local function actorReach(player, body, args, tx, ty)
+    local bx, by = tonumber(args.bx), tonumber(args.by)
+    if bx ~= nil and by ~= nil and dist(player, bx, by) <= 60 then
+        local dx, dy = bx - tx, by - ty
+        return math.sqrt(dx * dx + dy * dy)
+    end
+    return dist(body, tx, ty)
+end
+
+local function animalReach(player, body, args, animal)
+    return actorReach(player, body, args, animal:getX(), animal:getY())
+end
+
+BridgeServer.animalHolds = BridgeServer.animalHolds or {}
+
+BridgeServer.Commands.petAnimals = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local task = tostring(args.task or "pet")
+    if task ~= "milk" and task ~= "shear" then task = "pet" end
+    local result = { id = args.id, ok = false, why = nil, task = task, opId = args.opId, count = 0 }
+    local function reply(why)
+        result.why = why
+        sendServerCommand(player, "Bridge", "petAnimalsResult", result)
+    end
+    if body == nil or sq == nil then
+        log("petAnimals: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    local id = tonumber(args.id)
+    if id == nil then return reply("noanimal") end
+    local animal = animalById(id)
     if animal == nil then return reply("noanimal") end
-    local petFn = animal.petAnimal
-    if petFn == nil then
-        log("petAnimals: IsoAnimal.petAnimal missing")
-        return reply("noapi")
+
+    if task == "pet" then
+        local petFn = animal.petAnimal
+        if petFn == nil then
+            log("petAnimals: IsoAnimal.petAnimal missing")
+            return reply("noapi")
+        end
+        if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.canPet) == "function" then
+            if not BridgeAnimalCare.canPet(animal) then return reply("notready") end
+        end
+        local d = animalReach(player, body, args, animal)
+        if d > 6 then
+            log(string.format("petAnimals: far %s d=%.2f body=%.2f,%.2f animal=%.2f,%.2f id=%s",
+                tostring(who), d, body:getX(), body:getY(), animal:getX(), animal:getY(), tostring(id)))
+            return reply("far")
+        end
+        pcall(function() animal:getBehavior():setBlockMovement(true) end)
+        local before = nil
+        pcall(function() before = animal:getStress() end)
+        local ok, err = pcall(petFn, animal, player)
+        local after = nil
+        pcall(function() after = animal:getStress() end)
+        pcall(function() animal:getBehavior():setBlockMovement(false) end)
+        if not ok then
+            log("petAnimals: petAnimal failed for " .. tostring(who) .. ": " .. tostring(err))
+            return reply("error")
+        end
+        if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.notePet) == "function" then
+            BridgeAnimalCare.notePet(animal)
+        end
+        result.ok = true
+        reply(nil)
+        log(string.format("petAnimals: %s id=%s stress %s->%s d=%.2f",
+            tostring(who), tostring(id), tostring(before), tostring(after), d))
+        return
     end
-    if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.canPet) == "function" then
-        if not BridgeAnimalCare.canPet(animal) then return reply("notready") end
-    end
-    local d = dist(body, animal:getX(), animal:getY())
+
+    local d = animalReach(player, body, args, animal)
     if d > 6 then
         log(string.format("petAnimals: far %s d=%.2f body=%.2f,%.2f animal=%.2f,%.2f id=%s",
             tostring(who), d, body:getX(), body:getY(), animal:getX(), animal:getY(), tostring(id)))
         return reply("far")
     end
-    pcall(function() animal:getBehavior():setBlockMovement(true) end)
-    local before = nil
-    pcall(function() before = animal:getStress() end)
-    local ok, err = pcall(petFn, animal, player)
-    local after = nil
-    pcall(function() after = animal:getStress() end)
-    pcall(function() animal:getBehavior():setBlockMovement(false) end)
-    if not ok then
-        log("petAnimals: petAnimal failed for " .. tostring(who) .. ": " .. tostring(err))
-        return reply("error")
+
+    local stress = 0
+    pcall(function() stress = tonumber(animal:getStress()) or 0 end)
+    if stress > 40 then return reply("notready") end
+    local data = nil
+    pcall(function() data = animal:getData() end)
+    if data == nil then return reply("noapi") end
+    local breed = nil
+    pcall(function() breed = animal:getBreed() end)
+    if breed == nil then pcall(function() breed = data:getBreed() end) end
+
+    if task == "milk" then
+        local can, have = false, false
+        pcall(function() can = animal:canBeMilked() == true end)
+        pcall(function() have = data:canHaveMilk() == true end)
+        local qty = 0
+        pcall(function() qty = tonumber(data:getMilkQuantity()) or 0 end)
+        if not can or not have or qty < 0.1 then return reply("notready") end
+        local milkType = nil
+        if breed ~= nil then pcall(function() milkType = breed:getMilkType() end) end
+        if milkType == nil or milkType == "" then return reply("notready") end
+        local took = false
+        pcall(function()
+            data:setMilkQuantity(math.max(0, qty - 0.1))
+            took = true
+        end)
+        if not took then return reply("error") end
+        result.ok = true
+        result.count = 1
+        result.milkType = tostring(milkType)
+        reply(nil)
+        log(string.format("petAnimals milk: %s id=%s qty=%.2f type=%s",
+            tostring(who), tostring(id), qty, tostring(milkType)))
+        return
     end
-    if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.notePet) == "function" then
-        BridgeAnimalCare.notePet(animal)
+
+    local canShear = false
+    pcall(function() canShear = animal:canBeSheared() == true end)
+    local woolQty = 0
+    pcall(function() woolQty = tonumber(data:getWoolQuantity()) or 0 end)
+    if not canShear or woolQty < 1 then return reply("notready") end
+    local woolType = nil
+    if breed ~= nil then pcall(function() woolType = breed:getWoolType() end) end
+    if woolType == nil or woolType == "" then woolType = "Base.WoolRaw" end
+    local item = nil
+    pcall(function() item = instanceItem(woolType) end)
+    if item == nil then return reply("noitem") end
+    local one = nil
+    pcall(function() one = BridgeItems.record(item, true) end)
+    if one == nil then return reply("noitem") end
+    local rec = record(who)
+    local list = BridgeItems.decode(rec.items or "")
+    local flat = {}
+    flatten(one, nil, flat)
+    local temp = {}
+    for i = 1, #list do temp[i] = list[i] end
+    for i = 1, #flat do temp[#temp + 1] = flat[i] end
+    local encoded = BridgeItems.encode(temp)
+    if BridgeItems.overBlock() or #BridgeItems.decode(encoded) ~= #temp then
+        return reply("full")
     end
+    local took = false
+    pcall(function()
+        data:setWoolQuantity(math.max(0, woolQty - 1), true)
+        took = true
+    end)
+    if not took then return reply("error") end
+    BridgeItems.set(rec, encoded)
+    rec.saved = 1
+    rec.iseq = (rec.iseq or 0) + 1
+    transmit()
+    local itemId = nil
+    pcall(function() itemId = item:getID() end)
+    if itemId == nil or itemId == 0 then itemId = -(rec.iseq or 0) end
+    journalNote("G", who, rec, itemId, flat)
     result.ok = true
+    result.count = 1
+    sendServerCommand(player, "Bridge", "gave",
+        { ids = { itemId }, recs = { one }, iseq = rec.iseq, jobDest = "records" })
     reply(nil)
-    log(string.format("petAnimals: %s id=%s stress %s->%s d=%.2f",
-        tostring(who), tostring(id), tostring(before), tostring(after), d))
+    log(string.format("petAnimals shear: %s id=%s wool=%.2f type=%s",
+        tostring(who), tostring(id), woolQty, tostring(woolType)))
+end
+
+BridgeServer.Commands.animalHold = function(player, args)
+    local animal = animalById(tonumber(args.id))
+    if animal == nil then return end
+    local who = player:getUsername()
+    local on = args.on == true
+    local action = tostring(args.action or "")
+    if on then
+        local body, sq = companionAtRelaxed(player, args, 6)
+        if body == nil or sq == nil then return end
+        if animalReach(player, body, args, animal) > 6 then return end
+        pcall(function() animal:stopAllMovementNow() end)
+        pcall(function() animal:setVariable("animalRunning", false) end)
+        pcall(function() animal:setVariable("animalSpeed", 0) end)
+        pcall(function()
+            local b = animal:getBehavior()
+            if b ~= nil then b:setBlockMovement(true) end
+        end)
+        if action == "pet" then
+            pcall(function() animal:setVariable("idleAction", "petting") end)
+        end
+        BridgeServer.animalHolds[animal] = {
+            action = action,
+            who = who,
+            ["until"] = getTimestampMs() + 30000,
+        }
+    else
+        local hold = BridgeServer.animalHolds[animal]
+        if hold == nil then return end
+        if hold.who ~= nil and hold.who ~= who then return end
+        BridgeServer.animalHolds[animal] = nil
+        pcall(function()
+            local b = animal:getBehavior()
+            if b ~= nil then b:setBlockMovement(false) end
+        end)
+        if hold ~= nil and hold.action == "pet" then
+            pcall(function()
+                if animal:getVariableString("idleAction") == "petting" then
+                    animal:clearVariable("idleAction")
+                end
+            end)
+        end
+    end
+    sendServerCommand(player, "Bridge", "animalHoldResult",
+        { opId = args.opId, ok = true, on = on, id = args.id })
+end
+
+BridgeServer.Commands.animalDebug = function(player, args)
+    local who = player:getUsername()
+    local op = tostring(args.op or "")
+    local id = tonumber(args.id)
+    if id == nil then return end
+    local animal = animalById(id)
+    if animal == nil then return end
+    local px, py = player:getX(), player:getY()
+    local ax, ay = animal:getX(), animal:getY()
+    if (px - ax) ^ 2 + (py - ay) ^ 2 > 225 then return end
+    local data = nil
+    pcall(function() data = animal:getData() end)
+    if data == nil then return end
+    if op == "calm" then
+        pcall(function() animal:setDebugStress(0) end)
+        log("animalDebug calm id=" .. tostring(id) .. " for " .. tostring(who))
+    elseif op == "milk" then
+        local max = 0
+        pcall(function() max = tonumber(data:getMaxMilk()) or 0 end)
+        if max <= 0 then max = 10 end
+        pcall(function() data:setMaxMilkActual(max) end)
+        pcall(function() data:setMilkQuantity(max) end)
+        log("animalDebug milk " .. tostring(max) .. " id=" .. tostring(id) .. " for " .. tostring(who))
+    elseif op == "wool" then
+        local max = 0
+        pcall(function() max = tonumber(data:getMaxWool()) or 0 end)
+        pcall(function() data:setWoolQuantity(max, true) end)
+        log("animalDebug wool " .. tostring(max) .. " id=" .. tostring(id) .. " for " .. tostring(who))
+    end
 end
 
 BridgeServer.Commands.troughWater = function(player, args)
@@ -3915,7 +4110,7 @@ BridgeServer.Commands.troughWater = function(player, args)
         log("troughWater: no companion/square for " .. tostring(who))
         return reply("nobody", 0, false)
     end
-    if dist(body, args.x + 0.5, args.y + 0.5) > 6 then
+    if actorReach(player, body, args, args.x + 0.5, args.y + 0.5) > 6 then
         log(string.format("troughWater: far %s body=%.2f,%.2f trough=%s,%s",
             tostring(who), body:getX(), body:getY(), tostring(args.x), tostring(args.y)))
         return reply("far", 0, false)
@@ -4041,7 +4236,7 @@ BridgeServer.Commands.hutchCare = function(player, args)
         log("hutchCare: no companion/square for " .. tostring(who))
         return reply("nobody")
     end
-    if dist(body, args.x + 0.5, args.y + 0.5) > 6 then
+    if actorReach(player, body, args, args.x + 0.5, args.y + 0.5) > 6 then
         log("hutchCare: far " .. tostring(who))
         return reply("far")
     end
@@ -6121,6 +6316,25 @@ local function onTick()
     end
     if BridgeServer.tick % 30 == 15 then
         pcall(BridgeServer.restartPass)
+    end
+    if BridgeServer.animalHolds ~= nil then
+        local now = getTimestampMs()
+        for animal, hold in pairs(BridgeServer.animalHolds) do
+            if hold["until"] ~= nil and now > hold["until"] then
+                BridgeServer.animalHolds[animal] = nil
+                pcall(function()
+                    local b = animal:getBehavior()
+                    if b ~= nil then b:setBlockMovement(false) end
+                end)
+                if hold.action == "pet" then
+                    pcall(function()
+                        if animal:getVariableString("idleAction") == "petting" then
+                            animal:clearVariable("idleAction")
+                        end
+                    end)
+                end
+            end
+        end
     end
 end
 

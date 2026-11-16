@@ -104,6 +104,25 @@ function BridgeGardening.system(server)
     return sys
 end
 
+local spotCacheKey, spotCacheAt, spotCacheList = {}, {}, {}
+local SPOT_CACHE_TTL = 10
+
+local function spotKey(b)
+    return tostring(b.x1) .. ":" .. tostring(b.y1) .. ":" .. tostring(b.x2)
+        .. ":" .. tostring(b.y2) .. ":" .. tostring(b.z)
+end
+
+local function copySpotList(src)
+    local out = {}
+    for i = 1, #(src or {}) do out[i] = src[i] end
+    return out
+end
+
+local function cacheSpots(kind, key, now, list)
+    spotCacheKey[kind], spotCacheAt[kind], spotCacheList[kind] = key, now, list
+    return copySpotList(list)
+end
+
 function BridgeGardening.squareAt(target)
     if target == nil then return nil end
     local sq = nil
@@ -864,11 +883,7 @@ function BridgeGardening.kindUpdate(body)
         T.harvestWaitAt = nil
         T.animHold = 0
         T.info = "crop"
-        T.progressAt = Bridge.time
-        T.pathFails = 0
-        T.pathFailTick = nil
-        T.bestD = nil
-        T.spot = nil
+        T.resetWalkDest()
     end
 
     local target = T.current
@@ -1101,11 +1116,7 @@ function BridgeGardening.digUpdate(body)
         T.current = picked
         T.phase = "walk"
         T.info = "furrow"
-        T.progressAt = Bridge.time
-        T.pathFails = 0
-        T.pathFailTick = nil
-        T.bestD = nil
-        T.spot = nil
+        T.resetWalkDest()
     end
 
     local target = T.current
@@ -1915,10 +1926,7 @@ function BridgeGardening.sowFinishStep(body, outOfSeeds)
         if dest ~= nil then
             T.phase = "return"
             T.current = { x = dest.x, y = dest.y, z = dest.z }
-            T.spot = nil
-            T.bestD = nil
-            T.pathFails = 0
-            T.pathFailTick = nil
+            T.resetWalkDest()
             T.sowReturnItems = leftovers
             T.sowReturnDest = dest
             T.sowReturnAt = Bridge.time
@@ -2079,11 +2087,7 @@ function BridgeGardening.sowUpdate(body)
         T.current = picked
         T.phase = "walk"
         T.info = "furrow"
-        T.progressAt = Bridge.time
-        T.pathFails = 0
-        T.pathFailTick = nil
-        T.bestD = nil
-        T.spot = nil
+        T.resetWalkDest()
     end
 
     local target = T.current
@@ -2273,10 +2277,16 @@ end
 function BridgeGardening.waterSpots(b)
     local list = {}
     if b == nil then return list end
+    local key = spotKey(b)
+    local now = Bridge ~= nil and tonumber(Bridge.tick) or 0
+    if spotCacheKey.water == key and spotCacheAt.water ~= nil
+            and (now - spotCacheAt.water) < SPOT_CACHE_TTL then
+        return copySpotList(spotCacheList.water)
+    end
     local cap = BridgeGardening.MAX_WATER_PLANTS or 80
     for x = b.x1, b.x2 do
         for y = b.y1, b.y2 do
-            if #list >= cap then return list end
+            if #list >= cap then return cacheSpots("water", key, now, list) end
             local sq = nil
             pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
             if sq ~= nil then
@@ -2287,7 +2297,7 @@ function BridgeGardening.waterSpots(b)
             end
         end
     end
-    return list
+    return cacheSpots("water", key, now, list)
 end
 
 function BridgeGardening.waterContainerRank(item)
@@ -2585,10 +2595,16 @@ end
 function BridgeGardening.feedSpots(b)
     local list = {}
     if b == nil then return list end
+    local key = spotKey(b)
+    local now = Bridge ~= nil and tonumber(Bridge.tick) or 0
+    if spotCacheKey.feed == key and spotCacheAt.feed ~= nil
+            and (now - spotCacheAt.feed) < SPOT_CACHE_TTL then
+        return copySpotList(spotCacheList.feed)
+    end
     local cap = BridgeGardening.MAX_FEED_PLANTS or 80
     for x = b.x1, b.x2 do
         for y = b.y1, b.y2 do
-            if #list >= cap then return list end
+            if #list >= cap then return cacheSpots("feed", key, now, list) end
             local sq = nil
             pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
             if sq ~= nil then
@@ -2599,7 +2615,7 @@ function BridgeGardening.feedSpots(b)
             end
         end
     end
-    return list
+    return cacheSpots("feed", key, now, list)
 end
 
 function BridgeGardening.fertilizeAt(target, compost, server)
@@ -2933,12 +2949,15 @@ end
 function BridgeGardening.tendContext(body, level)
     local T = BridgeTask
     local now = Bridge.time or 0
+    local seq = Bridge ~= nil and tonumber(Bridge.itemsChangedSeq) or 0
+    local gen = BridgeInventory ~= nil and tonumber(BridgeInventory.wornBagGen) or 0
     local cached = T ~= nil and T.tendHave or nil
-    if cached ~= nil and (now - (cached.at or 0)) < SECOND then
+    if cached ~= nil and (now - (cached.at or 0)) < (2 * SECOND)
+            and cached.seq == seq and cached.gen == gen then
         if level ~= nil then cached.level = level end
         return cached
     end
-    local ctx = { at = now, level = level or 0, water = nil, compost = nil, fertilizer = nil, cures = {} }
+    local ctx = { at = now, seq = seq, gen = gen, level = level or 0, water = nil, compost = nil, fertilizer = nil, cures = {} }
     pcall(function()
         local s = BridgeGardening.supplyScan(body)
         ctx.water, ctx.compost, ctx.fertilizer, ctx.cures = s.water, s.compost, s.fertilizer, s.cures
@@ -2984,10 +3003,16 @@ end
 function BridgeGardening.tendSpots(b)
     local list = {}
     if b == nil then return list end
+    local key = spotKey(b)
+    local now = Bridge ~= nil and tonumber(Bridge.tick) or 0
+    if spotCacheKey.tend == key and spotCacheAt.tend ~= nil
+            and (now - spotCacheAt.tend) < SPOT_CACHE_TTL then
+        return copySpotList(spotCacheList.tend)
+    end
     local cap = BridgeGardening.MAX_TEND_PLANTS or 80
     for x = b.x1, b.x2 do
         for y = b.y1, b.y2 do
-            if #list >= cap then return list end
+            if #list >= cap then return cacheSpots("tend", key, now, list) end
             local sq = nil
             pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
             if sq ~= nil then
@@ -2999,7 +3024,7 @@ function BridgeGardening.tendSpots(b)
             end
         end
     end
-    return list
+    return cacheSpots("tend", key, now, list)
 end
 
 function BridgeGardening.tendNeedScan(body, targets, ctx)
