@@ -87,6 +87,55 @@ local function addPetXp()
     end
 end
 
+local function petXpNow(chr)
+    local v = nil
+    pcall(function() v = chr:getXp():getXP(Perks.Husbandry) end)
+    return tonumber(v) or 0
+end
+
+local function petXpLevel(chr)
+    local v = 0
+    pcall(function() v = chr:getPerkLevel(Perks.Husbandry) end)
+    return tonumber(v) or 0
+end
+
+local function petXpShift(chr, amount, serverSide)
+    if serverSide == true and type(addXp) == "function" then
+        if pcall(addXp, chr, Perks.Husbandry, amount) then return true end
+    end
+    return pcall(function() chr:getXp():AddXPNoMultiplier(Perks.Husbandry, amount) end)
+end
+
+function BridgeAnimalCare.petNoPlayerXp(a, chr, serverSide)
+    if a == nil or chr == nil then return false end
+    local fn = a.petAnimal
+    if fn == nil then return false end
+    local beforeXp = petXpNow(chr)
+    local beforeLvl = petXpLevel(chr)
+    if not pcall(fn, a, chr) then return false end
+    if petXpLevel(chr) ~= beforeLvl then
+        if BridgeLog ~= nil and BridgeLog.on() then
+            print("[BridgeAnimalCare] pet xp kept: player level gain")
+        end
+        return true
+    end
+    local scale = 1
+    for _ = 1, 4 do
+        local now = petXpNow(chr)
+        local left = now - beforeXp
+        if math.abs(left) <= 0.05 then break end
+        local want = left / scale
+        if math.abs(want) < 0.05 then break end
+        petXpShift(chr, -want, serverSide)
+        local after = petXpNow(chr)
+        local moved = now - after
+        if moved <= 0.0001 then break end
+        scale = moved / want
+        if scale <= 0.0001 then scale = 1 end
+    end
+    return true
+end
+
 local function isTendedRaw(a)
     if a == nil then return false end
     local dead = false
@@ -821,9 +870,7 @@ local function applyPet(a, body)
     local red = nil
     if BridgeData ~= nil and BridgeData.owner ~= nil then red = BridgeData.owner() end
     if red == nil then return false end
-    local fn = a.petAnimal
-    if fn == nil then return false end
-    local ok = pcall(fn, a, red)
+    local ok = BridgeAnimalCare.petNoPlayerXp(a, red, false)
     if not ok then return false end
     BridgeAnimalCare.notePet(a)
     addPetXp()

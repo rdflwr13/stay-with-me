@@ -315,6 +315,18 @@ function BridgeReport.generate()
         for _, l in ipairs(stateLines) do line(l) end
     end
 
+    section("RECENT_EVENTS")
+    line("# last " .. tostring(BridgeReport.EVENTS_MAX) .. " bridge/events.txt lines (hex-decoded)")
+    local events = BridgeReport.recentEvents(BridgeReport.EVENTS_MAX)
+    if #events == 0 then
+        line("(none)")
+    else
+        for _, l in ipairs(events) do line(l) end
+    end
+
+    section("USER_NOTES")
+    line("(none)")
+
     section("RECENT_ERRORS")
     line("# tick  ingame  source  count  first_tick..last_tick  message")
     local buf = Bridge ~= nil and Bridge.errBuf or {}
@@ -327,18 +339,6 @@ function BridgeReport.generate()
                 tonumber(e.count) or 1, tonumber(e.first_tick) or 0, tonumber(e.last_tick) or 0, tostring(e.msg)))
         end
     end
-
-    section("RECENT_EVENTS")
-    line("# last " .. tostring(BridgeReport.EVENTS_MAX) .. " bridge/events.txt lines (hex-decoded)")
-    local events = BridgeReport.recentEvents(BridgeReport.EVENTS_MAX)
-    if #events == 0 then
-        line("(none)")
-    else
-        for _, l in ipairs(events) do line(l) end
-    end
-
-    section("USER_NOTES")
-    line("(none)")
 
     section("ATTACH")
     line("console.txt = %UserProfile%\\Zomboid\\console.txt")

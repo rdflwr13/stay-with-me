@@ -1563,6 +1563,45 @@ BridgeServer.Commands.state = function(player, args)
             end
         end
     end
+    if args.workOrder ~= nil then
+        local order = BridgeData.cleanWorkOrder(args.workOrder)
+        if order ~= nil then
+            local old = BridgeData.cleanWorkOrder(rec.workOrder)
+            local same = old ~= nil and #old == #order
+            if same then
+                for i = 1, #order do
+                    if old[i] ~= order[i] then same = false break end
+                end
+            end
+            if not same then
+                rec.workOrder = order
+                changed = true
+            end
+        end
+    end
+    if args.workHidden ~= nil then
+        local hidden = BridgeData.cleanWorkHidden(args.workHidden)
+        if hidden ~= nil then
+            local old = BridgeData.cleanWorkHidden(rec.workHidden) or {}
+            local same = #old == #hidden
+            if same then
+                for i = 1, #hidden do
+                    if old[i] ~= hidden[i] then same = false break end
+                end
+            end
+            if not same then
+                rec.workHidden = hidden
+                changed = true
+            end
+        end
+    end
+    if args.hutchFertCap ~= nil then
+        local cap = BridgeData.cleanHutchFertCap(args.hutchFertCap)
+        if cap ~= nil and rec.hutchFertCap ~= cap then
+            rec.hutchFertCap = cap
+            changed = true
+        end
+    end
 
     if args.lootCats ~= nil then
         local cats = BridgeData.cleanLootCats(args.lootCats)
@@ -4058,12 +4097,12 @@ BridgeServer.Commands.petAnimals = function(player, args)
         pcall(function() animal:getBehavior():setBlockMovement(true) end)
         local before = nil
         pcall(function() before = animal:getStress() end)
-        local ok, err = pcall(petFn, animal, player)
+        local ok = BridgeAnimalCare.petNoPlayerXp(animal, player, true)
         local after = nil
         pcall(function() after = animal:getStress() end)
         pcall(function() animal:getBehavior():setBlockMovement(false) end)
         if not ok then
-            log("petAnimals: petAnimal failed for " .. tostring(who) .. ": " .. tostring(err))
+            log("petAnimals: petAnimal failed for " .. tostring(who))
             return reply("error")
         end
         if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.notePet) == "function" then
@@ -4461,12 +4500,11 @@ BridgeServer.Commands.hutchCare = function(player, args)
         if max <= 0 then return reply(nil, true) end
         local rec = record(who)
         local list = BridgeItems.decode(rec.items or "")
-        local picks = {}
+        local entries = {}
         local maxNest = nil
         pcall(function() maxNest = tonumber(hutch:getMaxNestBox()) end)
         if maxNest ~= nil and maxNest >= 0 then
             for i = 0, maxNest do
-                if #picks >= max then break end
                 local animal = nil
                 pcall(function() animal = hutch:getAnimalInNestBox(i) end)
                 if animal == nil then
@@ -4476,20 +4514,30 @@ BridgeServer.Commands.hutchCare = function(player, args)
                         local n = 0
                         pcall(function() n = tonumber(nest:getEggsNb()) or 0 end)
                         for j = n - 1, 0, -1 do
-                            if #picks >= max then break end
                             local egg = nil
                             local read = pcall(function() egg = nest:getEgg(j) end)
                             if read and egg ~= nil then
                                 local fert = nil
                                 pcall(function() fert = egg:isFertilized() == true end)
-                                if fert == false then
-                                    picks[#picks + 1] = { nest = nest, index = j }
-                                end
+                                entries[#entries + 1] = { fert = fert == true, nest = nest, index = j }
                             end
                         end
                     end
                 end
             end
+        end
+        local cap = 5
+        if BridgeData ~= nil and type(BridgeData.hutchFertCap) == "function" then
+            cap = BridgeData.hutchFertCap(rec)
+        end
+        local picks = {}
+        if BridgeData ~= nil and type(BridgeData.hutchEggPlan) == "function" then
+            picks = BridgeData.hutchEggPlan(entries, cap)
+        end
+        if #picks > max then
+            local trimmed = {}
+            for i = 1, max do trimmed[i] = picks[i] end
+            picks = trimmed
         end
         if #picks == 0 then return reply("noeggs", true) end
         local taken = {}

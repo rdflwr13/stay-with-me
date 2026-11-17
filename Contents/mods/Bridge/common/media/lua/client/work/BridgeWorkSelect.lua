@@ -923,11 +923,12 @@ end
 function BridgeWorkSelect.hutchInfo(h)
     local m = BridgeWorkSelect.hutchMaster(h)
     if m == nil then return nil end
-    local info = { hutch = m, eggs = 0, eggTypes = {}, floorDirt = 0, nestDirt = 0 }
+    local info = { hutch = m, eggs = 0, fert = 0, take = 0, eggTypes = {}, floorDirt = 0, nestDirt = 0 }
     pcall(function() info.floorDirt = tonumber(m:getHutchDirt()) or 0 end)
     pcall(function() info.nestDirt = tonumber(m:getNestBoxDirt()) or 0 end)
     local maxNest = nil
     pcall(function() maxNest = tonumber(m:getMaxNestBox()) end)
+    local entries = {}
     if maxNest ~= nil and maxNest >= 0 then
         for i = 0, maxNest do
             local animal = nil
@@ -938,29 +939,40 @@ function BridgeWorkSelect.hutchInfo(h)
                 if nest ~= nil then
                     local n = 0
                     pcall(function() n = tonumber(nest:getEggsNb()) or 0 end)
-                    local free = {}
                     for j = n - 1, 0, -1 do
                         local egg = nil
                         local read = pcall(function() egg = nest:getEgg(j) end)
                         if read and egg ~= nil then
                             local fert = nil
                             pcall(function() fert = egg:isFertilized() == true end)
-                            if fert == false then
-                                free[#free + 1] = j
-                                local full = nil
-                                pcall(function() full = egg:getFullType() end)
-                                if full ~= nil then info.eggTypes[full] = true end
+                            local full = nil
+                            pcall(function() full = egg:getFullType() end)
+                            entries[#entries + 1] = { fert = fert == true, nest = nest, index = j, type = full }
+                            if fert == true then
+                                info.fert = info.fert + 1
+                            else
+                                info.eggs = info.eggs + 1
                             end
                         end
-                    end
-                    if #free > 0 then
-                        info.eggs = info.eggs + #free
                     end
                 end
             end
         end
     end
-    info.needsEggs = info.eggs > 0
+    local cap = 5
+    if BridgeData ~= nil and type(BridgeData.hutchFertCap) == "function" then
+        cap = BridgeData.hutchFertCap(Bridge.store)
+    end
+    local plan = {}
+    if BridgeData ~= nil and type(BridgeData.hutchEggPlan) == "function" then
+        plan = BridgeData.hutchEggPlan(entries, cap)
+    end
+    info.take = #plan
+    for i = 1, #plan do
+        local full = plan[i].type
+        if full ~= nil then info.eggTypes[full] = true end
+    end
+    info.needsEggs = info.take > 0
     local threshold = (BridgeTask ~= nil and BridgeTask.HUTCH_DIRT) or 10
     info.needsNest = info.nestDirt >= threshold
     info.needsFloor = info.floorDirt >= threshold

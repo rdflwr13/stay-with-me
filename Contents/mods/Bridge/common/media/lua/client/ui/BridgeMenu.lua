@@ -684,50 +684,95 @@ local function addAnimalMenu(jobs)
     end
 end
 
+local function buildWorkDoors(jobs)
+    if BridgeTask == nil or BridgeTask.DOORS_ENABLED ~= 1 then return end
+    local doorsOption = jobs:addOption(tr("Doors"))
+    local doors = ISContextMenu:getNew(jobs)
+    jobs:addSubMenu(doorsOption, doors)
+    local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
+    local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
+    if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
+end
+
+
+local function buildWorkCleanUp(jobs)
+    if BridgeTask == nil or BridgeTask.CLEANING_ENABLED ~= 1 then return end
+    local okClean = false
+    pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
+    local clean = jobs:addOption(tr("JobCleanUp"), nil, BridgeMenu.onJobCleanUp)
+    if not okClean then jobTip(clean, "cleanUp") end
+    if not okClean or BridgeTask.active then clean.notAvailable = true end
+end
+
+
+local function buildWorkClearPlants(jobs)
+    if BridgeTask == nil or BridgeTask.CLEARING_ENABLED ~= 1 then return end
+    local okClear = false
+    pcall(function() okClear = BridgeTask.kinds.clearPlants.available(Bridge.body) end)
+    local clear = jobs:addOption(tr("JobClearPlants"), nil, BridgeMenu.onJobClearPlants)
+    jobTip(clear, "clearPlants")
+    if not okClear or BridgeTask.active then clear.notAvailable = true end
+end
+
+
+local function buildWorkChopTree(jobs)
+    if BridgeTask == nil or BridgeTask.TREECUTTING_ENABLED ~= 1 then return end
+    local ok = false
+    pcall(function() ok = BridgeTask.kinds.chopTree.available(Bridge.body) end)
+    local cut = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
+    if not ok then jobTip(cut, "chopTree") end
+    if not ok or BridgeTask.active then cut.notAvailable = true end
+end
+
+
+local function buildWorkMoveCorpses(jobs)
+    if BridgeTask == nil or BridgeTask.MOVE_CORPSES_ENABLED ~= 1 then return end
+    local ok = false
+    pcall(function() ok = BridgeTask.kinds.moveCorpses.available(Bridge.body) end)
+    local move = jobs:addOption(tr("JobMoveCorpses"), nil, BridgeMenu.onJobMoveCorpses)
+    if not ok then jobTip(move, "moveCorpses") end
+    if not ok or BridgeTask.active then move.notAvailable = true end
+end
+
+
+BridgeMenu.WORK_ORDERABLE = {
+    { id = "loot", label = "WindowLoot", build = addLootWorkMenu },
+    { id = "animals", label = "Animals", build = addAnimalMenu },
+    { id = "gardening", label = "Gardening", build = addGardeningMenu },
+    { id = "doors", label = "Doors", build = buildWorkDoors },
+    { id = "cleanUp", label = "JobCleanUp", build = buildWorkCleanUp },
+    { id = "clearPlants", label = "JobClearPlants", build = buildWorkClearPlants },
+    { id = "chopTree", label = "JobChopTree", build = buildWorkChopTree },
+    { id = "moveCorpses", label = "JobMoveCorpses", build = buildWorkMoveCorpses },
+}
+
+BridgeMenu.WORK_ORDERABLE_BY_ID = {}
+for _, entry in ipairs(BridgeMenu.WORK_ORDERABLE) do BridgeMenu.WORK_ORDERABLE_BY_ID[entry.id] = entry end
+
+
+function BridgeMenu.fillJobs(jobs, only)
+    if jobs == nil or Bridge == nil or Bridge.store == nil or BridgeData == nil then return end
+    local hidden = BridgeData.workHidden(Bridge.store)
+    local isHidden = {}
+    for i = 1, #hidden do isHidden[hidden[i]] = true end
+    local order = BridgeData.workOrder(Bridge.store)
+    for i = 1, #order do
+        local id = order[i]
+        local entry = BridgeMenu.WORK_ORDERABLE_BY_ID[id]
+        if entry ~= nil and entry.build ~= nil and isHidden[id] ~= true
+                and (only == nil or only[id] == true) then
+            entry.build(jobs)
+        end
+    end
+end
+
+
 local function buildJobs(context, playerNum, env)
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return end
     local jobsOption = context:addOption(tr("Jobs"))
     local jobs = ISContextMenu:getNew(context)
     context:addSubMenu(jobsOption, jobs)
-    addLootWorkMenu(jobs)
-    addAnimalMenu(jobs)
-    addGardeningMenu(jobs)
-    if BridgeTask.DOORS_ENABLED == 1 then
-        local doorsOption = jobs:addOption(tr("Doors"))
-        local doors = ISContextMenu:getNew(jobs)
-        jobs:addSubMenu(doorsOption, doors)
-        local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
-        local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
-        if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
-    end
-    if BridgeTask.CLEANING_ENABLED == 1 then
-        local okClean = false
-        pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
-        local clean = jobs:addOption(tr("JobCleanUp"), nil, BridgeMenu.onJobCleanUp)
-        if not okClean then jobTip(clean, "cleanUp") end
-        if not okClean or BridgeTask.active then clean.notAvailable = true end
-    end
-    if BridgeTask.CLEARING_ENABLED == 1 then
-        local okClear = false
-        pcall(function() okClear = BridgeTask.kinds.clearPlants.available(Bridge.body) end)
-        local clear = jobs:addOption(tr("JobClearPlants"), nil, BridgeMenu.onJobClearPlants)
-        jobTip(clear, "clearPlants")
-        if not okClear or BridgeTask.active then clear.notAvailable = true end
-    end
-    if BridgeTask.TREECUTTING_ENABLED == 1 then
-        local ok = false
-        pcall(function() ok = BridgeTask.kinds.chopTree.available(Bridge.body) end)
-        local cut = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
-        if not ok then jobTip(cut, "chopTree") end
-        if not ok or BridgeTask.active then cut.notAvailable = true end
-    end
-    if BridgeTask.MOVE_CORPSES_ENABLED == 1 then
-        local ok = false
-        pcall(function() ok = BridgeTask.kinds.moveCorpses.available(Bridge.body) end)
-        local move = jobs:addOption(tr("JobMoveCorpses"), nil, BridgeMenu.onJobMoveCorpses)
-        if not ok then jobTip(move, "moveCorpses") end
-        if not ok or BridgeTask.active then move.notAvailable = true end
-    end
+    BridgeMenu.fillJobs(jobs)
 end
 
 local function buildCancel(context, playerNum, env)
@@ -1677,45 +1722,7 @@ function BridgeMenu.onJobsMenu(playerNum, context, worldobjects, test)
     local jobsOption = sub:addOption(tr("Jobs"))
     local jobs = ISContextMenu:getNew(sub)
     sub:addSubMenu(jobsOption, jobs)
-    addLootWorkMenu(jobs)
-    addAnimalMenu(jobs)
-    addGardeningMenu(jobs)
-    if BridgeTask.DOORS_ENABLED == 1 then
-        local doorsOption = jobs:addOption(tr("Doors"))
-        local doors = ISContextMenu:getNew(jobs)
-        jobs:addSubMenu(doorsOption, doors)
-        local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
-        local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
-        if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
-    end
-    if BridgeTask.CLEANING_ENABLED == 1 then
-        local okClean = false
-        pcall(function() okClean = BridgeTask.kinds.cleanUp.available(Bridge.body) end)
-        local clean = jobs:addOption(tr("JobCleanUp"), nil, BridgeMenu.onJobCleanUp)
-        if not okClean then jobTip(clean, "cleanUp") end
-        if not okClean or BridgeTask.active then clean.notAvailable = true end
-    end
-    if BridgeTask.CLEARING_ENABLED == 1 then
-        local okClear = false
-        pcall(function() okClear = BridgeTask.kinds.clearPlants.available(Bridge.body) end)
-        local clear = jobs:addOption(tr("JobClearPlants"), nil, BridgeMenu.onJobClearPlants)
-        jobTip(clear, "clearPlants")
-        if not okClear or BridgeTask.active then clear.notAvailable = true end
-    end
-    if BridgeTask.TREECUTTING_ENABLED == 1 then
-        local ok = false
-        pcall(function() ok = BridgeTask.kinds.chopTree.available(Bridge.body) end)
-        local area = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
-        if not ok then jobTip(area, "chopTree") end
-        if not ok or BridgeTask.active then area.notAvailable = true end
-    end
-    if BridgeTask.MOVE_CORPSES_ENABLED == 1 then
-        local ok = false
-        pcall(function() ok = BridgeTask.kinds.moveCorpses.available(Bridge.body) end)
-        local move = jobs:addOption(tr("JobMoveCorpses"), nil, BridgeMenu.onJobMoveCorpses)
-        if not ok then jobTip(move, "moveCorpses") end
-        if not ok or BridgeTask.active then move.notAvailable = true end
-    end
+    BridgeMenu.fillJobs(jobs)
     BridgeMenu.addCancelTask(sub)
 end
 
@@ -1950,10 +1957,7 @@ function BridgeMenu.onTreeMenu(playerNum, context, worldobjects, test)
         local jobsOption = sub:addOption(tr("Jobs"))
         local jobs = ISContextMenu:getNew(sub)
         sub:addSubMenu(jobsOption, jobs)
-        addLootWorkMenu(jobs)
-        addGardeningMenu(jobs)
-        local area = jobs:addOption(tr("JobChopTree"), nil, BridgeMenu.onJobChopTree)
-        if not ok or BridgeTask.active then area.notAvailable = true end
+        BridgeMenu.fillJobs(jobs, { loot = true, gardening = true, chopTree = true })
     end
     BridgeMenu.addCancelTask(sub)
 end
@@ -3004,12 +3008,7 @@ local function onCarDoorMenu(playerNum, context, worldobjects, test)
     local jobsOption = sub:addOption(tr("Jobs"))
     local jobs = ISContextMenu:getNew(sub)
     sub:addSubMenu(jobsOption, jobs)
-    local doorsOption = jobs:addOption(tr("Doors"))
-    local doors = ISContextMenu:getNew(jobs)
-    jobs:addSubMenu(doorsOption, doors)
-    local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
-    local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
-    if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
+    BridgeMenu.fillJobs(jobs, { doors = true })
 end
 
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWorldMenu)

@@ -1323,7 +1323,6 @@ do
     end
 
     local function patch(body)
-        if not efzActive() then return false end
         if installed or body == nil then return installed end
         local zombie = false
         pcall(function() zombie = instanceof(body, "IsoZombie") == true end)
@@ -1338,7 +1337,7 @@ do
         installed = true
         if not reported then
             reported = true
-            print("[BridgeCompat] installed IsoZombie.isLocalPlayer guard for EFZ equip events")
+            print("[BridgeCompat] installed IsoZombie.isLocalPlayer guard")
         end
         return true
     end

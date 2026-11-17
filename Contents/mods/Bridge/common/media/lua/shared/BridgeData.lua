@@ -976,6 +976,120 @@ function BridgeData.menuOrder(rec)
 end
 
 
+BridgeData.WORK_ORDER_IDS = { "loot", "animals", "gardening", "doors", "cleanUp", "clearPlants", "chopTree", "moveCorpses" }
+BridgeData.WORK_ORDER_SET = {}
+for _, id in ipairs(BridgeData.WORK_ORDER_IDS) do BridgeData.WORK_ORDER_SET[id] = true end
+
+
+function BridgeData.cleanWorkOrder(value)
+    if type(value) ~= "table" then return nil end
+    local seen, out = {}, {}
+    for _, id in ipairs(value) do
+        if type(id) == "string" and BridgeData.WORK_ORDER_SET[id] and not seen[id] then
+            seen[id] = true
+            out[#out + 1] = id
+            if #out >= #BridgeData.WORK_ORDER_IDS then break end
+        end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
+
+function BridgeData.cleanWorkHidden(value)
+    if type(value) ~= "table" then return nil end
+    local seen = {}
+    for _, id in ipairs(value) do
+        if type(id) == "string" and BridgeData.WORK_ORDER_SET[id] then seen[id] = true end
+    end
+    local out = {}
+    for _, id in ipairs(BridgeData.WORK_ORDER_IDS) do
+        if seen[id] then out[#out + 1] = id end
+    end
+    return out
+end
+
+
+function BridgeData.workHidden(rec)
+    if type(rec) ~= "table" then return {} end
+    local clean = BridgeData.cleanWorkHidden(rec.workHidden)
+    if clean == nil then return {} end
+    return clean
+end
+
+
+function BridgeData.workShown(rec, id)
+    local hidden = BridgeData.workHidden(rec)
+    for i = 1, #hidden do
+        if hidden[i] == id then return false end
+    end
+    return true
+end
+
+
+function BridgeData.workOrder(rec)
+    local out, seen = {}, {}
+    local clean = nil
+    if rec ~= nil then clean = BridgeData.cleanWorkOrder(rec.workOrder) end
+    if clean ~= nil then
+        for _, id in ipairs(clean) do
+            if not seen[id] then seen[id] = true out[#out + 1] = id end
+        end
+    end
+    for _, id in ipairs(BridgeData.WORK_ORDER_IDS) do
+        if not seen[id] then seen[id] = true out[#out + 1] = id end
+    end
+    return out
+end
+
+
+BridgeData.HUTCH_FERT_CAP_DEFAULT = 5
+BridgeData.HUTCH_FERT_CAP_MAX = 5
+
+
+function BridgeData.cleanHutchFertCap(value)
+    local n = tonumber(value)
+    if n == nil or n ~= n then return nil end
+    n = math.floor(n)
+    if n < 0 then n = 0 end
+    if n > BridgeData.HUTCH_FERT_CAP_MAX then n = BridgeData.HUTCH_FERT_CAP_MAX end
+    return n
+end
+
+
+function BridgeData.hutchFertCap(rec)
+    if type(rec) == "table" and rec.hutchFertCap ~= nil then
+        local v = BridgeData.cleanHutchFertCap(rec.hutchFertCap)
+        if v ~= nil then return v end
+    end
+    return BridgeData.HUTCH_FERT_CAP_DEFAULT
+end
+
+
+function BridgeData.hutchEggPlan(entries, cap)
+    local out = {}
+    if type(entries) ~= "table" then return out end
+    local keep = BridgeData.cleanHutchFertCap(cap)
+    if keep == nil then keep = BridgeData.HUTCH_FERT_CAP_DEFAULT end
+    local left = 0
+    for i = 1, #entries do
+        local e = entries[i]
+        if type(e) == "table" then
+            if e.fert == true then
+                if left < keep then
+                    left = left + 1
+                else
+                    out[#out + 1] = e
+                end
+            else
+                out[#out + 1] = e
+            end
+        end
+    end
+    return out
+end
+
+
 BridgeData.HOME_MIN = 4
 BridgeData.HOME_MAX = 40
 BridgeData.HOME_MAX_FLOORS = 6
@@ -2084,6 +2198,26 @@ function BridgeData.selftest()
         check("marker range 4", BridgeData.markerRangeFor(4), 1000)
         check("marker range nil", BridgeData.markerRangeFor(nil), 500)
         check("marker range out of range", BridgeData.markerRangeFor(9), 500)
+        check("fert cap nil", BridgeData.cleanHutchFertCap(nil), nil)
+        check("fert cap -1", BridgeData.cleanHutchFertCap(-1), 0)
+        check("fert cap 6", BridgeData.cleanHutchFertCap(6), 5)
+        check("fert cap 3.7", BridgeData.cleanHutchFertCap(3.7), 3)
+        check("fert cap x", BridgeData.cleanHutchFertCap("x"), nil)
+        check("fert cap default", BridgeData.hutchFertCap({}), 5)
+        check("fert cap stored", BridgeData.hutchFertCap({ hutchFertCap = 2 }), 2)
+        check("work order default", #BridgeData.workOrder(nil), 8)
+        check("work order clean", #BridgeData.cleanWorkOrder({ "doors", "bogus", "loot" }), 2)
+        check("work hidden clean", #BridgeData.cleanWorkHidden({ "doors", "bogus" }), 1)
+        local function eggEntries(fertCount, normCount)
+            local t = {}
+            for i = 1, fertCount do t[#t + 1] = { fert = true, index = i } end
+            for i = 1, normCount do t[#t + 1] = { fert = false, index = fertCount + i } end
+            return t
+        end
+        check("plan 5 of 6", #BridgeData.hutchEggPlan(eggEntries(6, 0), 5), 1)
+        check("plan cap 0", #BridgeData.hutchEggPlan(eggEntries(3, 2), 0), 5)
+        check("plan 5 fert 2 norm", #BridgeData.hutchEggPlan(eggEntries(5, 2), 5), 2)
+        check("plan cap 3", #BridgeData.hutchEggPlan(eggEntries(5, 0), 3), 2)
     end)
     if not okAll then fails[#fails + 1] = "selftest error: " .. tostring(errAll) end
     if #fails == 0 then return string.format("dataselftest PASS (%d checks)", checks) end

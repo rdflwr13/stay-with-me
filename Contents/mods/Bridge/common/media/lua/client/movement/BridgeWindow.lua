@@ -842,6 +842,14 @@ BridgeWindow.LOOT_TICKS = {
 
 BridgeWindow.LOOT_WEIGHTS = { 0, 1, 2, 5, 10, 15, 20 }
 
+BridgeWindow.HUTCH_FERT_CAPS = { 0, 1, 2, 3, 4, 5 }
+
+BridgeWindow.STORE_ROWS = {
+    { left = "storeMatch", right = "storeKeepSeeds" },
+    { left = "storeKeepTools", right = "storeKeepLight" },
+    { left = "storeKeepMeds" },
+}
+
 local LOOT_ROW_PAD = 4
 
 BridgeLootList = ISScrollingListBox:derive("BridgeLootList")
@@ -880,16 +888,59 @@ end
 
 BridgeLootSettings = ISPanel:derive("BridgeLootSettings")
 
+function BridgeLootSettings.lootRowPlan(tickLabel, optLabel, optTexts, btnH)
+    local gap = 8
+    local tickW = btnH + gap + textW(UIFont.Small, tr(tickLabel)) + 10
+    local labelW = textW(UIFont.Small, tr(optLabel))
+    local comboW = 42
+    for i = 1, #optTexts do
+        local tw = textW(UIFont.Small, optTexts[i]) + 42
+        if tw > comboW then comboW = tw end
+    end
+    return tickW, labelW, comboW
+end
+
+function BridgeLootSettings.lootRowsPlan(weightTexts, fertTexts, btnH)
+    local gap = 8
+    local tickW1, labelW1, comboW1 = BridgeLootSettings.lootRowPlan("LootCorpses", "LootMaxWeight", weightTexts or {}, btnH)
+    local tickW2, labelW2, comboW2 = BridgeLootSettings.lootRowPlan("LootVehicles", "LootHutchFertCap", fertTexts or {}, btnH)
+    local tickW = math.max(tickW1, tickW2)
+    local comboW = math.max(comboW1, comboW2)
+    local comboX = PAD + tickW + gap
+    local labelX = comboX + comboW + gap
+    return tickW, comboX, labelX, comboW, math.max(labelW1, labelW2)
+end
+
+function BridgeLootSettings.storeCellPlan(key, btnH)
+    local gap = 8
+    return btnH + gap + textW(UIFont.Small, tr(BridgeLootSettings.storeLabel(key))) + 10
+end
+
+function BridgeLootSettings.storeRowsPlan(btnH)
+    local gap = 8
+    local leftW = 0
+    local rightW = 0
+    for _, row in ipairs(BridgeWindow.STORE_ROWS) do
+        if row.right ~= nil then
+            local w = BridgeLootSettings.storeCellPlan(row.left, btnH)
+            if w > leftW then leftW = w end
+            local rw = BridgeLootSettings.storeCellPlan(row.right, btnH)
+            if rw > rightW then rightW = rw end
+        end
+    end
+    return leftW, PAD + leftW + gap, rightW
+end
+
 function BridgeLootSettings.lootOptionsHeight()
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
-    return 2 * (btnH + PAD) + (fontS + 4) + btnH + PAD
+    return 2 * (btnH + PAD)
 end
 
 function BridgeLootSettings.storeOptionsHeight()
     local fontS = getTextManager():getFontHeight(UIFont.Small)
     local btnH = fontS + 6
-    return 4 * (btnH + PAD)
+    return #BridgeWindow.STORE_ROWS * (btnH + PAD)
 end
 
 function BridgeLootSettings.heightFor(width)
@@ -953,39 +1004,84 @@ function BridgeLootSettings:createChildren()
         self.lootTicks[i] = tick
         ty = ty + btnH + PAD
     end
-    self.weightLabelY = ty
-    local cy = ty + fontS + 4
-    self.weightCombo = ISComboBox:new(PAD, cy, self.width - PAD * 2, btnH, self, BridgeLootSettings.onWeight)
+    self.weightTexts = {}
+    self.weightCombo = ISComboBox:new(PAD, ty, self.width - PAD * 2, btnH, self, BridgeLootSettings.onWeight)
     self.weightCombo:initialise()
     for _, wv in ipairs(BridgeWindow.LOOT_WEIGHTS) do
         local label
         if wv <= 0 then label = tr("LootMaxWeightOff") else label = string.format("%g", wv) end
+        self.weightTexts[#self.weightTexts + 1] = label
         self.weightCombo:addOptionWithData(label, wv)
     end
     self:addChild(self.weightCombo)
 
+    self.fertTexts = {}
+    self.fertCapCombo = ISComboBox:new(PAD, ty, self.width - PAD * 2, btnH, self, BridgeLootSettings.onHutchFertCap)
+    self.fertCapCombo:initialise()
+    for _, capValue in ipairs(BridgeWindow.HUTCH_FERT_CAPS) do
+        local label = tostring(capValue)
+        self.fertTexts[#self.fertTexts + 1] = label
+        self.fertCapCombo:addOptionWithData(label, capValue, tr("LootHutchFertCapTip"))
+    end
+    self:addChild(self.fertCapCombo)
+
     ty = listY + listH + PAD
     self.storeTicks = {}
-    for i, entry in ipairs(BridgeWindow.STORE_TICKS) do
+    for _, entry in ipairs(BridgeWindow.STORE_TICKS) do
         local tick = ISTickBox:new(PAD, ty, self.width - PAD * 2, btnH, "", self, BridgeLootSettings.onTick, entry.key)
         tick:initialise()
         tick:instantiate()
         tick:addOption(tr(entry.label))
         tick.tooltip = tr(entry.tip)
         self:addChild(tick)
-        self.storeTicks[i] = tick
-        ty = ty + btnH + PAD
+        self.storeTicks[entry.key] = tick
     end
 
     self:applyMode()
     self:applyHeight(self.height)
 end
 
+function BridgeLootSettings.storeLabel(key)
+    for _, entry in ipairs(BridgeWindow.STORE_TICKS) do
+        if entry.key == key then return entry.label end
+    end
+    return key
+end
+
+function BridgeLootSettings:layoutOptionRows(ty, btnH)
+    local rows = {
+        { tick = (self.lootTicks or {})[1], combo = self.weightCombo },
+        { tick = (self.lootTicks or {})[2], combo = self.fertCapCombo },
+    }
+    local tickW, comboX, labelX, comboW = BridgeLootSettings.lootRowsPlan(self.weightTexts or {}, self.fertTexts or {}, btnH)
+    for i = 1, #rows do
+        local row = rows[i]
+        if row.tick ~= nil and row.combo ~= nil then
+            local y = ty + (i - 1) * (btnH + PAD)
+            row.tick:setX(PAD)
+            row.tick:setY(y)
+            row.tick:setWidth(tickW)
+            row.combo:setX(comboX)
+            row.combo:setY(y)
+            row.combo:setWidth(comboW)
+            if i == 1 then
+                self.weightLabelX, self.weightLabelY = labelX, y
+            else
+                self.fertLabelX, self.fertLabelY = labelX, y
+            end
+        end
+    end
+end
+
 function BridgeLootSettings:applyMode()
     local store = self.mode == "store"
     for _, tick in ipairs(self.lootTicks or {}) do tick:setVisible(not store) end
-    for _, tick in ipairs(self.storeTicks or {}) do tick:setVisible(store) end
+    for _, entry in ipairs(BridgeWindow.STORE_TICKS) do
+        local tick = (self.storeTicks or {})[entry.key]
+        if tick ~= nil then tick:setVisible(store) end
+    end
     if self.weightCombo ~= nil then self.weightCombo:setVisible(not store) end
+    if self.fertCapCombo ~= nil then self.fertCapCombo:setVisible(not store) end
     local active = { r = 0.25, g = 0.45, b = 0.75, a = 0.55 }
     local idle = { r = 0.12, g = 0.12, b = 0.12, a = 0.35 }
     if self.lootBtn ~= nil then self.lootBtn.backgroundColor = store and idle or active end
@@ -1046,13 +1142,18 @@ function BridgeLootSettings:prerender()
     end
     for i, entry in ipairs(BridgeWindow.STORE_TICKS) do
         local want = BridgeData.optionOf(Bridge.store, entry.key)
-        if self.storeTicks[i] ~= nil and self.storeTicks[i]:isSelected(1) ~= want then
-            self.storeTicks[i]:setSelected(1, want)
+        local tick = (self.storeTicks or {})[entry.key]
+        if tick ~= nil and tick:isSelected(1) ~= want then
+            tick:setSelected(1, want)
         end
     end
     if self.weightCombo ~= nil then
         local w = BridgeData.lootMaxWeight(Bridge.store)
         if self.weightCombo:getSelectedData() ~= w then self.weightCombo:selectData(w) end
+    end
+    if self.fertCapCombo ~= nil then
+        local capValue = BridgeData.hutchFertCap(Bridge.store)
+        if self.fertCapCombo:getSelectedData() ~= capValue then self.fertCapCombo:selectData(capValue) end
     end
 end
 
@@ -1065,7 +1166,14 @@ function BridgeLootSettings:render()
         y = y + getTextManager():getFontHeight(UIFont.Small) + 2
     end
     if self.mode ~= "store" then
-        self:drawText(tr("LootMaxWeight"), PAD, self.weightLabelY, 1, 1, 1, 1, UIFont.Small)
+        local fontS = getTextManager():getFontHeight(UIFont.Small)
+        local dy = ((self.btnH or (fontS + 6)) - fontS) / 2
+        if self.weightLabelX ~= nil and self.weightLabelY ~= nil then
+            self:drawText(tr("LootMaxWeight"), self.weightLabelX, self.weightLabelY + dy, 0.7, 0.7, 0.7, 1, UIFont.Small)
+        end
+        if self.fertLabelX ~= nil and self.fertLabelY ~= nil then
+            self:drawText(tr("LootHutchFertCap"), self.fertLabelX, self.fertLabelY + dy, 0.7, 0.7, 0.7, 1, UIFont.Small)
+        end
     end
 end
 
@@ -1093,6 +1201,12 @@ function BridgeLootSettings:onWeight(combo)
     if w ~= nil and Bridge ~= nil and type(Bridge.setLootMaxWeight) == "function" then Bridge.setLootMaxWeight(w) end
 end
 
+function BridgeLootSettings:onHutchFertCap(combo)
+    if combo == nil then return end
+    local v = combo:getSelectedData()
+    if v ~= nil and Bridge ~= nil and type(Bridge.setHutchFertCap) == "function" then Bridge.setHutchFertCap(v) end
+end
+
 function BridgeLootSettings:applyHeight(h)
     self:setHeight(h)
     local fontS = getTextManager():getFontHeight(UIFont.Small)
@@ -1112,17 +1226,33 @@ function BridgeLootSettings:applyHeight(h)
     end
     local ty = listY + listH + PAD
     if store then
-        for _, tick in ipairs(self.storeTicks or {}) do
-            tick:setY(ty)
-            ty = ty + btnH + PAD
+        local leftW, rightX, rightW = BridgeLootSettings.storeRowsPlan(btnH)
+        for i, row in ipairs(BridgeWindow.STORE_ROWS) do
+            local y = ty + (i - 1) * (btnH + PAD)
+            if row.right ~= nil then
+                local leftTick = (self.storeTicks or {})[row.left]
+                local rightTick = (self.storeTicks or {})[row.right]
+                if leftTick ~= nil then
+                    leftTick:setX(PAD)
+                    leftTick:setY(y)
+                    leftTick:setWidth(leftW)
+                end
+                if rightTick ~= nil then
+                    rightTick:setX(rightX)
+                    rightTick:setY(y)
+                    rightTick:setWidth(rightW)
+                end
+            else
+                local tick = (self.storeTicks or {})[row.left]
+                if tick ~= nil then
+                    tick:setX(PAD)
+                    tick:setY(y)
+                    tick:setWidth(self.width - PAD * 2)
+                end
+            end
         end
     else
-        for _, tick in ipairs(self.lootTicks or {}) do
-            tick:setY(ty)
-            ty = ty + btnH + PAD
-        end
-        self.weightLabelY = ty
-        if self.weightCombo ~= nil then self.weightCombo:setY(ty + fontS + 4) end
+        self:layoutOptionRows(ty, btnH)
     end
 end
 
@@ -1630,6 +1760,8 @@ function BridgeWindowMain:fitHeight()
     local value = ""
     if kind == "loot" then
         value = tostring(BridgeWindow.lootMode or "loot")
+    elseif kind == "order" then
+        value = tostring(BridgeWindow.orderMode or "menu")
     elseif kind == "info" then
         value = tostring(BridgeWindow.relRows())
     end
@@ -1782,6 +1914,16 @@ function BridgeWindow.neededSize()
         for _, entry in ipairs(BridgeWindow.STORE_TICKS) do
             w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr(entry.label)) + PAD)
         end
+        local leftW, rightX, rightW = BridgeLootSettings.storeRowsPlan(BTN_H)
+        w = math.max(w, rightX + rightW + PAD)
+        local weightTexts = {}
+        for _, wv in ipairs(BridgeWindow.LOOT_WEIGHTS) do
+            weightTexts[#weightTexts + 1] = wv <= 0 and tr("LootMaxWeightOff") or string.format("%g", wv)
+        end
+        local fertTexts = {}
+        for i = 1, #BridgeWindow.HUTCH_FERT_CAPS do fertTexts[i] = tostring(BridgeWindow.HUTCH_FERT_CAPS[i]) end
+        local _, _, labelX, _, labelW = BridgeLootSettings.lootRowsPlan(weightTexts, fertTexts, BTN_H)
+        w = math.max(w, labelX + labelW + PAD)
     end
     if BridgeHomeTab ~= nil then
         w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowHome")))
