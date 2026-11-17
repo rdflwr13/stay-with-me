@@ -160,32 +160,45 @@ Bridge.outFile = CFG.OUT_FILE
 Bridge.errBuf = Bridge.errBuf or {}
 CFG.ERR_BUF_MAX = 50
 
-function Bridge.logError(source, msg)
-    pcall(function()
-        if msg == nil then return end
-        source = tostring(source or "?")
-        msg = tostring(msg)
-        local tick = tonumber(Bridge.tick) or 0
-        local buf = Bridge.errBuf
-        local key = source .. "|" .. msg
-        for i = 1, #buf do
-            if buf[i].key == key then
-                local rec = buf[i]
-                rec.count = (rec.count or 1) + 1
-                rec.last_tick = tick
-                table.remove(buf, i)
-                buf[#buf + 1] = rec
-                return
-            end
+local errIngameTick = -1
+local errIngameText = "-"
+
+local function errIngame()
+    local gt = getGameTime()
+    return string.format("Y%d M%d D%d %02d:%02d", gt:getYear(), gt:getMonth() + 1, gt:getDay(), gt:getHour(), gt:getMinutes())
+end
+
+local function errIngameStamp()
+    local tick = tonumber(Bridge.tick) or 0
+    if tick == errIngameTick then return errIngameText end
+    local ok, text = pcall(errIngame)
+    if ok and type(text) == "string" then errIngameText = text end
+    errIngameTick = tick
+    return errIngameText
+end
+
+local function pushError(source, msg)
+    if msg == nil then return end
+    source = tostring(source or "?")
+    msg = tostring(msg)
+    local tick = tonumber(Bridge.tick) or 0
+    local buf = Bridge.errBuf
+    for i = 1, #buf do
+        local rec = buf[i]
+        if rec.source == source and rec.msg == msg then
+            rec.count = (rec.count or 1) + 1
+            rec.last_tick = tick
+            table.remove(buf, i)
+            buf[#buf + 1] = rec
+            return
         end
-        local ingame = "-"
-        pcall(function()
-            local gt = getGameTime()
-            ingame = string.format("Y%d M%d D%d %02d:%02d", gt:getYear(), gt:getMonth() + 1, gt:getDay(), gt:getHour(), gt:getMinutes())
-        end)
-        buf[#buf + 1] = { key = key, source = source, msg = msg, count = 1, first_tick = tick, last_tick = tick, ingame = ingame }
-        while #buf > CFG.ERR_BUF_MAX do table.remove(buf, 1) end
-    end)
+    end
+    buf[#buf + 1] = { source = source, msg = msg, count = 1, first_tick = tick, last_tick = tick, ingame = errIngameStamp() }
+    while #buf > CFG.ERR_BUF_MAX do table.remove(buf, 1) end
+end
+
+function Bridge.logError(source, msg)
+    pcall(pushError, source, msg)
 end
 
 CFG.ERR_FEED_MAX = 20
@@ -200,20 +213,30 @@ function Bridge.isSwmError(msg)
     return false
 end
 
+local function isSpaceByte(b)
+    return b == 32 or (b ~= nil and b >= 9 and b <= 13)
+end
+
 function Bridge.cleanLuaError(text)
     if type(text) ~= "string" then return nil end
     local out = {}
-    for line in (text .. "\n"):gmatch("(.-)\n") do
-        local t = line:gsub("\t", "  ")
-        t = t:gsub("%s+$", "")
-        if t:match("^%s*$") then
-        elseif t:match("^%-%-%-%-") then
-        elseif t == "STACK TRACE" then
-        elseif t:find("dumping Lua stack trace", 1, true) then
+    local capLines = CFG.ERR_FEED_LINES or 6
+    local pos, len = 1, #text
+    while pos <= len and #out < capLines do
+        local nl = string.find(text, "\n", pos, true)
+        local line = nl and string.sub(text, pos, nl - 1) or string.sub(text, pos)
+        pos = nl and (nl + 1) or (len + 1)
+        if string.find(line, "\t", 1, true) then line = string.gsub(line, "\t", "  ") end
+        if isSpaceByte(string.byte(line, #line)) then line = string.gsub(line, "%s+$", "") end
+        local b1, b2, b3, b4 = string.byte(line, 1, 4)
+        if not string.find(line, "%S") then
+        elseif b1 == 45 and b2 == 45 and b3 == 45 and b4 == 45 then
+        elseif line == "STACK TRACE" then
+        elseif string.find(line, "dumping Lua stack trace", 1, true) then
         else
-            t = t:gsub("^%s+", "")
-            if t ~= "" then out[#out + 1] = t end
-            if #out >= (CFG.ERR_FEED_LINES or 6) then break end
+            if isSpaceByte(b1) then line = string.gsub(line, "^%s+", "") end
+            if line ~= "" then out[#out + 1] = line end
+            if #out >= capLines then break end
         end
     end
     if #out == 0 then return nil end
@@ -223,19 +246,36 @@ function Bridge.cleanLuaError(text)
     return msg
 end
 
+local function errCount()
+    return tonumber(getLuaDebuggerErrorCount()) or 0
+end
+
+local function errList()
+    return getLuaDebuggerErrors()
+end
+
+local function errSize(list)
+    return tonumber(list:size()) or 0
+end
+
+local function errAt(list, i)
+    return list:get(i)
+end
+
 function Bridge.feedLuaErrors()
     if type(getLuaDebuggerErrorCount) ~= "function" then return end
     if type(getLuaDebuggerErrors) ~= "function" then return end
     local count = 0
     local list = nil
-    pcall(function()
-        count = tonumber(getLuaDebuggerErrorCount()) or 0
-        list = getLuaDebuggerErrors()
-    end)
+    local okCount, vCount = pcall(errCount)
+    if okCount then count = vCount end
+    local okList, vList = pcall(errList)
+    if okList then list = vList end
     if list == nil then return end
-    if count <= 0 then
-        pcall(function() count = tonumber(list:size()) or 0 end)
-    end
+    local size = 0
+    local okSize, vSize = pcall(errSize, list)
+    if okSize then size = vSize end
+    if count <= 0 then count = size end
     local seen = Bridge.errSeen
     if seen == nil then
         Bridge.errSeen = 0
@@ -246,12 +286,17 @@ function Bridge.feedLuaErrors()
         Bridge.errSeen = count
         return
     end
-    local first = seen + 1
+    if size <= 0 then
+        Bridge.errSeen = count
+        return
+    end
     local maxNew = CFG.ERR_FEED_MAX or 20
-    if count - seen > maxNew then first = count - maxNew + 1 end
-    for i = first, count do
-        local text = nil
-        pcall(function() text = list:get(i - 1) end)
+    local fresh = count - seen
+    if fresh > maxNew then fresh = maxNew end
+    if fresh > size then fresh = size end
+    for k = fresh, 1, -1 do
+        local ok, text = pcall(errAt, list, size - k)
+        if not ok then text = nil end
         local msg = Bridge.cleanLuaError(text)
         if msg ~= nil and Bridge.isSwmError(msg) then
             Bridge.logError("lua", msg)
@@ -9605,7 +9650,8 @@ function Bridge.onTick()
     Bridge.time = Bridge.time + dt
     if type(getLuaDebuggerErrorCount) == "function" then
         local errN = 0
-        pcall(function() errN = tonumber(getLuaDebuggerErrorCount()) or 0 end)
+        local okN, vN = pcall(errCount)
+        if okN then errN = vN end
         if errN ~= (Bridge.errSeen or 0) then pcall(Bridge.feedLuaErrors) end
     end
     if BridgeHorse ~= nil and not BridgeHorse.softDisabled and type(BridgeHorse.tick) == "function" then pcall(BridgeHorse.tick) end
