@@ -1316,6 +1316,8 @@ local function syncGunState(who, rec)
     rec.gunReloadSavedRounds = nil
     rec.gunReloadBaseRounds = nil
     rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
+    rec.gunEjectRound = nil
+    rec.gunEjectRoundsLeft = nil
     local body = currentBody(who, rec)
     local item = gunItemFor(body, rec)
     if item == nil then
@@ -1443,6 +1445,8 @@ BridgeServer.Commands.state = function(player, args)
                 rec.gunReloadSavedRounds = nil
                 rec.gunReloadBaseRounds = nil
                 rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
+                rec.gunEjectRound = nil
+                rec.gunEjectRoundsLeft = nil
                 changed = true
             end
         elseif type(gt) == "string" and #gt <= 64 and BridgeGunRules ~= nil and BridgeGunRules.validType(gt) then
@@ -1466,6 +1470,8 @@ BridgeServer.Commands.state = function(player, args)
                 rec.gunReloadVirtual = nil
                 rec.gunReloadSavedRounds, rec.gunReloadBaseRounds = nil, nil
                 rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
+                rec.gunEjectRound = nil
+                rec.gunEjectRoundsLeft = nil
             end
             if rec.gunReloadStage == nil then
                 local body = currentBody(player:getUsername(), rec)
@@ -2546,6 +2552,8 @@ local function clearReload(rec, who)
     rec.gunReloadClientAmmo = nil
     rec.gunReloadSavedRounds, rec.gunReloadBaseRounds = nil, nil
     rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
+    rec.gunEjectRound = nil
+    rec.gunEjectRoundsLeft = nil
 end
 
 
@@ -2925,6 +2933,32 @@ BridgeServer.Commands.gunReload = function(player, args)
         if item == nil then return answer(false, "gun not found") end
         if not BridgeGunRules.isGun(item) then return answer(false, "invalid gun") end
         local desc = BridgeGunRules.describe(item)
+        local clip = false
+        pcall(function() clip = item:isContainsClip() == true end)
+        local rounds = BridgeGunRules.roundsOf(item)
+        if args.perRound == true then
+            if clip then return answer(false, "gun has a clip") end
+            if rounds <= 0 then return answer(false, "nothing to unload") end
+            local base = 35
+            if desc.reloadFamily == "shotgun" then
+                base = 50
+            elseif desc.reloadFamily == "revolver" then
+                base = 57
+            end
+            local perRoundMs = (base / BridgeGunRules.reloadFactor(reloadLevel(rec))) * (1000 / 60)
+            if perRoundMs < 100 then perRoundMs = 100 end
+            local totalMs = math.floor(perRoundMs * rounds) + 5000
+            rec.gunReloadStage = "eject"
+            rec.gunReloadUntil = getTimestampMs() + totalMs
+            rec.gunEjectId = item:getID()
+            rec.gunEjectFamily = desc.reloadFamily
+            rec.gunEjectType = nil
+            rec.gunEjectRound = true
+            rec.gunEjectRoundsLeft = rounds
+            logf("gunReload unload gun=%s rounds=%d", tostring(desc.fullType), rounds)
+            answer(true, nil, { total = totalMs, family = desc.reloadFamily, rounds = rounds, perRound = true })
+            return
+        end
         if desc.magazineType == nil and desc.hasClipProfile ~= true then
             return answer(false, "no magazine profile")
         end
@@ -2934,9 +2968,6 @@ BridgeServer.Commands.gunReload = function(player, args)
             pcall(function() internal = BridgeGunRules.gunsmith.isInternal(item) == true end)
             if internal then return answer(false, "internal magazine") end
         end
-        local clip = false
-        pcall(function() clip = item:isContainsClip() == true end)
-        local rounds = BridgeGunRules.roundsOf(item)
         if not clip and rounds <= 0 then return answer(false, "nothing to eject") end
         local base = (desc.reloadFamily == "rifle") and 45 or 36
         local ejectMs = (base / BridgeGunRules.reloadFactor(reloadLevel(rec))) * (1000 / 60)
@@ -2946,6 +2977,8 @@ BridgeServer.Commands.gunReload = function(player, args)
         rec.gunEjectId = item:getID()
         rec.gunEjectFamily = desc.reloadFamily
         rec.gunEjectType = desc.magazineType
+        rec.gunEjectRound = nil
+        rec.gunEjectRoundsLeft = nil
         logf("gunReload eject gun=%s rounds=%d clip=%s", tostring(desc.fullType), rounds, tostring(clip))
         answer(true, nil, { total = math.floor(ejectMs), family = desc.reloadFamily, rounds = rounds })
         return
@@ -2953,7 +2986,8 @@ BridgeServer.Commands.gunReload = function(player, args)
     if action == "ejectDone" then
         if rec.gunReloadStage ~= "eject" then return answer(false, "not ejecting") end
         local now = getTimestampMs()
-        if rec.gunReloadUntil ~= nil and now < rec.gunReloadUntil - 1500 then
+        local perRound = rec.gunEjectRound == true
+        if not perRound and rec.gunReloadUntil ~= nil and now < rec.gunReloadUntil - 1500 then
             return answer(false, "too soon")
         end
         if rec.bodyId == nil then return answer(false, "no companion") end
@@ -2968,6 +3002,34 @@ BridgeServer.Commands.gunReload = function(player, args)
             return answer(false, "gun missing")
         end
         local desc = BridgeGunRules.describe(item)
+        if perRound then
+            local assigned = gunItemFor(body, rec)
+            local isAssigned = assigned ~= nil and assigned:getID() == item:getID()
+            local remaining = BridgeGunRules.roundsOf(item)
+            if remaining > 0 then
+                logf("gunReload unload finishing %d remaining round(s)", remaining)
+            end
+            local guard = 0
+            while remaining > 0 and guard < 64 do
+                local roundItem = nil
+                local left = remaining
+                pcall(function() roundItem, left = BridgeGunRules.popGunRound(body, item) end)
+                if roundItem == nil then break end
+                remaining = tonumber(left) or math.max(0, remaining - 1)
+                BridgeGunRules.placeItem(body, roundItem)
+                local dest = nil
+                pcall(function() dest = roundItem:getContainer() end)
+                if dest ~= nil then pcall(function() sendAddItemToContainer(dest, roundItem) end) end
+                pcall(function() sendItemStats(roundItem) end)
+                guard = guard + 1
+            end
+            pcall(function() sendItemStats(item) end)
+            if isAssigned then rec.gunRounds = BridgeGunRules.roundsOf(item) end
+            clearReload(rec, who)
+            logf("gunReload unload done gun=%s rounds=%d", tostring(desc.fullType), remaining)
+            answer(true, nil, { itemId = item:getID(), rounds = remaining, perRound = true })
+            return
+        end
         local magType = nil
         pcall(function() magType = item:getMagazineType() end)
         if type(magType) ~= "string" or magType == "" then
@@ -3227,6 +3289,51 @@ BridgeServer.Commands.gunReload = function(player, args)
         return
     end
     answer(false, "bad action")
+end
+
+
+BridgeServer.Commands.gunUnloadOne = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    if rec.gunReloadStage ~= "eject" or rec.gunEjectRound ~= true then
+        log("gunUnloadOne ignored for " .. tostring(who) .. ": no per-round unload")
+        return
+    end
+    if reloadStale(rec) then
+        clearReload(rec, who)
+        log("gunUnloadOne cleared stale unload for " .. tostring(who))
+        return
+    end
+    if rec.bodyId == nil then return end
+    local body = currentBody(who, rec)
+    if body == nil then return end
+    local item = nil
+    local wantId = tonumber(args.itemId) or rec.gunEjectId
+    if wantId ~= nil then
+        pcall(function() item = BridgeGunRules.findItemById(body, wantId) end)
+    end
+    if item == nil then item = gunItemFor(body, rec) end
+    if item == nil or not BridgeGunRules.isGun(item) then
+        log("gunUnloadOne: gun not found for " .. tostring(who))
+        return
+    end
+    local roundItem, remaining = BridgeGunRules.popGunRound(body, item)
+    if roundItem == nil then
+        log("gunUnloadOne: no round to unload for " .. tostring(who))
+        return
+    end
+    BridgeGunRules.placeItem(body, roundItem)
+    local dest = nil
+    pcall(function() dest = roundItem:getContainer() end)
+    if dest ~= nil then pcall(function() sendAddItemToContainer(dest, roundItem) end) end
+    pcall(function() sendItemStats(roundItem) end)
+    pcall(function() sendItemStats(item) end)
+    rec.gunEjectRoundsLeft = remaining
+    local assigned = gunItemFor(body, rec)
+    if assigned ~= nil and assigned:getID() == item:getID() then
+        rec.gunRounds = remaining
+    end
+    logf("gunUnloadOne %s left=%d", tostring(roundItem:getFullType()), remaining)
 end
 
 

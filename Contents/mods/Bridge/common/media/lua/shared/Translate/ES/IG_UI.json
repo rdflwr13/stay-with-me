@@ -4093,6 +4093,7 @@
     "IGUI_ContainerTitle_BridgeParked": "Acompañante",
     "IGUI_NotAlone_SidebarNewTip": "Nuevo: haz clic para abrir el panel de la compañera.",
     "IGUI_NotAlone_MenuEjectMagazine": "Expulsar cargador",
+    "IGUI_NotAlone_MenuUnloadRounds": "Unload rounds",
     "IGUI_NotAlone_PregameMeetTitle": "como nos encontramos",
     "IGUI_NotAlone_PregameMeetWhen": "Cuando",
     "IGUI_NotAlone_PregameMeetHint": "Pista",

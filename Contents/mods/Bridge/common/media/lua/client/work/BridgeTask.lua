@@ -2406,6 +2406,7 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
     if sameFloor and d <= reach and (not reachClear or BridgeTask.adjacentClear(body, targetSq)) then
         BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
         BridgeTask.openingSince = nil
+        Bridge.target = nil
         return "arrived", nil
     end
 
@@ -2488,6 +2489,7 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
             and (not reachClear or BridgeTask.adjacentClear(body, targetSq)) then
         BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
         BridgeTask.openingSince = nil
+        Bridge.target = nil
         return "arrived", nil
     end
 

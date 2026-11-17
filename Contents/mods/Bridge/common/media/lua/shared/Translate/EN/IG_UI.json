@@ -4515,6 +4515,7 @@
     "IGUI_NotAlone_Soc_EvMagLow_Close_3": "I'll need to reload. Cover me.",
     "IGUI_NotAlone_SidebarNewTip": "New: click to open the companion panel.",
     "IGUI_NotAlone_MenuEjectMagazine": "Eject magazine",
+    "IGUI_NotAlone_MenuUnloadRounds": "Unload rounds",
     "IGUI_NotAlone_Soc_EvSleep_Far_1": "Get some sleep. I'll keep an eye on the door.",
     "IGUI_NotAlone_Soc_EvSleep_Far_2": "Rest. I'll stay up a while.",
     "IGUI_NotAlone_Soc_EvSleep_Far_3": "You sleep. I'll listen for trouble.",

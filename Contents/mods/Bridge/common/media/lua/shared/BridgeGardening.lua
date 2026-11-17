@@ -397,7 +397,11 @@ function BridgeGardening.digAt(target, server)
         if BridgeGardening.DIG_TRACE == false then return end
         local state, iso, objs = "nil", nil, nil
         pcall(function() if plant ~= nil then state = tostring(plant.state) end end)
-        pcall(function() iso = plant ~= nil and plant:getIsoObject() ~= nil end)
+        pcall(function()
+            if plant ~= nil and plant.luaSystem ~= nil then
+                iso = plant:getIsoObject() ~= nil
+            end
+        end)
         pcall(function() objs = sq:getObjects():size() end)
         log(string.format("digAt %s %s,%s plant=%s iso=%s obj=%s objs=%s",
             tag, tostring(x), tostring(y), state, tostring(iso), tostring(hasObject()), tostring(objs)))
@@ -1715,6 +1719,11 @@ local function beginSow(body, target)
     pcall(function() BridgeMove.stopPath(body) end)
     T.forceIdle(body)
     pcall(function() body:faceLocationF(target.x + 0.5, target.y + 0.5) end)
+    pcall(function()
+        body:setPrimaryHandItem(nil)
+        body:setSecondaryHandItem(nil)
+        body:resetModelNextFrame()
+    end)
     T.sowAnim = T.LOOT_LOW or "LootLow"
     T.sowStart = Bridge.time
     T.sowAnimStart = Bridge.time
@@ -1912,7 +1921,10 @@ function BridgeGardening.sowFinishStep(body, outOfSeeds)
     if T == nil then return false end
     if (T.doneCount or 0) > 0 and not T.sowDoneSaid then
         T.sowDoneSaid = true
-        sayLine("EvSowingDone", "SowingDone", BridgeGardening.SOW_SAY_COOLDOWN)
+        if not sayLine("EvSowingDone", "SowingDone", BridgeGardening.SOW_SAY_COOLDOWN) then
+            log("sowing done line blocked, falling back")
+            Bridge.speak("JobDone")
+        end
     end
     if outOfSeeds == true and not T.sowOutSaid then
         T.sowOutSaid = true
@@ -2131,6 +2143,8 @@ function BridgeGardening.sowUpdate(body)
         local walk, why = T.walkTo(body, target, BridgeGardening.SOW_RANGE, true)
         if walk == "unreachable" then return T.dropTarget(why) end
         if walk ~= "arrived" then return true end
+        if BridgeMove ~= nil then pcall(function() BridgeMove.stopPath(body) end) end
+        if type(T.forceIdle) == "function" then T.forceIdle(body) end
         if (T.doneCount or 0) > 0 and T.settled ~= true then
             T.phase = "settle"
             T.settleAt = Bridge.time

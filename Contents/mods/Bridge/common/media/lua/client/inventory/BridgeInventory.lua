@@ -3869,12 +3869,23 @@ function BridgeInventory.onFill(playerNum, context, items)
     if #list == 1 and BridgeInventory.isGun(list[1]) and BridgeInventory.inBody(list[1]:getContainer()) then
         local ejectItem = list[1]
         local canEject = false
-        if BridgeGunfight ~= nil and type(BridgeGunfight.canEjectGun) == "function" then
-            pcall(function() canEject = BridgeGunfight.canEjectGun(ejectItem) == true end)
+        local canUnload = false
+        if BridgeGunfight ~= nil then
+            if type(BridgeGunfight.canEjectGun) == "function" then
+                pcall(function() canEject = BridgeGunfight.canEjectGun(ejectItem) == true end)
+            end
+            if type(BridgeGunfight.canUnloadRounds) == "function" then
+                pcall(function() canUnload = BridgeGunfight.canUnloadRounds(ejectItem) == true end)
+            end
         end
         if canEject then
             pcall(function() context:removeOptionByName(getText("ContextMenu_EjectMagazine")) end)
             rin:addOption(label("MenuEjectMagazine"), b, BridgeInventory.ejectOnHer, ejectItem)
+        elseif canUnload then
+            pcall(function()
+                context:removeOptionByName(getText("ContextMenu_UnloadRounds", ejectItem:getDisplayName()))
+            end)
+            rin:addOption(label("MenuUnloadRounds"), b, BridgeInventory.ejectOnHer, ejectItem)
         end
     end
 

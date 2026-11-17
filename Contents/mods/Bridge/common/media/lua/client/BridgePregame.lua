@@ -2894,6 +2894,48 @@ function BridgePregameScreen:onMeetHint(combo)
     self.draft.meetHint = cleanMeetHint(combo:getSelectedData())
 end
 
+function BridgePregameScreen:captureSettings()
+    local draft = self.draft
+    if draft == nil then return end
+    local function readData(combo)
+        if combo == nil then return nil end
+        local ok, value = pcall(function() return combo:getSelectedData() end)
+        if not ok then return nil end
+        return value
+    end
+
+    local opts = BridgePregame.cleanOptions(draft.options)
+    if type(self.behaviorTicks) == "table" then
+        for i, def in ipairs(BEHAVIOR_DEFS) do
+            local tick = self.behaviorTicks[i]
+            if tick ~= nil then
+                local ok, selected = pcall(function() return tick:isSelected(1) end)
+                if ok then opts[def.key] = selected == true end
+            end
+        end
+    end
+    local aim = readData(self.aimCombo)
+    if aim ~= nil then
+        local mode = cleanAimMode(aim)
+        if mode ~= nil then opts.aimSense = mode end
+    end
+    draft.options = opts
+
+    local mode = readData(self.meetModeCombo)
+    if mode ~= nil then draft.meetMode = cleanMeetMode(mode) end
+    if self.meetDaysEntry ~= nil then
+        local ok, text = pcall(function() return self.meetDaysEntry:getText() end)
+        local days = ok and tonumber(text) or nil
+        if days ~= nil and days >= 1 then draft.meetDays = cleanMeetDays(days) end
+    end
+    local town = readData(self.meetWhereCombo)
+    if town ~= nil then draft.meetTown = cleanMeetTown(town) end
+    local distance = readData(self.meetDistanceCombo)
+    if distance ~= nil then draft.meetDistance = cleanMeetDistance(distance) end
+    local hint = readData(self.meetHintCombo)
+    if hint ~= nil then draft.meetHint = cleanMeetHint(hint) end
+end
+
 function BridgePregameScreen:onMakeup(combo)
     if self.filling then return end
     BridgeAppearance.setMakeup(combo.category, combo:getSelectedData())
@@ -3414,6 +3456,7 @@ function BridgePregame.back()
     local screen = BridgePregame.screen
     if screen ~= nil and screen.draft ~= nil then
         screen:captureName()
+        if type(screen.captureSettings) == "function" then screen:captureSettings() end
         BridgeAppearance.snapshotCandidate(screen.draft)
     end
     BridgePregame.hideScreen()
@@ -3425,6 +3468,7 @@ function BridgePregame.start()
     if screen == nil or screen.draft == nil then return end
     local draft = screen.draft
     screen:captureName()
+    if type(screen.captureSettings) == "function" then screen:captureSettings() end
     draft.name = BridgeData.cleanName(draft.name) or BridgeData.DEFAULT_NAME
     draft.maleName = BridgeData.cleanName(draft.maleName) or BridgeData.DEFAULT_MALE_NAME
     BridgeAppearance.snapshotCandidate(draft)

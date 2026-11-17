@@ -452,6 +452,60 @@ do
         if not ok then warnOnce("syncrounds", "SyncRounds failed") end
         return ok
     end
+
+    function GSC.internalGun(item)
+        local G = api()
+        if G == nil or item == nil then return false end
+        if type(G.IsInternal) ~= "function" then return false end
+        local gun = isGunItem(G, item)
+        if not gun then return false end
+        local internal = false
+        local ok = pcall(function() internal = G.IsInternal(item) == true end)
+        if not ok then warnOnce("internalgun", "IsInternal failed") end
+        return internal == true
+    end
+
+    function GSC.popInternalRound(item)
+        local G = api()
+        if G == nil or item == nil then return nil end
+        if not isGunItem(G, item) then return nil end
+        local round = nil
+        if type(G.TubeRounds) == "function" then
+            pcall(function() G.TubeRounds(item) end)
+        end
+        if type(G.PopNextRound) == "function" then
+            pcall(function() round = G.PopNextRound(item) end)
+        end
+        if type(round) ~= "string" or round == "" then
+            round = nil
+            local cal = nil
+            if type(G.CaliberOf) == "function" then
+                pcall(function() cal = G.CaliberOf(item) end)
+            end
+            if cal ~= nil and type(G.DefaultAmmo) == "function" then
+                pcall(function() round = G.DefaultAmmo(cal) end)
+            end
+        end
+        if type(round) ~= "string" or round == "" then return nil end
+        return round
+    end
+
+    function GSC.syncAfterUnload(body, item)
+        local G = api()
+        if G == nil or item == nil then return false end
+        if type(G.SyncRounds) == "function" then
+            local ok = pcall(G.SyncRounds, item)
+            if not ok then warnOnce("syncrounds-unload", "SyncRounds failed") end
+        end
+        if type(G.ApplyStats) == "function" then
+            local ok = pcall(G.ApplyStats, item)
+            if not ok then warnOnce("applystats-unload", "ApplyStats failed") end
+        end
+        if type(G.SyncItem) == "function" then
+            pcall(G.SyncItem, body, item)
+        end
+        return true
+    end
 end
 
 
@@ -735,6 +789,15 @@ local function ggsConsumeRound(item)
     return ok
 end
 
+local function ggsQueueSupported(item)
+    if item == nil or not BridgeGunRules.ggsActive() then return false end
+    local queue = ggsQueue()
+    if queue == nil then return false end
+    local supported = false
+    pcall(function() supported = queue.isSupportedAmmoContainer(item) == true end)
+    return supported
+end
+
 local function ggsCopyQueue(source, target)
     if source == nil or target == nil then return false end
     if not BridgeGunRules.ggsActive() then return false end
@@ -820,6 +883,7 @@ BridgeGunRules.ggsConsumeRound = ggsConsumeRound
 BridgeGunRules.ggsInsertLoadedRound = ggsInsertLoadedRound
 BridgeGunRules.ggsSyncCount = ggsSyncCount
 BridgeGunRules.ggsCopyQueue = ggsCopyQueue
+BridgeGunRules.ggsQueueSupported = ggsQueueSupported
 
 
 local function specFeeds(spec, ammoTypeKey)
@@ -2268,6 +2332,69 @@ function BridgeGunRules.setAmmoList(item, list)
             md.AmmoList = nil
         end
     end)
+end
+
+
+function BridgeGunRules.popGunRound(body, item)
+    if item == nil or not BridgeGunRules.isGun(item) then return nil, 0 end
+    local n = BridgeGunRules.roundsOf(item)
+    if n <= 0 then return nil, 0 end
+    local gs = BridgeGunRules.gunsmith
+    local ggs = false
+    if type(BridgeGunRules.ggsQueueSupported) == "function" then
+        pcall(function() ggs = BridgeGunRules.ggsQueueSupported(item) == true end)
+    end
+    local internal = false
+    if not ggs and gs ~= nil and type(gs.internalGun) == "function" then
+        pcall(function() internal = gs.internalGun(item) == true end)
+    end
+    local roundType = nil
+    if internal then
+        if gs ~= nil and type(gs.popInternalRound) == "function" then
+            pcall(function() roundType = gs.popInternalRound(item) end)
+        end
+    else
+        roundType = BridgeGunRules.loadedRoundType(item)
+    end
+    if type(roundType) ~= "string" or roundType == "" then return nil, n end
+    local roundItem = nil
+    pcall(function() roundItem = instanceItem(roundType) end)
+    if roundItem == nil then return nil, n end
+
+    BridgeGunRules.setRounds(item, n - 1, false)
+
+    if not internal then
+        local list = BridgeGunRules.ammoListOf(item)
+        if type(list) == "table" and #list > 0 then
+            local removed = false
+            for i = #list, 1, -1 do
+                if list[i] == roundType then
+                    table.remove(list, i)
+                    removed = true
+                    break
+                end
+            end
+            if not removed then table.remove(list, #list) end
+            BridgeGunRules.setAmmoList(item, list)
+            if #list > 0 then
+                local ammoMod = gunworksAmmo()
+                if ammoMod ~= nil and ammoMod.AmmoProfileSetter ~= nil then
+                    pcall(function() ammoMod.AmmoProfileSetter(item, list[#list]) end)
+                end
+            end
+        end
+        if ggs and type(BridgeGunRules.ggsConsumeRound) == "function" then
+            pcall(function() BridgeGunRules.ggsConsumeRound(item) end)
+        end
+    end
+
+    if gs ~= nil and type(gs.syncAfterUnload) == "function" then
+        pcall(function() gs.syncAfterUnload(body, item) end)
+    end
+    if type(BridgeGunRules.ggsSyncCount) == "function" and not internal then
+        pcall(function() BridgeGunRules.ggsSyncCount(item) end)
+    end
+    return roundItem, n - 1
 end
 
 
