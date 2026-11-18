@@ -5072,6 +5072,67 @@ function Bridge.probeFlush()
     log("probe " .. table.concat(parts, " "))
 end
 
+local function bodyGestureGuard(b)
+    BridgeInventory.gestureGuard(b)
+end
+
+local function readPlayerMoving(r)
+    return r:isPlayerMoving()
+end
+
+local function bodyShoved(r, b)
+    local rx, ry = r:getX() - b:getX(), r:getY() - b:getY()
+    local d2 = rx * rx + ry * ry
+    local sh = d2 < 1.3 * 1.3 and (r:isRunning() or r:isSprinting())
+    if not sh and d2 < 0.9 * 0.9 then
+        local ok, goes = pcall(readPlayerMoving, r)
+        if ok and goes then sh = true end
+    end
+    return sh
+end
+
+local function bodyHoldPos(b, hx, hy)
+    b:setX(hx)
+    b:setY(hy)
+    b:setLastX(hx)
+    b:setLastY(hy)
+end
+
+local function bodyCarUpdate(b)
+    return BridgeCar.update(b)
+end
+
+local function readAsleep(r)
+    return r ~= nil and r:isAsleep()
+end
+
+local function bodyWashUpdate(b)
+    return BridgeWash.update(b)
+end
+
+local function bodyFightUpdate(b)
+    return BridgeFight.update(b)
+end
+
+local function bodyGestureTick(b)
+    return BridgeInventory.gestureTick(b)
+end
+
+local function bodyWeaponBusy()
+    return BridgeWeapon.busy()
+end
+
+local function bodyClearPath(b)
+    local pf = b:getPathFindBehavior2()
+    pf:cancel()
+    pf:reset()
+    b:setPath2(nil)
+end
+
+local function readIdleKind(b)
+    return BridgeWeapon.idleKind(b)
+end
+
 local function updateZombieBody(body)
     if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
     Bridge.zombieTicks = Bridge.zombieTicks + 1
@@ -5097,7 +5158,7 @@ local function updateZombieBody(body)
         return
     end
 
-    pcall(function() BridgeInventory.gestureGuard(body) end)
+    pcall(bodyGestureGuard, body)
     handProbe(body, "frame start")
 
     if Bridge.verbose and Bridge.every(60, 40) then
@@ -5571,20 +5632,8 @@ local function updateZombieBody(body)
 
         local shoved = bump == "left" or bump == "right"
         if not shoved and Bridge.pose == nil then
-            pcall(function()
-                local r = red
-                local rx, ry = r:getX() - body:getX(), r:getY() - body:getY()
-                local d2 = rx * rx + ry * ry
-                shoved = d2 < 1.3 * 1.3 and (r:isRunning() or r:isSprinting())
-
-
-
-                if not shoved and d2 < 0.9 * 0.9 then
-                    local goes = false
-                    pcall(function() goes = r:isPlayerMoving() end)
-                    if goes then shoved = true end
-                end
-            end)
+            local okShoved, sh = pcall(bodyShoved, red, body)
+            if okShoved then shoved = sh end
         end
         if Bridge.pose ~= nil and Bridge.pose.move then
 
@@ -5612,12 +5661,7 @@ local function updateZombieBody(body)
             end
             Bridge.holdPos = { body:getX(), body:getY(), body:getZ() }
         elseif (dx * dx + dy * dy) > limit then
-            pcall(function()
-                body:setX(hx)
-                body:setY(hy)
-                body:setLastX(hx)
-                body:setLastY(hy)
-            end)
+            pcall(bodyHoldPos, body, hx, hy)
         end
     else
         Bridge.holdPos = nil
@@ -5645,7 +5689,7 @@ local function updateZombieBody(body)
 
 
     do
-        local okCar, carBusy = pcall(function() return BridgeCar.update(body) end)
+        local okCar, carBusy = pcall(bodyCarUpdate, body)
         if not okCar then
             if Bridge.warnReady("car", 10) then warn("car failed: " .. tostring(carBusy)) end
             Bridge.logError("car", carBusy)
@@ -5676,7 +5720,8 @@ local function updateZombieBody(body)
 
 
     local asleep = false
-    pcall(function() asleep = red ~= nil and red:isAsleep() end)
+    local okAsleep, a = pcall(readAsleep, red)
+    if okAsleep then asleep = a end
     if asleep and Bridge.sleepParked == nil then
         local near = false
         pcall(function()
@@ -5695,7 +5740,7 @@ local function updateZombieBody(body)
     pcall(function() BridgeMove.seatGuard(body) end)
     pcall(function() BridgeMove.staySitTick(body) end)
 
-    local okWash, washing = pcall(function() return BridgeWash.update(body) end)
+    local okWash, washing = pcall(bodyWashUpdate, body)
     if not okWash then BridgeWash.info = "error: " .. tostring(washing) Bridge.logError("wash", washing) end
     if okWash and washing then
         Bridge.pose = nil
@@ -5717,7 +5762,7 @@ local function updateZombieBody(body)
         if not okTask then BridgeTask.info = "error: " .. tostring(taskBusy) Bridge.logError("task", taskBusy) end
         if okTask and taskBusy then
             Bridge.pose = nil
-            pcall(function() BridgeInventory.gestureTick(body) end)
+            pcall(bodyGestureTick, body)
             return
         end
     end
@@ -5738,7 +5783,7 @@ local function updateZombieBody(body)
             pcall(BridgeGunfight.followTick, body)
         end
     else
-        okFight, fighting = pcall(function() return BridgeFight.update(body) end)
+        okFight, fighting = pcall(bodyFightUpdate, body)
     end
     handProbe(body, "fight")
     if not okFight then BridgeFight.info = "error: " .. tostring(fighting) Bridge.logError("fight", fighting) end
@@ -5748,13 +5793,13 @@ local function updateZombieBody(body)
     end
 
 
-    local okGesture, gesturing = pcall(function() return BridgeInventory.gestureTick(body) end)
+    local okGesture, gesturing = pcall(bodyGestureTick, body)
     if okGesture and gesturing then return end
 
 
 
 
-    local okMove, moving = pcall(function() return BridgeWeapon.busy() end)
+    local okMove, moving = pcall(bodyWeaponBusy)
     if okMove and moving then
         local leave = false
         pcall(function() leave = Bridge.follow and dist2d(body, red) > 10 end)
@@ -5817,12 +5862,7 @@ local function updateZombieBody(body)
 
 
     if not BridgeMove.pathing and not BridgeMove.steering then
-        pcall(function()
-            local pf = body:getPathFindBehavior2()
-            pf:cancel()
-            pf:reset()
-            body:setPath2(nil)
-        end)
+        pcall(bodyClearPath, body)
         body:clearAggroList()
         pcall(function() body:setTargetSeenTime(0) end)
         if asn == "walktoward" or asn == "pathfind" then
@@ -5839,7 +5879,8 @@ local function updateZombieBody(body)
     end
 
     local kind = "none"
-    pcall(function() kind = BridgeWeapon.idleKind(body) end)
+    local okKind, k = pcall(readIdleKind, body)
+    if okKind then kind = k end
     local idleReady = Bridge.pose == nil and (asn == "idle" or bump == "Stand")
         and not (BridgeFastForward ~= nil and BridgeFastForward.active())
 
@@ -10435,6 +10476,10 @@ local function timedZombieUpdate(z)
 end
 Bridge.zombieUpdateHandler = timedZombieUpdate
 
+local function onZombieCreateVoice(z)
+    if Bridge.creating and z ~= nil then pcall(BridgeVoice.ensure, z) end
+end
+
 Events.OnZombieUpdate.Add(Bridge.zombieUpdateHandler)
 
 
@@ -10447,9 +10492,8 @@ Events.OnGameStart.Add(function()
         Bridge.xyPrev = nil
         Events.OnZombieUpdate.Remove(Bridge.zombieUpdateHandler)
 Events.OnZombieUpdate.Add(Bridge.zombieUpdateHandler)
-Events.OnZombieCreate.Add(function(z)
-    if Bridge.creating and z ~= nil then pcall(BridgeVoice.ensure, z) end
-end)
+Events.OnZombieCreate.Remove(onZombieCreateVoice)
+Events.OnZombieCreate.Add(onZombieCreateVoice)
     end)
 end)
 

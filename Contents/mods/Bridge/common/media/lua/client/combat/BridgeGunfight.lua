@@ -6616,6 +6616,12 @@ end
 
 
 function BridgeGunfight.tick()
+    local busy = BridgeGunfight.reloadStage ~= nil or BridgeGunfight.magCareStage ~= nil
+    if not busy
+        and Bridge ~= nil and type(Bridge.companionUpdateDue) == "function"
+        and not Bridge.companionUpdateDue(BridgeGunfight, "gunCapNext", 2) then
+        return
+    end
     local now = (Bridge ~= nil and Bridge.time) or 0
     if BridgeGunfight.ejectOnly and BridgeGunfight.reloadStage ~= nil and BridgeGunfight.body ~= nil then
         pcall(function() reloadTick(BridgeGunfight.body) end)

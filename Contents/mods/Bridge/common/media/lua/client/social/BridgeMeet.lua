@@ -1496,6 +1496,11 @@ function BridgeMeet.tick()
     if Bridge == nil or Bridge.mp then return end
     local st = Bridge.store
     if st == nil or not Bridge.gotData then return end
+    if not BridgeMeet.unjoined()
+        and type(Bridge.companionUpdateDue) == "function"
+        and not Bridge.companionUpdateDue(BridgeMeet, "meetCapNext", 2) then
+        return
+    end
     if forceSpawnTick(st) then return end
     if Bridge.time - (BridgeMeet.visitedAt or 0) >= 60 then
         BridgeMeet.visitedAt = Bridge.time

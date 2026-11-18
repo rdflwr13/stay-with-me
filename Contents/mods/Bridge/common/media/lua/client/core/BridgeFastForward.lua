@@ -634,6 +634,11 @@ function BridgeFastForward.tick()
     end
     local b = herBody()
     local ff = fastForward(speed)
+    if BridgeFastForward.flagged == nil and not ff
+        and type(Bridge.companionUpdateDue) == "function"
+        and not Bridge.companionUpdateDue(BridgeFastForward, "ffCapNext", 2) then
+        return
+    end
     local why, reason = nil, nil
     if b == nil then
         why = "no body"

@@ -36,6 +36,9 @@ BridgeMove.window = nil
 BridgeMove.redAt = nil
 BridgeMove.redPrev = nil
 
+local redPrevSlot = {}
+local redPrevPosSlot = {}
+
 
 
 
@@ -1960,6 +1963,14 @@ function BridgeMove.sitFlagTick(body)
     pcall(function() mp = isClient() or isServer() end)
     if mp then BridgeMove.sitFlagOff(body) return end
     if BridgeFastForward ~= nil and BridgeFastForward.flagged ~= nil then return end
+    local holding = BridgeMove.sitFlag == true
+        or (BridgeTask ~= nil and BridgeTask.active == true)
+        or Bridge.pose ~= nil
+    if not holding
+        and type(Bridge.companionUpdateDue) == "function"
+        and not Bridge.companionUpdateDue(BridgeMove, "sitCapNext", 2) then
+        return
+    end
     if BridgeMove.isOnChair(body) then
         if BridgeTask ~= nil and BridgeTask.isSeated ~= nil and BridgeTask.isSeated(body) then
             local asn, bump = "", ""
@@ -6652,7 +6663,8 @@ function BridgeMove.update(body)
             if Bridge.time - h0.t > 0 then
                 BridgeMove.redStep = dist2d(h0.x, h0.y, px, py) / (Bridge.time - h0.t)
             end
-            BridgeMove.redPrev = { x = px, y = py, t = Bridge.time }
+            redPrevSlot.x, redPrevSlot.y, redPrevSlot.t = px, py, Bridge.time
+            BridgeMove.redPrev = redPrevSlot
             BridgeMove.redMoving = BridgeMove.redStep > 0.015
 
             if BridgeMove.redStep < 0.5 then
@@ -6666,7 +6678,8 @@ function BridgeMove.update(body)
                     BridgeMove.redVy = (BridgeMove.redVy or 0) + ((py - prev.y) / el - (BridgeMove.redVy or 0)) * b
                 end
             end
-            BridgeMove.redPrevPos = { x = px, y = py }
+            redPrevPosSlot.x, redPrevPosSlot.y = px, py
+            BridgeMove.redPrevPos = redPrevPosSlot
             BridgeMove.addTrail(red)
         end
     end
