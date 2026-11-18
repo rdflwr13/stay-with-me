@@ -1214,6 +1214,15 @@ function BridgePregameLeftPanel:onLoseJoypadFocus(joypadData)
     ISUIElement.onLoseJoypadFocus(self, joypadData)
 end
 
+function BridgePregameLeftPanel:onMouseWheel(del)
+    local screen = self.parentScreen
+    if screen ~= nil and (screen.leftMaxScroll or 0) > 0 and type(screen.setLeftScroll) == "function" then
+        screen:setLeftScroll((screen.leftScroll or 0) - (tonumber(del) or 0) * 40)
+        return true
+    end
+    return false
+end
+
 function BridgePregameScreen:ensureClothRow(loc)
     self.clothRows = self.clothRows or {}
     local row = self.clothRows[loc]
@@ -1322,6 +1331,119 @@ function BridgePregameScreen:createChildren()
     self.voiceDemoBtn:initialise()
     self.voiceDemoBtn:instantiate()
     self:addChild(self.voiceDemoBtn)
+
+    self.sizeOn = false
+    self.sizeOpen = true
+    self.sizeActiveGroup = 1
+    self.sizeGroupButtons = {}
+    self.sizeSliders = {}
+    self.sizeEntries = { details = {} }
+    self.sizeDetailSliders = {}
+    self.sizeDetailResets = {}
+    self.sizeControls = {}
+    self.sizeUndo = nil
+    local sizeMod = BridgeSizeMatterCompat
+    if sizeMod ~= nil and type(sizeMod.neutralProfile) == "function"
+        and sizeMod.neutralProfile() ~= nil and BridgeAppearanceSlider ~= nil then
+        self.sizeOn = true
+        self.sizeSliderH = math.max(18, FONT_S + 8)
+
+        local function sizeButton(text, callback)
+            local button = ISButton:new(0, 0, 10, BTN_H, text, self, callback)
+            button:initialise()
+            button:instantiate()
+            self:addChild(button)
+            self.sizeControls[#self.sizeControls + 1] = button
+            return button
+        end
+
+        local function sizeEntry(width)
+            local box = ISTextEntryBox:new("", 0, 0, width or 34, BTN_H)
+            box:initialise()
+            box:instantiate()
+            box:setMaxTextLength(6)
+            box.target = self
+            box.onTextChangeFunction = function(form, target) form:onSizeTextChange(target) end
+            box.onCommandEntered = function(target) self:commitSizeText(target) end
+            box.onLostFocus = function(target) self:commitSizeText(target) end
+            self:addChild(box)
+            self.sizeControls[#self.sizeControls + 1] = box
+            return box
+        end
+
+        self.sizeToggleBtn = sizeButton("-", BridgePregameScreen.onSizeToggle)
+        self.sizeHeightMinus = sizeButton("-", BridgePregameScreen.onSizeHeightMinus)
+        self.sizeHeightEntry = sizeEntry(40)
+        self.sizeHeightEntry:setOnlyNumbers(true)
+        self.sizeHeightEntry:setMaxTextLength(10)
+        self.sizeHeightEntry.onCommandEntered = function(target) self:applySizeHeight(target) end
+        self.sizeHeightEntry.onLostFocus = function(target) self:applySizeHeight(target) end
+        self.sizeHeightPlus = sizeButton("+", BridgePregameScreen.onSizeHeightPlus)
+
+        local slo, shi = sizeMod.shapeBounds()
+        self.sizeShapeSlider = BridgeAppearanceSlider:new(0, 0, 10, self.sizeSliderH, self,
+            BridgePregameScreen.onSizeShape)
+        self.sizeShapeSlider:initialise()
+        self.sizeShapeSlider:instantiate()
+        self.sizeShapeSlider:setValues(slo, shi, 1, 10, true)
+        self:addChild(self.sizeShapeSlider)
+        self.sizeControls[#self.sizeControls + 1] = self.sizeShapeSlider
+        self.sizeSliders.shape = self.sizeShapeSlider
+        self.sizeShapeEntry = sizeEntry()
+        self.sizeShapeEntry.sizeField = "shape"
+        self.sizeShapeReset = sizeButton(tr("SizeRowReset", "Reset"), BridgePregameScreen.onSizeShapeReset)
+
+        local mlo, mhi = sizeMod.muscleBounds()
+        self.sizeMuscleSlider = BridgeAppearanceSlider:new(0, 0, 10, self.sizeSliderH, self,
+            BridgePregameScreen.onSizeMuscle)
+        self.sizeMuscleSlider:initialise()
+        self.sizeMuscleSlider:instantiate()
+        self.sizeMuscleSlider:setValues(mlo, mhi, 1, 10, true)
+        self:addChild(self.sizeMuscleSlider)
+        self.sizeControls[#self.sizeControls + 1] = self.sizeMuscleSlider
+        self.sizeSliders.muscle = self.sizeMuscleSlider
+        self.sizeMuscleEntry = sizeEntry()
+        self.sizeMuscleEntry.sizeField = "muscle"
+        self.sizeMuscleReset = sizeButton(tr("SizeRowReset", "Reset"), BridgePregameScreen.onSizeMuscleReset)
+
+        self.sizeModelCombo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onSizeModel)
+        self.sizeModelCombo:initialise()
+        self.sizeModelCombo:addOptionWithData(tr("SizeOriginal", "Original"), "original")
+        if type(sizeMod.bodyModelsAvailable) == "function" and sizeMod.bodyModelsAvailable() then
+            self.sizeModelCombo:addOptionWithData(tr("SizeTomb", "Tomb's"), "tomb")
+        end
+        self:addChild(self.sizeModelCombo)
+        self.sizeControls[#self.sizeControls + 1] = self.sizeModelCombo
+
+        for _, group in ipairs(sizeMod.GROUPS) do
+            local groupIndex = #self.sizeGroupButtons + 1
+            local button = sizeButton(tr("SizeGroup_" .. group.id, group.id),
+                function(form) form:onSizeGroup(groupIndex) end)
+            self.sizeGroupButtons[groupIndex] = button
+            for _, index in ipairs(group.indexes) do
+                local detail = sizeMod.DETAILS[index]
+                if detail ~= nil then
+                    local detailIndex = index
+                    local slider = BridgeAppearanceSlider:new(0, 0, 10, self.sizeSliderH, self,
+                        function(form, value) form:onSizeDetail(detailIndex, value) end)
+                    slider:initialise()
+                    slider:instantiate()
+                    slider:setValues(-100, 100, 1, 10, true)
+                    self:addChild(slider)
+                    self.sizeControls[#self.sizeControls + 1] = slider
+                    self.sizeDetailSliders[index] = slider
+                    local box = sizeEntry()
+                    box.sizeIndex = index
+                    self.sizeEntries.details[index] = box
+                    self.sizeDetailResets[index] = sizeButton(tr("SizeRowReset", "Reset"),
+                        function(form) form:onSizeDetailReset(detailIndex) end)
+                end
+            end
+        end
+
+        self.sizeResetAll = sizeButton(tr("SizeReset", "Reset size"), BridgePregameScreen.onSizeResetAll)
+        self.sizeUndoBtn = sizeButton(tr("SizeUndo", "Undo last"), BridgePregameScreen.onSizeUndo)
+    end
 
     self.hairCombo = ISComboBox:new(0, 0, 10, BTN_H, self, BridgePregameScreen.onHair)
     self.hairCombo:initialise()
@@ -1805,6 +1927,7 @@ function BridgePregameScreen:refresh()
     paintButton(self.beardColorBtn, c.beardColor or c.hairColor)
     if self.beardColorBtn ~= nil then self.beardColorBtn:setTitle("") end
 
+    if self.sizeOn then self:refreshSize() end
     self.filling = false
     BridgeAppearance.previewClothing = BridgePregame.activeClothing(draft)
     self:refreshClothing()
@@ -1844,6 +1967,7 @@ function BridgePregameScreen:layoutLeft()
         self.voiceCombo, self.hairCombo, self.hairColorBtn, self.beardCombo, self.beardColorBtn,
         self.faceCombo, self.detailCombo, self.detailBtn, self.detailClearBtn,
     }
+    for _, control in ipairs(self.sizeControls or {}) do controls[#controls + 1] = control end
     for _, control in ipairs(controls) do
         if control ~= nil then
             control:setVisible(false)
@@ -1885,6 +2009,169 @@ function BridgePregameScreen:layoutLeft()
     if self.speciesVisible then row(tr("AppearanceFur", "Species"), self.speciesCombo) end
     row(vanillaText("UI_characreation_voicetype", "Voice Type"), self.voiceCombo)
     row("", self.voiceDemoBtn)
+
+    if self.sizeOn and BridgeAppearance.candidate ~= nil and BridgeAppearance.candidate.fur == nil then
+        self.sizeHeadingY = y
+        heading(tr("AppearanceSize", "Size"))
+        local toggle = self.sizeToggleBtn
+        if toggle ~= nil then
+            toggle:setVisible(true)
+            toggle.bridgeLaidOut = true
+            toggle:setX(x + self.leftW - 22)
+            toggle:setY(self.sizeHeadingY - 3)
+            toggle:setWidth(20)
+            toggle:setHeight(BTN_H)
+            toggle:setTitle(self.sizeOpen and "-" or "+")
+        end
+        if self.sizeOpen then
+            local sizeMod = BridgeSizeMatterCompat
+            local labelW = 74
+            local ctrlX = x + labelW
+            local ctrlW = self.leftW - labelW - 6
+            if ctrlW < 80 then ctrlW = 80 end
+            local entryW = 34
+            local resetW = 38
+            local gap = 3
+            local sliderW = ctrlW - entryW - resetW - gap * 2
+            if sliderW < 40 then sliderW = 40 end
+            local function sizeLabel(text, lx, ly)
+                self.leftRender[#self.leftRender + 1] = { kind = "label", text = text, x = lx, y = ly + 3 }
+            end
+            local function laid(control)
+                if control == nil then return end
+                control:setVisible(true)
+                control.bridgeLaidOut = true
+            end
+
+            sizeLabel(tr("SizeHeight", "Height"), x, y)
+            laid(self.sizeHeightMinus)
+            self.sizeHeightMinus:setX(ctrlX)
+            self.sizeHeightMinus:setY(y)
+            self.sizeHeightMinus:setWidth(18)
+            self.sizeHeightMinus:setHeight(BTN_H)
+            laid(self.sizeHeightEntry)
+            self.sizeHeightEntry:setX(ctrlX + 21)
+            self.sizeHeightEntry:setY(y)
+            self.sizeHeightEntry:setWidth(40)
+            self.sizeHeightEntry:setHeight(BTN_H)
+            laid(self.sizeHeightPlus)
+            self.sizeHeightPlus:setX(ctrlX + 64)
+            self.sizeHeightPlus:setY(y)
+            self.sizeHeightPlus:setWidth(18)
+            self.sizeHeightPlus:setHeight(BTN_H)
+            sizeLabel("cm", ctrlX + 85, y)
+            y = y + BTN_H + 3
+
+            sizeLabel(tr("SizeModel", "Body model"), x, y)
+            laid(self.sizeModelCombo)
+            self.sizeModelCombo:setX(ctrlX)
+            self.sizeModelCombo:setY(y)
+            self.sizeModelCombo:setWidth(ctrlW)
+            self.sizeModelCombo:setHeight(BTN_H)
+            y = y + BTN_H + 3
+
+            local sliderH = self.sizeSliderH or math.max(18, FONT_S + 8)
+            local function sizeSliderRow(label, slider, box, reset)
+                sizeLabel(label, x, y)
+                laid(slider)
+                slider:setX(ctrlX)
+                slider:setY(y)
+                slider:setWidth(sliderW)
+                slider:setHeight(sliderH)
+                laid(box)
+                box:setX(ctrlX + sliderW + gap)
+                box:setY(y)
+                box:setWidth(entryW)
+                box:setHeight(BTN_H)
+                laid(reset)
+                reset:setX(ctrlX + sliderW + gap + entryW + gap)
+                reset:setY(y)
+                reset:setWidth(resetW)
+                reset:setHeight(BTN_H)
+                y = y + math.max(BTN_H, sliderH) + 3
+            end
+
+            sizeSliderRow(tr("SizeShape", "Shape"), self.sizeShapeSlider, self.sizeShapeEntry, self.sizeShapeReset)
+            sizeSliderRow(tr("SizeMuscle", "Muscle size"), self.sizeMuscleSlider, self.sizeMuscleEntry, self.sizeMuscleReset)
+
+            y = y + 4
+            local groupGap = 3
+            local groupCount = #sizeMod.GROUPS
+            local usableW = self.leftW - 6
+            local groupW = math.floor((usableW - groupGap * (groupCount - 1)) / groupCount)
+            if groupW < 34 then groupW = 34 end
+            local gx = x
+            for i, group in ipairs(sizeMod.GROUPS) do
+                local button = self.sizeGroupButtons[i]
+                if button ~= nil then
+                    laid(button)
+                    button:setX(gx)
+                    button:setY(y)
+                    button:setWidth(groupW)
+                    button:setHeight(BTN_H)
+                    if i == self.sizeActiveGroup then
+                        button.borderColor = { r = 1.0, g = 0.8, b = 0.3, a = 0.9 }
+                    else
+                        button.borderColor = { r = 1.0, g = 1.0, b = 1.0, a = 0.1 }
+                    end
+                    gx = gx + groupW + groupGap
+                end
+            end
+            y = y + BTN_H + 4
+            self.leftRender[#self.leftRender + 1] = { kind = "divider", x = x, y = y, w = self.leftW }
+            y = y + 5
+
+            local active = sizeMod.GROUPS[self.sizeActiveGroup] or sizeMod.GROUPS[1]
+            if active ~= nil then
+                local detailLabelW = 82
+                local detailX = x + detailLabelW
+                local detailW = self.leftW - detailLabelW - 6
+                local detailSliderW = detailW - entryW - resetW - gap * 2
+                if detailSliderW < 40 then detailSliderW = 40 end
+                for _, index in ipairs(active.indexes) do
+                    local detail = sizeMod.DETAILS[index]
+                    if detail ~= nil then
+                        local text = fitText(UIFont.Small, tr("SizeDetail_" .. detail.id, detail.label), detailLabelW)
+                        sizeLabel(text, x, y)
+                        local slider = self.sizeDetailSliders[index]
+                        local box = self.sizeEntries.details[index]
+                        local reset = self.sizeDetailResets[index]
+                        laid(slider)
+                        slider:setX(detailX)
+                        slider:setY(y)
+                        slider:setWidth(detailSliderW)
+                        slider:setHeight(sliderH)
+                        laid(box)
+                        box:setX(detailX + detailSliderW + gap)
+                        box:setY(y)
+                        box:setWidth(entryW)
+                        box:setHeight(BTN_H)
+                        laid(reset)
+                        reset:setX(detailX + detailSliderW + gap + entryW + gap)
+                        reset:setY(y)
+                        reset:setWidth(resetW)
+                        reset:setHeight(BTN_H)
+                        y = y + math.max(BTN_H, sliderH) + 2
+                    end
+                end
+            end
+
+            local allW = math.max(58, textW(UIFont.Small, tr("SizeReset", "Reset size")) + 12)
+            local undoW = math.max(54, textW(UIFont.Small, tr("SizeUndo", "Undo last")) + 12)
+            laid(self.sizeResetAll)
+            self.sizeResetAll:setX(ctrlX)
+            self.sizeResetAll:setY(y)
+            self.sizeResetAll:setWidth(allW)
+            self.sizeResetAll:setHeight(BTN_H)
+            laid(self.sizeUndoBtn)
+            self.sizeUndoBtn:setX(ctrlX + allW + 4)
+            self.sizeUndoBtn:setY(y)
+            self.sizeUndoBtn:setWidth(undoW)
+            self.sizeUndoBtn:setHeight(BTN_H)
+            self.sizeUndoBtn:setEnable(self.sizeUndo ~= nil)
+            y = y + BTN_H + 3
+        end
+    end
 
     heading(tr("AppearanceHair", "Hair"))
     row(tr("PregameStyle", "Style"), self.hairCombo)
@@ -1938,21 +2225,36 @@ function BridgePregameScreen:layoutLeft()
         self.beardColorBtn, self.faceCombo, self.detailCombo, self.detailBtn, self.detailClearBtn,
     }
     for _, cat in ipairs(self.makeupOrder) do left[#left + 1] = self.makeupCombos[cat] end
+    for _, control in ipairs(self.sizeControls or {}) do left[#left + 1] = control end
     for _, control in ipairs(left) do self:markJoypadAdd(control) end
     self.detailBtn.autoAddJoypadButton = self.detailsVisible == true
     self.detailClearBtn.autoAddJoypadButton = self.detailsVisible == true
     self.leftControls = left
     self.leftBottom = y
+    for _, control in ipairs(left) do
+        if control ~= nil then
+            control.bridgeWantVisible = control:isVisible() == true
+            control.bridgeBaseY = control:getY()
+        end
+    end
+    self.leftContentH = math.max(1, y - self.contentTop)
+    self.leftViewH = math.max(1, self.contentBottom - self.contentTop)
+    self.leftMaxScroll = math.max(0, self.leftContentH - self.leftViewH)
+    local scroll = tonumber(self.leftScroll) or 0
+    if scroll < 0 then scroll = 0 end
+    if scroll > self.leftMaxScroll then scroll = self.leftMaxScroll end
+    self.leftScroll = scroll
+    self:applyLeftScroll()
     local panel = self.leftPanel
     if panel ~= nil then
         panel:setX(self.leftX)
         panel:setY(self.contentTop)
         panel:setWidth(self.leftW)
-        panel:setHeight(math.max(1, y - self.contentTop))
+        panel:setHeight(self.leftViewH)
         local rows = {}
         local flat = {}
         for _, control in ipairs(left) do
-            if control ~= nil and control.bridgeLaidOut == true then
+            if control ~= nil and control.bridgeLaidOut == true and control:isVisible() then
                 rows[#rows + 1] = { control }
                 flat[#flat + 1] = control
             end
@@ -1970,6 +2272,39 @@ function BridgePregameScreen:layoutLeft()
         panel.joypadIndex = keepX
         panel.joypadButtons = keepRow
     end
+end
+
+function BridgePregameScreen:applyLeftScroll()
+    local scroll = tonumber(self.leftScroll) or 0
+    for _, control in ipairs(self.leftControls or {}) do
+        if control ~= nil and control.bridgeBaseY ~= nil then
+            control:setY(control.bridgeBaseY - scroll)
+            local top = control:getY()
+            local bottom = top + (tonumber(control:getHeight()) or 0)
+            local visible = control.bridgeWantVisible ~= false
+                and top >= self.contentTop and bottom <= self.contentBottom
+            control:setVisible(visible)
+        end
+    end
+end
+
+function BridgePregameScreen:setLeftScroll(value)
+    local maxScroll = tonumber(self.leftMaxScroll) or 0
+    local scroll = tonumber(value) or 0
+    if scroll < 0 then scroll = 0 end
+    if scroll > maxScroll then scroll = maxScroll end
+    if scroll == (self.leftScroll or 0) then return end
+    self.leftScroll = scroll
+    self:applyLeftScroll()
+end
+
+function BridgePregameScreen:onMouseWheel(del)
+    if (self.leftMaxScroll or 0) <= 0 then return false end
+    local mx, my = self:getMouseX(), self:getMouseY()
+    if mx < self.leftX or mx > self.leftX + self.leftW then return false end
+    if my < self.contentTop or my > self.contentBottom then return false end
+    self:setLeftScroll((self.leftScroll or 0) - (tonumber(del) or 0) * 40)
+    return true
 end
 
 function BridgePregameScreen:markJoypadAdd(control)
@@ -2222,7 +2557,7 @@ function BridgePregameScreen:layout()
     local contentBottom = h - footerH - 4
     local frameW = math.min(1120, w - PAD * 2)
     local frameX = math.floor((w - frameW) / 2)
-    local leftW = math.floor(math.min(300, math.max(250, frameW * 0.27)))
+    local leftW = math.floor(math.min(340, math.max(300, frameW * 0.30)))
     local rightW = math.floor(math.min(520, math.max(430, frameW * 0.45)))
     local centerX = frameX + leftW + PAD
     local rightX = frameX + frameW - rightW
@@ -2348,13 +2683,17 @@ function BridgePregameScreen:render()
     local titleW = textW(UIFont.Small, self.titleText)
     self:drawText(self.titleText, math.floor((self.width - titleW) / 2), self.subY, 0.8, 0.8, 0.8, 1, UIFont.Small)
 
+    local leftScroll = tonumber(self.leftScroll) or 0
     for _, entry in ipairs(self.leftRender or {}) do
-        if entry.kind == "heading" then
-            self:drawText(entry.text, entry.x, entry.y, 0.95, 0.95, 0.95, 1, UIFont.Small)
-        elseif entry.kind == "label" then
-            self:drawText(entry.text, entry.x, entry.y, 0.82, 0.82, 0.82, 1, UIFont.Small)
-        elseif entry.kind == "divider" then
-            self:drawRect(entry.x, entry.y, entry.w, 1, 0.45, 0.55, 0.55, 0.55)
+        local ey = entry.y - leftScroll
+        if ey >= self.contentTop and ey + FONT_S <= self.contentBottom then
+            if entry.kind == "heading" then
+                self:drawText(entry.text, entry.x, ey, 0.95, 0.95, 0.95, 1, UIFont.Small)
+            elseif entry.kind == "label" then
+                self:drawText(entry.text, entry.x, ey, 0.82, 0.82, 0.82, 1, UIFont.Small)
+            elseif entry.kind == "divider" then
+                self:drawRect(entry.x, ey, entry.w, 1, 0.45, 0.55, 0.55, 0.55)
+            end
         end
     end
     if self.summaryY ~= nil then
@@ -2362,7 +2701,21 @@ function BridgePregameScreen:render()
         if text == nil or text == "" then text = self.noneText end
         local prefix = tr("PregameSelected", "Selected") .. ": "
         local line = fitText(UIFont.Small, prefix .. text, self.leftW)
-        self:drawText(line, self.leftX, self.summaryY, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        local sy = self.summaryY - leftScroll
+        if sy >= self.contentTop and sy <= self.contentBottom then
+            self:drawText(line, self.leftX, sy, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        end
+    end
+    if (self.leftMaxScroll or 0) > 0 then
+        local trackX = self.leftX + self.leftW - 4
+        local trackY = self.contentTop
+        local trackH = math.max(1, self.leftViewH or (self.contentBottom - self.contentTop))
+        self:drawRect(trackX, trackY, 3, trackH, 0.15, 1, 1, 1)
+        local thumbH = math.max(18, math.floor(trackH * (trackH / (trackH + self.leftMaxScroll))))
+        local t = 0
+        if self.leftMaxScroll > 0 then t = leftScroll / self.leftMaxScroll end
+        local thumbY = trackY + math.floor((trackH - thumbH) * t)
+        self:drawRect(trackX, thumbY, 3, thumbH, 0.65, 0.78, 0.78, 0.78)
     end
 
     if self.behaviorHeadingY ~= nil then
@@ -2772,21 +3125,246 @@ function BridgePregameScreen:playVoice(voice)
         end
         local emitter = nil
         pcall(function() emitter = getSoundManager():getUIEmitter() end)
-        if emitter == nil then return end
         local player = nil
         pcall(function() player = IsoPlayer.getInstance() end)
-        if player == nil then
+        if emitter ~= nil and player == nil then
             pcall(function() emitter:setPos(0, 0, 0) end)
         end
         getSoundManager():setMusicState("InGame")
         getSoundManager():resumeSoundAndMusic()
         self.voiceSound = getSoundManager():playUISound(tostring(voice.prefix) .. "ShoutHey")
+        if self.voiceSound ~= nil and self.voiceSound ~= 0 and emitter ~= nil then
+            local maxType = (BridgeData ~= nil and type(BridgeData.VOICE_TYPE_MAX) == "number") and BridgeData.VOICE_TYPE_MAX or 15
+            local minPitch = (BridgeData ~= nil and type(BridgeData.VOICE_PITCH_MIN) == "number") and BridgeData.VOICE_PITCH_MIN or -100
+            local maxPitch = (BridgeData ~= nil and type(BridgeData.VOICE_PITCH_MAX) == "number") and BridgeData.VOICE_PITCH_MAX or 100
+            local voiceType = math.floor(tonumber(voice.type) or 0)
+            if voiceType < 0 then voiceType = 0 end
+            if voiceType > maxType then voiceType = maxType end
+            local pitch = math.floor((tonumber(voice.pitch) or 0) + 0.5)
+            if pitch < minPitch then pitch = minPitch end
+            if pitch > maxPitch then pitch = maxPitch end
+            pcall(function() emitter:setParameterValueByName(self.voiceSound, "CharacterVoiceType", voiceType) end)
+            pcall(function() emitter:setParameterValueByName(self.voiceSound, "CharacterVoicePitch", pitch) end)
+            pcall(function() emitter:tick() end)
+        end
     end)
 end
 
 function BridgePregameScreen:onVoiceDemo()
     local voice = BridgePregame.activeVoice(self.draft)
     if type(voice) == "table" then self:playVoice(voice) end
+end
+
+function BridgePregameScreen:sizeProfile()
+    local c = BridgeAppearance.candidate
+    local profile = c ~= nil and c.vsmBody or nil
+    if type(profile) == "table" then return profile end
+    local compat = BridgeSizeMatterCompat
+    if compat == nil then return nil end
+    return compat.neutralProfile()
+end
+
+function BridgePregameScreen:sizeApply(nextProfile)
+    local compat = BridgeSizeMatterCompat
+    if compat == nil or nextProfile == nil then return end
+    local clean = compat.cleanProfile(nextProfile)
+    if clean == nil then return end
+    BridgeAppearance.candidate.vsmBody = clean
+    self:refreshSize()
+    BridgeAppearance.updateSizePreview()
+end
+
+function BridgePregameScreen:sizeEdit(field, value)
+    if self.filling then return end
+    local compat = BridgeSizeMatterCompat
+    local current = self:sizeProfile()
+    if compat == nil or type(current) ~= "table" then return end
+    self.sizeUndo = compat.copyProfile(current)
+    self:sizeApply(compat.withField(current, field, value))
+end
+
+function BridgePregameScreen:sizeEditDetail(index, value)
+    if self.filling then return end
+    local compat = BridgeSizeMatterCompat
+    local current = self:sizeProfile()
+    if compat == nil or type(current) ~= "table" then return end
+    self.sizeUndo = compat.copyProfile(current)
+    self:sizeApply(compat.withDetail(current, index, value))
+end
+
+function BridgePregameScreen:setSizeEntryText(box, value)
+    if box == nil then return end
+    local text = tostring(value)
+    if box:getText() ~= text then box:setText(text) end
+end
+
+function BridgePregameScreen:refreshSize()
+    if not self.sizeOn then return end
+    local compat = BridgeSizeMatterCompat
+    if compat == nil then return end
+    local profile = BridgeAppearance.candidate.vsmBody
+    if type(profile) ~= "table" then profile = compat.neutralProfile() end
+    if type(profile) ~= "table" then return end
+    local was = self.filling
+    self.filling = true
+    self:setSizeEntryText(self.sizeHeightEntry, profile.height)
+    if self.sizeShapeSlider ~= nil then self.sizeShapeSlider:setCurrentValue(profile.shape, true) end
+    if self.sizeMuscleSlider ~= nil then self.sizeMuscleSlider:setCurrentValue(profile.muscle, true) end
+    self:setSizeEntryText(self.sizeShapeEntry, profile.shape)
+    self:setSizeEntryText(self.sizeMuscleEntry, profile.muscle)
+    for i, slider in ipairs(self.sizeDetailSliders) do
+        local value = compat.detailAt(profile.details, i)
+        slider:setCurrentValue(value, true)
+        self:setSizeEntryText(self.sizeEntries.details[i], value)
+    end
+    if self.sizeModelCombo ~= nil then self.sizeModelCombo:selectData(profile.bodyModel) end
+    if self.sizeUndoBtn ~= nil then self.sizeUndoBtn:setEnable(self.sizeUndo ~= nil) end
+    self.filling = was
+end
+
+function BridgePregameScreen:applySizeText(box, commit)
+    if self.filling or box == nil then return end
+    local n = tonumber(box:getText())
+    if n == nil then
+        if commit then self:refreshSize() end
+        return
+    end
+    local compat = BridgeSizeMatterCompat
+    local current = self:sizeProfile()
+    if compat == nil or type(current) ~= "table" then return end
+    self.sizeUndo = compat.copyProfile(current)
+    local nextValue = nil
+    if box.sizeIndex ~= nil then
+        nextValue = compat.withDetail(current, box.sizeIndex, n)
+    elseif box.sizeField ~= nil then
+        nextValue = compat.withField(current, box.sizeField, n)
+    end
+    if nextValue == nil then return end
+    BridgeAppearance.candidate.vsmBody = nextValue
+    if commit then
+        self:refreshSize()
+    else
+        local slider = nil
+        local value = nil
+        if box.sizeField ~= nil then
+            slider = self.sizeSliders[box.sizeField]
+            value = nextValue[box.sizeField]
+        else
+            slider = self.sizeDetailSliders[box.sizeIndex]
+            value = compat.detailAt(nextValue.details, box.sizeIndex)
+        end
+        if slider ~= nil then slider:setCurrentValue(value, true) end
+        if self.sizeUndoBtn ~= nil then self.sizeUndoBtn:setEnable(true) end
+    end
+    BridgeAppearance.updateSizePreview()
+end
+
+function BridgePregameScreen:onSizeTextChange(box)
+    self:applySizeText(box, false)
+end
+
+function BridgePregameScreen:commitSizeText(box)
+    self:applySizeText(box, true)
+end
+
+function BridgePregameScreen:onSizeToggle()
+    self.sizeOpen = not self.sizeOpen
+    self:layout()
+end
+
+function BridgePregameScreen:onSizeGroup(index)
+    index = tonumber(index) or 1
+    if self.sizeActiveGroup == index then return end
+    self.sizeActiveGroup = index
+    self:layout()
+end
+
+function BridgePregameScreen:onSizeShape(value)
+    self:sizeEdit("shape", math.floor((tonumber(value) or 0) + 0.5))
+end
+
+function BridgePregameScreen:onSizeMuscle(value)
+    self:sizeEdit("muscle", math.floor((tonumber(value) or 0) + 0.5))
+end
+
+function BridgePregameScreen:onSizeDetail(index, value)
+    self:sizeEditDetail(index, math.floor((tonumber(value) or 0) + 0.5))
+end
+
+function BridgePregameScreen:applySizeHeight(box)
+    if self.filling or box == nil then return end
+    local n = tonumber(box:getText())
+    if n == nil then
+        self:refreshSize()
+        return
+    end
+    self:sizeEdit("height", math.floor(n + 0.5))
+end
+
+function BridgePregameScreen:onSizeHeightMinus()
+    local profile = self:sizeProfile()
+    if type(profile) ~= "table" then return end
+    self:sizeEdit("height", profile.height - 1)
+end
+
+function BridgePregameScreen:onSizeHeightPlus()
+    local profile = self:sizeProfile()
+    if type(profile) ~= "table" then return end
+    self:sizeEdit("height", profile.height + 1)
+end
+
+function BridgePregameScreen:onSizeShapeReset()
+    local compat = BridgeSizeMatterCompat
+    local baseline = compat ~= nil and compat.neutralProfile() or nil
+    if baseline == nil then return end
+    self:sizeEdit("shape", baseline.shape)
+end
+
+function BridgePregameScreen:onSizeMuscleReset()
+    local compat = BridgeSizeMatterCompat
+    local baseline = compat ~= nil and compat.neutralProfile() or nil
+    if baseline == nil then return end
+    self:sizeEdit("muscle", baseline.muscle)
+end
+
+function BridgePregameScreen:onSizeDetailReset(index)
+    local compat = BridgeSizeMatterCompat
+    local baseline = compat ~= nil and compat.neutralProfile() or nil
+    if baseline == nil then return end
+    self:sizeEditDetail(index, compat.detailAt(baseline.details, index))
+end
+
+function BridgePregameScreen:onSizeModel(combo)
+    if self.filling or combo == nil then return end
+    local data = combo:getSelectedData()
+    if type(data) ~= "string" then return end
+    self:sizeEdit("bodyModel", data)
+    BridgeAppearance.refreshPreview()
+end
+
+function BridgePregameScreen:onSizeResetAll()
+    if self.filling then return end
+    local compat = BridgeSizeMatterCompat
+    if compat == nil then return end
+    local current = self:sizeProfile()
+    if type(current) == "table" then self.sizeUndo = compat.copyProfile(current) end
+    local neutral = compat.neutralProfile()
+    if neutral == nil then return end
+    BridgeAppearance.candidate.vsmBody = neutral
+    self:refreshSize()
+    BridgeAppearance.updateSizePreview()
+end
+
+function BridgePregameScreen:onSizeUndo()
+    if self.filling then return end
+    local compat = BridgeSizeMatterCompat
+    if compat == nil or self.sizeUndo == nil then return end
+    local previous = compat.copyProfile(self.sizeUndo)
+    self.sizeUndo = nil
+    if previous == nil then return end
+    BridgeAppearance.candidate.vsmBody = previous
+    self:refreshSize()
+    BridgeAppearance.updateSizePreview()
 end
 
 function BridgePregameScreen:onHair(combo)
@@ -2879,6 +3457,48 @@ end
 function BridgePregameScreen:onMeetHint(combo)
     if self.filling or self.draft == nil then return end
     self.draft.meetHint = cleanMeetHint(combo:getSelectedData())
+end
+
+function BridgePregameScreen:captureSettings()
+    local draft = self.draft
+    if draft == nil then return end
+    local function readData(combo)
+        if combo == nil then return nil end
+        local ok, value = pcall(function() return combo:getSelectedData() end)
+        if not ok then return nil end
+        return value
+    end
+
+    local opts = BridgePregame.cleanOptions(draft.options)
+    if type(self.behaviorTicks) == "table" then
+        for i, def in ipairs(BEHAVIOR_DEFS) do
+            local tick = self.behaviorTicks[i]
+            if tick ~= nil then
+                local ok, selected = pcall(function() return tick:isSelected(1) end)
+                if ok then opts[def.key] = selected == true end
+            end
+        end
+    end
+    local aim = readData(self.aimCombo)
+    if aim ~= nil then
+        local mode = cleanAimMode(aim)
+        if mode ~= nil then opts.aimSense = mode end
+    end
+    draft.options = opts
+
+    local mode = readData(self.meetModeCombo)
+    if mode ~= nil then draft.meetMode = cleanMeetMode(mode) end
+    if self.meetDaysEntry ~= nil then
+        local ok, text = pcall(function() return self.meetDaysEntry:getText() end)
+        local days = ok and tonumber(text) or nil
+        if days ~= nil and days >= 1 then draft.meetDays = cleanMeetDays(days) end
+    end
+    local town = readData(self.meetWhereCombo)
+    if town ~= nil then draft.meetTown = cleanMeetTown(town) end
+    local distance = readData(self.meetDistanceCombo)
+    if distance ~= nil then draft.meetDistance = cleanMeetDistance(distance) end
+    local hint = readData(self.meetHintCombo)
+    if hint ~= nil then draft.meetHint = cleanMeetHint(hint) end
 end
 
 function BridgePregameScreen:onMakeup(combo)
@@ -3401,6 +4021,7 @@ function BridgePregame.back()
     local screen = BridgePregame.screen
     if screen ~= nil and screen.draft ~= nil then
         screen:captureName()
+        if type(screen.captureSettings) == "function" then screen:captureSettings() end
         BridgeAppearance.snapshotCandidate(screen.draft)
     end
     BridgePregame.hideScreen()
@@ -3412,6 +4033,7 @@ function BridgePregame.start()
     if screen == nil or screen.draft == nil then return end
     local draft = screen.draft
     screen:captureName()
+    if type(screen.captureSettings) == "function" then screen:captureSettings() end
     draft.name = BridgeData.cleanName(draft.name) or BridgeData.DEFAULT_NAME
     draft.maleName = BridgeData.cleanName(draft.maleName) or BridgeData.DEFAULT_MALE_NAME
     BridgeAppearance.snapshotCandidate(draft)

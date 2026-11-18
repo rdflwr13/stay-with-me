@@ -8,19 +8,48 @@ require "ISUI/ISButton"
 require "ISUI/ISComboBox"
 require "ISUI/ISUI3DModel"
 require "ISUI/ISColorPickerHSB"
+pcall(require, "RadioCom/ISUIRadio/ISSliderPanel")
+require "ISUI/ISTextEntryBox"
 
 BridgeAppearance = BridgeAppearance or {}
 
 local PAD = 10
 local PREVIEW_W, PREVIEW_H = 260, 300
+local VIEW_GAP = 4
 
-local FONT_S, FONT_M, BTN_H = 0, 0, 0
+local FONT_S, FONT_M, BTN_H, SLIDER_H = 0, 0, 0, 18
 local function refreshFonts()
     FONT_S = getTextManager():getFontHeight(UIFont.Small)
     FONT_M = getTextManager():getFontHeight(UIFont.Medium)
     BTN_H = FONT_S + 6
+    SLIDER_H = math.max(18, FONT_S + 8)
 end
 refreshFonts()
+
+if ISSliderPanel ~= nil then
+    BridgeAppearanceSlider = ISSliderPanel:derive("BridgeAppearanceSlider")
+    function BridgeAppearanceSlider:onMouseDown(x, y)
+        if not self.disabled then
+            self:setCapture(true)
+            ISSliderPanel.onMouseDown(self, x, y)
+        end
+        return true
+    end
+    function BridgeAppearanceSlider:onMouseMove(x, y)
+        ISSliderPanel.onMouseMove(self, x, y)
+        return true
+    end
+    function BridgeAppearanceSlider:onMouseUp(x, y)
+        self:setCapture(false)
+        ISSliderPanel.onMouseUp(self, x, y)
+        return true
+    end
+    function BridgeAppearanceSlider:onMouseUpOutside(x, y)
+        self:setCapture(false)
+        ISSliderPanel.onMouseUpOutside(self, x, y)
+        return true
+    end
+end
 
 local function textW(font, text)
     local w = 0
@@ -45,6 +74,13 @@ local function fitText(font, text, maxW)
     return string.sub(text, 1, n) .. ell
 end
 
+local function comboLabel(combo, index)
+    if combo == nil or type(combo.options) ~= "table" then return "" end
+    local option = combo.options[index]
+    if type(option) == "table" then return tostring(option.text or "") end
+    return tostring(option or "")
+end
+
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeAppearance] " .. tostring(text)) end end
 local function warn(text) print("[BridgeAppearance] " .. tostring(text)) end
 
@@ -67,6 +103,21 @@ local function vanillaText(key, fallback)
     if type(getTextOrNull) ~= "function" then return fallback end
     local text = getTextOrNull(key)
     if type(text) ~= "string" or text == "" or text == key then return fallback end
+    return text
+end
+
+local function sizeCompat()
+    if BridgeSizeMatterCompat == nil then return nil end
+    if type(BridgeSizeMatterCompat.available) ~= "function" or BridgeSizeMatterCompat.available() ~= true then
+        return nil
+    end
+    return BridgeSizeMatterCompat
+end
+
+local function sizeLabel(key, fallback)
+    local text = nil
+    pcall(function() text = getTextOrNull("IGUI_NotAlone_" .. key) end)
+    if type(text) ~= "string" or text == "" or text == ("IGUI_NotAlone_" .. key) then return fallback end
     return text
 end
 
@@ -342,7 +393,7 @@ function BridgeAppearance.fixFurVariant()
     if t ~= typeShort(id) then BridgeAppearance.setFur(species) end
 end
 
-BridgeAppearance.candidate = { skin = nil, hair = nil, hairColor = nil, face = nil, details = {}, muscle = 0, makeup = {}, beard = "", beardColor = nil, fur = nil, voice = nil }
+BridgeAppearance.candidate = { skin = nil, hair = nil, hairColor = nil, face = nil, details = {}, muscle = 0, makeup = {}, beard = "", beardColor = nil, fur = nil, voice = nil, vsmBody = nil }
 
 function BridgeAppearance.uiStore()
     if BridgeAppearance.draftStore ~= nil then return BridgeAppearance.draftStore end
@@ -367,6 +418,7 @@ function BridgeAppearance.defaultCandidate(gender)
         beardColor = beardColor,
         fur = nil,
         voice = BridgeData.defaultVoice(gender),
+        vsmBody = nil,
     }
 end
 
@@ -377,6 +429,7 @@ function BridgeAppearance.initCandidate(gender)
     c.face = nil
     c.fur = nil
     c.beardColor = nil
+    c.vsmBody = nil
     for k, v in pairs(defaults) do c[k] = v end
     c.gender = g
     if g == "male" then c.male = c else c.male = nil end
@@ -398,6 +451,7 @@ function BridgeAppearance.captureCandidate(c)
         fur = c.fur,
         voice = nil,
         gender = c.gender,
+        vsmBody = nil,
     }
     for i, d in ipairs(c.details or {}) do out.details[i] = d end
     for i, m in ipairs(c.makeup or {}) do out.makeup[i] = m end
@@ -409,6 +463,8 @@ function BridgeAppearance.captureCandidate(c)
             pitch = c.voice.pitch,
         }
     end
+    local compat = sizeCompat()
+    if compat ~= nil and c.vsmBody ~= nil then out.vsmBody = compat.copyProfile(c.vsmBody) end
     return out
 end
 
@@ -438,6 +494,12 @@ function BridgeAppearance.restoreCandidate(snap)
         c.voice = nil
     end
     c.gender = snap.gender
+    local compat = sizeCompat()
+    if compat ~= nil and snap.vsmBody ~= nil then
+        c.vsmBody = compat.copyProfile(snap.vsmBody)
+    else
+        c.vsmBody = nil
+    end
     if c.gender == "male" then c.male = c else c.male = nil end
 end
 
@@ -671,6 +733,10 @@ function BridgeAppearance.applyToRecord(rec, c, gender)
         local beardColor = BridgeData.cleanHairColor(c.beardColor)
         if beardColor ~= nil then target.beardColor = copyColor(beardColor) end
     end
+    local compat = sizeCompat()
+    if compat ~= nil and c.vsmBody ~= nil then
+        target.vsmBody = compat.copyProfile(c.vsmBody)
+    end
     return true
 end
 
@@ -702,9 +768,45 @@ function BridgeAppearance.makePreviewDesc(starterOutfit, clothing)
     return BridgeWindow.makeDesc(tmp, c.fur, cloth)
 end
 
+function BridgeAppearance.updateSizePreview()
+    local w = BridgeAppearance.instance
+    if w == nil or w.preview == nil then return end
+    local compat = sizeCompat()
+    if compat == nil then return end
+    if w.form == nil then
+        local c = BridgeAppearance.candidate
+        if c == nil or c.fur ~= nil then return end
+        local profile = c.vsmBody
+        if type(profile) ~= "table" then profile = compat.neutralProfile() end
+        local gender = (type(w.draft) == "table" and w.draft.gender) or "female"
+        pcall(compat.applyProfilePreview, w.preview, profile, gender)
+        return
+    end
+    local form = w.form
+    if form.sizeOn ~= true then return end
+    if BridgeAppearance.furrySelected() then return end
+    local source = BridgeAppearance.previewOverride
+    local profile = nil
+    if type(source) == "table" and type(source.vsmBody) == "table" then
+        profile = source.vsmBody
+    elseif type(BridgeAppearance.candidate.vsmBody) == "table" then
+        profile = BridgeAppearance.candidate.vsmBody
+    end
+    if type(profile) ~= "table" then profile = compat.neutralProfile() end
+    if type(profile) ~= "table" then return end
+    local preview = w.preview
+    preview.vsmHeightCm = profile.height
+    preview.vsmBodyShape = profile.shape
+    preview.vsmMuscular = profile.muscle
+    preview.vsmDetails = profile.details
+    preview.vsmBodyModel = profile.bodyModel
+    preview.vsmMorphFemale = BridgeData.genderOf(BridgeAppearance.uiStore()) ~= "male"
+end
+
 function BridgeAppearance.refreshPreview()
     local w = BridgeAppearance.instance
     if w == nil or w.preview == nil then return end
+    BridgeAppearance.updateSizePreview()
     local starter = BridgeAppearance.previewStarter == true
     local clothing = BridgeAppearance.previewClothing
     local ok, err = pcall(function() w.preview:setSurvivorDesc(BridgeAppearance.makePreviewDesc(starter, clothing)) end)
@@ -1706,9 +1808,12 @@ function BridgeAppearanceForm:previewCandidate()
         beardColor = c.beardColor ~= nil and copyColor(c.beardColor) or nil,
         fur = c.fur,
         voice = c.voice,
+        vsmBody = nil,
     }
     for i, d in ipairs(c.details or {}) do out.details[i] = d end
     for i, m in ipairs(c.makeup or {}) do out.makeup[i] = m end
+    local compat = sizeCompat()
+    if compat ~= nil and c.vsmBody ~= nil then out.vsmBody = compat.copyProfile(c.vsmBody) end
     return out
 end
 
@@ -1753,6 +1858,7 @@ function BridgeAppearanceForm:createChildren()
     self.sectionVisible = {}
 
     self:addHeading("body", tr("AppearanceBody"))
+    self:addHeading("size", sizeLabel("AppearanceSize", "Size and shape"))
     self:addHeading("hair", tr("AppearanceHair"))
     self:addHeading("beard", tr("AppearanceBeard"))
     self:addHeading("face", tr("PregameHead"))
@@ -1814,6 +1920,141 @@ function BridgeAppearanceForm:createChildren()
             self.voiceCombo:addOptionWithData(label, s)
         end
         self:addControl(self.voiceCombo)
+    end
+
+    self.sizeOn = false
+    self.sizeSliders = {}
+    self.sizeEntries = { details = {} }
+    self.sizeDetailSliders = {}
+    self.sizeDetailResets = {}
+    self.sizeGroupButtons = {}
+    self.sizeActiveGroup = 1
+    self.vsmUndo = nil
+    local sizeMod = sizeCompat()
+    if sizeMod ~= nil and BridgeAppearanceSlider ~= nil then
+        self.sizeOn = true
+        self.sizeGroupDivider = ISRect:new(PAD, 0, 10, 1, 0.45, 0.55, 0.55, 0.55)
+        self.sizeGroupDivider:initialise()
+        self:addChild(self.sizeGroupDivider)
+        self:addLabel("sizeHeight", sizeLabel("SizeHeight", "Height"))
+        self:addLabel("sizeShape", sizeLabel("SizeShape", "Body shape"))
+        self:addLabel("sizeMuscle", sizeLabel("SizeMuscle", "Muscle size"))
+        self:addLabel("sizeModel", sizeLabel("SizeModel", "Body model"))
+
+        local function makeSizeEntry()
+            local box = ISTextEntryBox:new("", PAD, 0, 52, BTN_H)
+            box:initialise()
+            box:instantiate()
+            box:setMaxTextLength(6)
+            box.target = self
+            box.onTextChangeFunction = function(form, target) form:onSizeTextChange(target) end
+            box.onCommandEntered = function(target) self:commitSizeText(target) end
+            box.onLostFocus = function(target) self:commitSizeText(target) end
+            self:addControl(box)
+            return box
+        end
+
+        local resetText = sizeLabel("SizeRowReset", "Reset")
+        local function makeReset(callback)
+            local button = ISButton:new(PAD, 0, 48, BTN_H, resetText, self, callback)
+            button:initialise()
+            button:instantiate()
+            self:addControl(button)
+            return button
+        end
+
+        self.heightMinusBtn = ISButton:new(PAD, 0, 24, BTN_H, "-", self, BridgeAppearanceForm.onSizeHeightMinus)
+        self.heightMinusBtn:initialise()
+        self.heightMinusBtn:instantiate()
+        self:addControl(self.heightMinusBtn)
+
+        self.heightEntry = ISTextEntryBox:new("", PAD, 0, 60, BTN_H)
+        self.heightEntry:initialise()
+        self.heightEntry:instantiate()
+        self.heightEntry:setOnlyNumbers(true)
+        self.heightEntry:setMaxTextLength(10)
+        self.heightEntry.onCommandEntered = function(box) self:applySizeHeight(box) end
+        self.heightEntry.onLostFocus = function(box) self:applySizeHeight(box) end
+        self:addControl(self.heightEntry)
+
+        self.heightPlusBtn = ISButton:new(PAD, 0, 24, BTN_H, "+", self, BridgeAppearanceForm.onSizeHeightPlus)
+        self.heightPlusBtn:initialise()
+        self.heightPlusBtn:instantiate()
+        self:addControl(self.heightPlusBtn)
+
+        self.heightUnit = ISLabel:new(PAD, 0, FONT_S, "cm", 0.82, 0.82, 0.82, 1, UIFont.Small, true)
+        self.heightUnit:initialise()
+        self:addChild(self.heightUnit)
+
+        local slo, shi = sizeMod.shapeBounds()
+        local shape = BridgeAppearanceSlider:new(PAD, 0, 10, SLIDER_H, self, BridgeAppearanceForm.onSizeShape)
+        shape:initialise()
+        shape:instantiate()
+        shape:setValues(slo, shi, 1, 10, true)
+        self:addControl(shape)
+        self.sizeSliders.shape = shape
+        self.sizeEntries.shape = makeSizeEntry()
+        self.sizeEntries.shape.sizeField = "shape"
+        self.sizeShapeReset = makeReset(BridgeAppearanceForm.onSizeShapeReset)
+
+        local mlo, mhi = sizeMod.muscleBounds()
+        local muscle = BridgeAppearanceSlider:new(PAD, 0, 10, SLIDER_H, self, BridgeAppearanceForm.onSizeMuscle)
+        muscle:initialise()
+        muscle:instantiate()
+        muscle:setValues(mlo, mhi, 1, 10, true)
+        self:addControl(muscle)
+        self.sizeSliders.muscle = muscle
+        self.sizeEntries.muscle = makeSizeEntry()
+        self.sizeEntries.muscle.sizeField = "muscle"
+        self.sizeMuscleReset = makeReset(BridgeAppearanceForm.onSizeMuscleReset)
+
+        self.modelCombo = ISComboBox:new(PAD, 0, 10, BTN_H, self, BridgeAppearanceForm.onSizeModel)
+        self.modelCombo:initialise()
+        self.modelCombo:addOptionWithData(sizeLabel("SizeOriginal", "Original"), "original")
+        if type(sizeMod.bodyModelsAvailable) == "function" and sizeMod.bodyModelsAvailable() then
+            self.modelCombo:addOptionWithData(sizeLabel("SizeTomb", "Tomb's"), "tomb")
+        end
+        self:addControl(self.modelCombo)
+
+        for _, group in ipairs(sizeMod.GROUPS) do
+            local groupIndex = #self.sizeGroupButtons + 1
+            local button = ISButton:new(PAD, 0, 64, BTN_H, sizeLabel("SizeGroup_" .. group.id, group.id),
+                self, function(form) form:onSizeGroup(groupIndex) end)
+            button:initialise()
+            button:instantiate()
+            self:addControl(button)
+            self.sizeGroupButtons[groupIndex] = button
+            for _, index in ipairs(group.indexes) do
+                local entry = sizeMod.DETAILS[index]
+                if entry ~= nil then
+                    self:addLabel("sizeDetail_" .. entry.id, sizeLabel("SizeDetail_" .. entry.id, entry.label))
+                    local detailIndex = index
+                    local slider = BridgeAppearanceSlider:new(PAD, 0, 10, SLIDER_H, self,
+                        function(form, value) form:onSizeDetail(detailIndex, value) end)
+                    slider:initialise()
+                    slider:instantiate()
+                    slider:setValues(-100, 100, 1, 10, true)
+                    self:addControl(slider)
+                    self.sizeDetailSliders[index] = slider
+                    local box = makeSizeEntry()
+                    box.sizeIndex = index
+                    self.sizeEntries.details[index] = box
+                    self.sizeDetailResets[index] = makeReset(function(form) form:onSizeDetailReset(detailIndex) end)
+                end
+            end
+        end
+
+        self.sizeResetBtn = ISButton:new(PAD, 0, 10, BTN_H, sizeLabel("SizeReset", "Reset size"),
+            self, BridgeAppearanceForm.onSizeReset)
+        self.sizeResetBtn:initialise()
+        self.sizeResetBtn:instantiate()
+        self:addControl(self.sizeResetBtn)
+
+        self.sizeUndoBtn = ISButton:new(PAD, 0, 10, BTN_H, sizeLabel("SizeUndo", "Undo last"),
+            self, BridgeAppearanceForm.onSizeUndo)
+        self.sizeUndoBtn:initialise()
+        self.sizeUndoBtn:instantiate()
+        self:addControl(self.sizeUndoBtn)
     end
 
     self.hairCombo = nil
@@ -2085,8 +2326,232 @@ function BridgeAppearanceForm:refresh()
         end
         self:refreshDetailButtons()
     end
+    if self.sizeOn then self:refreshSize() end
     self.filling = false
     self:layout()
+end
+
+function BridgeAppearanceForm:sizeBaseline()
+    local compat = sizeCompat()
+    if compat == nil then return nil end
+    return compat.neutralProfile()
+end
+
+function BridgeAppearanceForm:sizeCurrent()
+    local c = BridgeAppearance.candidate
+    if type(c.vsmBody) == "table" then return c.vsmBody end
+    return self:sizeBaseline()
+end
+
+function BridgeAppearanceForm:setSizeEntryText(box, value)
+    if box == nil then return end
+    local text = tostring(value)
+    if box:getText() ~= text then box:setText(text) end
+end
+
+function BridgeAppearanceForm:refreshSize()
+    if not self.sizeOn then return end
+    local compat = sizeCompat()
+    if compat == nil then return end
+    local profile = BridgeAppearance.candidate.vsmBody
+    if type(profile) ~= "table" then profile = compat.neutralProfile() end
+    if type(profile) ~= "table" then return end
+    local was = self.filling
+    self.filling = true
+    if self.heightEntry ~= nil then
+        self:setSizeEntryText(self.heightEntry, profile.height)
+    end
+    if self.sizeSliders.shape ~= nil then self.sizeSliders.shape:setCurrentValue(profile.shape, true) end
+    if self.sizeSliders.muscle ~= nil then self.sizeSliders.muscle:setCurrentValue(profile.muscle, true) end
+    self:setSizeEntryText(self.sizeEntries.shape, profile.shape)
+    self:setSizeEntryText(self.sizeEntries.muscle, profile.muscle)
+    for i, slider in ipairs(self.sizeDetailSliders) do
+        local value = compat.detailAt(profile.details, i)
+        slider:setCurrentValue(value, true)
+        self:setSizeEntryText(self.sizeEntries.details[i], value)
+    end
+    if self.modelCombo ~= nil then self.modelCombo:selectData(profile.bodyModel) end
+    if self.sizeUndoBtn ~= nil then self.sizeUndoBtn:setEnable(self.vsmUndo ~= nil) end
+    self.filling = was
+end
+
+function BridgeAppearanceForm:sizeEdit(field, value)
+    if self.filling then return end
+    local compat = sizeCompat()
+    if compat == nil then return end
+    local current = self:sizeCurrent()
+    if type(current) ~= "table" then return end
+    self.vsmUndo = compat.copyProfile(current)
+    local nextValue = compat.copyProfile(current)
+    if nextValue == nil then return end
+    nextValue[field] = value
+    local clean = compat.cleanProfile(nextValue)
+    if clean == nil then return end
+    BridgeAppearance.candidate.vsmBody = clean
+    self:refreshSize()
+    BridgeAppearance.updateSizePreview()
+end
+
+function BridgeAppearanceForm:sizeEditDetail(index, value)
+    if self.filling then return end
+    local compat = sizeCompat()
+    if compat == nil then return end
+    local current = self:sizeCurrent()
+    if type(current) ~= "table" then return end
+    self.vsmUndo = compat.copyProfile(current)
+    local nextValue = compat.copyProfile(current)
+    if nextValue == nil then return end
+    nextValue.details = compat.detailSet(nextValue.details, index, value)
+    local clean = compat.cleanProfile(nextValue)
+    if clean == nil then return end
+    BridgeAppearance.candidate.vsmBody = clean
+    self:refreshSize()
+    BridgeAppearance.updateSizePreview()
+end
+
+function BridgeAppearanceForm:applySizeHeight(box)
+    if self.filling or box == nil then return end
+    local n = tonumber(box:getText())
+    if n == nil then
+        self:refreshSize()
+        return
+    end
+    self:sizeEdit("height", math.floor(n + 0.5))
+end
+
+function BridgeAppearanceForm:onSizeHeightMinus()
+    local compat = sizeCompat()
+    local profile = self:sizeCurrent()
+    if compat == nil or type(profile) ~= "table" then return end
+    self:sizeEdit("height", profile.height - 1)
+end
+
+function BridgeAppearanceForm:onSizeHeightPlus()
+    local compat = sizeCompat()
+    local profile = self:sizeCurrent()
+    if compat == nil or type(profile) ~= "table" then return end
+    self:sizeEdit("height", profile.height + 1)
+end
+
+function BridgeAppearanceForm:onSizeShape(value)
+    self:sizeEdit("shape", math.floor((tonumber(value) or 0) + 0.5))
+end
+
+function BridgeAppearanceForm:onSizeMuscle(value)
+    self:sizeEdit("muscle", math.floor((tonumber(value) or 0) + 0.5))
+end
+
+function BridgeAppearanceForm:onSizeDetail(index, value)
+    self:sizeEditDetail(index, math.floor((tonumber(value) or 0) + 0.5))
+end
+
+function BridgeAppearanceForm:applySizeText(box, commit)
+    if self.filling or box == nil then return end
+    local n = tonumber(box:getText())
+    if n == nil then
+        if commit then self:refreshSize() end
+        return
+    end
+    local compat = sizeCompat()
+    if compat == nil then return end
+    local current = self:sizeCurrent()
+    if type(current) ~= "table" then return end
+    self.vsmUndo = compat.copyProfile(current)
+    local nextValue = compat.copyProfile(current)
+    if nextValue == nil then return end
+    if box.sizeIndex ~= nil then
+        nextValue.details = compat.detailSet(nextValue.details, box.sizeIndex, n)
+    elseif box.sizeField ~= nil then
+        nextValue[box.sizeField] = math.floor(n + 0.5)
+    else
+        return
+    end
+    local clean = compat.cleanProfile(nextValue)
+    if clean == nil then return end
+    BridgeAppearance.candidate.vsmBody = clean
+    if self.sizeUndoBtn ~= nil then self.sizeUndoBtn:setEnable(true) end
+    if commit then
+        self:refreshSize()
+    else
+        local slider = nil
+        local value = nil
+        if box.sizeField ~= nil then
+            slider = self.sizeSliders[box.sizeField]
+            value = clean[box.sizeField]
+        else
+            slider = self.sizeDetailSliders[box.sizeIndex]
+            value = compat.detailAt(clean.details, box.sizeIndex)
+        end
+        if slider ~= nil then slider:setCurrentValue(value, true) end
+    end
+    BridgeAppearance.updateSizePreview()
+end
+
+function BridgeAppearanceForm:onSizeTextChange(box)
+    self:applySizeText(box, false)
+end
+
+function BridgeAppearanceForm:commitSizeText(box)
+    self:applySizeText(box, true)
+end
+
+function BridgeAppearanceForm:onSizeShapeReset()
+    local baseline = self:sizeBaseline()
+    if baseline == nil then return end
+    self:sizeEdit("shape", baseline.shape)
+end
+
+function BridgeAppearanceForm:onSizeMuscleReset()
+    local baseline = self:sizeBaseline()
+    if baseline == nil then return end
+    self:sizeEdit("muscle", baseline.muscle)
+end
+
+function BridgeAppearanceForm:onSizeDetailReset(index)
+    local baseline = self:sizeBaseline()
+    local compat = sizeCompat()
+    if baseline == nil or compat == nil then return end
+    self:sizeEditDetail(index, compat.detailAt(baseline.details, index))
+end
+
+function BridgeAppearanceForm:onSizeGroup(index)
+    index = tonumber(index) or 1
+    if self.sizeActiveGroup == index then return end
+    self.sizeActiveGroup = index
+    self:layout()
+end
+
+function BridgeAppearanceForm:onSizeModel(combo)
+    if self.filling or combo == nil then return end
+    local data = combo:getSelectedData()
+    if type(data) ~= "string" then return end
+    self:sizeEdit("bodyModel", data)
+    BridgeAppearance.refreshPreview()
+end
+
+function BridgeAppearanceForm:onSizeReset()
+    if self.filling then return end
+    local compat = sizeCompat()
+    if compat == nil then return end
+    local current = self:sizeCurrent()
+    if type(current) == "table" then self.vsmUndo = compat.copyProfile(current) end
+    local neutral = compat.neutralProfile()
+    if neutral == nil then return end
+    BridgeAppearance.candidate.vsmBody = neutral
+    self:refreshSize()
+    BridgeAppearance.refreshPreview()
+end
+
+function BridgeAppearanceForm:onSizeUndo()
+    if self.filling then return end
+    local compat = sizeCompat()
+    if compat == nil or self.vsmUndo == nil then return end
+    local previous = compat.copyProfile(self.vsmUndo)
+    self.vsmUndo = nil
+    if previous == nil then return end
+    BridgeAppearance.candidate.vsmBody = previous
+    self:refreshSize()
+    BridgeAppearance.refreshPreview()
 end
 
 function BridgeAppearanceForm:layout()
@@ -2112,6 +2577,26 @@ function BridgeAppearanceForm:layout()
     end
     local controlW = w - PAD * 2 - LABEL_W - scrollW
     if controlW < 60 then controlW = 60 end
+    local comboList = {
+        self.skinCombo, self.muscleCombo, self.speciesCombo, self.voiceCombo,
+        self.hairCombo, self.beardCombo, self.faceCombo, self.detailCombo,
+        self.modelCombo,
+    }
+    for _, cat in ipairs(self.makeupOrder or {}) do
+        comboList[#comboList + 1] = self.makeupCombos[cat]
+    end
+    local comboTextW = 0
+    for _, combo in ipairs(comboList) do
+        if combo ~= nil then
+            local index = tonumber(combo.selected) or 1
+            local width = textW(UIFont.Small, comboLabel(combo, index))
+            if width > comboTextW then comboTextW = width end
+        end
+    end
+    local uniformComboW = math.floor(comboTextW + 36)
+    if uniformComboW < 160 then uniformComboW = 160 end
+    if uniformComboW > 240 then uniformComboW = 240 end
+    if uniformComboW > controlW then uniformComboW = controlW end
     local scroll = 0
     pcall(function() scroll = self:getYScroll() end)
 
@@ -2120,6 +2605,8 @@ function BridgeAppearanceForm:layout()
     for _, l in pairs(self.labels) do l:setVisible(false) end
     for _, l in ipairs(self.detailLines or {}) do l:setVisible(false) end
     for _, c in ipairs(self.controls) do c:setVisible(false) end
+    if self.heightUnit ~= nil then self.heightUnit:setVisible(false) end
+    if self.sizeGroupDivider ~= nil then self.sizeGroupDivider:setVisible(false) end
 
     local y = PAD
 
@@ -2147,10 +2634,18 @@ function BridgeAppearanceForm:layout()
             lab:setY(y + 3)
             lab:setVisible(true)
         end
+        local cw = width
+        if cw == nil then
+            if type(control.options) == "table" then
+                cw = uniformComboW
+            else
+                cw = controlW
+            end
+        end
         control:setVisible(true)
         control:setX(PAD + LABEL_W)
         control:setY(y)
-        control:setWidth(width or controlW)
+        control:setWidth(cw)
         control:setHeight(BTN_H)
         control.openUpwards = y > self.height * 0.55
         y = y + BTN_H + 3
@@ -2163,6 +2658,150 @@ function BridgeAppearanceForm:layout()
     end
     row("species", self.speciesCombo)
     row("voice", self.voiceCombo)
+
+    local sizeMod = sizeCompat()
+    local sizeVisible = (not furry) and self.sizeOn == true and sizeMod ~= nil
+    if sizeVisible then
+        heading("size")
+        local entryW = 52
+        local resetW = math.max(48, textW(UIFont.Small, sizeLabel("SizeRowReset", "Reset")) + 16)
+        local gap = 4
+        local fullSliderW = controlW - entryW - resetW - gap * 2
+        if fullSliderW < 60 then fullSliderW = 60 end
+        local sliderW = math.floor(fullSliderW * 0.5)
+        if sliderW < 80 then sliderW = fullSliderW end
+        local rowH = math.max(BTN_H, SLIDER_H)
+        local heightLabel = self.labels.sizeHeight
+        if heightLabel ~= nil then
+            heightLabel:setX(PAD)
+            heightLabel:setY(y + 3)
+            heightLabel:setVisible(true)
+        end
+        local bx = PAD + LABEL_W
+        self.heightMinusBtn:setVisible(true)
+        self.heightMinusBtn:setX(bx)
+        self.heightMinusBtn:setY(y)
+        self.heightMinusBtn:setWidth(24)
+        self.heightMinusBtn:setHeight(BTN_H)
+        self.heightEntry:setVisible(true)
+        self.heightEntry:setX(bx + 28)
+        self.heightEntry:setY(y)
+        self.heightEntry:setWidth(60)
+        self.heightEntry:setHeight(BTN_H)
+        self.heightPlusBtn:setVisible(true)
+        self.heightPlusBtn:setX(bx + 92)
+        self.heightPlusBtn:setY(y)
+        self.heightPlusBtn:setWidth(24)
+        self.heightPlusBtn:setHeight(BTN_H)
+        self.heightUnit:setVisible(true)
+        self.heightUnit:setX(bx + 120)
+        self.heightUnit:setY(y + 3)
+        y = y + BTN_H + 3
+
+        local modelLabel = self.labels.sizeModel
+        if modelLabel ~= nil then
+            modelLabel:setX(PAD)
+            modelLabel:setY(y + 3)
+            modelLabel:setVisible(true)
+        end
+        self.modelCombo:setVisible(true)
+        self.modelCombo:setX(PAD + LABEL_W)
+        self.modelCombo:setY(y)
+        self.modelCombo:setWidth(uniformComboW)
+        self.modelCombo:setHeight(BTN_H)
+        self.modelCombo.openUpwards = y > self.height * 0.55
+        y = y + BTN_H + 3
+
+        local function sliderRow(key, slider, box, reset)
+            local label = self.labels[key]
+            if label ~= nil then
+                label:setX(PAD)
+                label:setY(y + 3)
+                label:setVisible(true)
+            end
+            slider:setVisible(true)
+            slider:setX(PAD + LABEL_W)
+            slider:setY(y + math.floor((rowH - SLIDER_H) / 2))
+            slider:setWidth(sliderW)
+            slider:setHeight(SLIDER_H)
+            local boxX = PAD + LABEL_W + sliderW + gap
+            box:setVisible(true)
+            box:setX(boxX)
+            box:setY(y + math.floor((rowH - BTN_H) / 2))
+            box:setWidth(entryW)
+            box:setHeight(BTN_H)
+            reset:setVisible(true)
+            reset:setX(boxX + entryW + gap)
+            reset:setY(y + math.floor((rowH - BTN_H) / 2))
+            reset:setWidth(resetW)
+            reset:setHeight(BTN_H)
+            y = y + rowH + 3
+        end
+
+        sliderRow("sizeShape", self.sizeSliders.shape, self.sizeEntries.shape, self.sizeShapeReset)
+        sliderRow("sizeMuscle", self.sizeSliders.muscle, self.sizeEntries.muscle, self.sizeMuscleReset)
+
+        y = y + PAD + 4
+        local groupGap = 4
+        local gx = PAD
+        local gy = y
+        for i, group in ipairs(sizeMod.GROUPS) do
+            local button = self.sizeGroupButtons[i]
+            if button ~= nil then
+                local groupText = sizeLabel("SizeGroup_" .. group.id, group.id)
+                local bw = math.max(56, textW(UIFont.Small, groupText) + 16)
+                if gx > PAD and gx + bw > w - PAD - scrollW then
+                    gx = PAD
+                    gy = gy + BTN_H + groupGap
+                end
+                button:setVisible(true)
+                button:setX(gx)
+                button:setY(gy)
+                button:setWidth(bw)
+                button:setHeight(BTN_H)
+                mark(button, i == self.sizeActiveGroup)
+                gx = gx + bw + groupGap
+            end
+        end
+        y = gy + BTN_H + 4
+        if self.sizeGroupDivider ~= nil then
+            self.sizeGroupDivider:setX(PAD)
+            self.sizeGroupDivider:setY(y)
+            self.sizeGroupDivider:setWidth(w - PAD * 2 - scrollW)
+            self.sizeGroupDivider:setVisible(true)
+            y = y + 6
+        end
+
+        local activeGroup = sizeMod.GROUPS[self.sizeActiveGroup] or sizeMod.GROUPS[1]
+        if activeGroup ~= nil then
+            for _, index in ipairs(activeGroup.indexes) do
+                local entry = sizeMod.DETAILS[index]
+                if entry ~= nil then
+                    sliderRow("sizeDetail_" .. entry.id, self.sizeDetailSliders[index],
+                        self.sizeEntries.details[index], self.sizeDetailResets[index])
+                end
+            end
+        end
+
+        local maxBtnW = math.floor((controlW - gap) / 2)
+        local resetBtnW = math.max(80, textW(UIFont.Small, sizeLabel("SizeReset", "Reset size")) + 20)
+        local undoBtnW = math.max(80, textW(UIFont.Small, sizeLabel("SizeUndo", "Undo last")) + 20)
+        if resetBtnW > maxBtnW then resetBtnW = maxBtnW end
+        if undoBtnW > maxBtnW then undoBtnW = maxBtnW end
+        local btnX = PAD + LABEL_W
+        self.sizeResetBtn:setVisible(true)
+        self.sizeResetBtn:setX(btnX)
+        self.sizeResetBtn:setY(y)
+        self.sizeResetBtn:setWidth(resetBtnW)
+        self.sizeResetBtn:setHeight(BTN_H)
+        self.sizeUndoBtn:setVisible(true)
+        self.sizeUndoBtn:setX(btnX + resetBtnW + gap)
+        self.sizeUndoBtn:setY(y)
+        self.sizeUndoBtn:setWidth(undoBtnW)
+        self.sizeUndoBtn:setHeight(BTN_H)
+        self.sizeUndoBtn:setEnable(self.vsmUndo ~= nil)
+        y = y + BTN_H + 3
+    end
 
     local hairVisible = (not furry) and self.hairCombo ~= nil and self.hairColorBtn ~= nil
     if hairVisible then
@@ -2241,12 +2880,16 @@ function BridgeAppearanceForm:layout()
     end
 
     self.sectionVisible.body = true
+    self.sectionVisible.size = sizeVisible
     self.sectionVisible.hair = hairVisible
     self.sectionVisible.beard = beardVisible
     self.sectionVisible.face = faceVisible
     self.sectionVisible.details = detailsVisible
     self.sectionVisible.makeup = makeupVisible
 
+    for _, combo in ipairs(comboList) do
+        if combo ~= nil then combo:setWidth(uniformComboW) end
+    end
     self.contentH = y + PAD
     pcall(function() self:setScrollHeight(math.max(self.contentH, self.height)) end)
     pcall(function() self:setYScroll(scroll) end)
@@ -2372,7 +3015,7 @@ BridgeAppearance.Window = ISCollapsableWindow:derive("BridgeAppearanceWindow")
 BridgeAppearance.ZOOM_MIN = 0
 BridgeAppearance.ZOOM_MAX = 20
 BridgeAppearance.ZOOM_STEP = 4
-BridgeAppearance.ZOOM = { body = 0, face = 18, hair = 16, beard = 18, details = 18, makeup = 20 }
+BridgeAppearance.ZOOM = { body = 0, size = 0, face = 18, hair = 16, beard = 18, details = 18, makeup = 20 }
 
 local function zoomY(zoom)
     local z = zoom
@@ -2493,6 +3136,24 @@ function BridgeAppearance.Window:createChildren()
     self.zoomInBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.zoomInBtn)
 
+    local D = IsoDirections or {}
+    self.viewDirection = D.S
+    self.viewButtons = {}
+    local function viewButton(label, direction)
+        local button = ISButton:new(PAD, 0, 10, BTN_H, label, self,
+            function(window) window:setViewDirection(direction) end)
+        button:initialise()
+        button:instantiate()
+        button.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+        self:addChild(button)
+        self.viewButtons[#self.viewButtons + 1] = { button = button, direction = direction }
+        return button
+    end
+    self.viewFrontBtn = viewButton(tr("ViewFront"), D.S)
+    self.viewSideBtn = viewButton(tr("ViewSide"), D.E)
+    self.viewBackBtn = viewButton(tr("ViewBack"), D.N)
+    self:setViewDirection(D.S)
+
     self.applyText = tr("AppearanceApply")
     self.closeText = tr("Close")
     self.applyBtn = ISButton:new(0, 0, 10, BTN_H, self.applyText, self, BridgeAppearance.Window.onApply)
@@ -2601,15 +3262,18 @@ function BridgeAppearance.Window:layout()
         self.form:layout()
     end
 
-    local zy = th + PAD + previewH + PAD
-    self.zoomOutBtn:setX(PAD)
-    self.zoomOutBtn:setY(zy)
-    self.zoomOutBtn:setWidth(30)
-    self.zoomOutBtn:setHeight(BTN_H)
-    self.zoomInBtn:setX(PAD + 34)
-    self.zoomInBtn:setY(zy)
-    self.zoomInBtn:setWidth(30)
-    self.zoomInBtn:setHeight(BTN_H)
+    local vy = th + PAD + previewH + PAD
+    local row = { self.viewFrontBtn, self.viewSideBtn, self.viewBackBtn, self.zoomInBtn, self.zoomOutBtn }
+    local vw = math.floor((PREVIEW_W - VIEW_GAP * 4) / 5)
+    for i = 1, 5 do
+        local button = row[i]
+        if button ~= nil then
+            button:setX(PAD + (i - 1) * (vw + VIEW_GAP))
+            button:setY(vy)
+            button:setWidth(vw)
+            button:setHeight(BTN_H)
+        end
+    end
 
     local by = self.height - rh - footerH + PAD
     local applyW, closeW, saveW, delW, resetW = self:footerWidths()
@@ -2678,8 +3342,19 @@ function BridgeAppearance.Window:setZoom(zoom)
         pcall(function() self.preview:setYOffset(zoomY(zoom)) end)
         pcall(function() self.preview:setXOffset(0) end)
     end
-    if self.zoomInBtn ~= nil then self.zoomInBtn:setVisible(zoom < BridgeAppearance.ZOOM_MAX) end
-    if self.zoomOutBtn ~= nil then self.zoomOutBtn:setVisible(zoom > BridgeAppearance.ZOOM_MIN) end
+    if self.zoomInBtn ~= nil then self.zoomInBtn:setEnable(zoom < BridgeAppearance.ZOOM_MAX) end
+    if self.zoomOutBtn ~= nil then self.zoomOutBtn:setEnable(zoom > BridgeAppearance.ZOOM_MIN) end
+end
+
+function BridgeAppearance.Window:setViewDirection(direction)
+    if direction == nil then return end
+    self.viewDirection = direction
+    if self.preview ~= nil then
+        pcall(function() self.preview:setDirection(direction) end)
+    end
+    for _, entry in ipairs(self.viewButtons or {}) do
+        if entry.button ~= nil then entry.button:setEnable(entry.direction ~= direction) end
+    end
 end
 
 function BridgeAppearance.Window:applyTabZoom(key)
@@ -2716,7 +3391,7 @@ end
 
 function BridgeAppearance.Window:selectTab(which)
     local key = which
-    if key ~= "body" and key ~= "face" and key ~= "hair" and key ~= "beard"
+    if key ~= "body" and key ~= "size" and key ~= "face" and key ~= "hair" and key ~= "beard"
         and key ~= "details" and key ~= "makeup" then
         key = "body"
     end
@@ -2935,6 +3610,10 @@ function BridgeAppearance.Window:onApply()
         local worn = BridgeAppearance.furSpeciesOf(Bridge.body)
         if c.fur ~= worn then pcall(function() BridgeAppearance.setFur(c.fur) end) end
     end
+    if self.form ~= nil and self.form.sizeOn == true and c.vsmBody ~= nil
+        and not BridgeAppearance.furrySelected() then
+        pcall(function() Bridge.setVsmBody(c.vsmBody) end)
+    end
     if BridgeLooks ~= nil then BridgeLooks.remember(self:selectedLook()) end
 end
 
@@ -3033,6 +3712,9 @@ function BridgeAppearance.open(tab)
     c.beardColor = BridgeData.beardColorOf(BridgeAppearance.uiStore())
     c.fur = BridgeAppearance.furOn() and BridgeAppearance.furSpeciesOf(Bridge.body) or nil
     c.voice = BridgeData.voiceOf(BridgeAppearance.uiStore())
+    local compat = sizeCompat()
+    c.vsmBody = compat ~= nil and compat.profileOf(Bridge.store) or nil
+    if c.vsmBody ~= nil then c.vsmBody = compat.copyProfile(c.vsmBody) end
 
     local sw, sh = 800, 600
     pcall(function() sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight() end)

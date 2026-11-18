@@ -846,6 +846,209 @@ function BridgeWorkSelect.doorsIn(b, mode)
     return list
 end
 
+function BridgeWorkSelect.troughsIn(b)
+    local out = {}
+    if type(b) ~= "table" then return out end
+    if CFeedingTroughSystem == nil or CFeedingTroughSystem.instance == nil then return out end
+    local seen = {}
+    local z = math.floor(tonumber(b.z) or 0)
+    local max = 10
+    for x = b.x1, b.x2 do
+        if #out >= max then return out end
+        for y = b.y1, b.y2 do
+            if #out >= max then return out end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+            if sq ~= nil then
+                local lua = nil
+                pcall(function() lua = CFeedingTroughSystem.instance:getLuaObjectOnSquare(sq) end)
+                if lua ~= nil then
+                    local master = nil
+                    pcall(function()
+                        local lx, ly = tonumber(lua.linkedX), tonumber(lua.linkedY)
+                        if lx ~= nil and ly ~= nil and lx > 0 and ly > 0 then
+                            local msq = getCell():getGridSquare(lx, ly, z)
+                            if msq ~= nil then
+                                master = CFeedingTroughSystem.instance:getLuaObjectOnSquare(msq)
+                            end
+                        end
+                    end)
+                    local use = master or lua
+                    if seen[use] ~= true then
+                        seen[use] = true
+                        local iso = nil
+                        pcall(function() iso = use:getIsoObject() end)
+                        if iso ~= nil then
+                            local water, maxWater = nil, nil
+                            pcall(function() water = tonumber(iso:getWater()) end)
+                            pcall(function() maxWater = tonumber(iso:getMaxWater()) end)
+                            if water == nil and use.water ~= nil then water = tonumber(use.water) end
+                            if maxWater == nil and use.maxWater ~= nil then maxWater = tonumber(use.maxWater) end
+                            local feed, maxFeed = 0, 0
+                            pcall(function() feed = iso:getCurrentFeedAmount() or 0 end)
+                            pcall(function() maxFeed = iso:getMaxFeed() or 0 end)
+                            local lowWater = maxWater ~= nil and maxWater > 0
+                                and water ~= nil and water < maxWater * 0.5
+                            local lowFeed = maxFeed ~= nil and maxFeed > 0 and feed < maxFeed * 0.5
+                            if lowWater or lowFeed then
+                                out[#out + 1] = {
+                                    x = tonumber(use.x) or x,
+                                    y = tonumber(use.y) or y,
+                                    z = tonumber(use.z) or z,
+                                    trough = iso,
+                                    lua = use,
+                                }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+BridgeWorkSelect.MAX_HUTCHES = 10
+
+function BridgeWorkSelect.hutchMaster(h)
+    if h == nil then return nil end
+    local m = h
+    pcall(function()
+        local up = h:getHutch()
+        if up ~= nil then m = up end
+    end)
+    return m
+end
+
+function BridgeWorkSelect.hutchInfo(h)
+    local m = BridgeWorkSelect.hutchMaster(h)
+    if m == nil then return nil end
+    local info = { hutch = m, eggs = 0, fert = 0, take = 0, eggTypes = {}, floorDirt = 0, nestDirt = 0 }
+    pcall(function() info.floorDirt = tonumber(m:getHutchDirt()) or 0 end)
+    pcall(function() info.nestDirt = tonumber(m:getNestBoxDirt()) or 0 end)
+    local maxNest = nil
+    pcall(function() maxNest = tonumber(m:getMaxNestBox()) end)
+    local entries = {}
+    if maxNest ~= nil and maxNest >= 0 then
+        for i = 0, maxNest do
+            local animal = nil
+            pcall(function() animal = m:getAnimalInNestBox(i) end)
+            if animal == nil then
+                local nest = nil
+                pcall(function() nest = m:getNestBox(i) end)
+                if nest ~= nil then
+                    local n = 0
+                    pcall(function() n = tonumber(nest:getEggsNb()) or 0 end)
+                    for j = n - 1, 0, -1 do
+                        local egg = nil
+                        local read = pcall(function() egg = nest:getEgg(j) end)
+                        if read and egg ~= nil then
+                            local fert = nil
+                            pcall(function() fert = egg:isFertilized() == true end)
+                            local full = nil
+                            pcall(function() full = egg:getFullType() end)
+                            entries[#entries + 1] = { fert = fert == true, nest = nest, index = j, type = full }
+                            if fert == true then
+                                info.fert = info.fert + 1
+                            else
+                                info.eggs = info.eggs + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local cap = 5
+    if BridgeData ~= nil and type(BridgeData.hutchFertCap) == "function" then
+        cap = BridgeData.hutchFertCap(Bridge.store)
+    end
+    local plan = {}
+    if BridgeData ~= nil and type(BridgeData.hutchEggPlan) == "function" then
+        plan = BridgeData.hutchEggPlan(entries, cap)
+    end
+    info.take = #plan
+    for i = 1, #plan do
+        local full = plan[i].type
+        if full ~= nil then info.eggTypes[full] = true end
+    end
+    info.needsEggs = info.take > 0
+    local threshold = (BridgeTask ~= nil and BridgeTask.HUTCH_DIRT) or 10
+    info.needsNest = info.nestDirt >= threshold
+    info.needsFloor = info.floorDirt >= threshold
+    info.needsWork = info.needsEggs or info.needsNest or info.needsFloor
+    return info
+end
+
+function BridgeWorkSelect.hutchTarget(h)
+    local m = BridgeWorkSelect.hutchMaster(h)
+    if m == nil then return nil end
+    local x, y, z = nil, nil, nil
+    pcall(function() x, y, z = m:getX(), m:getY(), m:getZ() end)
+    if x == nil or y == nil or z == nil then return nil end
+    local t = { x = x, y = y, z = z, hutch = m }
+    local entry = nil
+    pcall(function() entry = m:getEntrySq() end)
+    if entry ~= nil then
+        t.entryX, t.entryY, t.entryZ = entry:getX(), entry:getY(), entry:getZ()
+    end
+    return t
+end
+
+function BridgeWorkSelect.hutchNeedsWork(h)
+    local info = BridgeWorkSelect.hutchInfo(h)
+    return info ~= nil and info.needsWork == true
+end
+
+function BridgeWorkSelect.hutchNeedsFloor(h)
+    local info = BridgeWorkSelect.hutchInfo(h)
+    return info ~= nil and info.needsFloor == true
+end
+
+function BridgeWorkSelect.hutchesIn(b)
+    local out = {}
+    if type(b) ~= "table" then return out end
+    local seen = {}
+    local z = math.floor(tonumber(b.z) or 0)
+    for x = b.x1, b.x2 do
+        if #out >= BridgeWorkSelect.MAX_HUTCHES then return out end
+        for y = b.y1, b.y2 do
+            if #out >= BridgeWorkSelect.MAX_HUTCHES then return out end
+            local sq = nil
+            pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+            if sq ~= nil then
+                local h = nil
+                pcall(function() h = sq:getHutch() end)
+                if h == nil then
+                    pcall(function()
+                        local objs = sq:getObjects()
+                        if objs == nil then return end
+                        for i = 0, objs:size() - 1 do
+                            local o = objs:get(i)
+                            if o ~= nil and instanceof(o, "IsoHutch") then h = o break end
+                        end
+                    end)
+                end
+                local m = BridgeWorkSelect.hutchMaster(h)
+                if m ~= nil then
+                    local mx, my, mz = nil, nil, nil
+                    pcall(function() mx, my, mz = m:getX(), m:getY(), m:getZ() end)
+                    local key = tostring(mx) .. "," .. tostring(my) .. "," .. tostring(mz)
+                    if seen[key] ~= true then
+                        seen[key] = true
+                        local info = BridgeWorkSelect.hutchInfo(m)
+                        if info ~= nil and info.needsWork then
+                            local t = BridgeWorkSelect.hutchTarget(m)
+                            if t ~= nil then out[#out + 1] = t end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
 function BridgeWorkSelect.isDestinationValid(sq)
     if sq == nil then return false end
     local floor = nil
@@ -915,6 +1118,53 @@ BridgeWorkSelect.kinds = {
         min = 1,
         noneSay = "JobNoDoorsClose",
     },
+    digFurrows = {
+        collect = function(b) return BridgeGardening.furrowSpots(b) end,
+        max = BridgeGardening.MAX_FURROWS,
+        maxSide = 8,
+        min = 1,
+        noneSay = "JobNoDigSpots",
+    },
+    sowSeeds = {
+        collect = function(b) return BridgeGardening.sowSpots(b) end,
+        max = BridgeGardening.MAX_SOWS,
+        maxSide = 8,
+        min = 1,
+        noneSay = "JobNoSowSpots",
+    },
+    fillTroughs = {
+        collect = function(b) return BridgeWorkSelect.troughsIn(b) end,
+        max = 10,
+        maxSide = 40,
+        min = 1,
+        noneSay = "JobNoTroughs",
+    },
+    animalCare = {
+        collect = function(b) return BridgeWorkSelect.hutchesIn(b) end,
+        max = BridgeWorkSelect.MAX_HUTCHES,
+        maxSide = 40,
+        min = 1,
+        noneSay = "JobNoHutches",
+    },
+    tendAnimals = {
+        collect = function(b)
+            local out = {}
+            if BridgeTask ~= nil and BridgeTask.HUTCHCARE_ENABLED == 1 then
+                local list = BridgeWorkSelect.hutchesIn(b)
+                for i = 1, #list do out[#out + 1] = list[i] end
+            end
+            if BridgeTask ~= nil and BridgeTask.PET_ANIMALS_ENABLED == 1
+                    and BridgeAnimalCare ~= nil and type(BridgeAnimalCare.targetsIn) == "function" then
+                local list = BridgeAnimalCare.targetsIn(b)
+                for i = 1, #list do out[#out + 1] = list[i] end
+            end
+            return out
+        end,
+        max = (BridgeWorkSelect.MAX_HUTCHES or 10) + 10,
+        maxSide = 40,
+        min = 1,
+        noneSay = "JobNoAnimals",
+    },
 }
 
 function BridgeWorkSelect.sortTargets(targets)
@@ -965,6 +1215,15 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "lootArea" and BridgeTask.LOOTING_ENABLED ~= 1 then return nil end
     if kind == "depositArea" and (BridgeTask.DEPOSIT_ENABLED ~= 1 or BridgeDeposit == nil) then return nil end
     if kind == "moveCorpses" and BridgeTask.MOVE_CORPSES_ENABLED ~= 1 then return nil end
+    if kind == "harvestCrops" and BridgeTask.HARVESTING_ENABLED ~= 1 then return nil end
+    if kind == "digFurrows" and BridgeTask.FURROWS_ENABLED ~= 1 then return nil end
+    if kind == "sowSeeds" and (BridgeTask.SOWING_ENABLED ~= 1 or BridgeGardening == nil) then return nil end
+    if kind == "fertilizePlants" and BridgeTask.FEED_PLANTS_ENABLED ~= 1 then return nil end
+    if kind == "tendCrops" and BridgeTask.TEND_ENABLED ~= 1 then return nil end
+    if kind == "fillTroughs" and BridgeTask.TROUGHS_ENABLED ~= 1 then return nil end
+    if kind == "animalCare" and BridgeTask.HUTCHCARE_ENABLED ~= 1 then return nil end
+    if kind == "tendAnimals" and BridgeTask.HUTCHCARE_ENABLED ~= 1
+            and BridgeTask.PET_ANIMALS_ENABLED ~= 1 then return nil end
     if (kind == "openDoors" or kind == "closeDoors") and BridgeTask.DOORS_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)

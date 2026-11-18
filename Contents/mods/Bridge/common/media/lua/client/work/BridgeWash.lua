@@ -121,6 +121,19 @@ local function carriedList(body, skip)
     return out
 end
 
+local carriedBody, carriedSeq, carriedGen, carriedAllCache = nil, nil, nil, nil
+local function carriedAll(body)
+    local seq = Bridge ~= nil and tonumber(Bridge.itemsChangedSeq) or 0
+    local gen = BridgeInventory ~= nil and tonumber(BridgeInventory.wornBagGen) or 0
+    if body ~= nil and carriedBody == body and carriedSeq == seq and carriedGen == gen
+            and carriedAllCache ~= nil then
+        return carriedAllCache
+    end
+    local list = carriedList(body, {})
+    carriedBody, carriedSeq, carriedGen, carriedAllCache = body, seq, gen, list
+    return list
+end
+
 local function gearList(body, scope)
     local worn = wornList(body)
     local hands = handList(body)
@@ -224,13 +237,18 @@ local function soapItem(item)
 end
 BridgeWash.soapItem = soapItem
 
+local soapBody, soapSeq, soapValue = nil, nil, nil
+
 function BridgeWash.hasSoap(body)
     if body == nil then return false end
+    local seq = Bridge ~= nil and tonumber(Bridge.itemsChangedSeq) or 0
+    if soapBody == body and soapSeq == seq and soapValue ~= nil then return soapValue end
     local found = false
     pcall(function()
         local items = body:getInventory():getAllEvalRecurse(soapItem)
         found = items ~= nil and items:size() > 0
     end)
+    soapBody, soapSeq, soapValue = body, seq, found
     return found
 end
 
@@ -367,41 +385,150 @@ function BridgeWash.waterOn(square)
 end
 
 
-function BridgeWash.waterList(body)
+function BridgeWash.isFeedingTrough(o)
+    if o == nil then return false end
+    local yes = false
+    pcall(function() yes = instanceof(o, "IsoFeedingTrough") == true end)
+    return yes
+end
+
+function BridgeWash.waterRank(o)
+    if o == nil then return 4 end
+    if type(o.getFluidContainer) ~= "function" then return 4 end
+    local fc = BridgeWash.safeCall(o, "getFluidContainer")
+    if fc == nil then return 1 end
+    local text = ""
+    local function add(s)
+        if type(s) == "string" and s ~= "" then text = text .. " " .. string.lower(s) end
+    end
+    pcall(function() add(o:getName()) end)
+    pcall(function() add(o:getType()) end)
+    pcall(function() add(o:getObjectName()) end)
+    pcall(function()
+        local spr = o:getSprite()
+        if spr ~= nil then add(spr:getName()) end
+    end)
+    local props = BridgeWash.safeCall(o, "getProperties")
+    if props ~= nil then add(BridgeWash.safeCall(props, "get", "CustomName")) end
+    if string.find(text, "well", 1, true) ~= nil then return 2 end
+    if string.find(text, "sink", 1, true) ~= nil or string.find(text, "tap", 1, true) ~= nil
+            or string.find(text, "bath", 1, true) ~= nil or string.find(text, "toilet", 1, true) ~= nil
+            or o.bridgeTap == true then
+        return 3
+    end
+    return 4
+end
+
+
+local waterListBody, waterListKey, waterListTick, waterListOut = nil, nil, nil, nil
+local WATER_LIST_TTL = 60
+local function copyWaterList(src)
+    local out = {}
+    for i = 1, #(src or {}) do out[i] = src[i] end
+    return out
+end
+
+function BridgeWash.waterList(body, centre, radius, rect)
+    local nowTick = Bridge ~= nil and tonumber(Bridge.tick) or nil
+    local key = nil
+    if body ~= nil then
+        local r = radius or RADIUS
+        local bx = math.floor(body:getX() or 0)
+        local by = math.floor(body:getY() or 0)
+        if rect ~= nil then
+            key = "r|" .. tostring(rect.x1) .. ":" .. tostring(rect.y1) .. ":"
+                .. tostring(rect.x2) .. ":" .. tostring(rect.y2) .. ":" .. tostring(rect.z)
+                .. "|" .. tostring(r)
+        else
+            local cx, cy = bx, by
+            if centre ~= nil then
+                cx = math.floor(tonumber(centre.x) or bx)
+                cy = math.floor(tonumber(centre.y) or by)
+            end
+            key = "c|" .. cx .. ":" .. cy .. "|" .. tostring(r)
+        end
+        if nowTick ~= nil and waterListBody == body and waterListKey == key
+                and waterListTick ~= nil and (nowTick - waterListTick) < WATER_LIST_TTL
+                and waterListOut ~= nil then
+            return copyWaterList(waterListOut)
+        end
+    end
     local list = {}
+    local proxies = {}
+    local ranked = centre ~= nil or rect ~= nil
     pcall(function()
         local cell = getCell()
         local bx, by, bz = math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ())
         local home = nil
         pcall(function() local sq = body:getCurrentSquare() if sq ~= nil then home = sq:getBuilding() end end)
-        for dx = -RADIUS, RADIUS do
-            for dy = -RADIUS, RADIUS do
-                local sq = cell:getGridSquare(bx + dx, by + dy, bz)
+        local r = radius or RADIUS
+        local xs, ys = {}, {}
+        if rect ~= nil then
+            for x = rect.x1, rect.x2 do xs[#xs + 1] = x end
+            for y = rect.y1, rect.y2 do ys[#ys + 1] = y end
+        else
+            local cx, cy = bx, by
+            if centre ~= nil then
+                cx = math.floor(tonumber(centre.x) or bx)
+                cy = math.floor(tonumber(centre.y) or by)
+            end
+            for d = -r, r do
+                xs[#xs + 1] = cx + d
+                ys[#ys + 1] = cy + d
+            end
+        end
+        for xi = 1, #xs do
+            for yi = 1, #ys do
+                local x, y = xs[xi], ys[yi]
+                local sq = cell:getGridSquare(x, y, bz)
                 if sq ~= nil then
                     local objects = sq:getObjects()
+                    local added = false
                     for i = 0, objects:size() - 1 do
                         local o = objects:get(i)
+                        local trough = BridgeWash.isFeedingTrough(o)
                         local wet = false
-                        pcall(function()
-                            wet = BridgeWash.isWaterObject(o) and (o:getFluidAmount() or 0) > 0
-                        end)
-                        if wet then
-                            local d = dx * dx + dy * dy
+                        if not trough then
+                            pcall(function()
+                                wet = BridgeWash.isWaterObject(o) and (o:getFluidAmount() or 0) > 0
+                            end)
+                        else
+                            added = true
+                        end
+                        if wet and not trough then
+                            local d = (x - bx) ^ 2 + (y - by) ^ 2
                             local house = nil
                             pcall(function() house = sq:getBuilding() end)
                             if house ~= home then d = d + OTHER_HOUSE end
-                            list[#list + 1] = { o = o, d = d }
-                            if BridgeWash.DEBUG or (Bridge ~= nil and Bridge.verbose == true) then
+                            list[#list + 1] = { o = o, d = d, rank = BridgeWash.waterRank(o) }
+                            added = true
+                            if not ranked and (BridgeWash.DEBUG or (Bridge ~= nil and Bridge.verbose == true)) then
                                 dbg("waterList " .. BridgeWash.objInfo(o))
                             end
                         end
+                    end
+                    if ranked and not added and BridgeWash.waterSquare(sq) then
+                        proxies[#proxies + 1] = { o = BridgeWash.waterProxy(sq), d = (x - bx) ^ 2 + (y - by) ^ 2, rank = 1 }
                     end
                 end
             end
         end
     end)
-    table.sort(list, function(a, b) return a.d < b.d end)
-    return list
+    if ranked and #list == 0 then
+        for i = 1, #proxies do list[#list + 1] = proxies[i] end
+    end
+    if ranked then
+        table.sort(list, function(a, b)
+            if a.rank ~= b.rank then return a.rank < b.rank end
+            return a.d < b.d
+        end)
+    else
+        table.sort(list, function(a, b) return a.d < b.d end)
+    end
+    if body ~= nil and nowTick ~= nil and key ~= nil then
+        waterListBody, waterListKey, waterListTick, waterListOut = body, key, nowTick, list
+    end
+    return copyWaterList(list)
 end
 
 
@@ -438,8 +565,8 @@ function BridgeWash.fillables(body)
     local skip = {}
     for _, it in ipairs(wornList(body)) do skip[it] = true end
     pcall(function()
-        for _, it in ipairs(carriedList(body, skip)) do
-            if BridgeWash.isFillable(it) then out[#out + 1] = it end
+        for _, it in ipairs(carriedAll(body)) do
+            if not skip[it] and BridgeWash.isFillable(it) then out[#out + 1] = it end
         end
     end)
     return out
@@ -474,13 +601,15 @@ function BridgeWash.emptyables(body)
     local skip = {}
     for _, it in ipairs(wornList(body)) do skip[it] = true end
     pcall(function()
-        for _, it in ipairs(carriedList(body, skip)) do
-            local ok = false
-            pcall(function()
-                local fc = it:getFluidContainer()
-                ok = fc ~= nil and fc:getAmount() > 0
-            end)
-            if ok then out[#out + 1] = it end
+        for _, it in ipairs(carriedAll(body)) do
+            if not skip[it] then
+                local ok = false
+                pcall(function()
+                    local fc = it:getFluidContainer()
+                    ok = fc ~= nil and fc:getAmount() > 0
+                end)
+                if ok then out[#out + 1] = it end
+            end
         end
     end)
     return out

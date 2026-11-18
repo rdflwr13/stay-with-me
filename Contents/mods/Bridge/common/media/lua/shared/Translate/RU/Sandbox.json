@@ -247,7 +247,7 @@
     "Sandbox_StayWithMe_SpeechLanguage_Values_option8": "Русский",
     "Sandbox_StayWithMe_SpeechLanguage_Values_option9": "Мод перевода (авто)",
     "Sandbox_StayWithMe_BreathingVolume": "Громкость дыхания",
-    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Громкость дыхания компаньона, когда она запыхалась. «Выкл» отключает его. «Тихо» на 50% тише обычного. «Громко» на 50% громче. По умолчанию: Обычно.",
+    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Громкость дыхания компаньона, когда она запыхалась. «Выкл» отключает его. «Тихо» на 50%% тише обычного. «Громко» на 50%% громче. По умолчанию: Обычно.",
     "Sandbox_StayWithMe_BreathingVolume_Values_option1": "Выкл",
     "Sandbox_StayWithMe_BreathingVolume_Values_option2": "Тихо",
     "Sandbox_StayWithMe_BreathingVolume_Values_option3": "Обычно (по умолчанию)",

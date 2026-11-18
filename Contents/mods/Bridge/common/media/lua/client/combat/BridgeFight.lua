@@ -1680,12 +1680,12 @@ BridgeFight.sectorNCrowd = 0
 BridgeFight.oppositeCrowd = 0
 BridgeFight.gunShoveSwing = false
 
-local function footPressImpl(z)
+function FOOT.footPressImpl(z)
     if type(z.getTarget) ~= "function" then return nil end
     return z:getTarget()
 end
 
-local function footBodyOk(z, body, bz, red)
+function FOOT.footBodyOk(z, body, bz, red)
     if not (zsAlive(z) and zsHealth(z)) then return false end
     local zx, zy, zz = nil, nil, nil
     if BridgeZScan ~= nil and type(BridgeZScan.pos) == "function" then
@@ -1737,7 +1737,7 @@ BridgeFight.footState.add = function(st, z, zx, zy)
     out.n = out.n + 1
     local pressing = d <= FOOT.PRESS
     if not pressing then
-        local called, target = pcall(footPressImpl, z)
+        local called, target = pcall(FOOT.footPressImpl, z)
         pressing = called and target == st.body
     end
     if pressing and not downed then out.pressN = out.pressN + 1 end
@@ -1814,7 +1814,7 @@ local function footScan(body, red)
         for i = 0, listSize - 1 do
             local z = list:get(i)
             if z ~= nil and z ~= body then
-                local called, ok, zx, zy = pcall(footBodyOk, z, body, bz, red)
+                local called, ok, zx, zy = pcall(FOOT.footBodyOk, z, body, bz, red)
                 if called and ok then BridgeFight.footState.add(st, z, zx, zy) end
             end
         end
@@ -1880,7 +1880,7 @@ local function footScan(body, red)
 end
 BridgeFight.scan = footScan
 
-local function footBodyClear(body, x, y, z, skip, gap)
+function FOOT.footBodyClear(body, x, y, z, skip, gap)
     local ok = false
     local lim = gap or FOOT.GAP
     pcall(function()
@@ -1913,23 +1913,23 @@ local function footBodyClear(body, x, y, z, skip, gap)
     return ok
 end
 
-local function footClear(body, x, y, z, skip, gap)
+function FOOT.footClear(body, x, y, z, skip, gap)
     if not BridgeMove.lineClear(body, x, y, z) then return false end
-    return footBodyClear(body, x, y, z, skip, gap)
+    return FOOT.footBodyClear(body, x, y, z, skip, gap)
 end
 
-BridgeFight.clearAt = footClear
+BridgeFight.clearAt = FOOT.footClear
 
-local function footPoint(body, dx, dy, len)
+function FOOT.footPoint(body, dx, dy, len)
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
     local size = math.sqrt(dx * dx + dy * dy)
     if size < 0.001 then return nil end
     local x, y = bx + (dx / size) * len, by + (dy / size) * len
-    if not footClear(body, x, y, bz) then return nil end
+    if not FOOT.footClear(body, x, y, bz) then return nil end
     return x, y
 end
 
-local function footLeash(mode)
+function FOOT.footLeash(mode)
     local leash = tonumber(mode and mode.leash) or 999
     if BridgeFight.guardOnly and leash > 3.0 then leash = 3.0 end
     return leash
@@ -1974,11 +1974,11 @@ local function swingDrift(body, red, t, mode)
     if reason == nil then
         x = body:getX() + dx * drift
         y = body:getY() + dy * drift
-        if not footClear(body, x, y, body:getZ(), t, FOOT.DRIFT_GAP) then
+        if not FOOT.footClear(body, x, y, body:getZ(), t, FOOT.DRIFT_GAP) then
             reason = "clear"
         elseif red ~= nil then
             local rx, ry = x - red:getX(), y - red:getY()
-            local leash = footLeash(mode)
+            local leash = FOOT.footLeash(mode)
             if rx * rx + ry * ry > leash * leash then reason = "leash" end
         end
     end
@@ -1998,17 +1998,17 @@ local function swingDrift(body, red, t, mode)
     end
 end
 
-local function footCandidate(body, red, mode, dx, dy, want, how, leashMult)
+function FOOT.footCandidate(body, red, mode, dx, dy, want, how, leashMult)
     local size = math.sqrt(dx * dx + dy * dy)
     if size < 0.001 then return nil end
     dx, dy = dx / size, dy / size
     local rx, ry = red:getX(), red:getY()
-    local leash = footLeash(mode)
+    local leash = FOOT.footLeash(mode)
     if leashMult ~= nil then leash = leash * leashMult end
     local scales = { 1.0, 0.6, 0.35 }
     for i = 1, #scales do
         local len = want * scales[i]
-        local x, y = footPoint(body, dx, dy, len)
+        local x, y = FOOT.footPoint(body, dx, dy, len)
         if x ~= nil then
             local ddx, ddy = x - rx, y - ry
             if ddx * ddx + ddy * ddy <= leash * leash then
@@ -2019,7 +2019,7 @@ local function footCandidate(body, red, mode, dx, dy, want, how, leashMult)
     return nil
 end
 
-local function footBump(body)
+function FOOT.footBump(body)
     local v, rifle = "", ""
     pcall(function()
         v = tostring(body:getVariableString("NotAloneWeapon") or "")
@@ -2033,7 +2033,7 @@ local function footBump(body)
     return "NA_Backstep1H"
 end
 
-local function footEnd(body)
+function FOOT.footEnd(body)
     if body == nil and Bridge ~= nil then body = Bridge.body end
     local bump = BridgeFight.stepBump
     if body ~= nil and bump ~= nil then
@@ -2058,13 +2058,13 @@ local function footEnd(body)
     BridgeFight.stepReadyAt = Bridge.time + FOOT.COOLDOWN
 end
 
-local function footReset(body)
-    footEnd(body)
+function FOOT.footReset(body)
+    FOOT.footEnd(body)
     BridgeFight.stepStallAt = nil
     BridgeFight.stepReadyAt = 0
 end
 
-local function escapeReset()
+function FOOT.escapeReset()
     local hadStep = BridgeFight.stepEscape
     BridgeFight.escapeOn = false
     BridgeFight.escapeClearAt = nil
@@ -2086,10 +2086,10 @@ local function escapeReset()
     BridgeFight.fleePathAt, BridgeFight.fleePathX, BridgeFight.fleePathY = nil, nil, nil
     BridgeFight.escapePathAt = nil
     BridgeFight.escapePathX, BridgeFight.escapePathY = nil, nil
-    if hadStep then footEnd(nil) end
+    if hadStep then FOOT.footEnd(nil) end
 end
 
-local function footFinish(body, red, why)
+function FOOT.footFinish(body, red, why)
     local wasEscape = BridgeFight.stepEscape
     local before = BridgeFight.stepLastCrowdDist
     if before ~= nil and not wasEscape then
@@ -2104,10 +2104,10 @@ local function footFinish(body, red, why)
             tostring(why), before, after ~= nil and string.format("%.2f", after) or "?", after ~= nil and (after - before) or 0))
     end
     if wasEscape then vlog("escape burst end: " .. tostring(why)) end
-    footEnd(body)
+    FOOT.footEnd(body)
 end
 
-local function footStart(body, red, t, mode, range, opts, scan)
+function FOOT.footStart(body, red, t, mode, range, opts, scan)
     local gun = opts ~= nil and opts.gun == true
     if BridgeFight.state == "swing" then return false end
     if Bridge.time < (BridgeFight.stepReadyAt or 0) then return false end
@@ -2161,7 +2161,7 @@ local function footStart(body, red, t, mode, range, opts, scan)
         else
             local ex, ey = nil, nil
             if BridgeFight.escapePoint ~= nil then
-                local leash = footLeash(mode)
+                local leash = FOOT.footLeash(mode)
                 if opts.leashMult ~= nil then leash = leash * opts.leashMult end
                 pcall(function()
                     ex, ey = BridgeFight.escapePoint(body, red, S, mode,
@@ -2189,7 +2189,7 @@ local function footStart(body, red, t, mode, range, opts, scan)
     end
 
     local leashMult = gun and opts.leashMult or nil
-    local x, y, how = footCandidate(body, red, mode, dirX, dirY, step, "push", leashMult)
+    local x, y, how = FOOT.footCandidate(body, red, mode, dirX, dirY, step, "push", leashMult)
     if x == nil and size > 0.001 then
         local px, py = -dirY / size, dirX / size
         if S.cx ~= nil then
@@ -2201,14 +2201,14 @@ local function footStart(body, red, t, mode, range, opts, scan)
             local d2 = (bx - px - t:getX()) ^ 2 + (by - py - t:getY()) ^ 2
             if d2 > d1 then px, py = -px, -py end
         end
-        x, y, how = footCandidate(body, red, mode, px, py, step, "side", leashMult)
+        x, y, how = FOOT.footCandidate(body, red, mode, px, py, step, "side", leashMult)
     end
     if x == nil then
         local bestX, bestY, bestDot = nil, nil, nil
         for i = 0, 7 do
             local a = i * math.pi / 4
             local ox, oy = math.cos(a), math.sin(a)
-            local px, py = footPoint(body, ox, oy, FOOT.OUT)
+            local px, py = FOOT.footPoint(body, ox, oy, FOOT.OUT)
             if px ~= nil then
                 local fits = true
                 if range ~= nil and t ~= nil then
@@ -2224,7 +2224,7 @@ local function footStart(body, red, t, mode, range, opts, scan)
         end
         if bestX ~= nil then
             local rx, ry = red:getX(), red:getY()
-            local leash = footLeash(mode)
+            local leash = FOOT.footLeash(mode)
             if leashMult ~= nil then leash = leash * leashMult end
             local ddx, ddy = bestX - rx, bestY - ry
             if ddx * ddx + ddy * ddy <= leash * leash then
@@ -2239,7 +2239,7 @@ local function footStart(body, red, t, mode, range, opts, scan)
     end
 
     local len = math.sqrt((x - bx) ^ 2 + (y - by) ^ 2)
-    local bump = footBump(body)
+    local bump = FOOT.footBump(body)
     local threat = S.threat or t
     BridgeFight.state = "step"
     BridgeFight.stepOwner = gun and "gun" or "melee"
@@ -2258,7 +2258,7 @@ local function footStart(body, red, t, mode, range, opts, scan)
     return true
 end
 
-local function footTick(body, red, t, mode, range, opts, scan)
+function FOOT.footTick(body, red, t, mode, range, opts, scan)
     local gun = opts ~= nil and opts.gun == true
     if BridgeFight.FOOTWORK_ON ~= true and not BridgeFight.stepEscape and not gun then return false end
     if BridgeFight.state == "step" then
@@ -2272,34 +2272,34 @@ local function footTick(body, red, t, mode, range, opts, scan)
         end
         if not valid then
             local escape = BridgeFight.stepEscape
-            footFinish(body, red, "target lost")
-            if escape then escapeReset() end
+            FOOT.footFinish(body, red, "target lost")
+            if escape then FOOT.escapeReset() end
             return false
         end
-        local leash = footLeash(mode)
+        local leash = FOOT.footLeash(mode)
         if gun and opts.leashMult ~= nil then leash = leash * opts.leashMult end
         if dist(body, red) > leash then
             local escape = BridgeFight.stepEscape
-            footFinish(body, red, "leash")
-            if escape then escapeReset() end
+            FOOT.footFinish(body, red, "leash")
+            if escape then FOOT.escapeReset() end
             return false
         end
         if gun and opts.stopAt ~= nil and dist(body, t) >= opts.stopAt then
-            footFinish(body, red, "satisfied")
+            FOOT.footFinish(body, red, "satisfied")
             return false
         end
         local goalX, goalY, goalZ = BridgeFight.stepGoalX, BridgeFight.stepGoalY, BridgeFight.stepGoalZ
         if goalX == nil then
-            footFinish(body, red, "no goal")
+            FOOT.footFinish(body, red, "no goal")
             return false
         end
         local dx, dy = goalX - body:getX(), goalY - body:getY()
         if dx * dx + dy * dy <= FOOT.ARRIVE * FOOT.ARRIVE then
-            footFinish(body, red, "arrived")
+            FOOT.footFinish(body, red, "arrived")
             return false
         end
         if Bridge.time >= (BridgeFight.stepUntil or 0) then
-            footFinish(body, red, "timeout")
+            FOOT.footFinish(body, red, "timeout")
             return false
         end
         if BridgeFight.stepEscape and BridgeFight.stepPath then
@@ -2311,7 +2311,7 @@ local function footTick(body, red, t, mode, range, opts, scan)
             end
             if BridgeFight.escapePathAt ~= nil and Bridge.time - BridgeFight.escapePathAt >= 30 and moved < 0.4 then
                 BridgeFight.escapeCornered = true
-                footFinish(body, red, "escape path blocked")
+                FOOT.footFinish(body, red, "escape path blocked")
                 return false
             end
             if moved >= 0.4 then
@@ -2324,9 +2324,9 @@ local function footTick(body, red, t, mode, range, opts, scan)
         end
         local bump = BridgeFight.stepBump
         local ok = BridgeMove.goStraight(body, goalX, goalY, goalZ, false,
-            function(b, x, y, zz) return footClear(b, x, y, zz) end, true)
+            function(b, x, y, zz) return FOOT.footClear(b, x, y, zz) end, true)
         if not ok then
-            footFinish(body, red, "blocked")
+            FOOT.footFinish(body, red, "blocked")
             return false
         end
         pcall(function() body:setBumpType(bump) end)
@@ -2337,7 +2337,7 @@ local function footTick(body, red, t, mode, range, opts, scan)
         BridgeMove.walkType = "Walk"
         return true
     end
-    return footStart(body, red, t, mode, range, opts, scan)
+    return FOOT.footStart(body, red, t, mode, range, opts, scan)
 end
 
 
@@ -2345,17 +2345,17 @@ function BridgeFight.footStepGun(body, red, t, mode, opts)
     if BridgeFight.state == "swing" then return false end
     local use = opts or {}
     use.gun = true
-    return footTick(body, red, t, mode, 0, use, use.scan) == true
+    return FOOT.footTick(body, red, t, mode, 0, use, use.scan) == true
 end
 
 
 function BridgeFight.endGunStep(body)
     if BridgeFight.stepOwner ~= "gun" then return false end
-    footEnd(body)
+    FOOT.footEnd(body)
     return true
 end
 
-local function escapePoint(body, red, S, mode, radii, leash)
+function FOOT.escapePoint(body, red, S, mode, radii, leash)
     local gx, gy = S.cx, S.cy
     if gx == nil then return nil end
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
@@ -2373,7 +2373,7 @@ local function escapePoint(body, red, S, mode, radii, leash)
         end
     end
     local nowDist = math.sqrt((bx - gx) ^ 2 + (by - gy) ^ 2)
-    local lim = leash or footLeash(mode)
+    local lim = leash or FOOT.footLeash(mode)
     local rx, ry = red:getX(), red:getY()
     local best, bestScore = nil, nil
     local farBest, farScore = nil, nil
@@ -2382,7 +2382,7 @@ local function escapePoint(body, red, S, mode, radii, leash)
             local a = i * math.pi / 4
             local dx, dy = math.cos(a), math.sin(a)
             local x, y = bx + dx * radius, by + dy * radius
-            if footClear(body, x, y, bz) then
+            if FOOT.footClear(body, x, y, bz) then
                 local lx, ly = x - rx, y - ry
                 if lx * lx + ly * ly <= lim * lim then
                     local nd = math.sqrt((x - gx) ^ 2 + (y - gy) ^ 2)
@@ -2401,9 +2401,9 @@ local function escapePoint(body, red, S, mode, radii, leash)
     if pick == nil then return nil end
     return pick.x, pick.y, pick.score
 end
-BridgeFight.escapePoint = escapePoint
+BridgeFight.escapePoint = FOOT.escapePoint
 
-local function nearestInReach(body, red, range, S)
+function FOOT.nearestInReach(body, red, range, S)
     S = S or footScan(body, red)
     local z = S.threat
     if z ~= nil and S.threatD <= range + 0.1 then
@@ -2420,10 +2420,10 @@ local function nearestInReach(body, red, range, S)
     return nil
 end
 
-local function escapeTick(body, red, t, mode, range, S)
+function FOOT.escapeTick(body, red, t, mode, range, S)
     if BridgeFight.FOOT_ESCAPE_ON ~= true then
-        if BridgeFight.stepEscape then footEnd(body) end
-        escapeReset()
+        if BridgeFight.stepEscape then FOOT.footEnd(body) end
+        FOOT.escapeReset()
         return false
     end
     if BridgeFight.state == "swing" and not BridgeFight.escapeOn then return false end
@@ -2436,8 +2436,8 @@ local function escapeTick(body, red, t, mode, range, S)
         if g25 < 2 then
             if BridgeFight.escapeClearAt == nil then BridgeFight.escapeClearAt = Bridge.time end
             if Bridge.time - BridgeFight.escapeClearAt >= 30 then
-                escapeReset()
-                footEnd(body)
+                FOOT.escapeReset()
+                FOOT.footEnd(body)
                 BridgeFight.info = "escape clear"
                 vlog(string.format("escape clear: g2=%d g25=%d", g2, g25))
                 return false
@@ -2450,7 +2450,7 @@ local function escapeTick(body, red, t, mode, range, S)
     if BridgeFight.state == "swing" then return false end
 
     if BridgeFight.state == "step" and BridgeFight.stepEscape then
-        if footTick(body, red, t, mode, range, nil, S) then return true end
+        if FOOT.footTick(body, red, t, mode, range, nil, S) then return true end
     end
 
     BridgeFight.swingBack = false
@@ -2464,7 +2464,7 @@ local function escapeTick(body, red, t, mode, range, S)
 
     local near = nil
     if BridgeFight.FOOT_SWING_BACK == true then
-        near = nearestInReach(body, red, range, S)
+        near = FOOT.nearestInReach(body, red, range, S)
     end
     local pressed = (S.pressN or 0) >= 2
     local flankClose = (S.threatD or 999) <= (range or 0) - 0.15
@@ -2475,7 +2475,7 @@ local function escapeTick(body, red, t, mode, range, S)
             tostring(BridgeFight.state), t ~= nil and tostring(t:getActionStateName()) or "nil"))
     end
     if near ~= nil and pressed and (S.threatD or 999) <= (range or 0) - 0.15 then
-        local sx, sy = escapePoint(body, red, S, mode)
+        local sx, sy = FOOT.escapePoint(body, red, S, mode)
         local bx, by, bz = body:getX(), body:getY(), body:getZ()
         local ddx, ddy, src = nil, nil, "point"
         if sx ~= nil then
@@ -2517,7 +2517,7 @@ local function escapeTick(body, red, t, mode, range, S)
         return false
     end
 
-    local px, py, score = escapePoint(body, red, S, mode)
+    local px, py, score = FOOT.escapePoint(body, red, S, mode)
     if px == nil then
         BridgeFight.escapeCornered = true
         BridgeFight.info = string.format("escape cornered %d", g2)
@@ -2548,7 +2548,7 @@ local function escapeTick(body, red, t, mode, range, S)
     BridgeFight.escapePathAt = Bridge.time
     BridgeFight.escapePathX, BridgeFight.escapePathY = bx, by
     local threat = S.threat or t
-    local bump = footBump(body)
+    local bump = FOOT.footBump(body)
     BridgeFight.stepBump = bump
     BridgeFight.stepThreatX = threat ~= nil and threat:getX() or nil
     BridgeFight.stepThreatY = threat ~= nil and threat:getY() or nil
@@ -2556,9 +2556,9 @@ local function escapeTick(body, red, t, mode, range, S)
 
     pcall(function() BridgeMove.stopPath(body) end)
 
-    if footClear(body, gx, gy, bz) then
+    if FOOT.footClear(body, gx, gy, bz) then
         local ok = BridgeMove.goStraight(body, gx, gy, bz, false,
-            function(b, x, y, zz) return footClear(b, x, y, zz) end, true)
+            function(b, x, y, zz) return FOOT.footClear(b, x, y, zz) end, true)
         if ok then
             pcall(function() body:setBumpType(bump) end)
             pcall(function() body:setAnimatingBackwards(true) end)
@@ -2579,7 +2579,7 @@ local function escapeTick(body, red, t, mode, range, S)
     return true
 end
 
-local function fleeTick(body, red, mode, S, gunMode)
+function FOOT.fleeTick(body, red, mode, S, gunMode)
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
     local sectors = gunMode == true and (S.sectorNGun or 0) or (S.sectorN or 0)
     local nearN = S.nearN or 0
@@ -2664,7 +2664,7 @@ local function fleeTick(body, red, mode, S, gunMode)
         if playerSafe then
             gx, gy = red:getX(), red:getY()
         else
-            gx, gy = escapePoint(body, red, S, mode,
+            gx, gy = FOOT.escapePoint(body, red, S, mode,
                 { FLEE.BURST_MIN + 1.0, FLEE.BURST_MAX }, mode.leash * FLEE.LEASH_MULT)
         end
         if gx == nil then
@@ -2672,7 +2672,7 @@ local function fleeTick(body, red, mode, S, gunMode)
             for i = 0, 7 do
                 local a = i * math.pi / 4
                 local px, py = bx + math.cos(a) * FLEE.BURST_MIN, by + math.sin(a) * FLEE.BURST_MIN
-                if footClear(body, px, py, bz) then
+                if FOOT.footClear(body, px, py, bz) then
                     local dd = 0
                     if S.cx ~= nil then
                         dd = math.sqrt((px - S.cx) * (px - S.cx) + (py - S.cy) * (py - S.cy))
@@ -2697,13 +2697,13 @@ local function fleeTick(body, red, mode, S, gunMode)
     end
 
     local goalZ = BridgeFight.fleeGoalZ or bz
-    local straight = footClear(body, gx, gy, goalZ)
+    local straight = FOOT.footClear(body, gx, gy, goalZ)
     pcall(function() body:faceLocationF(gx, gy) end)
     local ran = false
     if straight then
         BridgeMove.walkType = "Run"
         ran = BridgeMove.goStraight(body, gx, gy, goalZ, true,
-            function(b, x, y, z) return footClear(b, x, y, z) end, false) == true
+            function(b, x, y, z) return FOOT.footClear(b, x, y, z) end, false) == true
     end
     if not ran then
         BridgeMove.walkType = "Walk"
@@ -2731,15 +2731,15 @@ function BridgeFight.reset(body)
     BridgeFight.flee = false
     BridgeFight.fleeUntil = 0
     BridgeFight.gunShoveSwing = false
-    footReset(body)
-    escapeReset()
+    FOOT.footReset(body)
+    FOOT.escapeReset()
     if BridgeGunfight ~= nil and BridgeGunfight.reset ~= nil then pcall(BridgeGunfight.reset) end
 end
 
 
 
 
-local function watchCrawlers(body, red)
+function FOOT.watchCrawlers(body, red)
     if not (Bridge.verbose and Bridge.every(60, 20)) then return end
     pcall(function()
         local list = getCell():getZombieList()
@@ -3083,9 +3083,9 @@ function BridgeFight.releaseForFollow(body, why)
     BridgeFight.swingBackFlank = false
     BridgeFight.gunShoveSwing = false
     BridgeFight.escapeScan = nil
-    escapeReset()
+    FOOT.escapeReset()
     if body ~= nil then
-        pcall(footEnd, body)
+        pcall(FOOT.footEnd, body)
         if BridgeMove ~= nil and not wasHold
                 and BridgeMove.pendingClimb == nil and BridgeMove.cross == nil then
             pcall(function() BridgeMove.stopPath(body) end)
@@ -3210,7 +3210,7 @@ function BridgeFight.update(body)
     if BridgeFight.stepBump ~= nil
             and (BridgeFight.state ~= "step"
                 or (BridgeFight.FOOTWORK_ON ~= true and BridgeFight.stepOwner ~= "gun")) then
-        pcall(footEnd, body)
+        pcall(FOOT.footEnd, body)
     end
 
     if BridgeData.combatOf(Bridge.store) == "backup" then
@@ -3239,7 +3239,7 @@ function BridgeFight.update(body)
         local panic = gunMode and (S.g2 or 0) >= 2 and (S.pressN or 0) >= 2
         if not mode.passive then
             if BridgeFight.flee then
-                return fleeTick(body, red, mode, S, gunMode)
+                return FOOT.fleeTick(body, red, mode, S, gunMode)
             end
             local reloadFlee = BridgeGunfight ~= nil and BridgeGunfight.reloadFlee == true
             if not BridgeFight.gunShoveSwing and not reloadFlee
@@ -3249,8 +3249,8 @@ function BridgeFight.update(body)
                 if BridgeGunfight ~= nil and BridgeGunfight.isAssigned(body) then
                     pcall(function() BridgeGunfight.interruptForFlee(body) end)
                 end
-                escapeReset()
-                footEnd(body)
+                FOOT.escapeReset()
+                FOOT.footEnd(body)
                 pcall(function() BridgeMove.stopPath(body) end)
                 BridgeFight.flee = true
                 BridgeFight.fleeClearAt = nil
@@ -3303,7 +3303,7 @@ function BridgeFight.update(body)
         end
         if BridgeFight.state == "gun" then BridgeFight.state = "idle" end
     end
-    watchCrawlers(body, red)
+    FOOT.watchCrawlers(body, red)
 
     if mode.passive then
         BridgeFight.target = nil
@@ -3328,7 +3328,7 @@ function BridgeFight.update(body)
         end
         BridgeFight.target = nil
         BridgeFight.state = "idle"
-        escapeReset()
+        FOOT.escapeReset()
         return false
     end
 
@@ -3465,7 +3465,7 @@ function BridgeFight.update(body)
         if not ok then BridgeFight.info = "pick error: " .. tostring(z); return false end
         BridgeFight.target = z
         if z == nil then
-            if BridgeFight.escapeOn then escapeReset() end
+            if BridgeFight.escapeOn then FOOT.escapeReset() end
             return false
         end
         BridgeFight.info = "target picked"
@@ -3503,14 +3503,14 @@ function BridgeFight.update(body)
     local range = item:getMaxRange()
     local d = dist(body, t)
 
-    if escapeTick(body, red, t, mode, range, S) then return true end
+    if FOOT.escapeTick(body, red, t, mode, range, S) then return true end
 
     if BridgeFight.state == "step" then
-        if footTick(body, red, t, mode, range, nil, S) then return true end
+        if FOOT.footTick(body, red, t, mode, range, nil, S) then return true end
     end
 
     if BridgeFight.escapeOn then
-        local near = nearestInReach(body, red, range, S)
+        local near = FOOT.nearestInReach(body, red, range, S)
         if near ~= nil then
             if near ~= t then
                 BridgeFight.target = near
@@ -3571,7 +3571,7 @@ function BridgeFight.update(body)
                 t:getHealth(), Bridge.time + BLACKLIST_TICKS))
             BridgeFight.target = nil
             BridgeFight.state = "idle"
-            escapeReset()
+            FOOT.escapeReset()
             BridgeMove.stopPath(body)
             return false
         end
@@ -3597,7 +3597,7 @@ function BridgeFight.update(body)
                 t:getHealth(), Bridge.time + BLACKLIST_TICKS))
             BridgeFight.target = nil
             BridgeFight.state = "idle"
-            escapeReset()
+            FOOT.escapeReset()
             BridgeMove.stopPath(body)
             return false
         end
@@ -3629,7 +3629,7 @@ function BridgeFight.update(body)
     BridgeMove.stopPath(body)
 
     if not BridgeFight.escapeOn then
-        if footTick(body, red, t, mode, range, nil, S) then return true end
+        if FOOT.footTick(body, red, t, mode, range, nil, S) then return true end
     end
 
     if wantShove(body, t, item) then

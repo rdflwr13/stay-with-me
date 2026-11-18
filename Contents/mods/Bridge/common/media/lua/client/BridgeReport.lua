@@ -3,6 +3,22 @@ require "ISUI/ISButton"
 
 local PAD = 10
 
+local FONT_BODY, FONT_HEAD, FONT_S, FONT_M = UIFont.Small, UIFont.Medium, 0, 0
+
+local function uiFonts()
+    FONT_BODY, FONT_HEAD = UIFont.Small, UIFont.Medium
+    FONT_S = getTextManager():getFontHeight(FONT_BODY)
+    FONT_M = getTextManager():getFontHeight(FONT_HEAD)
+    if BridgeWindow ~= nil and type(BridgeWindow.uiFonts) == "function" then
+        local body, head, smallH, mediumH = BridgeWindow.uiFonts()
+        FONT_BODY = body or FONT_BODY
+        FONT_HEAD = head or FONT_HEAD
+        FONT_S = smallH or FONT_S
+        FONT_M = mediumH or FONT_M
+    end
+    return FONT_BODY, FONT_HEAD, FONT_S, FONT_M
+end
+
 local function tr(key, a)
     if BridgeData ~= nil and type(BridgeData.text) == "function" then return BridgeData.text(key, a) end
     local text = key
@@ -54,21 +70,23 @@ BridgeReport.BUG_PAGE = "https://steamcommunity.com/workshop/filedetails/discuss
 
 
 function BridgeReport.stepLines(width)
+    uiFonts()
     local out = {}
     local raw = {
         tr("ReportStep1a") .. " (" .. BridgeReport.CONSOLE_PATH .. ") " .. tr("ReportStep1b"),
         tr("ReportStep2"),
     }
     for _, s in ipairs(raw) do
-        for _, l in ipairs(wrapText(UIFont.Small, s, width - PAD * 2)) do out[#out + 1] = l end
+        for _, l in ipairs(wrapText(FONT_BODY, s, width - PAD * 2)) do out[#out + 1] = l end
     end
     return out
 end
 
 
 function BridgeReport.logNoteLines(width)
+    uiFonts()
     local out = {}
-    for _, l in ipairs(wrapText(UIFont.Small, tr("ReportLogNote"), width - PAD * 2)) do out[#out + 1] = l end
+    for _, l in ipairs(wrapText(FONT_BODY, tr("ReportLogNote"), width - PAD * 2)) do out[#out + 1] = l end
     return out
 end
 
@@ -224,6 +242,16 @@ function BridgeReport.generate()
     local function line(s) out[#out + 1] = tostring(s) end
     local function section(name) line(""); line("[" .. name .. "]") end
     local function put(k, v) line(tostring(k) .. " = " .. tostring(v)) end
+    local function colorText(c)
+        if type(c) ~= "table" then return "-" end
+        return string.format("%.3f,%.3f,%.3f", tonumber(c.r) or 0, tonumber(c.g) or 0, tonumber(c.b) or 0)
+    end
+    local function listText(t)
+        if type(t) ~= "table" or #t == 0 then return "-" end
+        local out = {}
+        for i = 1, #t do out[i] = tostring(t[i]) end
+        return table.concat(out, ",")
+    end
 
     line("=== Stay With Me - Bug Report ===")
     line("report_format = 1")
@@ -285,6 +313,82 @@ function BridgeReport.generate()
         put(key, opt(key))
     end
 
+    section("APPEARANCE")
+    local appearanceOk = false
+    pcall(function()
+        if type(store) ~= "table" then return end
+        local app = BridgeData.appearanceOf(store) or {}
+        local gender = BridgeData.genderOf(store)
+        put("name", BridgeData.nameOf(store))
+        put("gender", gender)
+        put("skin", BridgeData.skinOf(store))
+        put("hair", BridgeData.hairOf(store))
+        put("hair_color", colorText(BridgeData.hairColorOf(store)))
+        put("face", BridgeData.cleanFace(app.face, gender) or "-")
+        put("details", listText(BridgeData.cleanDetails(app.details, gender) or {}))
+        put("muscle", BridgeData.muscleOf(store))
+        put("makeup", listText(BridgeData.cleanMakeup(app.makeup) or {}))
+        local beard = BridgeData.cleanBeard(app.beard)
+        put("beard", (beard ~= nil and beard ~= "") and beard or "-")
+        put("beard_color", colorText(BridgeData.beardColorOf(store)))
+        put("voice", BridgeData.voiceText(store))
+        local species = "Hooman"
+        if Bridge ~= nil and Bridge.body ~= nil and BridgeAppearance ~= nil
+            and type(BridgeAppearance.furSpeciesOf) == "function" then
+            species = BridgeAppearance.furSpeciesOf(Bridge.body)
+        end
+        put("species", tostring(species or "Hooman"))
+        appearanceOk = true
+    end)
+    if not appearanceOk then line("(unavailable)") end
+
+    local sizeOk = false
+    pcall(function()
+        if BridgeSizeMatterCompat == nil then
+            put("size_available", false)
+            sizeOk = true
+            return
+        end
+        local available = false
+        if type(BridgeSizeMatterCompat.available) == "function" then
+            available = BridgeSizeMatterCompat.available() == true
+        end
+        put("size_available", available)
+        local active = false
+        if type(BridgeSizeMatterCompat.active) == "function" then
+            active = BridgeSizeMatterCompat.active() == true
+        end
+        put("size_active", active)
+        local profile = nil
+        if type(BridgeSizeMatterCompat.profileOf) == "function" then
+            profile = BridgeSizeMatterCompat.profileOf(store)
+        end
+        if profile == nil then
+            put("size_profile", "(none)")
+        else
+            put("size_profile", "present")
+            put("size_height", profile.height)
+            put("size_shape", profile.shape)
+            put("size_muscle", profile.muscle)
+            put("size_details", profile.details)
+            put("size_body_model", profile.bodyModel)
+        end
+        if Bridge ~= nil and Bridge.body ~= nil then
+            local md = nil
+            pcall(function() md = Bridge.body:getModData() end)
+            if type(md) == "table" then
+                put("body_size_height", md.ZomboidTest1_HeightCm_v1 or "-")
+                put("body_size_shape", md.VSM_BodyShape or "-")
+                put("body_size_muscle", md.VSM_Muscular or "-")
+                put("body_size_details", md.VSM_Details or "-")
+                put("body_size_model", md.VSM_BodyModel or "-")
+                put("body_size_managed", md.VSM_CompanionManaged == true)
+            end
+        end
+        sizeOk = true
+    end)
+    if not sizeOk then line("(size matters unavailable)") end
+
     section("SANDBOX")
     local SANDBOX_KEYS = {
         "Zombies", "Distribution", "ZombieRespawn", "ZombieMigrate",
@@ -315,6 +419,18 @@ function BridgeReport.generate()
         for _, l in ipairs(stateLines) do line(l) end
     end
 
+    section("RECENT_EVENTS")
+    line("# last " .. tostring(BridgeReport.EVENTS_MAX) .. " bridge/events.txt lines (hex-decoded)")
+    local events = BridgeReport.recentEvents(BridgeReport.EVENTS_MAX)
+    if #events == 0 then
+        line("(none)")
+    else
+        for _, l in ipairs(events) do line(l) end
+    end
+
+    section("USER_NOTES")
+    line("(none)")
+
     section("RECENT_ERRORS")
     line("# tick  ingame  source  count  first_tick..last_tick  message")
     local buf = Bridge ~= nil and Bridge.errBuf or {}
@@ -327,18 +443,6 @@ function BridgeReport.generate()
                 tonumber(e.count) or 1, tonumber(e.first_tick) or 0, tonumber(e.last_tick) or 0, tostring(e.msg)))
         end
     end
-
-    section("RECENT_EVENTS")
-    line("# last " .. tostring(BridgeReport.EVENTS_MAX) .. " bridge/events.txt lines (hex-decoded)")
-    local events = BridgeReport.recentEvents(BridgeReport.EVENTS_MAX)
-    if #events == 0 then
-        line("(none)")
-    else
-        for _, l in ipairs(events) do line(l) end
-    end
-
-    section("USER_NOTES")
-    line("(none)")
 
     section("ATTACH")
     line("console.txt = %UserProfile%\\Zomboid\\console.txt")
@@ -369,7 +473,8 @@ end
 BridgeReportTab = ISPanel:derive("BridgeReportTab")
 
 function BridgeReportTab.heightFor(width)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local stepH = #BridgeReport.stepLines(width) * (fontS + 2) + 4
     local noteH = #BridgeReport.logNoteLines(width) * (fontS + 2) + 4
     local btnH = fontS + 6
@@ -379,7 +484,8 @@ end
 
 function BridgeReportTab:createChildren()
     ISPanel.createChildren(self)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local btnH = fontS + 6
     self.hintLines, self.hintH = BridgeWindow.hintLines(self.width, "ReportHint", Bridge.companionName())
     self.stepLines = BridgeReport.stepLines(self.width)
@@ -457,27 +563,28 @@ end
 
 function BridgeReportTab:render()
     if Bridge == nil or Bridge.store == nil then return end
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local y = PAD
     for _, line in ipairs(self.hintLines or {}) do
-        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, FONT_BODY)
         y = y + fontS + 2
     end
     y = PAD + (self.hintH or 0)
     for _, line in ipairs(self.stepLines or {}) do
-        self:drawText(line, PAD, y, 0.85, 0.85, 0.85, 1, UIFont.Small)
+        self:drawText(line, PAD, y, 0.85, 0.85, 0.85, 1, FONT_BODY)
         y = y + fontS + 2
     end
     y = self.noteY or y
     for _, line in ipairs(self.noteLines or {}) do
-        self:drawText(line, PAD, y, 0.8, 0.8, 0.8, 1, UIFont.Small)
+        self:drawText(line, PAD, y, 0.8, 0.8, 0.8, 1, FONT_BODY)
         y = y + fontS + 2
     end
     y = self.statusY or (y + PAD)
     local status = self.status or ""
     if status ~= "" then
-        for _, line in ipairs(wrapText(UIFont.Small, status, self.width - PAD * 2)) do
-            self:drawText(line, PAD, y, 0.75, 0.95, 0.75, 1, UIFont.Small)
+        for _, line in ipairs(wrapText(FONT_BODY, status, self.width - PAD * 2)) do
+            self:drawText(line, PAD, y, 0.75, 0.95, 0.75, 1, FONT_BODY)
             y = y + fontS + 2
         end
     end

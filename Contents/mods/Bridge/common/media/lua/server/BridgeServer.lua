@@ -67,6 +67,29 @@ local function record(who)
     return md.players[who]
 end
 
+local function addHerRecord(player, rec, one, why)
+    if one == nil or rec == nil then return false, "no record" end
+    if BridgeItems == nil or type(BridgeItems.decode) ~= "function" then return false, "no record" end
+    local list = BridgeItems.decode(rec.items or "")
+    list[#list + 1] = one
+    local encoded = BridgeItems.encode(list)
+    if BridgeItems.overBlock() then
+        log("her record add skipped (" .. tostring(why) .. "): carrying too much")
+        return false, "carrying too much"
+    end
+    if #BridgeItems.decode(encoded) ~= #list then
+        log("her record add skipped (" .. tostring(why) .. "): snapshot full")
+        return false, "snapshot full"
+    end
+    BridgeItems.set(rec, encoded)
+    rec.saved = 1
+    rec.iseq = (rec.iseq or 0) + 1
+    transmit()
+    local oneId = -(rec.iseq or 0)
+    sendServerCommand(player, "Bridge", "gave", { id = oneId, rec = one, iseq = rec.iseq })
+    return true
+end
+
 
 
 
@@ -890,12 +913,29 @@ BridgeServer.Commands.care = function(player, args)
             .. " for " .. tostring(player:getUsername()))
         return
     end
+    local returnRec = nil
+    if change.kind == "unbandage" and type(BridgeCare) == "table"
+            and type(BridgeCare.bandageReturnRecord) == "function" then
+        local bp = BridgeCare.part(player, math.floor(tonumber(change.part) or -1))
+        if bp ~= nil then returnRec = BridgeCare.bandageReturnRecord(bp) end
+    end
     local part, why = BridgeCare.apply(player, change)
     if part == nil then
         log("care " .. tostring(change.kind) .. " failed: " .. tostring(why))
         return
     end
     pcall(function() syncBodyPart(part, BridgeCare.SYNC[change.kind]) end)
+    if returnRec ~= nil then
+        local rec = record(player:getUsername())
+        local ok, failWhy = addHerRecord(player, rec, returnRec, "care unbandage")
+        if not ok then
+            pcall(function()
+                sendServerCommand(player, "Bridge", "giveFailed", { why = failWhy })
+            end)
+        else
+            log("care unbandage returned " .. tostring(returnRec.t))
+        end
+    end
     if type(args.items) == "table" then
         for i, id in ipairs(args.items) do
             if i > 2 then break end
@@ -1276,6 +1316,8 @@ local function syncGunState(who, rec)
     rec.gunReloadSavedRounds = nil
     rec.gunReloadBaseRounds = nil
     rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
+    rec.gunEjectRound = nil
+    rec.gunEjectRoundsLeft = nil
     local body = currentBody(who, rec)
     local item = gunItemFor(body, rec)
     if item == nil then
@@ -1403,6 +1445,8 @@ BridgeServer.Commands.state = function(player, args)
                 rec.gunReloadSavedRounds = nil
                 rec.gunReloadBaseRounds = nil
                 rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
+                rec.gunEjectRound = nil
+                rec.gunEjectRoundsLeft = nil
                 changed = true
             end
         elseif type(gt) == "string" and #gt <= 64 and BridgeGunRules ~= nil and BridgeGunRules.validType(gt) then
@@ -1426,6 +1470,8 @@ BridgeServer.Commands.state = function(player, args)
                 rec.gunReloadVirtual = nil
                 rec.gunReloadSavedRounds, rec.gunReloadBaseRounds = nil, nil
                 rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
+                rec.gunEjectRound = nil
+                rec.gunEjectRoundsLeft = nil
             end
             if rec.gunReloadStage == nil then
                 local body = currentBody(player:getUsername(), rec)
@@ -1517,6 +1563,45 @@ BridgeServer.Commands.state = function(player, args)
             end
         end
     end
+    if args.workOrder ~= nil then
+        local order = BridgeData.cleanWorkOrder(args.workOrder)
+        if order ~= nil then
+            local old = BridgeData.cleanWorkOrder(rec.workOrder)
+            local same = old ~= nil and #old == #order
+            if same then
+                for i = 1, #order do
+                    if old[i] ~= order[i] then same = false break end
+                end
+            end
+            if not same then
+                rec.workOrder = order
+                changed = true
+            end
+        end
+    end
+    if args.workHidden ~= nil then
+        local hidden = BridgeData.cleanWorkHidden(args.workHidden)
+        if hidden ~= nil then
+            local old = BridgeData.cleanWorkHidden(rec.workHidden) or {}
+            local same = #old == #hidden
+            if same then
+                for i = 1, #hidden do
+                    if old[i] ~= hidden[i] then same = false break end
+                end
+            end
+            if not same then
+                rec.workHidden = hidden
+                changed = true
+            end
+        end
+    end
+    if args.hutchFertCap ~= nil then
+        local cap = BridgeData.cleanHutchFertCap(args.hutchFertCap)
+        if cap ~= nil and rec.hutchFertCap ~= cap then
+            rec.hutchFertCap = cap
+            changed = true
+        end
+    end
 
     if args.lootCats ~= nil then
         local cats = BridgeData.cleanLootCats(args.lootCats)
@@ -1597,12 +1682,13 @@ BridgeServer.Commands.state = function(player, args)
     end
 
     if args.hair ~= nil or args.skin ~= nil or args.hairColor ~= nil or args.face ~= nil or args.details ~= nil
-        or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil or args.beardColor ~= nil then
+        or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil or args.beardColor ~= nil
+        or args.vsmBody ~= nil then
         pcall(function() BridgeServer.lookAt[player:getUsername()] = getTimestampMs() end)
     end
     if args.hair ~= nil or args.skin ~= nil or args.hairColor ~= nil or args.face ~= nil
         or args.details ~= nil or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil
-        or args.beardColor ~= nil or args.voice ~= nil then
+        or args.beardColor ~= nil or args.voice ~= nil or args.vsmBody ~= nil then
         local app = BridgeData.appearanceOf(rec)
         if args.hair ~= nil then
             local hair = BridgeData.cleanHair(args.hair)
@@ -1715,6 +1801,14 @@ BridgeServer.Commands.state = function(player, args)
                     app.voice = voice
                     changed = true
                 end
+            end
+        end
+        if args.vsmBody ~= nil and BridgeSizeMatterCompat ~= nil
+            and type(BridgeSizeMatterCompat.cleanProfile) == "function" then
+            local clean = BridgeSizeMatterCompat.cleanProfile(args.vsmBody)
+            if clean ~= nil and not BridgeSizeMatterCompat.sameProfile(app.vsmBody, clean) then
+                app.vsmBody = clean
+                changed = true
             end
         end
     end
@@ -2506,6 +2600,8 @@ local function clearReload(rec, who)
     rec.gunReloadClientAmmo = nil
     rec.gunReloadSavedRounds, rec.gunReloadBaseRounds = nil, nil
     rec.gunEjectId, rec.gunEjectFamily, rec.gunEjectType = nil, nil, nil
+    rec.gunEjectRound = nil
+    rec.gunEjectRoundsLeft = nil
 end
 
 
@@ -2885,6 +2981,32 @@ BridgeServer.Commands.gunReload = function(player, args)
         if item == nil then return answer(false, "gun not found") end
         if not BridgeGunRules.isGun(item) then return answer(false, "invalid gun") end
         local desc = BridgeGunRules.describe(item)
+        local clip = false
+        pcall(function() clip = item:isContainsClip() == true end)
+        local rounds = BridgeGunRules.roundsOf(item)
+        if args.perRound == true then
+            if clip then return answer(false, "gun has a clip") end
+            if rounds <= 0 then return answer(false, "nothing to unload") end
+            local base = 35
+            if desc.reloadFamily == "shotgun" then
+                base = 50
+            elseif desc.reloadFamily == "revolver" then
+                base = 57
+            end
+            local perRoundMs = (base / BridgeGunRules.reloadFactor(reloadLevel(rec))) * (1000 / 60)
+            if perRoundMs < 100 then perRoundMs = 100 end
+            local totalMs = math.floor(perRoundMs * rounds) + 5000
+            rec.gunReloadStage = "eject"
+            rec.gunReloadUntil = getTimestampMs() + totalMs
+            rec.gunEjectId = item:getID()
+            rec.gunEjectFamily = desc.reloadFamily
+            rec.gunEjectType = nil
+            rec.gunEjectRound = true
+            rec.gunEjectRoundsLeft = rounds
+            logf("gunReload unload gun=%s rounds=%d", tostring(desc.fullType), rounds)
+            answer(true, nil, { total = totalMs, family = desc.reloadFamily, rounds = rounds, perRound = true })
+            return
+        end
         if desc.magazineType == nil and desc.hasClipProfile ~= true then
             return answer(false, "no magazine profile")
         end
@@ -2894,9 +3016,6 @@ BridgeServer.Commands.gunReload = function(player, args)
             pcall(function() internal = BridgeGunRules.gunsmith.isInternal(item) == true end)
             if internal then return answer(false, "internal magazine") end
         end
-        local clip = false
-        pcall(function() clip = item:isContainsClip() == true end)
-        local rounds = BridgeGunRules.roundsOf(item)
         if not clip and rounds <= 0 then return answer(false, "nothing to eject") end
         local base = (desc.reloadFamily == "rifle") and 45 or 36
         local ejectMs = (base / BridgeGunRules.reloadFactor(reloadLevel(rec))) * (1000 / 60)
@@ -2906,6 +3025,8 @@ BridgeServer.Commands.gunReload = function(player, args)
         rec.gunEjectId = item:getID()
         rec.gunEjectFamily = desc.reloadFamily
         rec.gunEjectType = desc.magazineType
+        rec.gunEjectRound = nil
+        rec.gunEjectRoundsLeft = nil
         logf("gunReload eject gun=%s rounds=%d clip=%s", tostring(desc.fullType), rounds, tostring(clip))
         answer(true, nil, { total = math.floor(ejectMs), family = desc.reloadFamily, rounds = rounds })
         return
@@ -2913,7 +3034,8 @@ BridgeServer.Commands.gunReload = function(player, args)
     if action == "ejectDone" then
         if rec.gunReloadStage ~= "eject" then return answer(false, "not ejecting") end
         local now = getTimestampMs()
-        if rec.gunReloadUntil ~= nil and now < rec.gunReloadUntil - 1500 then
+        local perRound = rec.gunEjectRound == true
+        if not perRound and rec.gunReloadUntil ~= nil and now < rec.gunReloadUntil - 1500 then
             return answer(false, "too soon")
         end
         if rec.bodyId == nil then return answer(false, "no companion") end
@@ -2928,6 +3050,34 @@ BridgeServer.Commands.gunReload = function(player, args)
             return answer(false, "gun missing")
         end
         local desc = BridgeGunRules.describe(item)
+        if perRound then
+            local assigned = gunItemFor(body, rec)
+            local isAssigned = assigned ~= nil and assigned:getID() == item:getID()
+            local remaining = BridgeGunRules.roundsOf(item)
+            if remaining > 0 then
+                logf("gunReload unload finishing %d remaining round(s)", remaining)
+            end
+            local guard = 0
+            while remaining > 0 and guard < 64 do
+                local roundItem = nil
+                local left = remaining
+                pcall(function() roundItem, left = BridgeGunRules.popGunRound(body, item) end)
+                if roundItem == nil then break end
+                remaining = tonumber(left) or math.max(0, remaining - 1)
+                BridgeGunRules.placeItem(body, roundItem)
+                local dest = nil
+                pcall(function() dest = roundItem:getContainer() end)
+                if dest ~= nil then pcall(function() sendAddItemToContainer(dest, roundItem) end) end
+                pcall(function() sendItemStats(roundItem) end)
+                guard = guard + 1
+            end
+            pcall(function() sendItemStats(item) end)
+            if isAssigned then rec.gunRounds = BridgeGunRules.roundsOf(item) end
+            clearReload(rec, who)
+            logf("gunReload unload done gun=%s rounds=%d", tostring(desc.fullType), remaining)
+            answer(true, nil, { itemId = item:getID(), rounds = remaining, perRound = true })
+            return
+        end
         local magType = nil
         pcall(function() magType = item:getMagazineType() end)
         if type(magType) ~= "string" or magType == "" then
@@ -3190,6 +3340,51 @@ BridgeServer.Commands.gunReload = function(player, args)
 end
 
 
+BridgeServer.Commands.gunUnloadOne = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    if rec.gunReloadStage ~= "eject" or rec.gunEjectRound ~= true then
+        log("gunUnloadOne ignored for " .. tostring(who) .. ": no per-round unload")
+        return
+    end
+    if reloadStale(rec) then
+        clearReload(rec, who)
+        log("gunUnloadOne cleared stale unload for " .. tostring(who))
+        return
+    end
+    if rec.bodyId == nil then return end
+    local body = currentBody(who, rec)
+    if body == nil then return end
+    local item = nil
+    local wantId = tonumber(args.itemId) or rec.gunEjectId
+    if wantId ~= nil then
+        pcall(function() item = BridgeGunRules.findItemById(body, wantId) end)
+    end
+    if item == nil then item = gunItemFor(body, rec) end
+    if item == nil or not BridgeGunRules.isGun(item) then
+        log("gunUnloadOne: gun not found for " .. tostring(who))
+        return
+    end
+    local roundItem, remaining = BridgeGunRules.popGunRound(body, item)
+    if roundItem == nil then
+        log("gunUnloadOne: no round to unload for " .. tostring(who))
+        return
+    end
+    BridgeGunRules.placeItem(body, roundItem)
+    local dest = nil
+    pcall(function() dest = roundItem:getContainer() end)
+    if dest ~= nil then pcall(function() sendAddItemToContainer(dest, roundItem) end) end
+    pcall(function() sendItemStats(roundItem) end)
+    pcall(function() sendItemStats(item) end)
+    rec.gunEjectRoundsLeft = remaining
+    local assigned = gunItemFor(body, rec)
+    if assigned ~= nil and assigned:getID() == item:getID() then
+        rec.gunRounds = remaining
+    end
+    logf("gunUnloadOne %s left=%d", tostring(roundItem:getFullType()), remaining)
+end
+
+
 BridgeServer.Commands.carSeat = function(player, args)
     local who = player:getUsername()
     local rec = record(who)
@@ -3289,6 +3484,8 @@ BridgeServer.Commands.water = function(player, args)
         local objects = sq:getObjects()
         for i = 0, objects:size() - 1 do
             local o = objects:get(i)
+            local trough = false
+            pcall(function() trough = instanceof(o, "IsoFeedingTrough") == true end)
             local wet = false
             pcall(function()
                 local flagged = o:hasWater() == true or o:hasFluid() == true
@@ -3302,7 +3499,7 @@ BridgeServer.Commands.water = function(player, args)
                     end
                 end
             end)
-            if wet then
+            if wet and not trough then
                 if o:useFluid(math.min(amount, o:getFluidAmount())) > 0 then
                     pcall(function() o:transmitModData() end)
                 end
@@ -3315,7 +3512,7 @@ BridgeServer.Commands.water = function(player, args)
                     and (fc:isWaterSource() or fc:contains(Fluid.Water)
                         or (Fluid.TaintedWater ~= nil and fc:contains(Fluid.TaintedWater)))
             end)
-            if wet and fc ~= nil then
+            if wet and fc ~= nil and not trough then
                 local spent = math.min(amount, fc:getAmount())
                 if spent > 0 then
                     fc:adjustAmount(fc:getAmount() - spent)
@@ -3580,10 +3777,972 @@ BridgeServer.Commands.clearPlants = function(player, args)
         log("clearPlants: BridgePlants not loaded")
         return
     end
+    if kind == "grass" then
+        if not BridgePlants.squareGrass(sq) then return end
+        if BridgeItems == nil then return end
+        local rec = record(player:getUsername())
+        if rec == nil or rec.bodyId == nil then return end
+        local item = InventoryItemFactory.CreateItem("Base.GrassTuft")
+        if item == nil then return end
+        pcall(function() item:setCount(ZombRand(2, 4)) end)
+        local one = BridgeItems.record(item, true)
+        local list = BridgeItems.decode(rec.items or "")
+        flatten(one, nil, list)
+        local encoded = BridgeItems.encode(list)
+        if BridgeItems.overBlock() or #BridgeItems.decode(encoded) ~= #list then
+            log("clearPlants: snapshot full, clipping skipped")
+            return
+        end
+        local ok, err = pcall(function() BridgePlants.applyPlant(sq, "grass", nil) end)
+        if not ok then
+            log("clearPlants: applyPlant failed: " .. tostring(err))
+            return
+        end
+        BridgeItems.set(rec, encoded)
+        rec.iseq = (rec.iseq or 0) + 1
+        transmit()
+        sendServerCommand(player, "Bridge", "gave", { id = -rec.iseq, rec = one, iseq = rec.iseq })
+        log("clearPlants: grass clipping for " .. tostring(player:getUsername()))
+        return
+    end
     local ok, err = pcall(function() BridgePlants.applyPlant(sq, kind, body) end)
     if not ok then log("clearPlants: applyPlant failed: " .. tostring(err)) end
 end
 
+BridgeServer.Commands.harvestCrops = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("harvestCrops: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+    if BridgeGardening == nil or BridgeItems == nil then
+        log("harvestCrops: BridgeGardening not loaded")
+        return
+    end
+    pcall(BridgeGardening.pruneSeen)
+    local key = tostring(who) .. "|" .. tostring(args.id)
+    local seen = BridgeGardening.serverSeen
+    if seen[key] ~= nil then
+        log("harvestCrops: duplicate " .. tostring(args.id))
+        sendServerCommand(player, "Bridge", "harvestCropsResult", seen[key])
+        return
+    end
+    local result = { id = args.id, ok = false, why = "gone", xp = 0, x = args.x, y = args.y, z = args.z }
+    local plant = BridgeGardening.plantAt(sq, true)
+    if plant == nil or not BridgeGardening.canHarvest(plant) then
+        result.why = "notripe"
+    else
+        local rec = record(who)
+        local stored = 0
+        local okSkills = pcall(function()
+            local skills = BridgeData.skillsOf(rec)
+            stored = tonumber(skills.Agriculture) or 0
+        end)
+        if not okSkills then stored = 0 end
+        local skill = 0
+        pcall(function() skill = BridgeData.levelFromXp("Agriculture", stored) end)
+        local ok, why, xp, recs = BridgeGardening.harvestProduce(plant, skill)
+        result.ok = ok == true
+        result.why = why
+        result.xp = xp or 0
+        result.recs = recs or {}
+        if ok then
+            local list = BridgeItems.decode(rec.items or "")
+            local before = #list
+            for i = 1, #result.recs do flatten(result.recs[i], nil, list) end
+            local text = BridgeItems.encode(list)
+            if #BridgeItems.decode(text) == #list then
+                BridgeItems.set(rec, text)
+                rec.saved = 1
+            else
+                log(string.format("harvestCrops: %s snapshot full, %d record(s) not stored (was %d)",
+                    tostring(who), #list - before, before))
+            end
+            rec.iseq = (rec.iseq or 0) + 1
+            transmit()
+            result.iseq = rec.iseq
+        end
+    end
+    seen[key] = { id = args.id, ok = result.ok, why = result.why, xp = result.xp,
+        recs = result.recs, iseq = result.iseq,
+        x = result.x, y = result.y, z = result.z, at = BridgeGardening.now() }
+    sendServerCommand(player, "Bridge", "harvestCropsResult", seen[key])
+    log(string.format("harvestCrops: %s ok=%s why=%s items=%d", tostring(who),
+        tostring(result.ok), tostring(result.why), #(result.recs or {})))
+end
+
+BridgeServer.Commands.ripenCrops = function(player, args)
+    if BridgeGardening == nil then
+        log("ripenCrops: BridgeGardening not loaded")
+        return
+    end
+    local x, y, z = tonumber(args.x), tonumber(args.y), tonumber(args.z)
+    if x == nil or y == nil then return end
+    z = z or 0
+    local px, py = player:getX(), player:getY()
+    if (px - x) ^ 2 + (py - y) ^ 2 > 225 then
+        log("ripenCrops: too far for " .. tostring(player:getUsername()))
+        return
+    end
+    local ok, stages = BridgeGardening.ripenAt({ x = x, y = y, z = z }, true)
+    sendServerCommand(player, "Bridge", "ripenResult",
+        { x = x, y = y, z = z, ok = ok == true, stages = tonumber(stages) or 0 })
+    log(string.format("ripenCrops: %s %d,%d ok=%s stages=%d", tostring(player:getUsername()), x, y,
+        tostring(ok == true), tonumber(stages) or 0))
+end
+
+BridgeServer.Commands.digFurrow = function(player, args)
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("digFurrow: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y))
+        return
+    end
+    if BridgeGardening == nil then
+        log("digFurrow: BridgeGardening not loaded")
+        return
+    end
+    local why = nil
+    pcall(function()
+        if sq:hasGrave() then why = "grave" end
+    end)
+    if why == nil then
+        local free = false
+        pcall(function() free = sq:isFree(false) == true end)
+        if not free then why = "blocked" end
+    end
+    if why == nil then
+        local ground = nil
+        pcall(function() ground = ISShovelGroundCursor.GetDirtGravelSand(sq) end)
+        if ground ~= "dirt" then why = "notdirt" end
+    end
+    if why == nil then
+        local above = false
+        pcall(function()
+            above = getSandboxOptions():getOptionByName("PlaceDirtAboveground"):getValue() == true
+        end)
+        if math.floor(sq:getZ()) ~= 0 and not above then why = "aboveground" end
+    end
+    if why == nil then
+        local plant = nil
+        pcall(function()
+            if SFarmingSystem ~= nil and SFarmingSystem.instance ~= nil then
+                plant = SFarmingSystem.instance:getLuaObjectOnSquare(sq)
+            end
+        end)
+        if plant ~= nil then
+            local bad = true
+            pcall(function() bad = plant.state == "plow" or plant:isAlive() == true end)
+            if bad then why = "plant" end
+        end
+    end
+    local ok = false
+    if why == nil then
+        local done, fail = BridgeGardening.digAt({ x = args.x, y = args.y, z = args.z }, true)
+        ok = done == true
+        if not ok then why = fail or "error" end
+    end
+    sendServerCommand(player, "Bridge", "digFurrowResult",
+        { x = args.x, y = args.y, z = args.z, ok = ok, why = why })
+    log(string.format("digFurrow: %s %s,%s ok=%s why=%s", tostring(player:getUsername()),
+        tostring(args.x), tostring(args.y), tostring(ok), tostring(why)))
+end
+
+
+BridgeServer.Commands.sowSeeds = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("sowSeeds: no companion/square for " .. tostring(args.x) .. "," .. tostring(args.y)
+            .. "," .. tostring(args.z))
+        return
+    end
+    if BridgeGardening == nil then
+        log("sowSeeds: BridgeGardening not loaded")
+        return
+    end
+    local kind = args.kind
+    local result = { x = args.x, y = args.y, z = args.z, ok = false, kind = kind, why = nil }
+    local props = nil
+    if farming_vegetableconf ~= nil then props = farming_vegetableconf.props end
+    local plant = BridgeGardening.plantAt(sq, true)
+    local state = nil
+    pcall(function() state = plant ~= nil and plant.state or nil end)
+    if plant == nil or state ~= "plow" then
+        result.why = "noplow"
+    elseif type(kind) ~= "string" or props == nil or props[kind] == nil then
+        result.why = "badkind"
+    else
+        local rec = record(who)
+        local stored = 0
+        pcall(function()
+            local skills = BridgeData.skillsOf(rec)
+            stored = tonumber(skills.Agriculture) or 0
+        end)
+        local skill = 0
+        pcall(function() skill = BridgeData.levelFromXp("Agriculture", stored) end)
+        local ok, err = pcall(function()
+            plant:seed(kind, skill)
+            if isClient() then
+                plant.owner = player:getOnlineID()
+            else
+                plant.owner = player:getPlayerNum()
+            end
+            plant:saveData()
+        end)
+        result.ok = ok == true
+        if not ok then
+            result.why = "error"
+            log("sowSeeds: seed failed for " .. tostring(who) .. ": " .. tostring(err))
+        end
+    end
+    sendServerCommand(player, "Bridge", "sowSeedsResult", result)
+    log(string.format("sowSeeds: %s %s,%s kind=%s ok=%s why=%s", tostring(who),
+        tostring(args.x), tostring(args.y), tostring(kind), tostring(result.ok), tostring(result.why)))
+end
+
+BridgeServer.Commands.waterPlants = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local result = { x = args.x, y = args.y, z = args.z, uses = args.uses, ok = false, why = nil }
+    local function reply(why)
+        result.why = why
+        sendServerCommand(player, "Bridge", "waterPlantResult", result)
+    end
+    if body == nil or sq == nil then
+        log("waterPlants: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    if BridgeGardening == nil then return reply("notloaded") end
+    local uses = math.floor(tonumber(args.uses) or 0)
+    if uses < 1 then uses = 1 end
+    if uses > 10 then uses = 10 end
+    result.uses = uses
+    local plant = BridgeGardening.plantAt(sq, true)
+    local seed, alive = nil, false
+    pcall(function()
+        seed = plant ~= nil and plant.typeOfSeed or nil
+        alive = plant ~= nil and plant:isAlive() == true
+    end)
+    if plant == nil or seed == nil or seed == "none" or not alive then return reply("noplant") end
+    local ok, err = pcall(function() plant:water(nil, uses) end)
+    if ok then pcall(function() plant:saveData() end) end
+    result.ok = ok == true
+    if not ok then
+        log("waterPlants: water failed for " .. tostring(who) .. ": " .. tostring(err))
+        return reply("error")
+    end
+    reply(nil)
+    log(string.format("waterPlants: %s %s,%s uses=%d", tostring(who), tostring(args.x), tostring(args.y), uses))
+end
+
+local function animalById(id)
+    local animal = nil
+    if id == nil then return nil end
+    pcall(function()
+        local list = getCell():getAnimals()
+        if list == nil then return end
+        for i = 0, list:size() - 1 do
+            local a = list:get(i)
+            if a ~= nil and a:getOnlineID() == id then
+                animal = a
+                break
+            end
+        end
+    end)
+    return animal
+end
+
+local function actorReach(player, body, args, tx, ty)
+    local bx, by = tonumber(args.bx), tonumber(args.by)
+    if bx ~= nil and by ~= nil and dist(player, bx, by) <= 60 then
+        local dx, dy = bx - tx, by - ty
+        return math.sqrt(dx * dx + dy * dy)
+    end
+    return dist(body, tx, ty)
+end
+
+local function animalReach(player, body, args, animal)
+    return actorReach(player, body, args, animal:getX(), animal:getY())
+end
+
+BridgeServer.animalHolds = BridgeServer.animalHolds or {}
+
+BridgeServer.Commands.petAnimals = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local task = tostring(args.task or "pet")
+    if task ~= "milk" and task ~= "shear" then task = "pet" end
+    local result = { id = args.id, ok = false, why = nil, task = task, opId = args.opId, count = 0 }
+    local function reply(why)
+        result.why = why
+        sendServerCommand(player, "Bridge", "petAnimalsResult", result)
+    end
+    if body == nil or sq == nil then
+        log("petAnimals: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    local id = tonumber(args.id)
+    if id == nil then return reply("noanimal") end
+    local animal = animalById(id)
+    if animal == nil then return reply("noanimal") end
+
+    if task == "pet" then
+        local petFn = animal.petAnimal
+        if petFn == nil then
+            log("petAnimals: IsoAnimal.petAnimal missing")
+            return reply("noapi")
+        end
+        if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.canPet) == "function" then
+            if not BridgeAnimalCare.canPet(animal) then return reply("notready") end
+        end
+        local d = animalReach(player, body, args, animal)
+        if d > 6 then
+            log(string.format("petAnimals: far %s d=%.2f body=%.2f,%.2f animal=%.2f,%.2f id=%s",
+                tostring(who), d, body:getX(), body:getY(), animal:getX(), animal:getY(), tostring(id)))
+            return reply("far")
+        end
+        pcall(function() animal:getBehavior():setBlockMovement(true) end)
+        local before = nil
+        pcall(function() before = animal:getStress() end)
+        local ok = BridgeAnimalCare.petNoPlayerXp(animal, player, true)
+        local after = nil
+        pcall(function() after = animal:getStress() end)
+        pcall(function() animal:getBehavior():setBlockMovement(false) end)
+        if not ok then
+            log("petAnimals: petAnimal failed for " .. tostring(who))
+            return reply("error")
+        end
+        if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.notePet) == "function" then
+            BridgeAnimalCare.notePet(animal)
+        end
+        result.ok = true
+        reply(nil)
+        log(string.format("petAnimals: %s id=%s stress %s->%s d=%.2f",
+            tostring(who), tostring(id), tostring(before), tostring(after), d))
+        return
+    end
+
+    local d = animalReach(player, body, args, animal)
+    if d > 6 then
+        log(string.format("petAnimals: far %s d=%.2f body=%.2f,%.2f animal=%.2f,%.2f id=%s",
+            tostring(who), d, body:getX(), body:getY(), animal:getX(), animal:getY(), tostring(id)))
+        return reply("far")
+    end
+
+    local stress = 0
+    pcall(function() stress = tonumber(animal:getStress()) or 0 end)
+    if stress > 40 then return reply("notready") end
+    local data = nil
+    pcall(function() data = animal:getData() end)
+    if data == nil then return reply("noapi") end
+    local breed = nil
+    pcall(function() breed = animal:getBreed() end)
+    if breed == nil then pcall(function() breed = data:getBreed() end) end
+
+    if task == "milk" then
+        local can, have = false, false
+        pcall(function() can = animal:canBeMilked() == true end)
+        pcall(function() have = data:canHaveMilk() == true end)
+        local qty = 0
+        pcall(function() qty = tonumber(data:getMilkQuantity()) or 0 end)
+        if not can or not have or qty < 0.1 then return reply("notready") end
+        local milkType = nil
+        if breed ~= nil then pcall(function() milkType = breed:getMilkType() end) end
+        if milkType == nil or milkType == "" then return reply("notready") end
+        local took = false
+        pcall(function()
+            data:setMilkQuantity(math.max(0, qty - 0.1))
+            took = true
+        end)
+        if not took then return reply("error") end
+        result.ok = true
+        result.count = 1
+        result.milkType = tostring(milkType)
+        reply(nil)
+        log(string.format("petAnimals milk: %s id=%s qty=%.2f type=%s",
+            tostring(who), tostring(id), qty, tostring(milkType)))
+        return
+    end
+
+    local canShear = false
+    pcall(function() canShear = animal:canBeSheared() == true end)
+    local woolQty = 0
+    pcall(function() woolQty = tonumber(data:getWoolQuantity()) or 0 end)
+    if not canShear or woolQty < 1 then return reply("notready") end
+    local woolType = nil
+    if breed ~= nil then pcall(function() woolType = breed:getWoolType() end) end
+    if woolType == nil or woolType == "" then woolType = "Base.WoolRaw" end
+    local item = nil
+    pcall(function() item = instanceItem(woolType) end)
+    if item == nil then return reply("noitem") end
+    local one = nil
+    pcall(function() one = BridgeItems.record(item, true) end)
+    if one == nil then return reply("noitem") end
+    local rec = record(who)
+    local list = BridgeItems.decode(rec.items or "")
+    local flat = {}
+    flatten(one, nil, flat)
+    local temp = {}
+    for i = 1, #list do temp[i] = list[i] end
+    for i = 1, #flat do temp[#temp + 1] = flat[i] end
+    local encoded = BridgeItems.encode(temp)
+    if BridgeItems.overBlock() or #BridgeItems.decode(encoded) ~= #temp then
+        return reply("full")
+    end
+    local took = false
+    pcall(function()
+        data:setWoolQuantity(math.max(0, woolQty - 1), true)
+        took = true
+    end)
+    if not took then return reply("error") end
+    BridgeItems.set(rec, encoded)
+    rec.saved = 1
+    rec.iseq = (rec.iseq or 0) + 1
+    transmit()
+    local itemId = nil
+    pcall(function() itemId = item:getID() end)
+    if itemId == nil or itemId == 0 then itemId = -(rec.iseq or 0) end
+    journalNote("G", who, rec, itemId, flat)
+    result.ok = true
+    result.count = 1
+    sendServerCommand(player, "Bridge", "gave",
+        { ids = { itemId }, recs = { one }, iseq = rec.iseq, jobDest = "records" })
+    reply(nil)
+    log(string.format("petAnimals shear: %s id=%s wool=%.2f type=%s",
+        tostring(who), tostring(id), woolQty, tostring(woolType)))
+end
+
+BridgeServer.Commands.animalHold = function(player, args)
+    local animal = animalById(tonumber(args.id))
+    if animal == nil then return end
+    local who = player:getUsername()
+    local on = args.on == true
+    local action = tostring(args.action or "")
+    if on then
+        local body, sq = companionAtRelaxed(player, args, 6)
+        if body == nil or sq == nil then return end
+        if animalReach(player, body, args, animal) > 6 then return end
+        pcall(function() animal:stopAllMovementNow() end)
+        pcall(function() animal:setVariable("animalRunning", false) end)
+        pcall(function() animal:setVariable("animalSpeed", 0) end)
+        pcall(function()
+            local b = animal:getBehavior()
+            if b ~= nil then b:setBlockMovement(true) end
+        end)
+        if action == "pet" then
+            pcall(function() animal:setVariable("idleAction", "petting") end)
+        end
+        BridgeServer.animalHolds[animal] = {
+            action = action,
+            who = who,
+            ["until"] = getTimestampMs() + 30000,
+        }
+    else
+        local hold = BridgeServer.animalHolds[animal]
+        if hold == nil then return end
+        if hold.who ~= nil and hold.who ~= who then return end
+        BridgeServer.animalHolds[animal] = nil
+        pcall(function()
+            local b = animal:getBehavior()
+            if b ~= nil then b:setBlockMovement(false) end
+        end)
+        if hold ~= nil and hold.action == "pet" then
+            pcall(function()
+                if animal:getVariableString("idleAction") == "petting" then
+                    animal:clearVariable("idleAction")
+                end
+            end)
+        end
+    end
+    sendServerCommand(player, "Bridge", "animalHoldResult",
+        { opId = args.opId, ok = true, on = on, id = args.id })
+end
+
+BridgeServer.Commands.animalDebug = function(player, args)
+    local who = player:getUsername()
+    local op = tostring(args.op or "")
+    local id = tonumber(args.id)
+    if id == nil then return end
+    local animal = animalById(id)
+    if animal == nil then return end
+    local px, py = player:getX(), player:getY()
+    local ax, ay = animal:getX(), animal:getY()
+    if (px - ax) ^ 2 + (py - ay) ^ 2 > 225 then return end
+    local data = nil
+    pcall(function() data = animal:getData() end)
+    if data == nil then return end
+    if op == "calm" then
+        pcall(function() animal:setDebugStress(0) end)
+        log("animalDebug calm id=" .. tostring(id) .. " for " .. tostring(who))
+    elseif op == "milk" then
+        local max = 0
+        pcall(function() max = tonumber(data:getMaxMilk()) or 0 end)
+        if max <= 0 then max = 10 end
+        pcall(function() data:setMaxMilkActual(max) end)
+        pcall(function() data:setMilkQuantity(max) end)
+        log("animalDebug milk " .. tostring(max) .. " id=" .. tostring(id) .. " for " .. tostring(who))
+    elseif op == "wool" then
+        local max = 0
+        pcall(function() max = tonumber(data:getMaxWool()) or 0 end)
+        pcall(function() data:setWoolQuantity(max, true) end)
+        log("animalDebug wool " .. tostring(max) .. " id=" .. tostring(id) .. " for " .. tostring(who))
+    end
+end
+
+BridgeServer.Commands.troughWater = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local result = { id = args.id, ok = false, added = 0, why = nil, x = args.x, y = args.y, z = args.z }
+    local function reply(why, added, ok)
+        result.why = why
+        result.added = added or 0
+        result.ok = ok == true
+        sendServerCommand(player, "Bridge", "troughWaterResult", result)
+    end
+    if body == nil or sq == nil then
+        log("troughWater: no companion/square for " .. tostring(who))
+        return reply("nobody", 0, false)
+    end
+    if actorReach(player, body, args, args.x + 0.5, args.y + 0.5) > 6 then
+        log(string.format("troughWater: far %s body=%.2f,%.2f trough=%s,%s",
+            tostring(who), body:getX(), body:getY(), tostring(args.x), tostring(args.y)))
+        return reply("far", 0, false)
+    end
+    local iso = nil
+    pcall(function()
+        local sq2 = getCell():getGridSquare(args.x, args.y, args.z)
+        if sq2 ~= nil then
+            local objects = sq2:getObjects()
+            if objects ~= nil then
+                for i = 0, objects:size() - 1 do
+                    local o = objects:get(i)
+                    if o ~= nil and instanceof(o, "IsoFeedingTrough") then iso = o break end
+                end
+            end
+        end
+    end)
+    if iso == nil then
+        log("troughWater: no trough at " .. tostring(args.x) .. "," .. tostring(args.y))
+        return reply("gone", 0, false)
+    end
+    local fc = nil
+    pcall(function() fc = iso:getFluidContainer() end)
+    if fc == nil then return reply("troughfeed", 0, false) end
+    local water = tonumber(iso:getWater()) or 0
+    local maxWater = tonumber(iso:getMaxWater()) or 0
+    local free = math.max(0, maxWater - water)
+    local want = math.min(tonumber(args.amount) or 0, free)
+    if want <= 0 then
+        if maxWater <= 0 then return reply("notready", 0, false) end
+        return reply("full", 0, true)
+    end
+    local before = water
+    local fluidType = args.tainted == true and FluidType.TaintedWater or FluidType.Water
+    local ok, err = pcall(function() iso:addWater(fluidType, want) end)
+    pcall(function() iso:sendSyncEntity(nil) end)
+    pcall(function() iso:checkOverlayAfterAnimalEat() end)
+    local after = tonumber(iso:getWater()) or before
+    local added = math.max(0, after - before)
+    if not ok then
+        log("troughWater: addWater failed for " .. tostring(who) .. ": " .. tostring(err))
+        return reply("error", 0, false)
+    end
+    local why = nil
+    if added <= 0 then why = "full" end
+    reply(why, added, added > 0)
+    log(string.format("troughWater: %s %s,%s asked=%.2f added=%.2f water=%.2f",
+        tostring(who), tostring(args.x), tostring(args.y), want, added, after))
+end
+
+BridgeServer.Commands.hutchCare = function(player, args)
+    local who = player:getUsername()
+    local op = tostring(args.op or "")
+    local result = { op = op, ok = false, why = nil, count = 0, open = false, hatch = false,
+        waterUsed = 0, cleanerUsed = 0, x = args.x, y = args.y, z = args.z }
+    local function reply(why, ok)
+        result.why = why
+        result.ok = ok == true
+        sendServerCommand(player, "Bridge", "hutchCareResult", result)
+    end
+    if op == "debugEggs" or op == "debugDirty" then
+        local x, y, z = tonumber(args.x), tonumber(args.y), tonumber(args.z)
+        if x == nil or y == nil then return reply("badargs") end
+        z = z or 0
+        local px, py = player:getX(), player:getY()
+        if (px - x) ^ 2 + (py - y) ^ 2 > 225 then return reply("far") end
+        local sq = nil
+        pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+        local hutch = nil
+        pcall(function()
+            local h = sq ~= nil and sq:getHutch() or nil
+            if h ~= nil then
+                local up = h:getHutch()
+                hutch = up or h
+            end
+        end)
+        if hutch == nil then return reply("hutch") end
+        if op == "debugEggs" then
+            local added = 0
+            local maxNest = nil
+            pcall(function() maxNest = tonumber(hutch:getMaxNestBox()) end)
+            if maxNest ~= nil and maxNest >= 0 then
+                for i = 0, maxNest do
+                    local animal = nil
+                    pcall(function() animal = hutch:getAnimalInNestBox(i) end)
+                    if animal == nil then
+                        local nest = nil
+                        pcall(function() nest = hutch:getNestBox(i) end)
+                        if nest ~= nil then
+                            local before = 0
+                            pcall(function() before = tonumber(nest:getEggsNb()) or 0 end)
+                            for _ = 1, 2 do
+                                local egg = nil
+                                pcall(function() egg = instanceItem("Base.Egg") end)
+                                if egg ~= nil then
+                                    pcall(function() egg:setFertilized(false) end)
+                                    pcall(function() nest:addEgg(egg) end)
+                                end
+                            end
+                            local after = before
+                            pcall(function() after = tonumber(nest:getEggsNb()) or before end)
+                            if after > before then added = added + (after - before) end
+                        end
+                    end
+                end
+            end
+            pcall(function() hutch:sync() end)
+            result.count = added
+            log("hutchCare debugEggs " .. tostring(added) .. " for " .. tostring(who))
+            return reply(nil, true)
+        end
+        pcall(function()
+            hutch:setHutchDirt(100)
+            hutch:setNestBoxDirt(100)
+            hutch:sync()
+        end)
+        result.count = 1
+        log("hutchCare debugDirty for " .. tostring(who))
+        return reply(nil, true)
+    end
+    local body, sq = companionAtRelaxed(player, args, 6)
+    if body == nil or sq == nil then
+        log("hutchCare: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    if actorReach(player, body, args, args.x + 0.5, args.y + 0.5) > 6 then
+        log("hutchCare: far " .. tostring(who))
+        return reply("far")
+    end
+    local hutch = nil
+    pcall(function()
+        local h = sq:getHutch()
+        if h ~= nil then
+            local up = h:getHutch()
+            hutch = up or h
+        end
+    end)
+    if hutch == nil then return reply("hutch") end
+    pcall(function() result.open = hutch:isOpen() == true end)
+    pcall(function() result.hatch = hutch:isEggHatchDoorOpen() == true end)
+
+    if op == "openHatch" then
+        pcall(function()
+            if hutch:isEggHatchDoorOpen() ~= true then hutch:toggleEggHatchDoor() end
+            hutch:sync()
+        end)
+        pcall(function() result.hatch = hutch:isEggHatchDoorOpen() == true end)
+        return reply(nil, true)
+    end
+    if op == "closeHatch" then
+        pcall(function()
+            if hutch:isEggHatchDoorOpen() == true then hutch:toggleEggHatchDoor() end
+            hutch:sync()
+        end)
+        pcall(function() result.hatch = hutch:isEggHatchDoorOpen() == true end)
+        return reply(nil, true)
+    end
+    if op == "openDoor" then
+        pcall(function()
+            if hutch:isOpen() ~= true then hutch:toggleDoor() end
+            hutch:sync()
+        end)
+        pcall(function() result.open = hutch:isOpen() == true end)
+        return reply(nil, true)
+    end
+    if op == "closeDoor" then
+        pcall(function()
+            if hutch:isOpen() == true then hutch:toggleDoor() end
+            hutch:sync()
+        end)
+        pcall(function() result.open = hutch:isOpen() == true end)
+        return reply(nil, true)
+    end
+    if op == "cleanNest" then
+        local before = 0
+        pcall(function() before = tonumber(hutch:getNestBoxDirt()) or 0 end)
+        pcall(function()
+            hutch:setNestBoxDirt(0)
+            hutch:sync()
+        end)
+        result.count = before > 0 and 1 or 0
+        return reply(nil, true)
+    end
+    if op == "cleanFloor" then
+        local points = math.floor(tonumber(args.points) or 0)
+        local dirt = 0
+        pcall(function() dirt = tonumber(hutch:getHutchDirt()) or 0 end)
+        if points > dirt then points = dirt end
+        if points < 0 then points = 0 end
+        if points > 0 then
+            pcall(function()
+                hutch:setHutchDirt(math.max(0, dirt - points))
+                hutch:sync()
+            end)
+        end
+        result.count = points
+        return reply(nil, true)
+    end
+    if op == "eggs" then
+        local max = math.floor(tonumber(args.max) or 0)
+        if max <= 0 then return reply(nil, true) end
+        local rec = record(who)
+        local list = BridgeItems.decode(rec.items or "")
+        local entries = {}
+        local maxNest = nil
+        pcall(function() maxNest = tonumber(hutch:getMaxNestBox()) end)
+        if maxNest ~= nil and maxNest >= 0 then
+            for i = 0, maxNest do
+                local animal = nil
+                pcall(function() animal = hutch:getAnimalInNestBox(i) end)
+                if animal == nil then
+                    local nest = nil
+                    pcall(function() nest = hutch:getNestBox(i) end)
+                    if nest ~= nil then
+                        local n = 0
+                        pcall(function() n = tonumber(nest:getEggsNb()) or 0 end)
+                        for j = n - 1, 0, -1 do
+                            local egg = nil
+                            local read = pcall(function() egg = nest:getEgg(j) end)
+                            if read and egg ~= nil then
+                                local fert = nil
+                                pcall(function() fert = egg:isFertilized() == true end)
+                                entries[#entries + 1] = { fert = fert == true, nest = nest, index = j }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        local cap = 5
+        if BridgeData ~= nil and type(BridgeData.hutchFertCap) == "function" then
+            cap = BridgeData.hutchFertCap(rec)
+        end
+        local picks = {}
+        if BridgeData ~= nil and type(BridgeData.hutchEggPlan) == "function" then
+            picks = BridgeData.hutchEggPlan(entries, cap)
+        end
+        if #picks > max then
+            local trimmed = {}
+            for i = 1, max do trimmed[i] = picks[i] end
+            picks = trimmed
+        end
+        if #picks == 0 then return reply("noeggs", true) end
+        local taken = {}
+        for i = 1, #picks do
+            local egg = nil
+            pcall(function() egg = picks[i].nest:removeEgg(picks[i].index) end)
+            if egg ~= nil then
+                local r = nil
+                pcall(function() r = BridgeItems.record(egg, true) end)
+                if r ~= nil then
+                    taken[#taken + 1] = { egg = egg, rec = r, nest = picks[i].nest }
+                else
+                    pcall(function() picks[i].nest:addEgg(egg) end)
+                end
+            end
+        end
+        if #taken == 0 then return reply("noeggs", true) end
+        local temp, flat = {}, {}
+        for i = 1, #list do temp[i] = list[i] end
+        for i = 1, #taken do
+            local added = {}
+            flatten(taken[i].rec, nil, added)
+            for j = 1, #added do temp[#temp + 1] = added[j] end
+            flat[i] = added
+        end
+        local items = BridgeItems.encode(temp)
+        if BridgeItems.overBlock() or #BridgeItems.decode(items) ~= #temp then
+            for i = #taken, 1, -1 do
+                pcall(function() taken[i].nest:addEgg(taken[i].egg) end)
+            end
+            pcall(function() hutch:sync() end)
+            return reply("full")
+        end
+        pcall(function() hutch:sync() end)
+        BridgeItems.set(rec, items)
+        rec.saved = 1
+        rec.iseq = (rec.iseq or 0) + 1
+        transmit()
+        local recs, ids = {}, {}
+        for i = 1, #taken do
+            recs[i] = taken[i].rec
+            local id = nil
+            pcall(function() id = taken[i].egg:getID() end)
+            if id == nil then id = 0 - i end
+            ids[i] = id
+            journalNote("G", who, rec, id, flat[i])
+        end
+        result.count = #taken
+        sendServerCommand(player, "Bridge", "gave",
+            { ids = ids, recs = recs, iseq = rec.iseq, jobDest = "records" })
+        reply(nil, true)
+        log("hutchCare eggs " .. tostring(#taken) .. " for " .. tostring(who))
+        return
+    end
+    return reply("badop")
+end
+
+BridgeServer.Commands.fertilizePlants = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local result = { x = args.x, y = args.y, z = args.z, ok = false, why = nil }
+    local function reply(why)
+        result.why = why
+        sendServerCommand(player, "Bridge", "fertilizePlantResult", result)
+    end
+    if body == nil or sq == nil then
+        log("fertilizePlants: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    if BridgeGardening == nil then return reply("notloaded") end
+    local compost = args.compost == true
+    local plant = BridgeGardening.plantAt(sq, true)
+    if plant == nil then return reply("noplant") end
+    local okKind = BridgeGardening.feedKindFor(plant, compost, not compost) ~= nil
+    if not BridgeGardening.needsFeed(plant) or not okKind then return reply("nofeed") end
+    local rec = record(who)
+    local stored = 0
+    pcall(function()
+        local skills = BridgeData.skillsOf(rec)
+        stored = tonumber(skills.Agriculture) or 0
+    end)
+    local skill = 0
+    pcall(function() skill = BridgeData.levelFromXp("Agriculture", stored) end)
+    local done, err = pcall(function()
+        plant:fertilize({ compost = compost, skill = skill })
+    end)
+    if not done then
+        log("fertilizePlants: fertilize failed for " .. tostring(who) .. ": " .. tostring(err))
+        return reply("error")
+    end
+    pcall(function() plant:saveData() end)
+    result.ok = true
+    reply(nil)
+    log(string.format("fertilizePlants: %s %s,%s compost=%s ok=true", tostring(who),
+        tostring(args.x), tostring(args.y), tostring(compost)))
+end
+
+BridgeServer.Commands.curePlants = function(player, args)
+    local who = player:getUsername()
+    local body, sq = companionAtRelaxed(player, args, 6)
+    local result = { x = args.x, y = args.y, z = args.z, cure = args.cure, ok = false, why = nil }
+    local function reply(why)
+        result.why = why
+        sendServerCommand(player, "Bridge", "curePlantResult", result)
+    end
+    if body == nil or sq == nil then
+        log("curePlants: no companion/square for " .. tostring(who))
+        return reply("nobody")
+    end
+    if BridgeGardening == nil or BridgeGardening.CURES == nil then return reply("notloaded") end
+    local entry = nil
+    for i = 1, #BridgeGardening.CURES do
+        if BridgeGardening.CURES[i].cure == args.cure then
+            entry = BridgeGardening.CURES[i]
+            break
+        end
+    end
+    if entry == nil then return reply("badcure") end
+    local uses = math.floor(tonumber(args.uses) or 0)
+    if uses < 1 then uses = 1 end
+    if uses > 10 then uses = 10 end
+    result.uses = uses
+    local plant = BridgeGardening.plantAt(sq, true)
+    if plant == nil then return reply("noplant") end
+    local lvl = 0
+    pcall(function() lvl = tonumber(plant[entry.lvl]) or 0 end)
+    if lvl <= 0 then return reply("nocure") end
+    local rec = record(who)
+    local stored = 0
+    pcall(function()
+        local skills = BridgeData.skillsOf(rec)
+        stored = tonumber(skills.Agriculture) or 0
+    end)
+    local skill = 0
+    pcall(function() skill = BridgeData.levelFromXp("Agriculture", stored) end)
+    local fn = nil
+    pcall(function() fn = plant["cure" .. entry.cure] end)
+    if type(fn) ~= "function" then return reply("nocure") end
+    local done, err = pcall(fn, plant, nil, uses, skill)
+    if not done then
+        log("curePlants: cure failed for " .. tostring(who) .. ": " .. tostring(err))
+        return reply("error")
+    end
+    pcall(function() plant:saveData() end)
+    result.ok = true
+    reply(nil)
+    log(string.format("curePlants: %s %s,%s cure=%s uses=%d ok=true", tostring(who),
+        tostring(args.x), tostring(args.y), tostring(entry.cure), uses))
+end
+
+BridgeServer.Commands.openSeedPacket = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    local packetType = args.packetType
+    local function reply(ok, why)
+        sendServerCommand(player, "Bridge", "sowPacketResult",
+            { ok = ok == true, why = why, packet = packetType })
+    end
+    if BridgeGardening == nil or BridgeItems == nil then return reply(false, "not loaded") end
+    local info = BridgeGardening.packetInfo(packetType)
+    if info == nil then return reply(false, "bad packet") end
+    local seedProbe = instanceItem(info.seed)
+    local emptyProbe = instanceItem(info.empty)
+    if seedProbe == nil or emptyProbe == nil then return reply(false, "missing item") end
+    local list = BridgeItems.decode(rec.items or "")
+    local idx = nil
+    for i = 1, #list do
+        if list[i].t == packetType then idx = i break end
+    end
+    if idx == nil then return reply(false, "no packet") end
+    local trimmed = removeSubtree(list, idx)
+    local recs = {}
+    local per = BridgeGardening.SEEDS_PER_PACKET or 5
+    for i = 1, per do
+        local r = BridgeItems.record(instanceItem(info.seed), true)
+        recs[#recs + 1] = r
+        flatten(r, nil, trimmed)
+    end
+    local emptyRec = BridgeItems.record(instanceItem(info.empty), true)
+    recs[#recs + 1] = emptyRec
+    flatten(emptyRec, nil, trimmed)
+    local text = BridgeItems.encode(trimmed)
+    if BridgeItems.overBlock() then return reply(false, "carrying too much") end
+    if #BridgeItems.decode(text) ~= #trimmed then return reply(false, "snapshot full") end
+    BridgeItems.set(rec, text)
+    rec.saved = 1
+    rec.iseq = (rec.iseq or 0) + 1
+    local ids = {}
+    local base = (rec.iseq or 0) * 1000
+    for i = 1, #recs do ids[i] = -(base + i) - 1 end
+    transmit()
+    sendServerCommand(player, "Bridge", "gave",
+        { ids = ids, recs = recs, token = args.token, iseq = rec.iseq })
+    reply(true, nil)
+    log(string.format("openSeedPacket: %s %s into %d seeds", tostring(who), tostring(packetType), per))
+end
 
 local function serverCorpseOn(sq, cx, cy)
     local best, bestD = nil, nil
@@ -3719,9 +4878,24 @@ function BridgeServer.resolveRef(sq, ref, player)
                 end
             end
         else
-            local o = sq:getObjects():get(ref.o)
+            local objs = nil
+            pcall(function() objs = sq:getObjects() end)
+            local o = BridgeData.objAtIndex(objs, ref.o)
             if o ~= nil then
-                if ref.c == nil or ref.c == -1 then c = o:getContainer() else c = o:getContainerByIndex(ref.c) end
+                local cidx = tonumber(ref.c)
+                if cidx == nil or cidx < 0 then
+                    pcall(function() c = o:getContainer() end)
+                else
+                    c = BridgeData.containerAtIndex(o, cidx)
+                end
+            end
+            if c == nil then
+                local on, cn = 0, 0
+                pcall(function() if objs ~= nil then on = objs:size() end end)
+                pcall(function() if o ~= nil then cn = o:getContainerCount() end end)
+                log(string.format("ref rejected: kind=%s x=%s y=%s z=%s o=%s c=%s objects=%d containers=%d",
+                    tostring(ref.kind), tostring(ref.x), tostring(ref.y), tostring(ref.z),
+                    tostring(ref.o), tostring(ref.c), on, cn))
             end
         end
     end)
@@ -3930,7 +5104,16 @@ local function collectHomeItems(rec, body, player, fullType, want)
     local all = BridgeData.optionOf(rec, "homeAllFloors")
     local h, x1, y1, x2, y2, z1, z2 = homeRectOf(rec, all)
     local out, total = {}, 0
-    if h == nil or type(fullType) ~= "string" then return out, total end
+    local wanted = nil
+    if type(fullType) == "string" then
+        wanted = { [fullType] = true }
+    elseif type(fullType) == "table" then
+        wanted = {}
+        for i = 1, #fullType do
+            if type(fullType[i]) == "string" then wanted[fullType[i]] = true end
+        end
+    end
+    if h == nil or wanted == nil then return out, total end
     local need = math.floor(tonumber(want) or 0)
     if need <= 0 then need = 1 end
     local seen = {}
@@ -3975,7 +5158,7 @@ local function collectHomeItems(rec, body, player, fullType, want)
                                                     local it = list:get(k)
                                                     local full = nil
                                                     pcall(function() if it ~= nil then full = it:getFullType() end end)
-                                                    if full == fullType then
+                                                    if full ~= nil and wanted[full] then
                                                         local cnt = 0
                                                         pcall(function() cnt = it:getCount() end)
                                                         cnt = math.floor(tonumber(cnt) or 1)
@@ -4190,6 +5373,155 @@ BridgeServer.Commands.fetchSupply = function(player, args)
 end
 
 
+
+local function splitHomePacket(player, container, item, info)
+    if container == nil or item == nil or info == nil then return false end
+    local seedProbe = instanceItem(info.seed)
+    local emptyProbe = instanceItem(info.empty)
+    if seedProbe == nil or emptyProbe == nil then return false end
+    local per = BridgeGardening.SEEDS_PER_PACKET or 5
+    pcall(function()
+        if container:hasRoomFor(player, seedProbe) == false then error("no room") end
+    end)
+    local removed, added, addedCount = false, nil, 0
+    local ok, err = pcall(function()
+        container:Remove(item)
+        removed = true
+        sendRemoveItemFromContainer(container, item)
+        pcall(function() added = container:AddItems(info.seed, per) end)
+        if added ~= nil then pcall(function() addedCount = added:size() end) end
+        if addedCount < per then error("seeds rejected " .. tostring(addedCount)) end
+        pcall(function() sendAddItemsToContainer(container, added) end)
+        local empty = nil
+        pcall(function() empty = container:AddItem(info.empty) end)
+        if empty == nil then error("empty packet rejected") end
+        pcall(function() sendAddItemToContainer(container, empty) end)
+    end)
+    if not ok then
+        pcall(function()
+            if added ~= nil then
+                for i = addedCount - 1, 0, -1 do
+                    local one = added:get(i)
+                    if one ~= nil then container:Remove(one) end
+                end
+            end
+            if removed then
+                container:AddItem(item)
+                sendAddItemToContainer(container, item)
+            end
+        end)
+        log("fetchSeeds: opening " .. tostring(info.seed) .. " packet failed: " .. tostring(err))
+        return false
+    end
+    return true
+end
+
+BridgeServer.Commands.fetchSeeds = function(player, args)
+    local who = player:getUsername()
+    local rec = record(who)
+    local kind = args.kind
+    local function fail(why)
+        log("fetchSeeds failed for " .. tostring(who) .. ": " .. tostring(why))
+    end
+    if BridgeGardening == nil or BridgeItems == nil then return fail("not loaded") end
+    if rec.bodyId == nil then return fail("no body") end
+    local all = BridgeData.optionOf(rec, "homeAllFloors")
+    local h = homeRectOf(rec, all)
+    if h == nil then return fail("no home") end
+    local body = BridgeServer.bodies[who] or currentBody(who, rec)
+    if body == nil then return fail("no body") end
+    local bx, by, bz = nil, nil, nil
+    pcall(function() bx, by, bz = math.floor(body:getX()), math.floor(body:getY()), math.floor(body:getZ()) end)
+    if bx == nil then return fail("no position") end
+    if not BridgeData.homeHas(h, bx, by, bz, FETCH_MARGIN, all) then return fail("not at home") end
+    local types = BridgeGardening.seedTypesOf(kind)
+    if #types == 0 then return fail("bad kind") end
+    local want = math.floor(tonumber(args.want) or 0)
+    if want < 1 then return fail("no want") end
+    if want > 200 then want = 200 end
+    local seedType = nil
+    for i = 1, #types do
+        if instanceItem(types[i]) ~= nil then
+            seedType = types[i]
+            break
+        end
+    end
+    if seedType == nil then return fail("no seed item") end
+    local picked, available = collectHomeItems(rec, body, player, types, want)
+    if available < want then
+        local entry = BridgeGardening.seedTable().byKind[kind]
+        local packets = entry ~= nil and entry.packets or {}
+        if #packets > 0 then
+            local needPacks = math.ceil((want - available) / (BridgeGardening.SEEDS_PER_PACKET or 5))
+            local packs = collectHomeItems(rec, body, player, packets, needPacks)
+            local opened = 0
+            for i = 1, #packs do
+                if opened >= needPacks then break end
+                local item, cont = packs[i].item, packs[i].container
+                local full = nil
+                pcall(function() full = item ~= nil and item:getFullType() or nil end)
+                local info = BridgeGardening.packetInfo(full)
+                if info ~= nil and splitHomePacket(player, cont, item, info) then
+                    opened = opened + 1
+                end
+            end
+            if opened > 0 then
+                picked, available = collectHomeItems(rec, body, player, types, want)
+            end
+        end
+    end
+    if available < 1 or #picked == 0 then return fail("no seeds") end
+    local take = math.min(want, available)
+    local list = BridgeItems.decode(rec.items or "")
+    local recs = {}
+    local made = 0
+    for i = 1, #picked do
+        if made >= take then break end
+        local it = picked[i].item
+        local full = nil
+        pcall(function() full = it ~= nil and it:getFullType() or nil end)
+        local have = picked[i].count
+        local use = math.min(have, take - made)
+        if full ~= nil then
+            for _ = 1, use do
+                local r = BridgeItems.record(instanceItem(full), true)
+                recs[#recs + 1] = r
+                flatten(r, nil, list)
+                made = made + 1
+            end
+        end
+    end
+    if made < take then return fail("no seed item") end
+    local encoded = BridgeItems.encode(list)
+    if BridgeItems.overBlock() then return fail("carrying too much") end
+    if #BridgeItems.decode(encoded) ~= #list then return fail("snapshot full") end
+    local left = take
+    for i = 1, #picked do
+        if left <= 0 then break end
+        local it, c = picked[i].item, picked[i].container
+        local have = picked[i].count
+        local use = math.min(have, left)
+        if use >= have then
+            pcall(function() c:Remove(it) end)
+            pcall(function() sendRemoveItemFromContainer(c, it) end)
+        else
+            pcall(function() it:setCount(have - use) end)
+            pcall(function() sendItemStats(it) end)
+        end
+        left = left - use
+    end
+    BridgeItems.set(rec, encoded)
+    rec.saved = 1
+    rec.iseq = (rec.iseq or 0) + 1
+    local ids = {}
+    local base = (rec.iseq or 0) * 1000
+    for i = 1, take do ids[i] = -(base + i) - 1 end
+    transmit()
+    sendServerCommand(player, "Bridge", "gave",
+        { ids = ids, recs = recs, token = args.token, iseq = rec.iseq })
+    log(string.format("fetchSeeds: %d of %s for %s, left %d in home storage",
+        take, tostring(kind), tostring(who), available - take))
+end
 
 BridgeServer.Commands.take = function(player, args)
     local who = player:getUsername()
@@ -5204,6 +6536,25 @@ local function onTick()
     if BridgeServer.tick % 30 == 15 then
         pcall(BridgeServer.restartPass)
     end
+    if BridgeServer.animalHolds ~= nil then
+        local now = getTimestampMs()
+        for animal, hold in pairs(BridgeServer.animalHolds) do
+            if hold["until"] ~= nil and now > hold["until"] then
+                BridgeServer.animalHolds[animal] = nil
+                pcall(function()
+                    local b = animal:getBehavior()
+                    if b ~= nil then b:setBlockMovement(false) end
+                end)
+                if hold.action == "pet" then
+                    pcall(function()
+                        if animal:getVariableString("idleAction") == "petting" then
+                            animal:clearVariable("idleAction")
+                        end
+                    end)
+                end
+            end
+        end
+    end
 end
 
 local function onInit()
@@ -5234,6 +6585,26 @@ local function onInit()
 
 
         rec.oldIds = nil
+    end
+    local migrated, salvaged, preset, failed = 0, 0, 0, 0
+    if BridgeGunRules ~= nil and type(BridgeGunRules.efzMigrateRecord) == "function" then
+        for who, rec in pairs(md.players) do
+            local ok, changed, stats = pcall(BridgeGunRules.efzMigrateRecord, rec)
+            if not ok then
+                failed = failed + 1
+            else
+                if type(changed) == "number" then migrated = migrated + changed end
+                if type(stats) == "table" then
+                    salvaged = salvaged + (stats.salvaged or 0)
+                    preset = preset + (stats.preset or 0)
+                    failed = failed + (stats.failed or 0)
+                end
+            end
+        end
+    end
+    if migrated > 0 or failed > 0 then
+        log(string.format("EFZ gun migration: migrated=%d salvaged=%d preset=%d failed=%d",
+            migrated, salvaged, preset, failed))
     end
     transmit()
     local ids = 0

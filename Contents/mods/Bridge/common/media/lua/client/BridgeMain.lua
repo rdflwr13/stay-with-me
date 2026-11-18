@@ -18,10 +18,11 @@
 if BridgeLog ~= nil and BridgeLog.on() then print("[Bridge] main loaded v225") end
 
 
-local START_AXE = { condition = 10, head = 10, sharpness = 0.6 }
+local CFG = {}
+CFG.START_AXE = { condition = 10, head = 10, sharpness = 0.6 }
 
 
-local SPAWN_SPEAK_GRACE = 5 * 60
+CFG.SPAWN_SPEAK_GRACE = 5 * 60
 
 Bridge = Bridge or {}
 
@@ -151,65 +152,187 @@ Bridge.genderCooldownUntil = 0
 Bridge.genderNoticeText = nil
 Bridge.genderNoticeUntil = 0
 
-local IN_FILE = "bridge/in.txt"
-local OUT_FILE = "bridge/out.txt"
-Bridge.outFile = OUT_FILE
+CFG.IN_FILE = "bridge/in.txt"
+CFG.OUT_FILE = "bridge/out.txt"
+Bridge.outFile = CFG.OUT_FILE
 
 
 Bridge.errBuf = Bridge.errBuf or {}
-local ERR_BUF_MAX = 50
+CFG.ERR_BUF_MAX = 50
 
-function Bridge.logError(source, msg)
-    pcall(function()
-        if msg == nil then return end
-        source = tostring(source or "?")
-        msg = tostring(msg)
-        local tick = tonumber(Bridge.tick) or 0
-        local buf = Bridge.errBuf
-        local key = source .. "|" .. msg
-        for i = 1, #buf do
-            if buf[i].key == key then
-                local rec = buf[i]
-                rec.count = (rec.count or 1) + 1
-                rec.last_tick = tick
-                table.remove(buf, i)
-                buf[#buf + 1] = rec
-                return
-            end
-        end
-        local ingame = "-"
-        pcall(function()
-            local gt = getGameTime()
-            ingame = string.format("Y%d M%d D%d %02d:%02d", gt:getYear(), gt:getMonth() + 1, gt:getDay(), gt:getHour(), gt:getMinutes())
-        end)
-        buf[#buf + 1] = { key = key, source = source, msg = msg, count = 1, first_tick = tick, last_tick = tick, ingame = ingame }
-        while #buf > ERR_BUF_MAX do table.remove(buf, 1) end
-    end)
+local errIngameTick = -1
+local errIngameText = "-"
+
+local function errIngame()
+    local gt = getGameTime()
+    return string.format("Y%d M%d D%d %02d:%02d", gt:getYear(), gt:getMonth() + 1, gt:getDay(), gt:getHour(), gt:getMinutes())
 end
 
-local APPEAR_DELAY = 180
+local function errIngameStamp()
+    local tick = tonumber(Bridge.tick) or 0
+    if tick == errIngameTick then return errIngameText end
+    local ok, text = pcall(errIngame)
+    if ok and type(text) == "string" then errIngameText = text end
+    errIngameTick = tick
+    return errIngameText
+end
+
+local function pushError(source, msg)
+    if msg == nil then return end
+    source = tostring(source or "?")
+    msg = tostring(msg)
+    local tick = tonumber(Bridge.tick) or 0
+    local buf = Bridge.errBuf
+    for i = 1, #buf do
+        local rec = buf[i]
+        if rec.source == source and rec.msg == msg then
+            rec.count = (rec.count or 1) + 1
+            rec.last_tick = tick
+            table.remove(buf, i)
+            buf[#buf + 1] = rec
+            return
+        end
+    end
+    buf[#buf + 1] = { source = source, msg = msg, count = 1, first_tick = tick, last_tick = tick, ingame = errIngameStamp() }
+    while #buf > CFG.ERR_BUF_MAX do table.remove(buf, 1) end
+end
+
+function Bridge.logError(source, msg)
+    pcall(pushError, source, msg)
+end
+
+CFG.ERR_FEED_MAX = 20
+CFG.ERR_FEED_LINES = 6
+CFG.ERR_FEED_CHARS = 400
+
+function Bridge.isSwmError(msg)
+    if type(msg) ~= "string" then return false end
+    if string.find(msg, "MOD:Stay With Me", 1, true) then return true end
+    if string.find(msg, "mods/Bridge", 1, true) then return true end
+    if string.find(msg, "mods\\Bridge", 1, true) then return true end
+    return false
+end
+
+local function isSpaceByte(b)
+    return b == 32 or (b ~= nil and b >= 9 and b <= 13)
+end
+
+function Bridge.cleanLuaError(text)
+    if type(text) ~= "string" then return nil end
+    local out = {}
+    local capLines = CFG.ERR_FEED_LINES or 6
+    local pos, len = 1, #text
+    while pos <= len and #out < capLines do
+        local nl = string.find(text, "\n", pos, true)
+        local line = nl and string.sub(text, pos, nl - 1) or string.sub(text, pos)
+        pos = nl and (nl + 1) or (len + 1)
+        if string.find(line, "\t", 1, true) then line = string.gsub(line, "\t", "  ") end
+        if isSpaceByte(string.byte(line, #line)) then line = string.gsub(line, "%s+$", "") end
+        local b1, b2, b3, b4 = string.byte(line, 1, 4)
+        if not string.find(line, "%S") then
+        elseif b1 == 45 and b2 == 45 and b3 == 45 and b4 == 45 then
+        elseif line == "STACK TRACE" then
+        elseif string.find(line, "dumping Lua stack trace", 1, true) then
+        else
+            if isSpaceByte(b1) then line = string.gsub(line, "^%s+", "") end
+            if line ~= "" then out[#out + 1] = line end
+            if #out >= capLines then break end
+        end
+    end
+    if #out == 0 then return nil end
+    local msg = table.concat(out, " | ")
+    local cap = CFG.ERR_FEED_CHARS or 400
+    if #msg > cap then msg = msg:sub(1, cap) .. "..." end
+    return msg
+end
+
+local function errCount()
+    return tonumber(getLuaDebuggerErrorCount()) or 0
+end
+
+local function errList()
+    return getLuaDebuggerErrors()
+end
+
+local function errSize(list)
+    return tonumber(list:size()) or 0
+end
+
+local function errAt(list, i)
+    return list:get(i)
+end
+
+function Bridge.feedLuaErrors()
+    if type(getLuaDebuggerErrorCount) ~= "function" then return end
+    if type(getLuaDebuggerErrors) ~= "function" then return end
+    local count = 0
+    local list = nil
+    local okCount, vCount = pcall(errCount)
+    if okCount then count = vCount end
+    local okList, vList = pcall(errList)
+    if okList then list = vList end
+    if list == nil then return end
+    local size = 0
+    local okSize, vSize = pcall(errSize, list)
+    if okSize then size = vSize end
+    if count <= 0 then count = size end
+    local seen = Bridge.errSeen
+    if seen == nil then
+        Bridge.errSeen = 0
+        seen = 0
+    end
+    if count < seen then seen = 0 end
+    if count <= seen then
+        Bridge.errSeen = count
+        return
+    end
+    if size <= 0 then
+        Bridge.errSeen = count
+        return
+    end
+    local maxNew = CFG.ERR_FEED_MAX or 20
+    local fresh = count - seen
+    if fresh > maxNew then fresh = maxNew end
+    if fresh > size then fresh = size end
+    for k = fresh, 1, -1 do
+        local ok, text = pcall(errAt, list, size - k)
+        if not ok then text = nil end
+        local msg = Bridge.cleanLuaError(text)
+        if msg ~= nil and Bridge.isSwmError(msg) then
+            Bridge.logError("lua", msg)
+        end
+    end
+    Bridge.errSeen = count
+end
+
+CFG.APPEAR_DELAY = 180
 
 
-local GONE_SOON = 600
-local BACKOFF_FIRST = 300
-local BACKOFF_MAX = 1800
-local BACKOFF_RESET = 1200
-local HOME_NEAR = 35
-local HOME_FAR = 45
-local READ_EVERY = 30
-local WRITE_EVERY = 30
-local DIAG_EVERY = 300
-local EVENT_FLUSH_EVERY = 60
-local PATH_EVERY = 30
-local OUTFIT_EVERY = 5
-local HEALTH_EVERY = 10
-local VOICE_EVERY = 10
-local FOLLOW_DIST = 2.5
-local BODY_VAR = "NotAloneBody"
-Bridge.BODY_VAR = BODY_VAR
-local ITEMS_DIRTY_DEBOUNCE = 20
-local STALE_SWEEP_FALLBACK = 3600
-local MARKED_SCAN_EVERY = 15
+CFG.GONE_SOON = 600
+CFG.BACKOFF = {}
+CFG.BACKOFF.FIRST = 300
+CFG.BACKOFF.MAX = 1800
+CFG.BACKOFF.RESET = 1200
+CFG.HOME = {}
+CFG.HOME.NEAR = 35
+CFG.HOME.FAR = 45
+CFG.READ_EVERY = 30
+CFG.WRITE_EVERY = 30
+CFG.DIAG_EVERY = 300
+CFG.EVENT_FLUSH_EVERY = 60
+CFG.PATH_EVERY = 30
+CFG.OUTFIT_EVERY = 5
+CFG.HEALTH = {}
+CFG.HEALTH.EVERY = 10
+CFG.VOICE_EVERY = 10
+CFG.FOLLOW_DIST = 2.5
+CFG.BODY = {}
+CFG.BODY.VAR = "NotAloneBody"
+Bridge.BODY_VAR = CFG.BODY.VAR
+CFG.ITEMS_DIRTY_DEBOUNCE = 20
+CFG.STALE = {}
+CFG.STALE.SWEEP_FALLBACK = 3600
+CFG.MARKED_SCAN_EVERY = 15
 
 Bridge.bodyVarCache = Bridge.bodyVarCache or setmetatable({}, { __mode = "k" })
 Bridge.bodyVarAt = Bridge.bodyVarAt or setmetatable({}, { __mode = "k" })
@@ -238,6 +361,7 @@ end
 function Bridge.itemsChanged()
     Bridge.itemsDirty = true
     Bridge.itemsDirtyAt = Bridge.time
+    Bridge.itemsChangedSeq = (Bridge.itemsChangedSeq or 0) + 1
     if BridgeBackup ~= nil then
         BridgeBackup.counter = (tonumber(BridgeBackup.counter) or 0) + 1
     end
@@ -279,7 +403,7 @@ local function zombieBodyVar(z)
     local at = cacheOn and Bridge.bodyVarAt[z] or nil
     if at ~= nil and now - at < ttl then return Bridge.bodyVarCache[z] end
     local v = nil
-    local ok, got = pcall(z.getVariableBoolean, z, BODY_VAR)
+    local ok, got = pcall(z.getVariableBoolean, z, CFG.BODY.VAR)
     if ok then v = got == true end
     if v == nil then return nil end
     if cacheOn then
@@ -308,9 +432,9 @@ end
 
 
 
-local HEALTH_BUFFER_AT = 1000
+CFG.HEALTH.BUFFER_AT = 1000
 local function healthBuffer()
-    if BridgeGun ~= nil and BridgeGun.installed then return HEALTH_BUFFER_AT end
+    if BridgeGun ~= nil and BridgeGun.installed then return CFG.HEALTH.BUFFER_AT end
     return 1
 end
 Bridge.healthBuffer = healthBuffer
@@ -339,7 +463,7 @@ end
 
 
 
-local VERBOSE_FILE = "bridge/verbose.txt"
+CFG.VERBOSE_FILE = "bridge/verbose.txt"
 Bridge.verbose = false
 Bridge.verboseCheckTick = -9999
 Bridge.verboseOverride = nil
@@ -390,13 +514,13 @@ local function dist2d(a, b)
     return math.sqrt(dx * dx + dy * dy)
 end
 
-local OWNER_DRIVE_RADIUS = 30
+CFG.OWNER_DRIVE_RADIUS = 30
 local function ownerNearBody(body, owner, radius)
     if body == nil or owner == nil then return false end
     local near = false
     pcall(function()
         near = not owner:isDead() and math.abs(owner:getZ() - body:getZ()) < 1
-            and dist2d(owner, body) <= (radius or OWNER_DRIVE_RADIUS)
+            and dist2d(owner, body) <= (radius or CFG.OWNER_DRIVE_RADIUS)
     end)
     return near
 end
@@ -426,7 +550,7 @@ local function aliveUncached()
     end
     if not ok or dead then return false end
 
-    local okVar, marked = pcall(function() return Bridge.body:getVariableBoolean(BODY_VAR) end)
+    local okVar, marked = pcall(function() return Bridge.body:getVariableBoolean(CFG.BODY.VAR) end)
     if okVar and not marked and Bridge.kind == "zombie" then
 
 
@@ -680,7 +804,7 @@ local function humanize(body)
     Bridge.invalidateBodyCaches(body)
     Bridge.resetApplied()
     pcall(BridgeVoice.applyPrefix, body)
-    body:setVariable(BODY_VAR, true)
+    body:setVariable(CFG.BODY.VAR, true)
 
     pcall(function() BridgeInventory.bodyArrived(body) end)
 
@@ -769,7 +893,7 @@ function Bridge.unhumanize(z, pooled)
                             "NotAloneStride", "WalkInjury", "NotAloneAnimOld", "NotAloneSneak", "SurvivorNPC" }) do
         pcall(function() z:clearVariable(name) end)
     end
-    pcall(function() z:setVariable(BODY_VAR, false) end)
+    pcall(function() z:setVariable(CFG.BODY.VAR, false) end)
     pcall(function() if z:hasModData() then z:getModData().ST_Ignore = nil end end)
     pcall(function() if z:hasModData() then z:getModData().RandomZedsExcluded = nil end end)
     pcall(function() if z:hasModData() then z:getModData().notAloneBody = nil end end)
@@ -842,7 +966,7 @@ function Bridge.releaseForeign(z)
             pcall(Bandit.UpdateItemsToSpawnAtDeath, z, brain)
         end
     end
-    pcall(function() z:setVariable(BODY_VAR, false) end)
+    pcall(function() z:setVariable(CFG.BODY.VAR, false) end)
 
     pcall(function()
         if z:hasModData() then
@@ -1466,9 +1590,9 @@ local function dressBody(body)
 
 
 
-                    pcall(function() weapon:setCondition(START_AXE.condition) end)
-                    pcall(function() if weapon.setHeadCondition ~= nil then weapon:setHeadCondition(START_AXE.head) end end)
-                    pcall(function() if weapon.setSharpness ~= nil then weapon:setSharpness(START_AXE.sharpness) end end)
+                    pcall(function() weapon:setCondition(CFG.START_AXE.condition) end)
+                    pcall(function() if weapon.setHeadCondition ~= nil then weapon:setHeadCondition(CFG.START_AXE.head) end end)
+                    pcall(function() if weapon.setSharpness ~= nil then weapon:setSharpness(CFG.START_AXE.sharpness) end end)
                     body:setPrimaryHandItem(weapon)
                     body:setSecondaryHandItem(weapon)
                     BridgeWeapon.assignedId = weapon:getID()
@@ -1513,18 +1637,19 @@ end
 
 
 
-local SCARE_RADIUS = 10
+CFG.SCARE = {}
+CFG.SCARE.RADIUS = 10
 
 
 
 
 
-local SCARE_CLOSE = 5
-local SCARE_SEE = 7
-local SCARE_QUIET = 600
-local SCARE_EVERY = 600
-local SEEN_EVERY = 15
-local WATCH_SCAN_AGE = 15
+CFG.SCARE.CLOSE = 5
+CFG.SCARE.SEE = 7
+CFG.SCARE.QUIET = 600
+CFG.SCARE.EVERY = 600
+CFG.SEEN_EVERY = 15
+CFG.WATCH_SCAN_AGE = 15
 
 
 
@@ -1579,7 +1704,7 @@ function Bridge.isCompanion(z)
     end
     local yes = false
     pcall(function()
-        if z:getVariableBoolean(BODY_VAR) then yes = true return end
+        if z:getVariableBoolean(CFG.BODY.VAR) then yes = true return end
         if not Bridge.mp then return end
         local pid = z:getPersistentOutfitID()
         if Bridge.bodyIndex[pid] ~= nil or (Bridge.store ~= nil and Bridge.store.bodyId == pid) then yes = true return end
@@ -1604,7 +1729,7 @@ local function watchOthers(red, body, around)
     pcall(function()
         local list = nil
         if BridgeZScan ~= nil then
-            list = BridgeZScan.near(red:getX(), red:getY(), SCARE_RADIUS, { tag = "watch.others", age = WATCH_SCAN_AGE })
+            list = BridgeZScan.near(red:getX(), red:getY(), CFG.SCARE.RADIUS, { tag = "watch.others", age = CFG.WATCH_SCAN_AGE })
         end
         if list == nil then list = getCell():getZombieList() end
         local redZ = red:getZ()
@@ -1630,14 +1755,14 @@ local function watchOthers(red, body, around)
             end
             if not skip then
                 local d = dist2d(z, red)
-                if d < SCARE_RADIUS then
+                if d < CFG.SCARE.RADIUS then
                     local sq = z:getCurrentSquare()
                     if sq ~= nil and sq:isCanSee(pn) then
 
                         seen[z] = true
                         count = count + 1
-                        if d < SCARE_SEE and sq:getRoom() == redRoom then gameSeen = gameSeen + 1 end
-                        if not Bridge.seenIds[z] and d < SCARE_CLOSE then newClose = z end
+                        if d < CFG.SCARE.SEE and sq:getRoom() == redRoom then gameSeen = gameSeen + 1 end
+                        if not Bridge.seenIds[z] and d < CFG.SCARE.CLOSE then newClose = z end
                     end
                 end
             end
@@ -1664,8 +1789,8 @@ local function watchOthers(red, body, around)
     local asleep = false
     pcall(function() asleep = red:isAsleep() == true end)
     if BridgeSleep ~= nil and BridgeSleep.pending ~= nil then asleep = true end
-    local play = around == true and not asleep and newClose ~= nil and quietFor >= SCARE_QUIET
-        and (Bridge.time - Bridge.lastScare) > SCARE_EVERY and vol > 0
+    local play = around == true and not asleep and newClose ~= nil and quietFor >= CFG.SCARE.QUIET
+        and (Bridge.time - Bridge.lastScare) > CFG.SCARE.EVERY and vol > 0
     if around == true and newClose ~= nil and not play and Bridge.verbose then
 
         pcall(function()
@@ -1723,7 +1848,7 @@ function Bridge.bodiesSeen()
             local marked = false
             if rec == nil or rec.onlineId == nil then
                 marked = true
-            elseif z:getOnlineID() == rec.onlineId or z:getVariableBoolean(BODY_VAR) == true then
+            elseif z:getOnlineID() == rec.onlineId or z:getVariableBoolean(CFG.BODY.VAR) == true then
                 marked = true
             end
             live = marked and (Bridge.time - info.tick) <= 60 and not z:isDead()
@@ -1766,7 +1891,7 @@ function Bridge.onPlayerUpdate(red)
     local body = Bridge.anyBody()
 
 
-    if Bridge.every(SEEN_EVERY) then watchOthers(red, body, around) end
+    if Bridge.every(CFG.SEEN_EVERY) then watchOthers(red, body, around) end
 
     if BridgeMood ~= nil then pcall(BridgeMood.frame, red) end
     if body == nil then Bridge.restoreRed() return end
@@ -1997,7 +2122,7 @@ function Bridge.spawnZombie(px, py, pz)
         Bridge.kind = "zombie"
         Bridge.clearSpeechOverlay()
         Bridge.noteSpawned()
-        pcall(function() body:setVariable(BODY_VAR, true) end)
+        pcall(function() body:setVariable(CFG.BODY.VAR, true) end)
         Bridge.hideBody(body, true)
         Bridge.hiddenSince = Bridge.tick
         Bridge.hiddenTicks = Bridge.zombieTicks
@@ -2165,7 +2290,7 @@ function Bridge.despawn(skipSave)
 
     if taken then
         local still = false
-        pcall(function() still = dying:getVariableBoolean(BODY_VAR) == true end)
+        pcall(function() still = dying:getVariableBoolean(CFG.BODY.VAR) == true end)
         if still then
             taken = false
             log("despawn: outfit id changed by someone else, the object is still hers: removed as usual")
@@ -2234,7 +2359,7 @@ function Bridge.goneCheck()
         Bridge.goneChecks = nil
         if square == nil then log("body in cell list without a square") end
 
-        if Bridge.spawnBackoff ~= nil and Bridge.createdTime ~= nil and Bridge.time - Bridge.createdTime > BACKOFF_RESET then
+        if Bridge.spawnBackoff ~= nil and Bridge.createdTime ~= nil and Bridge.time - Bridge.createdTime > CFG.BACKOFF.RESET then
             Bridge.spawnBackoff = nil
         end
         return "in world"
@@ -2309,11 +2434,11 @@ function Bridge.bodyGone()
 
     local age = Bridge.createdTime ~= nil and (Bridge.time - Bridge.createdTime) or nil
     Bridge.createdTime = nil
-    if age ~= nil and age < GONE_SOON then
-        Bridge.spawnBackoff = math.min((Bridge.spawnBackoff or (BACKOFF_FIRST / 2)) * 2, BACKOFF_MAX)
+    if age ~= nil and age < CFG.GONE_SOON then
+        Bridge.spawnBackoff = math.min((Bridge.spawnBackoff or (CFG.BACKOFF.FIRST / 2)) * 2, CFG.BACKOFF.MAX)
         Bridge.startTick = Bridge.time
         log(string.format("body removed %.1f s after creation: something clears zombies here, next attempt in %d s",
-            age / 60, math.floor((APPEAR_DELAY + Bridge.spawnBackoff) / 60)))
+            age / 60, math.floor((CFG.APPEAR_DELAY + Bridge.spawnBackoff) / 60)))
     end
     log("body removed by another mod: she comes back from the saved outfit")
     return "gone"
@@ -2590,7 +2715,7 @@ end
 
 
 
-local EVENTS_FILE = "bridge/events.txt"
+CFG.EVENTS_FILE = "bridge/events.txt"
 Bridge.muteLines = false
 Bridge.quietLines = false
 
@@ -2612,10 +2737,10 @@ function Bridge.flushBridgeEvents(force)
     local buf = Bridge.eventBuf
     if buf == nil or #buf == 0 then return end
     local now = Bridge.tick or 0
-    if not force and now - (Bridge.eventFlushAt or -99999) < EVENT_FLUSH_EVERY then return end
+    if not force and now - (Bridge.eventFlushAt or -99999) < CFG.EVENT_FLUSH_EVERY then return end
     Bridge.eventFlushAt = now
     pcall(function()
-        local w = getFileWriter(EVENTS_FILE, true, true)
+        local w = getFileWriter(CFG.EVENTS_FILE, true, true)
         for i = 1, #buf do w:write(buf[i]) end
         w:close()
     end)
@@ -2640,7 +2765,7 @@ end
 
 
 function Bridge.noteSpawned()
-    Bridge.speakGraceUntil = Bridge.time + SPAWN_SPEAK_GRACE
+    Bridge.speakGraceUntil = Bridge.time + CFG.SPAWN_SPEAK_GRACE
 end
 
 
@@ -2785,12 +2910,13 @@ function Bridge.speechShadow()
 end
 
 
-local SPEECH_FONT_NAMES = { "Normal", "Large", "Huge" }
-local SPEECH_SECONDS = { 5.25, 7, 9 }
+CFG.SPEECH = {}
+CFG.SPEECH.FONT_NAMES = { "Normal", "Large", "Huge" }
+CFG.SPEECH.SECONDS = { 5.25, 7, 9 }
 
 
 function Bridge.speechSeconds()
-    return SPEECH_SECONDS[speechOpts().seconds] or 5.25
+    return CFG.SPEECH.SECONDS[speechOpts().seconds] or 5.25
 end
 
 
@@ -2848,7 +2974,6 @@ end
 
 local function speechOverlayApplies(z)
     if z == nil or z ~= Bridge.body then return false end
-    if Bridge.mp then return false end
     if BridgeCar ~= nil and type(BridgeCar.withRed) == "function" then
         local ok, inCar = pcall(BridgeCar.withRed, BridgeData.owner())
         if ok and inCar then return false end
@@ -2893,9 +3018,9 @@ function Bridge.speechOverlayPrune()
 end
 
 
-local SPEECH_MAX_CHARS = 75
-local SPEECH_FADE_MS = 500
-local SPEECH_ANCHOR_Z = 0.6667
+CFG.SPEECH.MAX_CHARS = 75
+CFG.SPEECH.FADE_MS = 500
+CFG.SPEECH.ANCHOR_Z = 0.6667
 
 
 local function speechWrap(text)
@@ -2908,15 +3033,15 @@ local function speechWrap(text)
             local line = ""
             for word in paragraph:gmatch("%S+") do
                 local attempt = line == "" and word or (line .. " " .. word)
-                if line ~= "" and #attempt > SPEECH_MAX_CHARS then
+                if line ~= "" and #attempt > CFG.SPEECH.MAX_CHARS then
                     rows[#rows + 1] = line
                     line = word
                 else
                     line = attempt
                 end
-                while #line > SPEECH_MAX_CHARS do
-                    rows[#rows + 1] = string.sub(line, 1, SPEECH_MAX_CHARS)
-                    line = string.sub(line, SPEECH_MAX_CHARS + 1)
+                while #line > CFG.SPEECH.MAX_CHARS do
+                    rows[#rows + 1] = string.sub(line, 1, CFG.SPEECH.MAX_CHARS)
+                    line = string.sub(line, CFG.SPEECH.MAX_CHARS + 1)
                 end
             end
             if line ~= "" then rows[#rows + 1] = line end
@@ -2996,6 +3121,7 @@ local function speechWrapMeasured(font, text, maxWidth, hardSplit)
 end
 
 function Bridge.speechOverlayDraw()
+    if Bridge == nil then return end
     if not Bridge.speechBubblesOn() then
         if #Bridge.speechLines > 0 then Bridge.clearSpeechOverlay() end
         return
@@ -3005,7 +3131,6 @@ function Bridge.speechOverlayDraw()
     if body == nil or owner == nil then return end
     Bridge.speechOverlayPrune()
     if #Bridge.speechLines == 0 then return end
-    if Bridge.mp then return end
     if Bridge.speechMaxLines() <= 1 then Bridge.clearSpeechOverlay() return end
     if BridgeCar ~= nil and type(BridgeCar.withRed) == "function" then
         local carOK, inCar = pcall(BridgeCar.withRed, owner)
@@ -3015,7 +3140,7 @@ function Bridge.speechOverlayDraw()
     local ok, err = pcall(function()
         local bx = body:getX()
         local by = body:getY()
-        local bz = body:getZ() + SPEECH_ANCHOR_Z
+        local bz = body:getZ() + CFG.SPEECH.ANCHOR_Z
         local sx = isoToScreenX(0, bx, by, bz)
         local anchorY = isoToScreenY(0, bx, by, bz)
         if sx == nil or anchorY == nil then return end
@@ -3037,8 +3162,8 @@ function Bridge.speechOverlayDraw()
             local line = Bridge.speechLines[i]
             local alpha = 1
             local remaining = (line.untilMs or 0) - now
-            if remaining < SPEECH_FADE_MS then
-                alpha = remaining / SPEECH_FADE_MS
+            if remaining < CFG.SPEECH.FADE_MS then
+                alpha = remaining / CFG.SPEECH.FADE_MS
                 if alpha < 0 then alpha = 0 end
             end
             local rows = typed and speechWrapMeasured(font, line.text) or speechWrap(line.text)
@@ -3124,6 +3249,7 @@ end
 
 
 function Bridge.subtitleDraw()
+    if Bridge == nil then return end
     if not Bridge.subtitlesOn() then
         if #Bridge.subtitleLines > 0 then Bridge.clearSubtitles() end
         return
@@ -3149,8 +3275,8 @@ function Bridge.subtitleDraw()
             local line = Bridge.subtitleLines[i]
             local alpha = 1
             local remaining = (line.untilMs or 0) - now
-            if remaining < SPEECH_FADE_MS then
-                alpha = remaining / SPEECH_FADE_MS
+            if remaining < CFG.SPEECH.FADE_MS then
+                alpha = remaining / CFG.SPEECH.FADE_MS
                 if alpha < 0 then alpha = 0 end
             end
             if alpha > 0 then
@@ -3231,7 +3357,7 @@ function Bridge.speechLineFor(z, text, expectId)
         Bridge.speechLoggedType, Bridge.speechLoggedColor = typeIndex, rawColor
         local cr, cg, cb = Bridge.speechColor()
         log(string.format("speech settings font=%s type=%s color=%d,%d,%d duration=%s s",
-            tostring(SPEECH_FONT_NAMES[fontIndex] or "Dialogue"), tostring(typeName),
+            tostring(CFG.SPEECH.FONT_NAMES[fontIndex] or "Dialogue"), tostring(typeName),
             math.floor(cr * 255 + 0.5), math.floor(cg * 255 + 0.5), math.floor(cb * 255 + 0.5),
             tostring(seconds)))
     end
@@ -3274,22 +3400,22 @@ function Bridge.speechInfo()
     local typeName = typeFace ~= nil and typeFace.name or "Default"
     local cr, cg, cb = Bridge.speechColor()
     if Bridge.subtitlesOn() then Bridge.subtitlePrune() end
-    return string.format("font=%s type=%s color=%d,%d,%d seconds=%s remaining=%dms mode=%d subtitles=%d",
-        tostring(SPEECH_FONT_NAMES[Bridge.speechFontIndex()] or "Dialogue"),
+    return string.format("font=%s type=%s color=%d,%d,%d seconds=%s remaining=%dms mode=%d subtitles=%d overlay=%d",
+        tostring(CFG.SPEECH.FONT_NAMES[Bridge.speechFontIndex()] or "Dialogue"),
         tostring(typeName),
         math.floor(cr * 255 + 0.5), math.floor(cg * 255 + 0.5), math.floor(cb * 255 + 0.5),
         tostring(Bridge.speechSeconds()), remaining,
-        Bridge.companionSpeechMode(), #Bridge.subtitleLines)
+        Bridge.companionSpeechMode(), #Bridge.subtitleLines, #Bridge.speechLines)
 end
 
 
 -- bridge-speech-gap begin
 Bridge.speechGapAt = Bridge.speechGapAt or {}
 
-local SPEECH_GAP_FOOT = 8 * 60
-local SPEECH_GAP_CAR = 12 * 60
+CFG.SPEECH.GAP_FOOT = 8 * 60
+CFG.SPEECH.GAP_CAR = 12 * 60
 
-local SPEECH_HEALTH_EVENTS = {
+CFG.SPEECH.HEALTH_EVENTS = {
     EvHealthHalf = true, EvDying = true, EvDyingLast = true,
     EvBite = true, EvBullet = true, EvBulletNoTools = true,
     EvGlass = true, EvGlassNoTweezers = true, EvDeep = true, EvDeepNoSuture = true,
@@ -3321,7 +3447,7 @@ function Bridge.markSpeech(ctx)
 end
 
 local function speechGapFor(ctx)
-    return ctx == "car" and SPEECH_GAP_CAR or SPEECH_GAP_FOOT
+    return ctx == "car" and CFG.SPEECH.GAP_CAR or CFG.SPEECH.GAP_FOOT
 end
 
 function Bridge.speechGapActive(ctx)
@@ -3347,7 +3473,7 @@ function Bridge.isHealthSpeech(event)
     if name:sub(1, 5) == "Heal_" or name:sub(1, 5) == "Fire_" or name:sub(1, 3) == "We_" then
         return true
     end
-    return SPEECH_HEALTH_EVENTS[name] == true
+    return CFG.SPEECH.HEALTH_EVENTS[name] == true
 end
 
 function Bridge.speechInCombat()
@@ -3557,6 +3683,41 @@ function Bridge.setMenuShown(id, on)
 end
 
 
+function Bridge.setWorkOrder(list)
+    local order = BridgeData.cleanWorkOrder(list)
+    if order == nil then return "bad work order" end
+    if Bridge.store ~= nil then Bridge.store.workOrder = order end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { workOrder = order }) end)
+    end
+    log("workOrder=" .. table.concat(order, ","))
+    return "workOrder=" .. table.concat(order, ",")
+end
+
+
+function Bridge.resetWorkOrder()
+    return Bridge.setWorkOrder(BridgeData.WORK_ORDER_IDS)
+end
+
+
+function Bridge.setWorkShown(id, on)
+    if type(id) ~= "string" or not BridgeData.WORK_ORDER_SET[id] then return "bad work item" end
+    local hidden = BridgeData.workHidden(Bridge.store)
+    local nextHidden = {}
+    for i = 1, #hidden do
+        if hidden[i] ~= id then nextHidden[#nextHidden + 1] = hidden[i] end
+    end
+    if on ~= true then nextHidden[#nextHidden + 1] = id end
+    nextHidden = BridgeData.cleanWorkHidden(nextHidden)
+    if Bridge.store ~= nil then Bridge.store.workHidden = nextHidden end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { workHidden = nextHidden }) end)
+    end
+    log("workShown " .. id .. "=" .. tostring(on == true))
+    return id .. "=" .. tostring(on == true)
+end
+
+
 function Bridge.setLootCat(cat, on)
     if type(cat) ~= "string" or not BridgeData.LOOT_CAT_SET[cat] then
         return "no such loot category: " .. tostring(cat)
@@ -3604,6 +3765,18 @@ function Bridge.setLootMaxWeight(value)
     end
     log("lootMaxWeight=" .. tostring(v))
     return "lootMaxWeight=" .. tostring(v)
+end
+
+
+function Bridge.setHutchFertCap(value)
+    local v = BridgeData.cleanHutchFertCap(value)
+    if v == nil then return "bad hutch egg cap" end
+    if Bridge.store ~= nil then Bridge.store.hutchFertCap = v end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { hutchFertCap = v }) end)
+    end
+    log("hutchFertCap=" .. tostring(v))
+    return "hutchFertCap=" .. tostring(v)
 end
 
 
@@ -3768,6 +3941,28 @@ function Bridge.setMuscle(level)
     end
     log("muscle=" .. tostring(m))
     return "muscle=" .. tostring(m)
+end
+
+
+function Bridge.setVsmBody(profile)
+    local clean = nil
+    if BridgeSizeMatterCompat ~= nil and type(BridgeSizeMatterCompat.cleanProfile) == "function" then
+        clean = BridgeSizeMatterCompat.cleanProfile(profile)
+    end
+    if clean == nil then return "bad size" end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).vsmBody = clean end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { vsmBody = clean }) end)
+    end
+    if Bridge.alive() and Bridge.kind == "zombie" then
+        pcall(function()
+            BridgeInventory.skin(Bridge.body, Bridge.store)
+            Bridge.body:resetModelNextFrame()
+            Bridge.body:resetModel()
+        end)
+    end
+    log(string.format("vsmBody height=%d shape=%d muscle=%d", clean.height, clean.shape, clean.muscle))
+    return string.format("size height=%d shape=%d muscle=%d", clean.height, clean.shape, clean.muscle)
 end
 
 
@@ -4359,7 +4554,7 @@ function Bridge.onHitZombie(zombie, attacker, bodyPart, weapon)
     if instanceof(attacker, "IsoPlayer") then
         pcall(function() if BridgeKills ~= nil then BridgeKills.clear(zombie) end end)
     end
-    local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY_VAR) end)
+    local ok, isBody = pcall(function() return zombie:getVariableBoolean(CFG.BODY.VAR) end)
     if ok then pcall(function() Bridge.spyHit(zombie, attacker, isBody and not reusedBody(zombie)) end) end
     if not ok or not isBody or reusedBody(zombie) then return end
     pcall(function() zombie:setAvoidDamage(true) end)
@@ -4474,7 +4669,7 @@ end
 
 function Bridge.onZombieDead(zombie)
     if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" and BridgeSeatPuppet.is(zombie) then return end
-    local ok, isBody = pcall(function() return zombie:getVariableBoolean(BODY_VAR) end)
+    local ok, isBody = pcall(function() return zombie:getVariableBoolean(CFG.BODY.VAR) end)
     if not ok or not isBody or reusedBody(zombie) then return end
 
 
@@ -4573,7 +4768,8 @@ function Bridge.onZombieDead(zombie)
 end
 
 
-local FAILSAFE_LIMIT, FAILSAFE_WINDOW, FAILSAFE_COOLDOWN = 3, 3600, 600
+CFG.FAILSAFE = {}
+CFG.FAILSAFE.LIMIT, CFG.FAILSAFE.WINDOW, CFG.FAILSAFE.COOLDOWN = 3, 3600, 600
 
 function Bridge.notePoseFail(why)
     if Bridge.mp then return false end
@@ -4582,19 +4778,19 @@ function Bridge.notePoseFail(why)
         fs = { count = 0, at = nil, tripAt = nil }
         Bridge.failSafe = fs
     end
-    if Bridge.time - (fs.at or -1e18) > FAILSAFE_WINDOW then fs.count = 0 end
+    if Bridge.time - (fs.at or -1e18) > CFG.FAILSAFE.WINDOW then fs.count = 0 end
     fs.at = Bridge.time
     fs.count = fs.count + 1
-    if fs.count < FAILSAFE_LIMIT then return false end
+    if fs.count < CFG.FAILSAFE.LIMIT then return false end
     fs.count = 0
-    if fs.tripAt ~= nil and Bridge.time - fs.tripAt < FAILSAFE_COOLDOWN then return false end
+    if fs.tripAt ~= nil and Bridge.time - fs.tripAt < CFG.FAILSAFE.COOLDOWN then return false end
     fs.tripAt = Bridge.time
     Bridge.failSafeRespawn(why)
     return true
 end
 
 function Bridge.failSafeRespawn(why)
-    log("fail-safe: " .. tostring(why) .. " " .. tostring(FAILSAFE_LIMIT) .. "x, putting her back at the player")
+    log("fail-safe: " .. tostring(why) .. " " .. tostring(CFG.FAILSAFE.LIMIT) .. "x, putting her back at the player")
     Bridge.result = "fail-safe respawn: " .. tostring(why)
     local body = Bridge.body
     pcall(function() if BridgeTask ~= nil then BridgeTask.cancel("fail-safe") end end)
@@ -4634,11 +4830,11 @@ end
 
 
 
-local ENGINE_STATES = { "climbfence", "climbwindow", "getup", "onground", "staggerback", "hitreaction", "falldown",
+CFG.ENGINE_STATES = { "climbfence", "climbwindow", "getup", "onground", "staggerback", "hitreaction", "falldown",
                         "knockeddown", "falling", "sitting" }
 local function engineState(asn)
     if asn == nil then return false end
-    for _, name in ipairs(ENGINE_STATES) do
+    for _, name in ipairs(CFG.ENGINE_STATES) do
         if string.sub(asn, 1, #name) == name then return true end
     end
     return false
@@ -4702,7 +4898,8 @@ end
 
 
 
-local LOOK_ONCE = {}
+CFG.LOOK = {}
+CFG.LOOK.ONCE = {}
 for _, n in ipairs({ "BandageHead", "BandageLeftArm", "BandageLeftLeg", "BandageLowerBody", "BandageRightArm",
     "BandageRightLeg", "BandageUpperBody", "ChewNails", "EmoteClap", "EmoteComeHere", "EmoteNo", "EmoteNoThankYou",
     "EmoteShrug", "EmoteThankYou", "EmoteUndecided", "EmoteWaveHi", "EmoteYes", "PainHead", "PullAtCollar",
@@ -4712,8 +4909,8 @@ for _, n in ipairs({ "BandageHead", "BandageLeftArm", "BandageLeftLeg", "Bandage
     "IdleExt03_2H", "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun", "IdleExt01_Rifle",
     "IdleExt02_Rifle", "IdleExt03_Rifle", "NAPghugHigh2", "NAPghugLow2", "NAPghugHigh1", "NAPghugHigh3",
     "NAPGDance2Lead", "NAPGDance2Follow", "NAPGMassageL", "NAPGMassageF", "NAPGKissL", "NAPGDanceLead",
-    "NAPGbump1", "NAPGbump2", "NAPGbump3", "NAPGshake1", "NAPGshake2", "NAPGshake3", "NAPGKissF" }) do LOOK_ONCE[n] = true end
-function Bridge.isLookOnce(name) return type(name) == "string" and LOOK_ONCE[name] == true end
+    "NAPGbump1", "NAPGbump2", "NAPGbump3", "NAPGshake1", "NAPGshake2", "NAPGshake3", "NAPGKissF" }) do CFG.LOOK.ONCE[n] = true end
+function Bridge.isLookOnce(name) return type(name) == "string" and CFG.LOOK.ONCE[name] == true end
 
 
 local function lookShare(body)
@@ -4722,7 +4919,7 @@ local function lookShare(body)
     pcall(function() b = tostring(body:getBumpType()) end)
     if b == Bridge.lookSent then return end
     Bridge.lookSent = b
-    if LOOK_ONCE[b] then pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "look", { a = b }) end) end
+    if CFG.LOOK.ONCE[b] then pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "look", { a = b }) end) end
 end
 Bridge.lookShare = lookShare
 
@@ -4800,12 +4997,13 @@ local function snapshotBody(body)
 end
 Bridge.snapshotBodyFor = snapshotBody
 
-local ARMED_STILL = 1500
-local ARMED_CALM = 1800
-local ARMED_COOLDOWN = 3600
-local ARMED_COOLDOWN_RAND = 3600
+CFG.ARMED = {}
+CFG.ARMED.STILL = 1500
+CFG.ARMED.CALM = 1800
+CFG.ARMED.COOLDOWN = 3600
+CFG.ARMED.COOLDOWN_RAND = 3600
 
-local ARMED_IDLE = {
+CFG.ARMED.IDLE = {
     ["1h"] = { "IdleExt01_1H", "IdleExt02_1H", "IdleExt03_1H" },
     ["2h"] = { "IdleExt01_2H", "IdleExt02_2H", "IdleExt03_2H" },
     handgun = { "IdleExt01_Handgun", "IdleExt02_Handgun", "IdleExt03_Handgun" },
@@ -4848,7 +5046,7 @@ local function armedIdleReady(body, kind)
     local now = Bridge.time
     local lastCombat = math.max(BridgeWeapon.lastFight or -1e9,
         BridgeFight ~= nil and BridgeFight.playerFightUntil or 0)
-    if now - lastCombat < ARMED_CALM then
+    if now - lastCombat < CFG.ARMED.CALM then
         Bridge.armedIdleSince = now
         return false
     end
@@ -4856,36 +5054,133 @@ local function armedIdleReady(body, kind)
         Bridge.armedIdleSince = now
         return false
     end
-    if now - (Bridge.armedIdleSince or now) < ARMED_STILL then return false end
+    if now - (Bridge.armedIdleSince or now) < CFG.ARMED.STILL then return false end
     if now < (Bridge.nextArmedIdleAnim or 0) then return false end
     return true
 end
 Bridge.armedIdleReady = armedIdleReady
 
+Bridge.probe = Bridge.probe ~= false
+Bridge.probeAcc = Bridge.probeAcc or {}
+Bridge.probeCnt = Bridge.probeCnt or {}
+
+local function probeT()
+    local v = nil
+    pcall(function() v = getTimestampMs() end)
+    return v
+end
+
+local function probeAdd(key, t0, t1)
+    if not Bridge.probe or t0 == nil or t1 == nil then return end
+    local ms = t1 - t0
+    if ms < 0 then return end
+    Bridge.probeAcc[key] = (Bridge.probeAcc[key] or 0) + ms
+    Bridge.probeCnt[key] = (Bridge.probeCnt[key] or 0) + 1
+end
+
+function Bridge.probeFlush()
+    if not Bridge.probe then return end
+    local acc, cnt = Bridge.probeAcc, Bridge.probeCnt
+    local keys = {}
+    for k in pairs(acc) do keys[#keys + 1] = k end
+    if #keys == 0 then return end
+    table.sort(keys)
+    local parts = {}
+    for i = 1, #keys do
+        local k = keys[i]
+        parts[#parts + 1] = string.format("%s=%.1f/%d", k, acc[k], cnt[k] or 0)
+    end
+    Bridge.probeAcc, Bridge.probeCnt = {}, {}
+    log("probe " .. table.concat(parts, " "))
+end
+
+local function bodyGestureGuard(b)
+    BridgeInventory.gestureGuard(b)
+end
+
+local function readPlayerMoving(r)
+    return r:isPlayerMoving()
+end
+
+local function bodyShoved(r, b)
+    local rx, ry = r:getX() - b:getX(), r:getY() - b:getY()
+    local d2 = rx * rx + ry * ry
+    local sh = d2 < 1.3 * 1.3 and (r:isRunning() or r:isSprinting())
+    if not sh and d2 < 0.9 * 0.9 then
+        local ok, goes = pcall(readPlayerMoving, r)
+        if ok and goes then sh = true end
+    end
+    return sh
+end
+
+local function bodyHoldPos(b, hx, hy)
+    b:setX(hx)
+    b:setY(hy)
+    b:setLastX(hx)
+    b:setLastY(hy)
+end
+
+local function bodyCarUpdate(b)
+    return BridgeCar.update(b)
+end
+
+local function readAsleep(r)
+    return r ~= nil and r:isAsleep()
+end
+
+local function bodyWashUpdate(b)
+    return BridgeWash.update(b)
+end
+
+local function bodyFightUpdate(b)
+    return BridgeFight.update(b)
+end
+
+local function bodyGestureTick(b)
+    return BridgeInventory.gestureTick(b)
+end
+
+local function bodyWeaponBusy()
+    return BridgeWeapon.busy()
+end
+
+local function bodyClearPath(b)
+    local pf = b:getPathFindBehavior2()
+    pf:cancel()
+    pf:reset()
+    b:setPath2(nil)
+end
+
+local function readIdleKind(b)
+    return BridgeWeapon.idleKind(b)
+end
+
 local function updateZombieBody(body)
     if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
     Bridge.zombieTicks = Bridge.zombieTicks + 1
     local red = BridgeData.owner()
+    local g0 = probeT()
     Bridge.keepHidden(body)
 
     local okGuard, errGuard = true, nil
-    if Bridge.wornKeepBody ~= body or Bridge.zombieTicks % OUTFIT_EVERY == 0 then
+    if Bridge.wornKeepBody ~= body or Bridge.zombieTicks % CFG.OUTFIT_EVERY == 0 then
         okGuard, errGuard = pcall(Bridge.guardOutfit, body)
     end
     if not okGuard then warn("guardOutfit failed: " .. tostring(errGuard)) end
 
 
-    if not Bridge.mp and not Bridge.mortal and Bridge.zombieTicks % HEALTH_EVERY == 5 then
+    if not Bridge.mp and not Bridge.mortal and Bridge.zombieTicks % CFG.HEALTH.EVERY == 5 then
         pcall(Bridge.keepHealth, body)
     end
     lookShare(body)
+    probeAdd("guard", g0, probeT())
 
     if BridgeHorse ~= nil and not BridgeHorse.softDisabled and type(BridgeHorse.frame) == "function" and BridgeHorse.frame(body) then
         if BridgeVoice ~= nil and type(BridgeVoice.ensure) == "function" then pcall(BridgeVoice.ensure, body) end
         return
     end
 
-    pcall(function() BridgeInventory.gestureGuard(body) end)
+    pcall(bodyGestureGuard, body)
     handProbe(body, "frame start")
 
     if Bridge.verbose and Bridge.every(60, 40) then
@@ -5021,7 +5316,7 @@ local function updateZombieBody(body)
         pcall(body.setAnimatingBackwards, body, false)
     end
     pcall(BridgeVoice.applyPrefix, body)
-    if Bridge.zombieTicks % VOICE_EVERY == 3 then pcall(BridgeVoice.suppress, body) end
+    if Bridge.zombieTicks % CFG.VOICE_EVERY == 3 then pcall(BridgeVoice.suppress, body) end
 
 
 
@@ -5053,7 +5348,8 @@ local function updateZombieBody(body)
 
 
     local itemsDirtyDue = Bridge.itemsDirty == true
-        and (Bridge.time - (Bridge.itemsDirtyAt or 0)) >= ITEMS_DIRTY_DEBOUNCE
+        and (Bridge.time - (Bridge.itemsDirtyAt or 0)) >= CFG.ITEMS_DIRTY_DEBOUNCE
+    local i0 = probeT()
     if Bridge.zombieTicks % 30 == 15 or itemsDirtyDue then
         local ok, now = pcall(BridgeInventory.wornList, body)
 
@@ -5080,18 +5376,16 @@ local function updateZombieBody(body)
 
 
 
-        local snapshotDue
-        if BridgePerf ~= nil and type(BridgePerf.every) == "function" then
-            snapshotDue = BridgePerf.every("snapshot", 60)
-        else
-            snapshotDue = Bridge.zombieTicks % 30 == 15
-        end
+        local zt = Bridge.zombieTicks or 0
+        local fullDue = (zt - (Bridge.snapshotFullAt or 0)) >= 300
+        if fullDue then Bridge.snapshotFullAt = zt end
+        local seq = Bridge.itemsChangedSeq or 0
+        local changed = seq ~= (Bridge.snapshotSeq or -1)
         local transferActive = BridgeTask ~= nil and BridgeTask.active == true
             and (BridgeTask.kind == "deposit" or BridgeTask.kind == "lootArea")
         local transferSnap = false
         if transferActive then
             Bridge.transferSnapPending = true
-            snapshotDue = false
         elseif Bridge.transferSnapPending == true then
             Bridge.transferSnapPending = nil
             transferSnap = true
@@ -5099,8 +5393,10 @@ local function updateZombieBody(body)
         local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
         local transferBusy = type(BridgeInventory.herTransferBusy) == "function" and BridgeInventory.herTransferBusy()
         local busy = showering or transferBusy
+        local wantSnap = transferSnap or itemsDirtyDue or changed or fullDue
+        if transferActive then wantSnap = false end
         local okSnap, list = nil, nil
-        if snapshotDue or transferSnap or itemsDirtyDue then
+        if wantSnap then
             Bridge.itemsDirty = nil
             Bridge.itemsDirtyAt = nil
             if busy then
@@ -5110,6 +5406,7 @@ local function updateZombieBody(body)
             end
         end
         if okSnap then
+            Bridge.snapshotSeq = seq
             local sign = BridgeItems.signature(list)
             if sign ~= Bridge.itemsSign then
                 Bridge.itemsSign = sign
@@ -5135,6 +5432,7 @@ local function updateZombieBody(body)
             end
         end
     end
+    probeAdd("inv", i0, probeT())
 
 
 
@@ -5288,6 +5586,7 @@ local function updateZombieBody(body)
 
 
     local ownerDead = Bridge.mourning ~= nil or Bridge.redDead(red)
+    local t0 = probeT()
     if not ownerDead then
         handProbe(body, "before weapon")
         if BridgeTask == nil or not BridgeTask.active then pcall(BridgeWeapon.update, body) end
@@ -5316,6 +5615,7 @@ local function updateZombieBody(body)
     end
 
 
+    probeAdd("talk", t0, probeT())
     pcall(BridgeWeapon.animStep, body)
 
 
@@ -5354,20 +5654,8 @@ local function updateZombieBody(body)
 
         local shoved = bump == "left" or bump == "right"
         if not shoved and Bridge.pose == nil then
-            pcall(function()
-                local r = red
-                local rx, ry = r:getX() - body:getX(), r:getY() - body:getY()
-                local d2 = rx * rx + ry * ry
-                shoved = d2 < 1.3 * 1.3 and (r:isRunning() or r:isSprinting())
-
-
-
-                if not shoved and d2 < 0.9 * 0.9 then
-                    local goes = false
-                    pcall(function() goes = r:isPlayerMoving() end)
-                    if goes then shoved = true end
-                end
-            end)
+            local okShoved, sh = pcall(bodyShoved, red, body)
+            if okShoved then shoved = sh end
         end
         if Bridge.pose ~= nil and Bridge.pose.move then
 
@@ -5395,12 +5683,7 @@ local function updateZombieBody(body)
             end
             Bridge.holdPos = { body:getX(), body:getY(), body:getZ() }
         elseif (dx * dx + dy * dy) > limit then
-            pcall(function()
-                body:setX(hx)
-                body:setY(hy)
-                body:setLastX(hx)
-                body:setLastY(hy)
-            end)
+            pcall(bodyHoldPos, body, hx, hy)
         end
     else
         Bridge.holdPos = nil
@@ -5413,7 +5696,9 @@ local function updateZombieBody(body)
 
     if ownerDead then
         if Bridge.mourning ~= nil or Bridge.mournAware(body, red) then
-            if not Bridge.mournFrame(body, red) then BridgeMove.update(body) end
+            local m0 = probeT()
+    if not Bridge.mournFrame(body, red) then BridgeMove.update(body) end
+    probeAdd("move", m0, probeT())
             return
         end
         pcall(function() BridgeHeal.stop("player died far away") end)
@@ -5426,7 +5711,7 @@ local function updateZombieBody(body)
 
 
     do
-        local okCar, carBusy = pcall(function() return BridgeCar.update(body) end)
+        local okCar, carBusy = pcall(bodyCarUpdate, body)
         if not okCar then
             if Bridge.warnReady("car", 10) then warn("car failed: " .. tostring(carBusy)) end
             Bridge.logError("car", carBusy)
@@ -5457,7 +5742,8 @@ local function updateZombieBody(body)
 
 
     local asleep = false
-    pcall(function() asleep = red ~= nil and red:isAsleep() end)
+    local okAsleep, a = pcall(readAsleep, red)
+    if okAsleep then asleep = a end
     if asleep and Bridge.sleepParked == nil then
         local near = false
         pcall(function()
@@ -5476,7 +5762,7 @@ local function updateZombieBody(body)
     pcall(function() BridgeMove.seatGuard(body) end)
     pcall(function() BridgeMove.staySitTick(body) end)
 
-    local okWash, washing = pcall(function() return BridgeWash.update(body) end)
+    local okWash, washing = pcall(bodyWashUpdate, body)
     if not okWash then BridgeWash.info = "error: " .. tostring(washing) Bridge.logError("wash", washing) end
     if okWash and washing then
         Bridge.pose = nil
@@ -5498,7 +5784,7 @@ local function updateZombieBody(body)
         if not okTask then BridgeTask.info = "error: " .. tostring(taskBusy) Bridge.logError("task", taskBusy) end
         if okTask and taskBusy then
             Bridge.pose = nil
-            pcall(function() BridgeInventory.gestureTick(body) end)
+            pcall(bodyGestureTick, body)
             return
         end
     end
@@ -5519,7 +5805,7 @@ local function updateZombieBody(body)
             pcall(BridgeGunfight.followTick, body)
         end
     else
-        okFight, fighting = pcall(function() return BridgeFight.update(body) end)
+        okFight, fighting = pcall(bodyFightUpdate, body)
     end
     handProbe(body, "fight")
     if not okFight then BridgeFight.info = "error: " .. tostring(fighting) Bridge.logError("fight", fighting) end
@@ -5529,13 +5815,13 @@ local function updateZombieBody(body)
     end
 
 
-    local okGesture, gesturing = pcall(function() return BridgeInventory.gestureTick(body) end)
+    local okGesture, gesturing = pcall(bodyGestureTick, body)
     if okGesture and gesturing then return end
 
 
 
 
-    local okMove, moving = pcall(function() return BridgeWeapon.busy() end)
+    local okMove, moving = pcall(bodyWeaponBusy)
     if okMove and moving then
         local leave = false
         pcall(function() leave = Bridge.follow and dist2d(body, red) > 10 end)
@@ -5598,12 +5884,7 @@ local function updateZombieBody(body)
 
 
     if not BridgeMove.pathing and not BridgeMove.steering then
-        pcall(function()
-            local pf = body:getPathFindBehavior2()
-            pf:cancel()
-            pf:reset()
-            body:setPath2(nil)
-        end)
+        pcall(bodyClearPath, body)
         body:clearAggroList()
         pcall(function() body:setTargetSeenTime(0) end)
         if asn == "walktoward" or asn == "pathfind" then
@@ -5620,7 +5901,8 @@ local function updateZombieBody(body)
     end
 
     local kind = "none"
-    pcall(function() kind = BridgeWeapon.idleKind(body) end)
+    local okKind, k = pcall(readIdleKind, body)
+    if okKind then kind = k end
     local idleReady = Bridge.pose == nil and (asn == "idle" or bump == "Stand")
         and not (BridgeFastForward ~= nil and BridgeFastForward.active())
 
@@ -5641,12 +5923,12 @@ local function updateZombieBody(body)
         if kind == "none" then
             Bridge.armedIdleSince = Bridge.time
         elseif armedIdleReady(body, kind) then
-            local pool = ARMED_IDLE[kind]
+            local pool = CFG.ARMED.IDLE[kind]
             if pool ~= nil then
                 local pick = pool[1 + ZombRand(#pool)]
                 pcall(function() body:setBumpType(pick) end)
                 log(string.format("idle start %s kind=%s t=%d", pick, tostring(kind), Bridge.tick))
-                Bridge.nextArmedIdleAnim = Bridge.time + ARMED_COOLDOWN + ZombRand(ARMED_COOLDOWN_RAND)
+                Bridge.nextArmedIdleAnim = Bridge.time + CFG.ARMED.COOLDOWN + ZombRand(CFG.ARMED.COOLDOWN_RAND)
             end
         end
     elseif not moving then
@@ -5663,7 +5945,9 @@ local function updateZombieBody(body)
     end
 
     BridgeMove.followDebug("main-before-update", body, "call")
+    local m1 = probeT()
     BridgeMove.update(body)
+    probeAdd("move", m1, probeT())
     handProbe(body, "frame end")
 end
 
@@ -5708,21 +5992,22 @@ end
 
 
 
-local LOOK_RUN_ON, LOOK_RUN_OFF = 0.046, 0.041
-local LOOK_GAP_RUN, LOOK_GAP_WALK = 3.5, 2.5
-local LOOK_GAIT_HOLD = 24
+CFG.LOOK.RUN_ON, CFG.LOOK.RUN_OFF = 0.046, 0.041
+CFG.LOOK.GAP_RUN, CFG.LOOK.GAP_WALK = 3.5, 2.5
+CFG.LOOK.GAIT_HOLD = 24
 
 
-local COPY_FALL = { "hitreaction", "staggerback", "falldown", "knockeddown", "onground", "getup" }
-local COPY_AGGRO = { ["lunge-network"] = true, ["attack-network"] = true, ["face-target"] = true, lunge = true,
+CFG.COPY = {}
+CFG.COPY.FALL = { "hitreaction", "staggerback", "falldown", "knockeddown", "onground", "getup" }
+CFG.COPY.AGGRO = { ["lunge-network"] = true, ["attack-network"] = true, ["face-target"] = true, lunge = true,
     attack = true, turnalerted = true }
 local function copyFallen(st)
-    for _, p in ipairs(COPY_FALL) do if string.sub(st, 1, #p) == p then return true end end
+    for _, p in ipairs(CFG.COPY.FALL) do if string.sub(st, 1, #p) == p then return true end end
     return false
 end
 
 local function applyLook(z, visuals, rec, who)
-    z:setVariable(BODY_VAR, true)
+    z:setVariable(CFG.BODY.VAR, true)
     if BridgeSizeMatterCompat ~= nil then pcall(BridgeSizeMatterCompat.neutralize, z, rec) end
 
     pcall(function()
@@ -5772,7 +6057,7 @@ local function applyLook(z, visuals, rec, who)
     pcall(function()
         if z:isRemoteZombie() then
             if z:getTarget() ~= nil then z:setTarget(nil) end
-            if COPY_AGGRO[tostring(z:getActionStateName())] then z:changeState(ZombieIdleState.instance()) end
+            if CFG.COPY.AGGRO[tostring(z:getActionStateName())] then z:changeState(ZombieIdleState.instance()) end
         end
     end)
     pcall(z.setDressInRandomOutfit, z, false)
@@ -5841,8 +6126,8 @@ local function applyLook(z, visuals, rec, who)
         local okWs, wsVal = pcall(owner.getVariableFloat, owner, "WalkSpeed", 1.0)
         if okWs then ownerWs = wsVal end
         local gap = dist2d(z, owner)
-        local want = ownerRuns or gap > LOOK_GAP_RUN or (l.run == true and gap > LOOK_GAP_WALK)
-        if want ~= (l.run == true) and Bridge.time - (l.gaitAt or -9999) >= LOOK_GAIT_HOLD then
+        local want = ownerRuns or gap > CFG.LOOK.GAP_RUN or (l.run == true and gap > CFG.LOOK.GAP_WALK)
+        if want ~= (l.run == true) and Bridge.time - (l.gaitAt or -9999) >= CFG.LOOK.GAIT_HOLD then
             l.run, l.gaitAt = want, Bridge.time
         end
 
@@ -5854,7 +6139,7 @@ local function applyLook(z, visuals, rec, who)
         end
         if type(ws) ~= "number" or ws < 0.3 then ws = 1.0 end
     else
-        if l.speed > LOOK_RUN_ON then l.run = true elseif l.speed < LOOK_RUN_OFF then l.run = false end
+        if l.speed > CFG.LOOK.RUN_ON then l.run = true elseif l.speed < CFG.LOOK.RUN_OFF then l.run = false end
     end
     pcall(z.setVariable, z, "WalkSpeed", ws)
     pcall(z.setWalkType, z, l.run and "Run" or "Walk")
@@ -6174,7 +6459,7 @@ function Bridge.watchGuest(z, who, remote)
     end
 end
 
-local BODY_AI_GAP = 1
+CFG.BODY.AI_GAP = 1
 
 function Bridge.companionUpdateGap()
     local idx = 1
@@ -6187,7 +6472,7 @@ function Bridge.companionUpdateGap()
     if idx == 4 then return 2 end
     if idx == 3 then return 1.5 end
     if idx == 2 then return 1.2 end
-    return BODY_AI_GAP
+    return CFG.BODY.AI_GAP
 end
 
 function Bridge.companionUpdateDue(state, key, gap)
@@ -6253,7 +6538,9 @@ local function runBodyUpdate(zombie, red)
     Bridge.bodyAiAt = now
     local savedDt = Bridge.dt
     if elapsed > (savedDt or 1) then Bridge.dt = elapsed end
+    local r0 = probeT()
     local ok, err = pcall(updateZombieBody, zombie)
+    probeAdd("body", r0, probeT())
     Bridge.dt = savedDt
     if not ok then
         BridgeMove.pathResult = "update error: " .. tostring(err)
@@ -6392,7 +6679,7 @@ function Bridge.onZombieUpdate(zombie)
         return
     end
     if not isBody then
-        if Bridge.body ~= nil and (Bridge.tick % MARKED_SCAN_EVERY) ~= 0 then return end
+        if Bridge.body ~= nil and (Bridge.tick % CFG.MARKED_SCAN_EVERY) ~= 0 then return end
         local okPid, pid = pcall(zombieOutfitId, zombie)
         if not okPid then pid = nil end
         if Bridge.checked[zombie] == pid then return end
@@ -6448,14 +6735,14 @@ local function updatePlayerBody()
     if Bridge.manualUpdate then
         pcall(function() Bridge.body:update() end)
     end
-    if Bridge.follow and (Bridge.tick - Bridge.lastPath) >= PATH_EVERY then
+    if Bridge.follow and (Bridge.tick - Bridge.lastPath) >= CFG.PATH_EVERY then
         Bridge.lastPath = Bridge.tick
         local red = BridgeData.owner()
-        if red ~= nil and dist2d(Bridge.body, red) > FOLLOW_DIST then
+        if red ~= nil and dist2d(Bridge.body, red) > CFG.FOLLOW_DIST then
             pcall(function() Bridge.body:pathToCharacter(red) end)
         end
     end
-    if Bridge.target and (Bridge.tick - Bridge.lastPath) >= PATH_EVERY then
+    if Bridge.target and (Bridge.tick - Bridge.lastPath) >= CFG.PATH_EVERY then
         Bridge.lastPath = Bridge.tick
         local t = Bridge.target
         pcall(function() Bridge.body:pathToLocationF(t.x, t.y, t.z) end)
@@ -6472,20 +6759,21 @@ end
 
 
 
-local SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follow = true, go = true, wait = true,
+CFG.SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follow = true, go = true, wait = true,
     rest = true, stop = true, mode = true, sit = true, stand = true, sleep = true, anim = true, walk = true,
     keep = true, far = true, combat = true, ["goto"] = true, chop = true, trace = true, sq = true, doors = true, status = true,
     items = true, wounds = true, heal = true, wash = true, name = true, call = true, goodbye = true, menu = true,
     kills = true, lose = true, despawn = true, rel = true, gift = true, places = true, home = true, itemselftest = true,
     gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
-    friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
+    friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, livingworldselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
     exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, sound = true, meet = true,
-    perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true }
+    perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true, farmdebug = true,
+    look = true, take = true, sizeselftest = true }
 
 
 
-local DEV_MP_COMMANDS = { mood = true, rel = true, gift = true, car = true, places = true }
+CFG.DEV_MP_COMMANDS = { mood = true, rel = true, gift = true, car = true, places = true }
 
 
 local function itemselftest()
@@ -6609,8 +6897,8 @@ function Bridge.run(line)
     local cmd = parts[2]
     if cmd == nil then return "empty" end
     local dev = BridgeBuild ~= nil and BridgeBuild.test == true
-    local devMp = dev and Bridge.mp and DEV_MP_COMMANDS[cmd] == true
-    if not devMp and (Bridge.mp or not dev) and (not SAFE_COMMANDS[cmd] or (cmd == "call" and parts[3] ~= nil)) then
+    local devMp = dev and Bridge.mp and CFG.DEV_MP_COMMANDS[cmd] == true
+    if not devMp and (Bridge.mp or not dev) and (not CFG.SAFE_COMMANDS[cmd] or (cmd == "call" and parts[3] ~= nil)) then
         return cmd .. (dev and ": not in multiplayer" or ": test build only")
     end
 
@@ -7061,6 +7349,10 @@ function Bridge.run(line)
         return "quiet " .. tostring(Bridge.quietLines)
     end
 
+    if cmd == "look" or cmd == "take" then
+        if BridgeAround == nil then return cmd .. ": not loaded" end
+        return BridgeAround.run(cmd, parts)
+    end
     if cmd == "doors" then
         local red = BridgeData.owner()
         if red == nil then return "doors: no player" end
@@ -7121,6 +7413,20 @@ function Bridge.run(line)
     if cmd == "mortal" then
         Bridge.mortal = parts[3] == "on"
         return "mortal " .. tostring(Bridge.mortal)
+    end
+
+    if cmd == "farmdebug" then
+        if BridgeTask == nil then return "farmdebug off (task not loaded)" end
+        local mode = parts[3]
+        if mode == "on" or mode == "1" or mode == "true" then
+            BridgeTask.FARM_DEBUG = true
+            return "farmdebug on"
+        end
+        if mode == "off" or mode == "0" or mode == "false" then
+            BridgeTask.FARM_DEBUG = false
+            return "farmdebug off"
+        end
+        return "farmdebug on|off (currently " .. (BridgeTask.FARM_DEBUG == true and "on" or "off") .. ")"
     end
 
     if cmd == "sq" then
@@ -7218,6 +7524,13 @@ function Bridge.run(line)
 
     if cmd == "itemselftest" then return Bridge.itemselftest() end
 
+    if cmd == "sizeselftest" then
+        if BridgeSizeMatterCompat == nil or type(BridgeSizeMatterCompat.selftest) ~= "function" then
+            return "sizeselftest SKIP (compat not loaded)"
+        end
+        return BridgeSizeMatterCompat.selftest()
+    end
+
     if cmd == "bathselftest" then
         if BridgeBath == nil then return "bath not loaded" end
         return BridgeBath.selftest()
@@ -7279,6 +7592,13 @@ function Bridge.run(line)
             return "BridgeKnoxSurvivors not loaded"
         end
         return BridgeKnoxSurvivors.selftest()
+    end
+
+    if cmd == "livingworldselftest" then
+        if BridgeLivingWorld == nil or type(BridgeLivingWorld.selftest) ~= "function" then
+            return "livingworldselftest: not loaded"
+        end
+        return BridgeLivingWorld.selftest()
     end
 
     if cmd == "theodoreselftest" then
@@ -7830,7 +8150,7 @@ end)
 
 
 local function eachCommand(handler)
-    local reader = getFileReader(IN_FILE, false)
+    local reader = getFileReader(CFG.IN_FILE, false)
     if reader == nil then return end
     while true do
         local line = reader:readLine()
@@ -8064,7 +8384,7 @@ function Bridge.diagLines()
                     local dx, dy = z:getX() - red:getX(), z:getY() - red:getY()
                     if math.sqrt(dx * dx + dy * dy) < 15 then
                         near = near + 1
-                        if z:getVariableBoolean(BODY_VAR) then mine = mine + 1 end
+                        if z:getVariableBoolean(CFG.BODY.VAR) then mine = mine + 1 end
                     end
                 end
             end
@@ -8086,7 +8406,7 @@ function Bridge.diagLines()
                         if z ~= nil and z:getPersistentOutfitID() == md.bodyId then
                             local d = red and dist2d(z, red) or -1
                             info = string.format("found d=%.1f remote=%s marked=%s alive=%s", d,
-                                tostring(z:isRemoteZombie()), tostring(z:getVariableBoolean(BODY_VAR)), tostring(z:isAlive()))
+                                tostring(z:isRemoteZombie()), tostring(z:getVariableBoolean(CFG.BODY.VAR)), tostring(z:isAlive()))
                             break
                         end
                     end
@@ -8213,7 +8533,7 @@ function Bridge.writeState(full)
     Bridge.lastWriteTick = Bridge.tick
     pcall(function()
         local lines = full and Bridge.diagLines() or Bridge.diagCore()
-        local writer = getFileWriter(OUT_FILE, true, false)
+        local writer = getFileWriter(CFG.OUT_FILE, true, false)
         for i = 1, #lines do writer:write(lines[i] .. "\r\n") end
         writer:close()
     end)
@@ -8227,7 +8547,7 @@ function Bridge.dropLostBody()
     local old = Bridge.body
     if old == nil or Bridge.mp then return false end
     local ours, inWorld = false, false
-    pcall(function() ours = old:getVariableBoolean(BODY_VAR) end)
+    pcall(function() ours = old:getVariableBoolean(CFG.BODY.VAR) end)
     pcall(function() inWorld = old:isExistInTheWorld() end)
     if not ours or not inWorld then return false end
     pcall(function() old:setPrimaryHandItem(nil) end)
@@ -8315,7 +8635,7 @@ function Bridge.ensurePresent()
         end
         Bridge.arrivalHold = nil
 
-        Bridge.startTick = Bridge.time - APPEAR_DELAY
+        Bridge.startTick = Bridge.time - CFG.APPEAR_DELAY
         log("Spawn Selector arrival safety is over: companion appears now")
     end
 
@@ -8337,7 +8657,7 @@ function Bridge.ensurePresent()
     end
     if Bridge.startTick == nil then Bridge.startTick = Bridge.time return end
 
-    if (Bridge.time - Bridge.startTick) < APPEAR_DELAY + (Bridge.spawnBackoff or 0) then return end
+    if (Bridge.time - Bridge.startTick) < CFG.APPEAR_DELAY + (Bridge.spawnBackoff or 0) then return end
 
 
 
@@ -8369,7 +8689,7 @@ function Bridge.ensurePresent()
 
     if BridgeData.modeOf(st) ~= "follow" and st.waitX ~= nil then
         local dx, dy = red:getX() - st.waitX, red:getY() - st.waitY
-        if math.sqrt(dx * dx + dy * dy) > HOME_NEAR or math.abs(red:getZ() - (st.waitZ or 0)) > 3 then return end
+        if math.sqrt(dx * dx + dy * dy) > CFG.HOME.NEAR or math.abs(red:getZ() - (st.waitZ or 0)) > 3 then return end
         Bridge.homeParked = false
         pcall(Bridge.dropLostBody)
         local res = Bridge.spawnZombie(st.waitX, st.waitY, st.waitZ)
@@ -8394,9 +8714,10 @@ end
 
 
 
-local LOST_AFTER = 180
-local LOST_EXISTED = 600
-local LOST_RETRY = { 180, 300, 600 }
+CFG.LOST = {}
+CFG.LOST.AFTER = 180
+CFG.LOST.EXISTED = 600
+CFG.LOST.RETRY = { 180, 300, 600 }
 
 
 
@@ -8484,14 +8805,14 @@ function Bridge.sweepStaleBodies(reason)
     return n
 end
 
-local STALE_ID_CAP = 256
+CFG.STALE.ID_CAP = 256
 
 local function pruneStaleIds()
     local ids = Bridge.staleIds
     if ids == nil then return end
     local n = 0
     for _ in pairs(ids) do n = n + 1 end
-    if n <= STALE_ID_CAP then return end
+    if n <= CFG.STALE.ID_CAP then return end
     local cutoff = (Bridge.time or 0) - 3600
     for id, at in pairs(ids) do
         if (tonumber(at) or 0) < cutoff then
@@ -8499,7 +8820,7 @@ local function pruneStaleIds()
             n = n - 1
         end
     end
-    while n > STALE_ID_CAP do
+    while n > CFG.STALE.ID_CAP do
         local oldestId, oldestAt = nil, nil
         for id, at in pairs(ids) do
             local t = tonumber(at) or 0
@@ -8684,7 +9005,7 @@ function Bridge.lostBodyCheck()
     if waiting then
 
         local dx, dy = red:getX() - st.waitX, red:getY() - st.waitY
-        if math.sqrt(dx * dx + dy * dy) > HOME_NEAR or math.abs(red:getZ() - (st.waitZ or 0)) > 3 then lostReset() return end
+        if math.sqrt(dx * dx + dy * dy) > CFG.HOME.NEAR or math.abs(red:getZ() - (st.waitZ or 0)) > 3 then lostReset() return end
     end
     if Bridge.bodyInClientList(st.bodyId) then lostReset() return end
     if Bridge.lostId ~= st.bodyId then
@@ -8696,7 +9017,7 @@ function Bridge.lostBodyCheck()
 
 
         local asked = Bridge.askedId ~= nil and Bridge.askedId == st.bodyId
-        local after = (asked or Bridge.newLifePending == true) and LOST_AFTER or LOST_EXISTED
+        local after = (asked or Bridge.newLifePending == true) and CFG.LOST.AFTER or CFG.LOST.EXISTED
         Bridge.lostNext = math.max(Bridge.lostNext or 0, Bridge.time + after)
     end
 
@@ -8704,11 +9025,11 @@ function Bridge.lostBodyCheck()
 
     if Bridge.lostCall then
         Bridge.lostCall = nil
-        Bridge.lostNext = math.max(Bridge.time, (Bridge.lostSince or Bridge.time) + LOST_AFTER)
+        Bridge.lostNext = math.max(Bridge.time, (Bridge.lostSince or Bridge.time) + CFG.LOST.AFTER)
     end
     if Bridge.time < Bridge.lostNext then return end
     Bridge.lostTries = (Bridge.lostTries or 0) + 1
-    Bridge.lostNext = Bridge.time + LOST_RETRY[math.min(Bridge.lostTries, #LOST_RETRY)]
+    Bridge.lostNext = Bridge.time + CFG.LOST.RETRY[math.min(Bridge.lostTries, #CFG.LOST.RETRY)]
     local x, y, z
     if waiting then
         x, y, z = math.floor(st.waitX), math.floor(st.waitY), math.floor(st.waitZ or 0)
@@ -8739,15 +9060,19 @@ end
 
 
 
-local TELEPORT_JUMP = 100
-local TELEPORT_FAR = 150
+CFG.TELEPORT = {}
+CFG.TELEPORT.JUMP = 100
+CFG.TELEPORT.FAR = 150
 
-local CLIMB_GRACE = 15
-local MAX_PENDING = 600
-local MISMATCH_TICKS = 300
-local MISMATCH_STILL = 0.3
-local LADDER_RADIUS = 1
-local PULL_RETRY = 30
+CFG.CLIMB = {}
+CFG.CLIMB.GRACE = 15
+CFG.MAX_PENDING = 600
+CFG.MISMATCH = {}
+CFG.MISMATCH.TICKS = 300
+CFG.MISMATCH.STILL = 0.3
+CFG.LADDER = {}
+CFG.LADDER.RADIUS = 1
+CFG.PULL_RETRY = 30
 
 Bridge.floorPull = nil
 Bridge.floorMismatchSince = nil
@@ -8774,7 +9099,7 @@ function Bridge.pullOnTeleport(red)
     local dx, dy = x - px, y - py
     local d2 = dx * dx + dy * dy
 
-    if d2 >= TELEPORT_JUMP * TELEPORT_JUMP and Bridge.spawnSelectorStagingAt(px, py) then
+    if d2 >= CFG.TELEPORT.JUMP * CFG.TELEPORT.JUMP and Bridge.spawnSelectorStagingAt(px, py) then
         Bridge.arrivalHoldStart("teleport from the Spawn Selector staging area")
     end
     if BridgeHorse ~= nil and type(BridgeHorse.blocksFollow) == "function" and BridgeHorse.blocksFollow() then return end
@@ -8784,9 +9109,9 @@ function Bridge.pullOnTeleport(red)
     local far = false
     pcall(function()
         local bx, by = Bridge.body:getX() - x, Bridge.body:getY() - y
-        far = bx * bx + by * by > TELEPORT_FAR * TELEPORT_FAR
+        far = bx * bx + by * by > CFG.TELEPORT.FAR * CFG.TELEPORT.FAR
     end)
-    if d2 < TELEPORT_JUMP * TELEPORT_JUMP and not far then return end
+    if d2 < CFG.TELEPORT.JUMP * CFG.TELEPORT.JUMP and not far then return end
 
 
     if Bridge.mode ~= "follow" then
@@ -8801,13 +9126,13 @@ function Bridge.pullOnTeleport(red)
 end
 
 
-local LADDER_FLAGS = {
+CFG.LADDER.FLAGS = {
     "ladderN", "ladderS", "ladderE", "ladderW",
     "climbSheetN", "climbSheetS", "climbSheetE", "climbSheetW",
     "climbSheetTopN", "climbSheetTopS", "climbSheetTopE", "climbSheetTopW",
 }
 
-local LADDER_SPRITES = {
+CFG.LADDER.SPRITES = {
     "industry_railroad_05_20", "industry_railroad_05_21", "industry_railroad_05_36",
     "industry_railroad_05_37", "industry_railroad_05_56", "industry_railroad_05_57",
     "industry_railroad_05_58", "industry_railroad_05_59",
@@ -8824,17 +9149,17 @@ local function spriteIsLadder(name)
     if name == nil then return false end
     local lower = string.lower(tostring(name))
     if string.find(lower, "ladder", 1, true) ~= nil then return true end
-    for i = 1, #LADDER_SPRITES do
-        if string.find(lower, LADDER_SPRITES[i], 1, true) ~= nil then return true end
+    for i = 1, #CFG.LADDER.SPRITES do
+        if string.find(lower, CFG.LADDER.SPRITES[i], 1, true) ~= nil then return true end
     end
     return false
 end
 
 local function squareHasLadderFlag(square)
     if square == nil then return false end
-    for i = 1, #LADDER_FLAGS do
+    for i = 1, #CFG.LADDER.FLAGS do
         local found = false
-        pcall(function() found = square:has(LADDER_FLAGS[i]) == true end)
+        pcall(function() found = square:has(CFG.LADDER.FLAGS[i]) == true end)
         if found then return true end
     end
     return false
@@ -8846,8 +9171,8 @@ local function objectHasLadderFlag(obj)
     pcall(function()
         local props = obj:getProperties()
         if props == nil then return end
-        for i = 1, #LADDER_FLAGS do
-            if props:has(LADDER_FLAGS[i]) then
+        for i = 1, #CFG.LADDER.FLAGS do
+            if props:has(CFG.LADDER.FLAGS[i]) then
                 found = true
                 return
             end
@@ -8856,7 +9181,7 @@ local function objectHasLadderFlag(obj)
     return found
 end
 
-local CLIMB_FLAGS = { "ClimbRope", "ClimbLadder", "AparosaLadder" }
+CFG.CLIMB.FLAGS = { "ClimbRope", "ClimbLadder", "AparosaLadder" }
 
 local function playerIsClimbingRope(red)
     return red:isClimbingRope() == true
@@ -8891,8 +9216,8 @@ function Bridge.climbSignal(red)
         if okClimb and climbing == true then
             value = "ladder"
         else
-            for i = 1, #CLIMB_FLAGS do
-                local okVar, on = pcall(playerHasVar, red, CLIMB_FLAGS[i])
+            for i = 1, #CFG.CLIMB.FLAGS do
+                local okVar, on = pcall(playerHasVar, red, CFG.CLIMB.FLAGS[i])
                 if okVar and on == true then value = "ladder" break end
             end
             if value == nil then
@@ -8925,8 +9250,8 @@ function Bridge.ladderNear(x, y, zFrom, zTo)
     for c = 1, #centres do
         local bx = math.floor(centres[c][1])
         local by = math.floor(centres[c][2])
-        for dx = -LADDER_RADIUS, LADDER_RADIUS do
-            for dy = -LADDER_RADIUS, LADDER_RADIUS do
+        for dx = -CFG.LADDER.RADIUS, CFG.LADDER.RADIUS do
+            for dy = -CFG.LADDER.RADIUS, CFG.LADDER.RADIUS do
                 for z = zmin, zmax do
                     local square = cell:getGridSquare(bx + dx, by + dy, z)
                     if square ~= nil then
@@ -9050,9 +9375,9 @@ function Bridge.floorPullTick(red)
                     or Bridge.onStairs(body:getCurrentSquare())
             end)
         end
-        if mismatch and not stairs and (Bridge.walk60 or 0) < MISMATCH_STILL then
+        if mismatch and not stairs and (Bridge.walk60 or 0) < CFG.MISMATCH.STILL then
             if Bridge.floorMismatchSince == nil then Bridge.floorMismatchSince = now end
-            if now - Bridge.floorMismatchSince >= MISMATCH_TICKS then
+            if now - Bridge.floorMismatchSince >= CFG.MISMATCH.TICKS then
                 Bridge.floorPull = {
                     fromZ = body:getZ(),
                     fromX = body:getX(),
@@ -9064,7 +9389,7 @@ function Bridge.floorPullTick(red)
                     failedLogged = nil,
                 }
                 Bridge.floorMismatchSince = nil
-                log(string.format("vertical: floor mismatch for %d ticks, pulling her", MISMATCH_TICKS))
+                log(string.format("vertical: floor mismatch for %d ticks, pulling her", CFG.MISMATCH.TICKS))
             end
         else
             Bridge.floorMismatchSince = nil
@@ -9076,10 +9401,10 @@ function Bridge.floorPullTick(red)
     pull = Bridge.floorPull
     if pull ~= nil then
         if pull.endedAt == nil then pull.endedAt = now end
-        if now - pull.endedAt >= CLIMB_GRACE then
+        if now - pull.endedAt >= CFG.CLIMB.GRACE then
             if math.abs(z - pull.fromZ) < 0.9 then
                 Bridge.floorPull = nil
-            elseif now - pull.seenAt > MAX_PENDING then
+            elseif now - pull.seenAt > CFG.MAX_PENDING then
                 Bridge.floorPull = nil
                 log("vertical: pull timed out")
             elseif Bridge.mode ~= "follow" then
@@ -9105,7 +9430,7 @@ function Bridge.floorPullTick(red)
                 end
                 if playerReady and Bridge.autoTeleportAllowed() and Bridge.drivable()
                     and BridgeMove.cross == nil and BridgeMove.pendingClimb == nil then
-                    if pull.lastTryAt == nil or now - pull.lastTryAt >= PULL_RETRY then
+                    if pull.lastTryAt == nil or now - pull.lastTryAt >= CFG.PULL_RETRY then
                         pull.lastTryAt = now
                         local result = Bridge.teleportToRed()
                         if result == "teleported" then
@@ -9138,7 +9463,7 @@ function Bridge.parkAtHome()
     if BridgeHorse ~= nil and type(BridgeHorse.blocksFollow) == "function" and BridgeHorse.blocksFollow() then return end
     if not Bridge.alive() or Bridge.kind ~= "zombie" or Bridge.mode == "follow" then return end
     local red = BridgeData.owner()
-    if red == nil or dist2d(Bridge.body, red) <= HOME_FAR then return end
+    if red == nil or dist2d(Bridge.body, red) <= CFG.HOME.FAR then return end
     local st = Bridge.store
     if st ~= nil and st.waitX == nil then
         st.waitX, st.waitY, st.waitZ = Bridge.body:getX(), Bridge.body:getY(), Bridge.body:getZ()
@@ -9157,13 +9482,13 @@ end
 
 
 Bridge.drive = nil
-local DRIVE_ROUTES = {
+CFG.DRIVE_ROUTES = {
     line = { { 0, -15 }, { pause = 90 } },
     startstop = { { 0, -5 }, { pause = 40 }, { 0, -10 }, { pause = 40 }, { 0, -15 }, { pause = 90 } },
     zigzag = { { 3, -3 }, { -3, -6 }, { 3, -9 }, { -3, -12 }, { pause = 90 } },
     uturn = { { 0, -8 }, { pause = 20 }, { 0, 0 }, { pause = 90 } },
 }
-DRIVE_ROUTES.circle = (function()
+CFG.DRIVE_ROUTES.circle = (function()
     local t = {}
     for i = 1, 16 do
         local a = i / 16 * 2 * math.pi
@@ -9182,7 +9507,7 @@ function Bridge.driveStart(route, gait)
         pcall(function() red:setRunning(false) red:setSneaking(false) end)
         return "drive stopped"
     end
-    local items = DRIVE_ROUTES[route or ""]
+    local items = CFG.DRIVE_ROUTES[route or ""]
     if route == "room" then
 
 
@@ -9403,6 +9728,7 @@ function Bridge.stuckDiagnostics()
 end
 
 function Bridge.onTick()
+    if Bridge == nil then Bridge = BridgeKeep end
     Bridge.tick = Bridge.tick + 1
     local dt = 1
     pcall(function() dt = getGameTime():getRealworldSecondsSinceLastUpdate() * 60 end)
@@ -9411,6 +9737,12 @@ function Bridge.onTick()
     Bridge.dt = dt
     Bridge.prevTime = Bridge.time
     Bridge.time = Bridge.time + dt
+    if type(getLuaDebuggerErrorCount) == "function" then
+        local errN = 0
+        local okN, vN = pcall(errCount)
+        if okN then errN = vN end
+        if errN ~= (Bridge.errSeen or 0) then pcall(Bridge.feedLuaErrors) end
+    end
     if BridgeHorse ~= nil and not BridgeHorse.softDisabled and type(BridgeHorse.tick) == "function" then pcall(BridgeHorse.tick) end
     if BridgeInventory ~= nil and type(BridgeInventory.outfitSaveTick) == "function" then
         pcall(BridgeInventory.outfitSaveTick)
@@ -9703,7 +10035,7 @@ function Bridge.onTick()
         Bridge.verboseCheckTick = Bridge.time
         local on = false
         pcall(function()
-            local reader = getFileReader(VERBOSE_FILE, false)
+            local reader = getFileReader(CFG.VERBOSE_FILE, false)
             if reader ~= nil then
                 on = true
                 reader:close()
@@ -9721,7 +10053,7 @@ function Bridge.onTick()
         Bridge.bridgeCheckTick = Bridge.time
         local on = false
         pcall(function()
-            local reader = getFileReader(IN_FILE, false)
+            local reader = getFileReader(CFG.IN_FILE, false)
             if reader ~= nil then
                 on = true
                 reader:close()
@@ -9733,9 +10065,9 @@ function Bridge.onTick()
         end
     end
     if Bridge.bridgeOn then
-        if Bridge.every(READ_EVERY) then Bridge.readCommands() end
+        if Bridge.every(CFG.READ_EVERY) then Bridge.readCommands() end
     end
-    if Bridge.bridgeOn and Bridge.diagOn and Bridge.every(DIAG_EVERY) then Bridge.writeState(false) end
+    if Bridge.bridgeOn and Bridge.diagOn and Bridge.every(CFG.DIAG_EVERY) then Bridge.writeState(false) end
     Bridge.flushBridgeEvents()
 
     if not Bridge.mp then
@@ -9750,7 +10082,7 @@ function Bridge.onTick()
         end
         if Bridge.staleSweepWanted == true or Bridge.time >= (Bridge.staleSweepAt or 0) then
             Bridge.staleSweepWanted = nil
-            Bridge.staleSweepAt = Bridge.time + STALE_SWEEP_FALLBACK
+            Bridge.staleSweepAt = Bridge.time + CFG.STALE.SWEEP_FALLBACK
             pcall(Bridge.sweepStaleBodies, "tick")
         end
         if Bridge.time >= (Bridge.staleRestartAt or 0) then
@@ -9840,7 +10172,7 @@ Bridge.skipOldCommands()
 
 
 
-local CLAIM_WAIT = 180
+CFG.CLAIM_WAIT = 180
 
 
 
@@ -9987,14 +10319,14 @@ function Bridge.claimTick()
     local c = Bridge.claimParked
     if c == nil then return end
     if c.sent == nil then
-        if Bridge.time - c.since > CLAIM_WAIT then Bridge.claimReturn("no reply from the server, claim not sent") end
+        if Bridge.time - c.since > CFG.CLAIM_WAIT then Bridge.claimReturn("no reply from the server, claim not sent") end
         return
     end
     local done = false
     pcall(function() done = SafeHouse.getSafeHouse(c.square) ~= nil end)
     if done then
         Bridge.claimReturn("building claimed")
-    elseif Bridge.time - c.sent > CLAIM_WAIT then
+    elseif Bridge.time - c.sent > CFG.CLAIM_WAIT then
         Bridge.claimReturn("claim not confirmed in 3 s")
     end
 end
@@ -10090,6 +10422,51 @@ function Bridge.onServerCommand(module, command, args)
     elseif command == "giveFailed" then
         pcall(function() BridgeInventory.giveFailed(args) end)
         Bridge.result = "give failed: " .. tostring(args.why)
+    elseif command == "harvestCropsResult" then
+        if BridgeGardening ~= nil then pcall(function() BridgeGardening.onResult(args) end) end
+        Bridge.result = "harvest: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+    elseif command == "ripenResult" then
+        Bridge.result = "ripen: " .. tostring(args.ok) .. " stages=" .. tostring(args.stages)
+        log(Bridge.result)
+    elseif command == "digFurrowResult" then
+        Bridge.result = "dig: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
+    elseif command == "sowSeedsResult" then
+        if BridgeGardening ~= nil then pcall(function() BridgeGardening.onSowResult(args) end) end
+        Bridge.result = "sow: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
+    elseif command == "sowPacketResult" then
+        if BridgeGardening ~= nil then pcall(function() BridgeGardening.onSowPacketResult(args) end) end
+        Bridge.result = "seed packet: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
+    elseif command == "waterPlantResult" then
+        if BridgeGardening ~= nil then pcall(function() BridgeGardening.onWaterResult(args) end) end
+        Bridge.result = "water: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
+    elseif command == "fertilizePlantResult" then
+        if BridgeGardening ~= nil then pcall(function() BridgeGardening.onFertilizeResult(args) end) end
+        Bridge.result = "feed: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
+    elseif command == "curePlantResult" then
+        if BridgeGardening ~= nil then pcall(function() BridgeGardening.onCureResult(args) end) end
+        Bridge.result = "cure: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
+    elseif command == "petAnimalsResult" then
+        if BridgeAnimalCare ~= nil then pcall(function() BridgeAnimalCare.onPetResult(args) end) end
+        Bridge.result = "pet: " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
+    elseif command == "troughWaterResult" then
+        if BridgeTask ~= nil and type(BridgeTask.troughWaterResult) == "function" then
+            pcall(function() BridgeTask.troughWaterResult(args) end)
+        end
+        Bridge.result = "trough water: " .. tostring(args.ok) .. " " .. tostring(args.added) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
+    elseif command == "hutchCareResult" then
+        if BridgeTask ~= nil and type(BridgeTask.hutchCareResult) == "function" then
+            pcall(function() BridgeTask.hutchCareResult(args) end)
+        end
+        Bridge.result = "hutch: " .. tostring(args.op) .. " " .. tostring(args.ok) .. " " .. tostring(args.why or "")
+        log(Bridge.result)
     elseif command == "say" and args.text ~= nil then
         local name = args.name or BridgeData.DEFAULT_NAME
         if args.chat ~= false then
@@ -10134,7 +10511,19 @@ Events.OnSave.Add(Bridge.onSave)
 Events.OnTick.Add(Bridge.onTick)
 Events.OnPlayerUpdate.Add(Bridge.onPlayerUpdate)
 Events.OnPlayerUpdate.Add(function(player) pcall(Bridge.clearCompanionOutline, player) end)
-Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
+local function timedZombieUpdate(z)
+    local t0 = probeT()
+    Bridge.onZombieUpdate(z)
+    probeAdd("zupd", t0, probeT())
+    if Bridge.probe and Bridge.every(300) then pcall(Bridge.probeFlush) end
+end
+Bridge.zombieUpdateHandler = timedZombieUpdate
+
+local function onZombieCreateVoice(z)
+    if Bridge.creating and z ~= nil then pcall(BridgeVoice.ensure, z) end
+end
+
+Events.OnZombieUpdate.Add(Bridge.zombieUpdateHandler)
 
 
 Events.OnGameStart.Add(function()
@@ -10144,11 +10533,10 @@ Events.OnGameStart.Add(function()
         Bridge.floorMismatchSince = nil
         Bridge.zPrev = nil
         Bridge.xyPrev = nil
-        Events.OnZombieUpdate.Remove(Bridge.onZombieUpdate)
-Events.OnZombieUpdate.Add(Bridge.onZombieUpdate)
-Events.OnZombieCreate.Add(function(z)
-    if Bridge.creating and z ~= nil then pcall(BridgeVoice.ensure, z) end
-end)
+        Events.OnZombieUpdate.Remove(Bridge.zombieUpdateHandler)
+Events.OnZombieUpdate.Add(Bridge.zombieUpdateHandler)
+Events.OnZombieCreate.Remove(onZombieCreateVoice)
+Events.OnZombieCreate.Add(onZombieCreateVoice)
     end)
 end)
 
@@ -10286,7 +10674,7 @@ function Bridge.mournThreat(body, red)
         local list = getCell():getZombieList()
         for i = 0, list:size() - 1 do
             local z = list:get(i)
-            if z ~= nil and z ~= body and z:isAlive() and not z:getVariableBoolean(BODY_VAR)
+            if z ~= nil and z ~= body and z:isAlive() and not z:getVariableBoolean(CFG.BODY.VAR)
                 and not BridgeData.harmless(z) and math.abs(z:getZ() - bz) < 1 then
                 local zx, zy = z:getX(), z:getY()
                 local dHer = math.sqrt((zx - bx) ^ 2 + (zy - by) ^ 2)
@@ -10340,8 +10728,9 @@ end
 
 
 
-local LEAVE_DIST = { 1.5, 2, 2.5, 3, 4, 5, 6, 8 }
-local LEAVE_RING = { 2, 3, 4, 5, 6, 8 }
+CFG.LEAVE = {}
+CFG.LEAVE.DIST = { 1.5, 2, 2.5, 3, 4, 5, 6, 8 }
+CFG.LEAVE.RING = { 2, 3, 4, 5, 6, 8 }
 local function leavePoint(body, red, m, fx, fy, bad)
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
     local ax, ay = bx - fx, by - fy
@@ -10392,7 +10781,7 @@ local function leavePoint(body, red, m, fx, fy, bad)
         end
         return best
     end
-    return pick(LEAVE_DIST, true) or pick(LEAVE_RING, false)
+    return pick(CFG.LEAVE.DIST, true) or pick(CFG.LEAVE.RING, false)
 end
 
 function Bridge.mournStart(body, red, opts)
@@ -10897,7 +11286,7 @@ Bridge.checked = setmetatable({}, { __mode = "k" })
     if Bridge.mourning ~= nil then pcall(function() Bridge.mournEnd("new player") end) end
     Bridge.mourning = nil
     if Bridge.body ~= nil then
-        pcall(function() Bridge.body:setVariable(BODY_VAR, false) end)
+        pcall(function() Bridge.body:setVariable(CFG.BODY.VAR, false) end)
         Bridge.body = nil
         Bridge.kind = nil
         if Bridge.store ~= nil and not Bridge.mp then Bridge.store.bodyId, Bridge.store.onlineId = nil, nil end

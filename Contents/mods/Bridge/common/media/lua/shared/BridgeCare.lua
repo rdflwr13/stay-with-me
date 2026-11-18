@@ -116,19 +116,26 @@ end
 
 
 
-function BridgeCare.returnBandage(inv, p)
-    local item = nil
+function BridgeCare.bandageReturnRecord(p)
+    local rec = nil
+    if p == nil then return nil end
+    if type(BridgeItems) ~= "table" or type(BridgeItems.record) ~= "function" then return nil end
     pcall(function()
+        local bandaged = false
+        pcall(function() bandaged = p:bandaged() == true end)
+        if not bandaged then return end
         local t = p:getBandageType()
-        if t == nil or t == "" or inv == nil then return end
-        item = instanceItem(t)
+        if t == nil or t == "" then return end
+        local item = instanceItem(t)
         if item == nil then return end
-        inv:AddItem(item)
+        local life = 0
+        pcall(function() life = p:getBandageLife() or 0 end)
         local reusable = false
         pcall(function() reusable = ItemTag ~= nil and item:hasTag(ItemTag.REUSABLE_BANDAGE) end)
-        if p:getBandageLife() <= 0 and not reusable then item:Use() end
+        if life <= 0 and not reusable then pcall(function() item:Use() end) end
+        rec = BridgeItems.record(item, true)
     end)
-    return item
+    return rec
 end
 
 

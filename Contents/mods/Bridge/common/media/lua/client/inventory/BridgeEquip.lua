@@ -1799,6 +1799,13 @@ function BridgeEquipWindow:liveKey(st)
             parts[#parts + 1] = tostring(w.item:getType()) .. ":" .. tostring(id) .. ":" .. tostring(w.loc)
         end
     end
+    if BridgeSizeMatterCompat ~= nil and type(BridgeSizeMatterCompat.profileToken) == "function" then
+        local profile = nil
+        if type(BridgeSizeMatterCompat.profileOf) == "function" then
+            pcall(function() profile = BridgeSizeMatterCompat.profileOf(st) end)
+        end
+        parts[#parts + 1] = BridgeSizeMatterCompat.profileToken(profile) or ""
+    end
     return table.concat(parts, "|")
 end
 
@@ -1807,6 +1814,9 @@ function BridgeEquipWindow:refreshAvatar()
     local key = self:liveKey(Bridge.store)
     if key == self.avatarKey then return end
     self.avatarKey = key
+    if BridgeSizeMatterCompat ~= nil and type(BridgeSizeMatterCompat.applyPreview) == "function" then
+        pcall(BridgeSizeMatterCompat.applyPreview, self.avatar, Bridge.store)
+    end
     local ok, err = pcall(function() self.avatar:setSurvivorDesc(self:makeDesc(Bridge.store)) end)
     if not ok then warn("avatar failed: " .. tostring(err)) return end
     pcall(function() self.avatar:setState("idle") end)

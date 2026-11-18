@@ -560,6 +560,14 @@ local FINDERS = {
 
 
 
+local function needsCover(w)
+    return w.injury or w.bleeding or w.scratched or w.cut or w.deep or w.bitten
+        or w.glass or w.bullet or w.fracture or w.splint or w.infected or w.burn
+        or w.burnWash or w.stitched
+        or (w.we ~= nil and w.we.any == true)
+end
+
+
 function BridgeHeal.plan(body, red)
     local wounds = BridgeHeal.scan(red)
     local rawQueue, missing, used = {}, {}, {}
@@ -642,13 +650,17 @@ function BridgeHeal.plan(body, red)
 
         local spare = nil
         if not weBandaged and w.bandaged and w.dirty then
-            spare = bestBandage(body, red, used)
-            if spare ~= nil then
-                queue[#queue + 1] = { kind = "unbandage", w = w }
-                open = w.injury
-                wantBandage = true
+            if needsCover(w) then
+                spare = bestBandage(body, red, used)
+                if spare ~= nil then
+                    queue[#queue + 1] = { kind = "unbandage", w = w }
+                    open = w.injury
+                    wantBandage = true
+                else
+                    need("Bandage", w)
+                end
             else
-                need("Bandage", w)
+                queue[#queue + 1] = { kind = "unbandage", w = w }
             end
         end
 
@@ -929,11 +941,9 @@ local function apply(body, red, step)
     end
     local change = { kind = step.kind, part = p:getIndex() }
 
-    if step.kind == "unbandage" then
-        local bag = nil
-        pcall(function() bag = body:getInventory() end)
-        if bag == nil and BridgeParked ~= nil and BridgeParked.active then bag = BridgeParked.main end
-        BridgeCare.returnBandage(bag, p)
+    local returnRec = nil
+    if step.kind == "unbandage" and not isClient() then
+        returnRec = BridgeCare.bandageReturnRecord(p)
     end
     if step.kind == "bullet" then
         change.level = lvl
@@ -966,6 +976,9 @@ local function apply(body, red, step)
     end
     local part, why = BridgeCare.apply(red, change)
     if part == nil then return why end
+    if returnRec ~= nil and BridgeInventory ~= nil and type(BridgeInventory.receive) == "function" then
+        BridgeInventory.receive({ ids = { -1 }, recs = { returnRec } })
+    end
     for _, it in ipairs(spent(step)) do BridgeCare.consume(it, false) end
     return nil
 end

@@ -72,6 +72,7 @@ function BridgePlants.applyPlant(square, kind, body)
         if body ~= nil and not (Bridge ~= nil and Bridge.mp == true) then
             pcall(function()
                 body:getInventory():AddItems("Base.GrassTuft", ZombRand(2, 4))
+                if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
             end)
         end
     elseif kind == "bush" then

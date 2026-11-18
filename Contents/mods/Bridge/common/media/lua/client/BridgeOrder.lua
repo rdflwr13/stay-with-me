@@ -5,6 +5,22 @@ require "ISUI/ISTickBox"
 
 local PAD = 10
 
+local FONT_BODY, FONT_HEAD, FONT_S, FONT_M = UIFont.Small, UIFont.Medium, 0, 0
+
+local function uiFonts()
+    FONT_BODY, FONT_HEAD = UIFont.Small, UIFont.Medium
+    FONT_S = getTextManager():getFontHeight(FONT_BODY)
+    FONT_M = getTextManager():getFontHeight(FONT_HEAD)
+    if BridgeWindow ~= nil and type(BridgeWindow.uiFonts) == "function" then
+        local body, head, smallH, mediumH = BridgeWindow.uiFonts()
+        FONT_BODY = body or FONT_BODY
+        FONT_HEAD = head or FONT_HEAD
+        FONT_S = smallH or FONT_S
+        FONT_M = mediumH or FONT_M
+    end
+    return FONT_BODY, FONT_HEAD, FONT_S, FONT_M
+end
+
 local function tr(key, a)
     if BridgeData ~= nil and type(BridgeData.text) == "function" then return BridgeData.text(key, a) end
     local text = key
@@ -34,14 +50,15 @@ end
 BridgeOrderList = ISScrollingListBox:derive("BridgeOrderList")
 
 function BridgeOrderList:new(x, y, width, height)
+    uiFonts()
     local o = ISScrollingListBox:new(x, y, width, height)
     setmetatable(o, self)
     self.__index = self
     o.backgroundColor = { r = 0, g = 0, b = 0, a = 0.3 }
     o.borderColor = { r = 1, g = 1, b = 1, a = 0.2 }
     o.drawBorder = true
-    o.font = UIFont.Small
-    o.fontHgt = getTextManager():getFontHeight(UIFont.Small)
+    o.font = FONT_BODY
+    o.fontHgt = FONT_S
     o.itemPadY = 5
     o.tickSize = o.fontHgt
     o.boxSize = o.fontHgt
@@ -191,32 +208,50 @@ end
 
 BridgeOrder = ISPanel:derive("BridgeOrder")
 
+local function orderMode()
+    if BridgeWindow ~= nil and BridgeWindow.orderMode == "work" then return "work" end
+    return "menu"
+end
+
 function BridgeOrder.heightFor(width)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local btnH = fontS + 6
+    local gap = PAD / 2
+    local kind = orderMode()
     local who = "Rin"
     pcall(function() if Bridge ~= nil and Bridge.companionName ~= nil then who = Bridge.companionName() end end)
-    local lines = wrapText(UIFont.Small, tr("MenuOrderHint", who), math.max(40, (width or 0) - PAD * 2))
+    local hintKey = kind == "work" and "MenuOrderHintWork" or "MenuOrderHint"
+    local lines = wrapText(FONT_BODY, tr(hintKey, who), math.max(40, (width or 0) - PAD * 2))
     local hintH = #lines * (fontS + 2) + 4
     local rowH = fontS + 10
     local n = 1
-    if Bridge ~= nil and Bridge.store ~= nil and BridgeData ~= nil and BridgeData.menuOrder ~= nil then
-        n = #BridgeData.menuOrder(Bridge.store)
+    if Bridge ~= nil and Bridge.store ~= nil and BridgeData ~= nil then
+        if kind == "work" and BridgeData.workOrder ~= nil then
+            n = #BridgeData.workOrder(Bridge.store)
+        elseif BridgeData.menuOrder ~= nil then
+            n = #BridgeData.menuOrder(Bridge.store)
+        end
     end
     if n < 1 then n = 1 end
-    local gap = PAD / 2
-    return PAD + hintH + n * rowH + PAD + btnH + gap + btnH + PAD
+    local tail = btnH
+    if kind == "menu" then tail = btnH + gap + btnH end
+    return PAD + btnH + gap + hintH + n * rowH + PAD + tail + PAD
 end
 
 function BridgeOrder:applyHeight(h)
     self:setHeight(h)
     if self.list == nil or self.upBtn == nil then return end
     local gap = PAD / 2
-    local lootY = h - PAD - self.btnH
-    if lootY < 0 then lootY = 0 end
-    local rowY = lootY - gap - self.btnH
+    local menu = self.kind ~= "work"
+    local lootY = nil
+    local rowY = h - PAD - self.btnH
+    if menu and self.lootTick ~= nil then
+        lootY = rowY
+        rowY = lootY - gap - self.btnH
+    end
     if rowY < 0 then rowY = 0 end
-    local listY = PAD + (self.hintH or 0)
+    local listY = PAD + self.btnH + gap + (self.hintH or 0)
     local listH = rowY - listY - PAD
     if listH < 0 then listH = 0 end
     self.list:setY(listY)
@@ -224,23 +259,39 @@ function BridgeOrder:applyHeight(h)
     self.upBtn:setY(rowY)
     self.downBtn:setY(rowY)
     self.resetBtn:setY(rowY)
+    if self.menuBtn ~= nil then self.menuBtn:setY(PAD) end
+    if self.workBtn ~= nil then self.workBtn:setY(PAD) end
     if self.lootTick ~= nil then
         self.lootTick:setX(PAD)
         self.lootTick:setWidth(self.width - PAD * 2)
-        self.lootTick:setY(lootY)
+        if menu then self.lootTick:setY(lootY) end
     end
 end
 
 function BridgeOrder:createChildren()
     ISPanel.createChildren(self)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local btnH = fontS + 6
     self.btnH = btnH
-    self.hintLines = wrapText(UIFont.Small, tr("MenuOrderHint", Bridge.companionName()), self.width - PAD * 2)
-    self.hintH = #self.hintLines * (fontS + 2) + 4
+    self.kind = orderMode()
+    self:buildHints()
 
-    local listY = PAD + self.hintH
     local gap = PAD / 2
+    local half = math.max(40, math.floor((self.width - PAD * 3) / 2))
+    self.menuBtn = ISButton:new(PAD, PAD, half, btnH, tr("WindowOrder"), self, BridgeOrder.onModeMenu)
+    self.menuBtn:initialise()
+    self.menuBtn:instantiate()
+    self.menuBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+    self:addChild(self.menuBtn)
+
+    self.workBtn = ISButton:new(PAD + half + PAD, PAD, half, btnH, tr("Jobs"), self, BridgeOrder.onModeWork)
+    self.workBtn:initialise()
+    self.workBtn:instantiate()
+    self.workBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+    self:addChild(self.workBtn)
+
+    local listY = PAD + btnH + gap + self.hintH
     local lootY = self.height - PAD - btnH
     local rowY = lootY - gap - btnH
     if rowY < listY then rowY = listY end
@@ -252,7 +303,7 @@ function BridgeOrder:createChildren()
     self.list.onToggle = function(item) self:onToggle(item) end
     self:addChild(self.list)
 
-    local labelW = getTextManager():MeasureStringX(UIFont.Small, tr("MenuReset")) + PAD * 2
+    local labelW = getTextManager():MeasureStringX(FONT_BODY, tr("MenuReset")) + PAD * 2
     local bw = math.max(labelW, btnH * 2)
     self.upBtn = ISButton:new(PAD, rowY, bw, btnH, "^", self, BridgeOrder.onUp)
     self.upBtn:initialise()
@@ -279,14 +330,71 @@ function BridgeOrder:createChildren()
     self.lootTick.tooltip = tr("OptLootMenuTip")
     self:addChild(self.lootTick)
 
+    self:applyMode()
     self.key = nil
     self:refresh()
 end
 
+function BridgeOrder:buildHints()
+    uiFonts()
+    local fontS = FONT_S
+    local who = "Rin"
+    pcall(function() if Bridge ~= nil and Bridge.companionName ~= nil then who = Bridge.companionName() end end)
+    local menuLines = wrapText(FONT_BODY, tr("MenuOrderHint", who), self.width - PAD * 2)
+    local workLines = wrapText(FONT_BODY, tr("MenuOrderHintWork", who), self.width - PAD * 2)
+    self.hints = {
+        menu = { lines = menuLines, h = #menuLines * (fontS + 2) + 4 },
+        work = { lines = workLines, h = #workLines * (fontS + 2) + 4 },
+    }
+    local hint = self.hints[self.kind] or self.hints.menu
+    self.hintLines = hint.lines
+    self.hintH = hint.h
+end
+
+function BridgeOrder:applyMode()
+    local work = self.kind == "work"
+    if self.lootTick ~= nil then self.lootTick:setVisible(not work) end
+    local active = { r = 0.25, g = 0.45, b = 0.75, a = 0.55 }
+    local idle = { r = 0.12, g = 0.12, b = 0.12, a = 0.35 }
+    if self.menuBtn ~= nil then self.menuBtn.backgroundColor = work and idle or active end
+    if self.workBtn ~= nil then self.workBtn.backgroundColor = work and active or idle end
+    if self.hints == nil then self:buildHints() end
+    local hint = self.hints ~= nil and self.hints[self.kind] or nil
+    self.hintLines = (hint ~= nil and hint.lines) or {}
+    self.hintH = (hint ~= nil and hint.h) or 0
+end
+
+function BridgeOrder:setMode(mode)
+    if mode ~= "menu" and mode ~= "work" then return end
+    self.kind = mode
+    if BridgeWindow ~= nil then BridgeWindow.orderMode = mode end
+    self:applyMode()
+    self.key = nil
+    self:refresh()
+    if BridgeWindow ~= nil and type(BridgeWindow.contentHeight) == "function" then
+        self:applyHeight(BridgeWindow.contentHeight("order", self.width))
+    end
+end
+
+function BridgeOrder:onModeMenu()
+    self:setMode("menu")
+end
+
+function BridgeOrder:onModeWork()
+    self:setMode("work")
+end
+
 function BridgeOrder:orderKey()
-    if Bridge == nil or Bridge.store == nil then return "" end
-    local hidden = BridgeData.menuHidden(Bridge.store)
-    return table.concat(BridgeData.menuOrder(Bridge.store), ",") .. "|" .. table.concat(hidden, ",")
+    if Bridge == nil or Bridge.store == nil or BridgeData == nil then return "" end
+    local order, hidden = {}, {}
+    if self.kind == "work" and BridgeData.workOrder ~= nil then
+        order = BridgeData.workOrder(Bridge.store)
+        hidden = BridgeData.workHidden(Bridge.store)
+    else
+        order = BridgeData.menuOrder(Bridge.store)
+        hidden = BridgeData.menuHidden(Bridge.store)
+    end
+    return tostring(self.kind) .. "|" .. table.concat(order, ",") .. "|" .. table.concat(hidden, ",")
 end
 
 function BridgeOrder:refresh()
@@ -296,14 +404,29 @@ function BridgeOrder:refresh()
     list.items = {}
     list.count = 0
     list:setScrollHeight(0)
+    local work = self.kind == "work"
     local order = {}
-    if Bridge ~= nil and Bridge.store ~= nil then order = BridgeData.menuOrder(Bridge.store) end
+    if Bridge ~= nil and Bridge.store ~= nil and BridgeData ~= nil then
+        if work and BridgeData.workOrder ~= nil then
+            order = BridgeData.workOrder(Bridge.store)
+        elseif BridgeData.menuOrder ~= nil then
+            order = BridgeData.menuOrder(Bridge.store)
+        end
+    end
+    local byId = nil
+    if BridgeMenu ~= nil then
+        byId = work and BridgeMenu.WORK_ORDERABLE_BY_ID or BridgeMenu.ORDERABLE_BY_ID
+    end
     for _, id in ipairs(order) do
-        local entry = BridgeMenu ~= nil and BridgeMenu.ORDERABLE_BY_ID and BridgeMenu.ORDERABLE_BY_ID[id] or nil
+        local entry = byId ~= nil and byId[id] or nil
         local label = (entry ~= nil and tr(entry.label)) or id
         local item = list:addItem(label, nil)
         item.id = id
-        item.on = BridgeData.menuShown(Bridge.store, id)
+        if work and BridgeData ~= nil and BridgeData.workShown ~= nil then
+            item.on = BridgeData.workShown(Bridge.store, id)
+        else
+            item.on = BridgeData ~= nil and BridgeData.menuShown(Bridge.store, id) or true
+        end
     end
     if keep == nil or keep < 1 or keep > #list.items then keep = 1 end
     list.selected = keep
@@ -313,9 +436,15 @@ end
 function BridgeOrder:prerender()
     ISPanel.prerender(self)
     if Bridge == nil or Bridge.store == nil then return end
+    local kind = orderMode()
+    if kind ~= self.kind then
+        self.kind = kind
+        self:applyMode()
+        self.key = nil
+    end
     if self.list == nil or self.list.dragItem ~= nil then return end
     if self:orderKey() ~= self.key then self:refresh() end
-    if self.lootTick ~= nil then
+    if self.lootTick ~= nil and self.kind ~= "work" then
         local want = BridgeData.optionOf(Bridge.store, "lootMenu")
         if self.lootTick:isSelected(1) ~= want then self.lootTick:setSelected(1, want) end
     end
@@ -323,17 +452,24 @@ end
 
 function BridgeOrder:render()
     if Bridge == nil or Bridge.store == nil then return end
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
-    local y = PAD
+    uiFonts()
+    local fontS = FONT_S
+    local y = PAD + (self.btnH or 0) + PAD / 2
     for _, line in ipairs(self.hintLines or {}) do
-        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, FONT_BODY)
         y = y + fontS + 2
     end
 end
 
 function BridgeOrder:onToggle(item)
-    if item == nil or item.id == nil or Bridge == nil or type(Bridge.setMenuShown) ~= "function" then return end
-    Bridge.setMenuShown(item.id, item.on ~= true)
+    if item == nil or item.id == nil or Bridge == nil then return end
+    if self.kind == "work" then
+        if type(Bridge.setWorkShown) ~= "function" then return end
+        Bridge.setWorkShown(item.id, item.on ~= true)
+    else
+        if type(Bridge.setMenuShown) ~= "function" then return end
+        Bridge.setMenuShown(item.id, item.on ~= true)
+    end
     self.key = nil
     self:refresh()
 end
@@ -341,12 +477,24 @@ end
 function BridgeOrder:onReorder()
     local ids = {}
     for _, item in ipairs(self.list.items) do ids[#ids + 1] = item.id end
-    if Bridge ~= nil and type(Bridge.setMenuOrder) == "function" then Bridge.setMenuOrder(ids) end
+    if Bridge ~= nil then
+        if self.kind == "work" then
+            if type(Bridge.setWorkOrder) == "function" then Bridge.setWorkOrder(ids) end
+        elseif type(Bridge.setMenuOrder) == "function" then
+            Bridge.setMenuOrder(ids)
+        end
+    end
     self.key = table.concat(ids, ",")
 end
 
 function BridgeOrder:onReset()
-    if Bridge ~= nil and type(Bridge.resetMenuOrder) == "function" then Bridge.resetMenuOrder() end
+    if Bridge ~= nil then
+        if self.kind == "work" then
+            if type(Bridge.resetWorkOrder) == "function" then Bridge.resetWorkOrder() end
+        elseif type(Bridge.resetMenuOrder) == "function" then
+            Bridge.resetMenuOrder()
+        end
+    end
     self.key = nil
     self:refresh()
 end

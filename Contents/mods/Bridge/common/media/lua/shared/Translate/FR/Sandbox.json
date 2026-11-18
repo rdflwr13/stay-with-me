@@ -249,7 +249,7 @@
     "Sandbox_StayWithMe_MaxSpeechLines": "Lignes de répliques max.",
     "Sandbox_StayWithMe_MaxSpeechLines_tooltip": "Combien de répliques à pied le compagnon garde visibles à la fois. 1 conserve l'ancienne ligne unique. Jusqu'à 5. Chaque ligne reste pendant la Durée des répliques normale. Limite aussi les lignes de sous-titres quand ils sont activés. Les lignes en voiture ne le respectent qu'avec les sous-titres activés. Par défaut : 5.",
     "Sandbox_StayWithMe_BreathingVolume": "Volume de la respiration",
-    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Contrôle le volume de la respiration du compagnon lorsqu'il est essoufflé. « Désactivé » la coupe. « Discret » est 50 % plus silencieux que Normal. « Fort » est 50 % plus fort. Par défaut : Normal.",
+    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Contrôle le volume de la respiration du compagnon lorsqu'il est essoufflé. « Désactivé » la coupe. « Discret » est 50 %% plus silencieux que Normal. « Fort » est 50 %% plus fort. Par défaut : Normal.",
     "Sandbox_StayWithMe_BreathingVolume_Values_option1": "Désactivé",
     "Sandbox_StayWithMe_BreathingVolume_Values_option2": "Discret",
     "Sandbox_StayWithMe_BreathingVolume_Values_option3": "Normal (par défaut)",

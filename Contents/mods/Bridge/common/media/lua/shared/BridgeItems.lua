@@ -173,8 +173,16 @@ function BridgeItems.record(item, deep)
             end
         end
     end
+    local G = BridgeGunRules
+    local efzTree = nil
+    try(function()
+        if G == nil or type(G.efzTreeString) ~= "function" then return end
+        local ok, text = pcall(G.efzTreeString, item)
+        if ok and type(text) == "string" and text ~= "" then efzTree = text end
+    end)
+    local wpNames = nil
     local okWeaponParts, isWeaponParts = pcall(item.IsWeapon, item)
-    if okWeaponParts and isWeaponParts then
+    if efzTree == nil and okWeaponParts and isWeaponParts then
         local okParts, parts = pcall(item.getAllWeaponParts, item)
         if okParts and parts ~= nil then
             local okSize, n = pcall(parts.size, parts)
@@ -187,9 +195,22 @@ function BridgeItems.record(item, deep)
                         if okType then names[#names + 1] = typ end
                     end
                 end
-                rec.wp = table.concat(names, "+")
+                if #names > 0 then wpNames = table.concat(names, "+") end
             end
         end
+    end
+    if efzTree == nil and wpNames ~= nil and G ~= nil
+        and type(G.efzSalvageTree) == "function" and type(G.efzTreeText) == "function" then
+        local okS, salvage = pcall(G.efzSalvageTree, rec.t, wpNames)
+        if okS and type(salvage) == "table" then
+            local okT, text = pcall(G.efzTreeText, salvage)
+            if okT and type(text) == "string" and text ~= "" then efzTree = text end
+        end
+    end
+    if efzTree ~= nil then
+        rec.ew = efzTree
+    elseif wpNames ~= nil then
+        rec.wp = wpNames
     end
     local okDrain, drainable = pcall(item.IsDrainable, item)
     if okDrain and drainable then
@@ -300,6 +321,8 @@ function BridgeItems.record(item, deep)
     try(function()
         if item.hasModData ~= nil and item:hasModData() == true then
             local md = plainCopy(item:getModData(), 1)
+
+            if efzTree ~= nil and type(md) == "table" then md.TW = nil end
 
             if md ~= nil and not deep and BridgeItems.prepareModData ~= nil then
                 pcall(BridgeItems.prepareModData, item, md)
@@ -444,6 +467,14 @@ end
 
 
 function BridgeItems.apply(item, rec)
+    local efzTree = nil
+    if type(rec.ew) == "string" and BridgeGunRules ~= nil and type(BridgeGunRules.efzParseTree) == "function" then
+        local okTree, tree = pcall(BridgeGunRules.efzParseTree, rec.ew)
+        if okTree and type(tree) == "table" then efzTree = tree end
+    end
+    if efzTree ~= nil and type(BridgeGunRules.efzApplyTree) == "function" then
+        pcall(BridgeGunRules.efzApplyTree, item, efzTree)
+    end
     if rec.c ~= nil then try(function() item:setCondition(rec.c) end) end
     if rec.hc ~= nil then try(function() if item.setHeadCondition ~= nil then item:setHeadCondition(rec.hc) end end) end
     if rec.sh ~= nil then try(function() if item.setSharpness ~= nil then item:setSharpness(rec.sh) end end) end
@@ -487,7 +518,7 @@ function BridgeItems.apply(item, rec)
             if fc ~= nil and not fc:isEmpty() then fc:Empty() end
         end)
     end
-    if rec.wp ~= nil then
+    if efzTree == nil and rec.wp ~= nil then
         try(function()
             for name in string.gmatch(rec.wp, "[^+]+") do
                 local part = instanceItem(name)
@@ -577,10 +608,10 @@ local NUM = { h = true, p = true, c = true, u = true, a = true, la = true, r = t
               mi = true, pg = true, q = true, fp = true }
 local BOOL = { w = true, ck = true, bu = true, f = true, cl = true, ch = true, fe = true, as = true, cn = true }
 
-local TEXT = { n = true, lk = true, ga = true, gt = true, gp = true }
+local TEXT = { n = true, lk = true, ga = true, gt = true, gp = true, ew = true }
 local PACKED = { md = true, cp = true }
 local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "la", "fp", "r", "g", "b", "tc", "bt", "hue", "dec", "ho", "pa", "bl", "di", "k", "f", "ck", "bu",
-                "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp" }
+                "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp", "ew" }
 local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", la = "%.3f", fa = "%.3f", sh = "%.3f", fp = "%.4f" }
 BridgeItems.MAX_LENGTH = 60000
 BridgeItems.BLOCK_RATIO = 0.92

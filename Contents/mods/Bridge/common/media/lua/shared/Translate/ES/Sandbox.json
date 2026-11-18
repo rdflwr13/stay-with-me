@@ -251,7 +251,7 @@
     "Sandbox_StayWithMe_MaxSpeechLines": "Líneas de diálogo máximas",
     "Sandbox_StayWithMe_MaxSpeechLines_tooltip": "Cuántas líneas de diálogo a pie mantiene visibles la compañera a la vez. 1 mantiene la única línea anterior. Hasta 5. Cada línea permanece el tiempo normal de Duración del diálogo. También limita las filas de subtítulos cuando están activados. Las líneas en coche solo lo respetan con subtítulos activados. Por defecto: 5.",
     "Sandbox_StayWithMe_BreathingVolume": "Volumen de respiración",
-    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Controla el volumen de la respiración de la compañera cuando está sin aliento. «Apagado» lo desactiva. «Silencioso» es un 50 % más silencioso que Normal. «Alto» es un 50 % más alto. Por defecto: Normal.",
+    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Controla el volumen de la respiración de la compañera cuando está sin aliento. «Apagado» lo desactiva. «Silencioso» es un 50 %% más silencioso que Normal. «Alto» es un 50 %% más alto. Por defecto: Normal.",
     "Sandbox_StayWithMe_BreathingVolume_Values_option1": "Apagado",
     "Sandbox_StayWithMe_BreathingVolume_Values_option2": "Silencioso",
     "Sandbox_StayWithMe_BreathingVolume_Values_option3": "Normal (predeterminado)",

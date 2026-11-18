@@ -711,7 +711,7 @@ function BridgeCar.choose(seats, his, tried)
     elseif hisRow == "Front" then
 
         local rest = {}
-        for _, s in ipairs(seats) do if s.row ~= "Front" then rest[#rest + 1] = s end end
+        for _, s in ipairs(seats) do if not s.driver and s.row ~= "Front" then rest[#rest + 1] = s end end
         groups = { nearFirst(rest) }
     else
         local row, rest = {}, {}
@@ -722,8 +722,11 @@ function BridgeCar.choose(seats, his, tried)
         end
         groups = { nearFirst(row), nearFirst(rest) }
     end
+    if his ~= nil and his ~= 0 and byI[0] ~= nil then
+        groups[#groups + 1] = { byI[0] }
+    end
     local function ok(s, items)
-        return not s.driver and s.i ~= his and s.installed and not s.person and not s.reserved and not s.blocked
+        return s.i ~= his and s.installed and not s.person and not s.reserved and not s.blocked
             and not s.nodoor and not tried[s.i] and (items or not s.items)
     end
 
@@ -1216,6 +1219,21 @@ local function repick(body, car, why)
 end
 
 
+local function reseat(car, his)
+    if his == nil or his < 0 or his == BridgeCar.his then return end
+    BridgeCar.his = his
+    local was, wasLap = BridgeCar.seat, BridgeCar.lap
+    local hx, hy = BridgeCar.doorPoint(car, his)
+    BridgeCar.tried = {}
+    BridgeCar.seat, BridgeCar.lap = pick(car, his, hx, hy)
+    if BridgeCar.seat ~= was or BridgeCar.lap ~= wasLap then
+        BridgeCar.reserve(true)
+        log(sformat("inside seat %s%s -> %s%s after he changed seats",
+            tostring(was), wasLap and " lap" or "", tostring(BridgeCar.seat), BridgeCar.lap and " lap" or ""))
+    end
+end
+
+
 local function phaseAge()
     return (BridgeCar.gt or 0) - (BridgeCar.phaseGt or 0)
 end
@@ -1437,14 +1455,19 @@ local function exitSeat(car, red)
     local seats = BridgeCar.layout(car, BridgeCar.doorPoint(car, his or 0))
     local byI = {}
     for _, s in ipairs(seats) do byI[s.i] = s end
-    local function free(s)
-        return s ~= nil and not s.driver and s.i ~= his and s.installed and not s.person and not s.blocked and not s.nodoor
+    local function usable(s)
+        if s == nil or s.i == his then return false end
+        return s.installed and not s.person and not s.blocked and not s.nodoor
     end
-    if not BridgeCar.lap and free(byI[BridgeCar.seat]) then return BridgeCar.seat, false, his end
-    table.sort(seats, function(a, b) return a.d < b.d end)
-    for _, s in ipairs(seats) do
-        if free(s) and not s.reserved then return s.i, false, his end
+    if not BridgeCar.lap and usable(byI[BridgeCar.seat]) then return BridgeCar.seat, false, his end
+    local rest = {}
+    for _, s in ipairs(seats) do if not s.driver then rest[#rest + 1] = s end end
+    table.sort(rest, function(a, b) return a.d < b.d end)
+    for _, s in ipairs(rest) do
+        if usable(s) and not s.reserved then return s.i, false, his end
     end
+    local d0 = byI[0]
+    if usable(d0) and not d0.reserved then return 0, false, his end
     return his or 0, true, his
 end
 
@@ -1809,6 +1832,8 @@ function BridgeCar.tick(red)
 
 
 
+        local _, his = BridgeCar.intent(red)
+        reseat(BridgeCar.car, his)
         if redExiting(red) and not BridgeCar.moving(v) and not redSwitching(red) then
             beginExit(red, v, "he gets out")
             exitSpawn(red)

@@ -249,7 +249,7 @@
     "Sandbox_StayWithMe_MaxSpeechLines": "Máximo de linhas de fala",
     "Sandbox_StayWithMe_MaxSpeechLines_tooltip": "Quantas linhas de fala a pé a companheira mantém visíveis de uma vez. 1 mantém a linha única antiga. Até 5. Cada linha permanece pela Duração das falas normal. Também limita as linhas de legenda quando as legendas estão ativas. As falas no carro só respeitam isso com as legendas ativas. Padrão: 5.",
     "Sandbox_StayWithMe_BreathingVolume": "Volume da respiração",
-    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Controla o volume da respiração da companheira quando ela está sem fôlego. «Desligado» desativa. «Silencioso» é 50% mais baixo que Normal. «Alto» é 50% mais alto. Padrão: Normal.",
+    "Sandbox_StayWithMe_BreathingVolume_tooltip": "Controla o volume da respiração da companheira quando ela está sem fôlego. «Desligado» desativa. «Silencioso» é 50%% mais baixo que Normal. «Alto» é 50%% mais alto. Padrão: Normal.",
     "Sandbox_StayWithMe_BreathingVolume_Values_option1": "Desligado",
     "Sandbox_StayWithMe_BreathingVolume_Values_option2": "Silencioso",
     "Sandbox_StayWithMe_BreathingVolume_Values_option3": "Normal (padrão)",

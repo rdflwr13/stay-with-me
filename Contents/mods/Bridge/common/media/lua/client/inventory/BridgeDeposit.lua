@@ -5,6 +5,7 @@ BridgeDeposit.catTypeCache = BridgeDeposit.catTypeCache or {}
 BridgeDeposit.cacheOn = false
 
 local HOME_CAP = 240
+local HOME_TARGET_TTL = 120
 local AREA_CAP = 80
 local VALIDATE_EVERY = 120
 
@@ -307,6 +308,21 @@ local function reserveIds(body, items)
             end
         end
     end
+    if BridgeData ~= nil and rec ~= nil and BridgeData.optionOf(rec, "storeKeepSeeds")
+            and BridgeGardening ~= nil and type(BridgeGardening.seedTypesOf) == "function" then
+        local pick = BridgeGardening.sowPick
+        local kind = pick ~= nil and pick.kind or nil
+        if kind ~= nil then
+            local seedSet = {}
+            local types = BridgeGardening.seedTypesOf(kind)
+            for i = 1, #types do seedSet[types[i]] = true end
+            for i = 1, #items do
+                local full = nil
+                pcall(function() full = items[i]:getFullType() end)
+                if full ~= nil and seedSet[full] then keep[items[i]] = true end
+            end
+        end
+    end
     local assigned = nil
     if BridgeWeapon ~= nil and type(BridgeWeapon.assigned) == "function" then
         pcall(function() assigned = BridgeWeapon.assigned(body) end)
@@ -329,6 +345,11 @@ end
 function BridgeDeposit.storableItems(body)
     local out = {}
     if body == nil or BridgeData == nil then return out end
+    local was = BridgeDeposit.cacheOn
+    BridgeDeposit.cacheOn = true
+    if not was then
+        BridgeDeposit.poolCache, BridgeDeposit.catCache, BridgeDeposit.catTypeCache = {}, {}, {}
+    end
     local home = bodyAtHome(body)
     local invs = {}
     pcall(function() invs[#invs + 1] = body:getInventory() end)
@@ -361,6 +382,10 @@ function BridgeDeposit.storableItems(body)
     local weights = {}
     for i = 1, #filtered do weights[filtered[i]] = itemWeight(filtered[i]) end
     table.sort(filtered, function(a, b) return (weights[a] or 0) < (weights[b] or 0) end)
+    if not was then
+        BridgeDeposit.cacheOn = false
+        BridgeDeposit.poolCache, BridgeDeposit.catCache, BridgeDeposit.catTypeCache = {}, {}, {}
+    end
     return filtered
 end
 
@@ -404,6 +429,11 @@ end
 function BridgeDeposit.explain(body)
     local out = {}
     if body == nil then return out end
+    local was = BridgeDeposit.cacheOn
+    BridgeDeposit.cacheOn = true
+    if not was then
+        BridgeDeposit.poolCache, BridgeDeposit.catCache, BridgeDeposit.catTypeCache = {}, {}, {}
+    end
     local home = bodyAtHome(body)
     local seen = {}
     local invs = {}
@@ -442,6 +472,10 @@ function BridgeDeposit.explain(body)
             reason = reasonFor(item, body, home, keep)
         end
         out[#out + 1] = string.format("%s=%s", tostring(itemFull(item)), reason)
+    end
+    if not was then
+        BridgeDeposit.cacheOn = false
+        BridgeDeposit.poolCache, BridgeDeposit.catCache, BridgeDeposit.catTypeCache = {}, {}, {}
     end
     return out
 end
@@ -633,6 +667,13 @@ function BridgeDeposit.targetsUnder(worldobjects)
     return list
 end
 
+local depositHomeKey, depositHomeAt, depositHomeOut = nil, nil, nil
+local function copyTargets(src)
+    local out = {}
+    for i = 1, #(src or {}) do out[i] = src[i] end
+    return out
+end
+
 function BridgeDeposit.homeTargets()
     local list = {}
     if BridgeHome == nil or type(BridgeHome.get) ~= "function" then return list end
@@ -641,6 +682,17 @@ function BridgeDeposit.homeTargets()
     local floors = nil
     pcall(function() floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn()) end)
     if floors == nil or #floors == 0 then floors = { h.z } end
+    local key = tostring(h.x) .. ":" .. tostring(h.y) .. ":" .. tostring(h.w) .. ":"
+        .. tostring(h.h) .. ":" .. tostring(h.z) .. ":" .. tostring(HOME_CAP)
+    for i = 1, #floors do key = key .. ":" .. tostring(floors[i]) end
+    local now = Bridge.time or 0
+    local ttl = HOME_TARGET_TTL
+    if BridgePerf ~= nil and type(BridgePerf.age) == "function" then
+        ttl = BridgePerf.age("homeTargets", HOME_TARGET_TTL)
+    end
+    if depositHomeKey == key and depositHomeOut ~= nil and (now - (depositHomeAt or 0)) < ttl then
+        return copyTargets(depositHomeOut)
+    end
     local player = owner()
     local seen = {}
     local cell = getCell()
@@ -659,7 +711,8 @@ function BridgeDeposit.homeTargets()
             end
         end
     end
-    return list
+    depositHomeKey, depositHomeAt, depositHomeOut = key, now, list
+    return copyTargets(list)
 end
 
 BridgeDeposit.contIds = BridgeDeposit.contIds or setmetatable({}, { __mode = "k" })
@@ -722,11 +775,22 @@ function BridgeDeposit.resolveStoredRef(ref)
         local objs = nil
         pcall(function() objs = sq:getObjects() end)
         if objs == nil then return nil end
-        local o = nil
-        pcall(function() o = objs:get(tonumber(ref.o) or -1) end)
-        if o == nil then return nil end
-        if tonumber(ref.c) ~= nil and tonumber(ref.c) >= 0 then
-            pcall(function() cont = o:getContainerByIndex(tonumber(ref.c)) end)
+        local n = 0
+        pcall(function() n = objs:size() end)
+        local o = BridgeData.objAtIndex(objs, ref.o)
+        if o == nil then
+            log(string.format("stale mark %d,%d,%d o=%s size=%d", tx, ty, tz, tostring(ref.o), n))
+            return nil
+        end
+        local cidx = tonumber(ref.c)
+        if cidx ~= nil and cidx >= 0 then
+            cont = BridgeData.containerAtIndex(o, cidx)
+            if cont == nil then
+                local cn = 0
+                pcall(function() cn = o:getContainerCount() end)
+                log(string.format("stale mark %d,%d,%d o=%s c=%s containers=%d", tx, ty, tz, tostring(ref.o), tostring(ref.c), cn))
+                return nil
+            end
         else
             pcall(function() cont = o:getContainer() end)
         end
@@ -1393,13 +1457,14 @@ local function destLabel(dest)
     return string.format("%s@%s,%s,%s", kind, tostring(dest.x), tostring(dest.y), tostring(dest.z))
 end
 
-local function depositTake(body, item, target, available, home, job)
+local function depositTake(body, item, target, available, home, job, actor)
     local dest = target ~= nil and target.cont or nil
     local src = nil
     pcall(function() src = item:getContainer() end)
     if src == nil or dest == nil then return nil, nil end
+    local chr = actor or owner()
     local act = nil
-    pcall(function() act = ISInventoryTransferAction:new(owner(), item, src, dest) end)
+    pcall(function() act = ISInventoryTransferAction:new(chr, item, src, dest) end)
     if act == nil then return nil, nil end
     local group = { item }
     local weightMode = BridgeTask == nil or BridgeTask.transferMode ~= "legacy"
@@ -1407,7 +1472,7 @@ local function depositTake(body, item, target, available, home, job)
     local remaining = math.huge
     local budget, actual = 0, 0
     if weightMode and BridgeTask ~= nil and type(BridgeTask.batchLimit) == "function" then
-        remaining = BridgeTask.remainingCapacity(dest, owner())
+        remaining = BridgeTask.remainingCapacity(dest, chr)
         cap = BridgeTask.batchLimit(item, remaining)
         budget = BridgeTask.batchWeight(item)
         actual = BridgeTask.actualWeight(item)
@@ -1474,6 +1539,17 @@ local function depositTake(body, item, target, available, home, job)
     return act, group, t
 end
 
+function BridgeDeposit.depositItems(body, items, target)
+    if body == nil or type(items) ~= "table" or #items == 0 then return nil, nil end
+    if type(target) ~= "table" or target.cont == nil then return nil, nil end
+    local usable = false
+    pcall(function() usable = BridgeDeposit.destUsable(target) == true end)
+    if not usable then return nil, nil end
+    local act, group, t = depositTake(body, items[1], target, items, true, nil, body)
+    if act == nil then return nil, nil end
+    return act, group, t
+end
+
 local function removeDest(job, dest)
     if job == nil or dest == nil then return end
     job.bad = job.bad or {}
@@ -1530,7 +1606,10 @@ local function updateTransfers(body, job)
                     if moved and it ~= nil then movedItems[#movedItems + 1] = it end
                 end
                 job.count = (job.count or 0) + #movedItems
-                if #movedItems > 0 then sayFor(job, job.pending) end
+                if #movedItems > 0 then
+                    sayFor(job, job.pending)
+                    if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end
+                end
                 removeItems(job, movedItems)
                 if job.pendingEntry ~= nil then removeFromList(job.pendingEntry.items, movedItems) end
                 indexAdd(job.current, movedItems)

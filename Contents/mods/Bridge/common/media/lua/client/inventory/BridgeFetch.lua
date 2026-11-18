@@ -4,6 +4,7 @@ BridgeFetch = BridgeFetch or {}
 
 local MARGIN = 6
 local PENDING_TIMEOUT = 240
+BridgeFetch.RECHECK_TICKS = 30
 BridgeFetch.AMMO_SCAN_CAP = 240
 BridgeFetch.AMMO_CACHE_TTL = 120
 BridgeFetch.ammoCache = BridgeFetch.ammoCache or {}
@@ -179,9 +180,39 @@ local function splintSheetOk(it)
 end
 
 
+local function cureMatchAt(index)
+    return function(it)
+        if BridgeGardening == nil or BridgeGardening.CURES == nil then return false end
+        return BridgeGardening.isCureItem(it, BridgeGardening.CURES[index]) == true
+    end
+end
+
+
+local function animalFeedItem(it)
+    local t = nil
+    pcall(function() t = it:getAnimalFeedType() end)
+    if type(t) == "string" and t ~= "" then return true end
+    local full = nil
+    pcall(function() full = it:getFullType() end)
+    return full == "Base.GrassTuft" or full == "Base.HayTuft"
+end
+
 BridgeFetch.NEEDS = {
     { id = "axe",            matches = usableAxe },
     { id = "cutTool",        matches = usableCutTool },
+    { id = "digTool",        matches = function(it)
+        return BridgeTask ~= nil and BridgeTask.isDigTool(it) == true
+    end },
+    { id = "waterContainer", matches = function(it)
+        return BridgeGardening ~= nil and BridgeGardening.isWaterContainer(it) == true
+    end },
+    { id = "cropFeed", matches = function(it)
+        return BridgeGardening ~= nil and BridgeGardening.isFeedItem(it) == true
+    end },
+    { id = "cureMildew", matches = cureMatchAt(1) },
+    { id = "cureFlies", matches = cureMatchAt(2) },
+    { id = "cureSlugs", matches = cureMatchAt(3) },
+    { id = "cureAphids", matches = cureMatchAt(4) },
     { id = "ashTool",        matches = ashToolItem },
     { id = "cleanImplement", matches = cleanStainItem },
     { id = "cleanerFluid",   fluid = true, matches = cleanerFluidAmt },
@@ -198,6 +229,13 @@ BridgeFetch.NEEDS = {
     { id = "splintPlank",    matches = splintPlankOk },
     { id = "splintSheet",    matches = splintSheetOk },
     { id = "battery",        matches = isBattery },
+    { id = "animalFeed",     matches = animalFeedItem },
+    { id = "shearTool",      matches = function(it)
+        return BridgeAnimalCare ~= nil and BridgeAnimalCare.shearUsable(it) == true
+    end },
+    { id = "milkContainer",  matches = function(it)
+        return BridgeAnimalCare ~= nil and BridgeAnimalCare.milkContainerItem(it) == true
+    end },
 }
 BridgeFetch.BY_ID = {}
 for _, n in ipairs(BridgeFetch.NEEDS) do BridgeFetch.BY_ID[n.id] = n end
@@ -210,6 +248,18 @@ function BridgeFetch.has(id)
     pcall(function()
         if id == "axe" then ok = BridgeTask.findAxe(b) ~= nil
         elseif id == "cutTool" then ok = BridgeTask.findCutTool(b) ~= nil
+        elseif id == "digTool" then ok = BridgeTask.findDigTool(b) ~= nil
+        elseif id == "waterContainer" then
+            ok = BridgeGardening ~= nil and BridgeGardening.findWaterContainer(b) ~= nil
+        elseif id == "cropFeed" then
+            ok = BridgeGardening ~= nil and BridgeGardening.findFeed(b) ~= nil
+        elseif id == "cureMildew" or id == "cureFlies" or id == "cureSlugs" or id == "cureAphids" then
+            if BridgeGardening ~= nil and BridgeGardening.CURES ~= nil then
+                for i = 1, #BridgeGardening.CURES do
+                    local entry = BridgeGardening.CURES[i]
+                    if entry.need == id then ok = BridgeGardening.findCure(b, entry) ~= nil break end
+                end
+            end
         elseif id == "ashTool" then ok = BridgeTask.findAshTool(b) ~= nil
         elseif id == "cleanImplement" then ok = BridgeTask.findCleanStainItem(b) ~= nil
         elseif id == "cleanerFluid" then ok = BridgeTask.findStainCleaner(b) ~= nil
@@ -226,6 +276,14 @@ function BridgeFetch.has(id)
         elseif id == "splintPlank" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "plank") == true
         elseif id == "splintSheet" then ok = BridgeHeal.hasFor(b, BridgeData.owner(), "sheet") == true
         elseif id == "battery" then ok = BridgeTorchShared.findBattery(b) ~= nil
+        elseif id == "animalFeed" then
+            local items = nil
+            pcall(function() items = b:getInventory():getAllEvalRecurse(animalFeedItem) end)
+            ok = items ~= nil and items:size() > 0
+        elseif id == "shearTool" then
+            ok = BridgeAnimalCare ~= nil and BridgeAnimalCare.findShears(b) ~= nil
+        elseif id == "milkContainer" then
+            ok = BridgeAnimalCare ~= nil and BridgeAnimalCare.findMilkContainerAny(b) ~= nil
         end
     end)
     return ok == true
@@ -358,6 +416,243 @@ local function homeTargets(perFloorCap, totalCap)
     end
     homeMemoAt, homeMemoKey, homeMemoOut = now, key, out
     return out
+end
+
+
+BridgeFetch.SEED_STOCK_MS = 5000
+BridgeFetch.SEED_SCAN_CONTAINERS = 60
+BridgeFetch.SEED_SCAN_ITEMS = 800
+
+local seedStockAt, seedStockKey, seedStockOut = nil, nil, nil
+
+
+function BridgeFetch.invalidateSeedStock()
+    seedStockAt, seedStockKey, seedStockOut = nil, nil, nil
+end
+
+
+local function seedPickKind()
+    local pick = BridgeGardening ~= nil and BridgeGardening.sowPick or nil
+    return pick ~= nil and pick.kind or nil
+end
+
+
+function BridgeFetch.sowWant(count)
+    local kind = seedPickKind()
+    if kind == nil then return 0 end
+    local stock = BridgeFetch.seedStock(false)
+    local counts = stock ~= nil and stock[kind] or nil
+    if counts == nil then return 0 end
+    local plantable = math.floor(tonumber(counts.plantable) or 0)
+    local want = math.min(math.floor(tonumber(count) or 0), plantable)
+    if want < 0 then want = 0 end
+    return want
+end
+
+
+function BridgeFetch.sowNeed(count)
+    local kind = seedPickKind()
+    if kind == nil then return 0 end
+    local stock = BridgeFetch.seedStock(false)
+    local counts = stock ~= nil and stock[kind] or nil
+    if counts == nil then return 0 end
+    local per = BridgeGardening.SEEDS_PER_PACKET or 5
+    local carried = math.floor(tonumber(counts.loose) or 0)
+        + per * math.floor(tonumber(counts.packets) or 0)
+    local want = BridgeFetch.sowWant(count)
+    if carried >= want then return 0 end
+    return want - carried
+end
+
+
+function BridgeFetch.seedStock(force)
+    local b = Bridge.body
+    if b == nil or BridgeGardening == nil or type(BridgeGardening.seedTable) ~= "function" then return {} end
+    local st = BridgeGardening.seedTable()
+    local h = nil
+    pcall(function() h = BridgeHome ~= nil and BridgeHome.get() or nil end)
+    local hk = "none"
+    if h ~= nil then
+        hk = string.format("%s:%s:%s:%s:%s", tostring(h.x), tostring(h.y), tostring(h.z),
+            tostring(h.w), tostring(h.h))
+    end
+    local dirty = 0
+    pcall(function() dirty = tonumber(Bridge.itemsDirtyAt) or 0 end)
+    local key = hk .. "|" .. tostring(dirty) .. "|" .. tostring(Bridge.itemsDirty == true)
+    local now = 0
+    if BridgeGardening ~= nil and type(BridgeGardening.now) == "function" then
+        pcall(function() now = BridgeGardening.now() end)
+    end
+    local ttl = BridgeFetch.SEED_STOCK_MS or 5000
+    if force ~= true and seedStockOut ~= nil and seedStockKey == key
+            and (now - (seedStockAt or 0)) < ttl then
+        return seedStockOut
+    end
+    local out = {}
+    local itemsSeen, capped = 0, false
+    local itemCap = BridgeFetch.SEED_SCAN_ITEMS or 800
+
+    local function bump(kind, field, n)
+        local entry = out[kind]
+        if entry == nil then
+            entry = { loose = 0, packets = 0, homeLoose = 0, homePackets = 0, yours = 0, plantable = 0 }
+            out[kind] = entry
+        end
+        entry[field] = (entry[field] or 0) + n
+    end
+
+    local function scanContainer(cont, bucket)
+        if cont == nil or itemsSeen >= itemCap then return end
+        local list = nil
+        pcall(function() list = cont:getItems() end)
+        if list == nil then return end
+        for i = 0, list:size() - 1 do
+            if itemsSeen >= itemCap then
+                capped = true
+                return
+            end
+            local it = list:get(i)
+            if it ~= nil then
+                itemsSeen = itemsSeen + 1
+                local full = nil
+                pcall(function() full = it:getFullType() end)
+                if type(full) == "string" then
+                    local kind = st.bySeed[full]
+                    local packet = st.byPacket[full]
+                    if kind ~= nil or packet ~= nil then
+                        local n = 1
+                        pcall(function() n = it:getCount() or 1 end)
+                        n = math.max(1, math.floor(tonumber(n) or 1))
+                        if kind ~= nil then
+                            if bucket == "hers" then bump(kind, "loose", n)
+                            elseif bucket == "home" then bump(kind, "homeLoose", n)
+                            else bump(kind, "yours", n) end
+                        elseif bucket == "hers" then
+                            bump(packet.kind, "packets", n)
+                        elseif bucket == "home" then
+                            bump(packet.kind, "homePackets", n)
+                        else
+                            bump(packet.kind, "yours", (BridgeGardening.SEEDS_PER_PACKET or 5) * n)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local lists = BridgeGardening.bagLists(b)
+    for i = 1, #lists do scanContainer(lists[i], "hers") end
+    local cap = BridgeFetch.SEED_SCAN_CONTAINERS or 60
+    local targets = homeTargets(cap, cap)
+    local used = 0
+    for i = 1, #(targets or {}) do
+        if used >= cap then
+            capped = true
+            break
+        end
+        local cont = targets[i].cont
+        if cont ~= nil then
+            used = used + 1
+            scanContainer(cont, "home")
+        end
+    end
+    local red = nil
+    pcall(function() red = BridgeData.owner() end)
+    if red ~= nil then
+        local pinv = nil
+        pcall(function() pinv = red:getInventory() end)
+        scanContainer(pinv, "player")
+    end
+
+    local per = BridgeGardening.SEEDS_PER_PACKET or 5
+    for kind, entry in pairs(out) do
+        entry.plantable = (entry.loose or 0) + (entry.homeLoose or 0)
+            + per * ((entry.packets or 0) + (entry.homePackets or 0))
+    end
+    if capped then
+        log(string.format("seed stock capped at %d item(s) in %d container(s)", itemsSeen, used))
+    end
+    seedStockAt, seedStockKey, seedStockOut = now, key, out
+    return out
+end
+
+
+local function moveSeedLocal(body, red, kind, want)
+    local types = BridgeGardening.seedTypesOf(kind)
+    if #types == 0 then return "absent" end
+    local rank = {}
+    for i = 1, #types do rank[types[i]] = i end
+    local cap = BridgeFetch.SEED_SCAN_CONTAINERS or 60
+    local targets = homeTargets(cap, cap)
+    if targets == nil then return "absent" end
+    local need = math.floor(tonumber(want) or 0)
+    if need < 1 then need = 1 end
+    local moved = 0
+    for i = 1, #targets do
+        if need <= 0 then break end
+        local cont = targets[i].cont
+        if cont ~= nil then
+            local list = nil
+            pcall(function() list = cont:getItems() end)
+            if list ~= nil then
+                for j = list:size() - 1, 0, -1 do
+                    if need <= 0 then break end
+                    local it = list:get(j)
+                    local full = nil
+                    pcall(function() full = it ~= nil and it:getFullType() or nil end)
+                    if full ~= nil and rank[full] ~= nil then
+                        local have = BridgeGunRules.itemCount(it)
+                        local use = math.min(have, need)
+                        local dest = nil
+                        pcall(function() dest = BridgeInventory.overflowDest(body, red, it, nil) end)
+                        if dest ~= nil then
+                            local okMove = false
+                            pcall(function()
+                                if use >= have then
+                                    cont:Remove(it)
+                                    dest:AddItem(it)
+                                    okMove = it:getContainer() == dest
+                                elseif BridgeGunRules.setItemCount(it, have - use) then
+                                    local made = nil
+                                    pcall(function() made = dest:AddItems(full, use) end)
+                                    okMove = made ~= nil and made:size() >= use
+                                end
+                            end)
+                            if okMove then
+                                moved = moved + use
+                                need = need - use
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if moved <= 0 then return "absent" end
+    pcall(function() if Bridge.saveOutfit ~= nil then Bridge.saveOutfit() end end)
+    BridgeFetch.invalidateSeedStock()
+    log(string.format("home seeds: pulled %d of %s from home", moved, tostring(kind)))
+    return "moved"
+end
+
+
+function BridgeFetch.pullSeeds(kind, want)
+    if BridgeGardening == nil then return "unavailable" end
+    local b = Bridge.body
+    local red = BridgeData.owner()
+    if b == nil or red == nil or kind == nil then return "unavailable" end
+    if #BridgeGardening.seedTypesOf(kind) == 0 then return "absent" end
+    local n = math.floor(tonumber(want) or 0)
+    if n < 1 then n = 1 end
+    if Bridge.mp then
+        local ok = pcall(function()
+            sendClientCommand(red, "Bridge", "fetchSeeds", { kind = kind, want = n })
+        end)
+        if not ok then return "failed" end
+        log(string.format("home seeds: requested %d of %s from home", n, tostring(kind)))
+        return "requested"
+    end
+    return moveSeedLocal(b, red, kind, n)
 end
 
 
@@ -820,6 +1115,15 @@ local function jobEnabled(kind)
         if kind == "chopTree" then ok = BridgeTask.TREECUTTING_ENABLED == 1
         elseif kind == "clearPlants" then ok = BridgeTask.CLEARING_ENABLED == 1
         elseif kind == "cleanUp" then ok = BridgeTask.CLEANING_ENABLED == 1
+        elseif kind == "digFurrows" then ok = BridgeTask.FURROWS_ENABLED == 1
+        elseif kind == "sowSeeds" then ok = BridgeTask.SOWING_ENABLED == 1
+        elseif kind == "waterPlants" then ok = BridgeTask.WATER_PLANTS_ENABLED == 1
+        elseif kind == "fertilizePlants" then ok = BridgeTask.FEED_PLANTS_ENABLED == 1
+        elseif kind == "tendCrops" then ok = BridgeTask.TEND_ENABLED == 1
+        elseif kind == "animalCare" then ok = BridgeTask.HUTCHCARE_ENABLED == 1
+        elseif kind == "petAnimals" then ok = BridgeTask.PET_ANIMALS_ENABLED == 1
+        elseif kind == "tendAnimals" then
+            ok = BridgeTask.HUTCHCARE_ENABLED == 1 or BridgeTask.PET_ANIMALS_ENABLED == 1
         end
     end)
     return ok == true
@@ -833,6 +1137,54 @@ function BridgeFetch.jobMissing(kind, targets)
     pcall(function()
         if kind == "chopTree" then
             if BridgeTask.findAxe(b) == nil then out[#out + 1] = "axe" end
+        elseif kind == "digFurrows" then
+            if BridgeTask.findDigTool(b) == nil then out[#out + 1] = "digTool" end
+        elseif kind == "sowSeeds" then
+            if BridgeFetch.sowNeed(#targets) > 0 then out[#out + 1] = "seeds" end
+        elseif kind == "waterPlants" then
+            if BridgeGardening == nil or BridgeGardening.findWaterContainer(b) == nil then
+                out[#out + 1] = "waterContainer"
+            end
+        elseif kind == "fertilizePlants" then
+            local haveCompost, haveFertilizer = false, false
+            local want = false
+            if BridgeGardening ~= nil then
+                haveCompost = BridgeGardening.findFeed(b, "compost") ~= nil
+                haveFertilizer = BridgeGardening.findFeed(b, "fertilizer") ~= nil
+                for i = 1, #targets do
+                    local t = targets[i]
+                    local plant = BridgeGardening.plantAt(BridgeGardening.squareAt(t), false)
+                    if BridgeGardening.needsFeed(plant)
+                            and BridgeGardening.feedKindFor(plant, haveCompost, haveFertilizer) ~= nil then
+                        want = true
+                        break
+                    end
+                end
+            end
+            if not want then
+                if haveCompost or haveFertilizer then
+                    out[#out + 1] = "cropFeed"
+                elseif BridgeGardening ~= nil then
+                    for i = 1, #targets do
+                        local t = targets[i]
+                        local plant = BridgeGardening.plantAt(BridgeGardening.squareAt(t), false)
+                        if BridgeGardening.needsFeed(plant) then
+                            out[#out + 1] = "cropFeed"
+                            break
+                        end
+                    end
+                end
+            end
+        elseif kind == "tendCrops" then
+            if BridgeGardening == nil then return end
+            local more = BridgeGardening.tendNeeds(b, targets) or {}
+            for i = 1, #more do
+                local dup = false
+                for j = 1, #out do
+                    if out[j] == more[i] then dup = true break end
+                end
+                if not dup then out[#out + 1] = more[i] end
+            end
         elseif kind == "clearPlants" then
             local needCut = false
             local haveCut = BridgeTask.findCutTool(b) ~= nil
@@ -875,6 +1227,62 @@ function BridgeFetch.jobMissing(kind, targets)
             if need.petrol then out[#out + 1] = "petrol" end
             if need.ash then out[#out + 1] = "ashTool" end
             if need.cut then out[#out + 1] = "cutTool" end
+        elseif kind == "tendAnimals" then
+            local hutch, animal = {}, {}
+            for i = 1, #targets do
+                local t = targets[i]
+                if type(t) == "table" and t.hutch ~= nil then
+                    hutch[#hutch + 1] = t
+                elseif type(t) == "table" and t.animal ~= nil then
+                    animal[#animal + 1] = t
+                end
+            end
+            local seen = {}
+            local function add(v)
+                if v ~= nil and seen[v] ~= true then
+                    seen[v] = true
+                    out[#out + 1] = v
+                end
+            end
+            if #hutch > 0 then
+                local hm = BridgeFetch.jobMissing("animalCare", hutch)
+                for i = 1, #hm do add(hm[i]) end
+            end
+            if #animal > 0 then
+                local am = BridgeFetch.jobMissing("petAnimals", animal)
+                for i = 1, #am do add(am[i]) end
+            end
+        elseif kind == "animalCare" then
+            if BridgeTask.findCleanStainItem(b) == nil
+                    and BridgeWorkSelect ~= nil and type(BridgeWorkSelect.hutchNeedsFloor) == "function" then
+                local needFloor = false
+                for i = 1, #targets do
+                    local t = targets[i]
+                    if type(t) == "table" and t.hutch ~= nil then
+                        pcall(function()
+                            needFloor = BridgeWorkSelect.hutchNeedsFloor(t.hutch) == true
+                        end)
+                    end
+                    if needFloor then break end
+                end
+                if needFloor then out[#out + 1] = "cleanImplement" end
+            end
+        elseif kind == "petAnimals" then
+            if BridgeAnimalCare == nil then return end
+            local needShear, needMilk = false, false
+            for i = 1, #targets do
+                local t = targets[i]
+                local a = type(t) == "table" and t.animal or nil
+                local task = type(t) == "table" and t.task or nil
+                if task == nil and a ~= nil then task = BridgeAnimalCare.taskFor(a) end
+                if task == "shear" then
+                    needShear = true
+                elseif task == "milk" then
+                    needMilk = true
+                end
+            end
+            if needShear and BridgeAnimalCare.findShears(b) == nil then out[#out + 1] = "shearTool" end
+            if needMilk and BridgeAnimalCare.findMilkContainerAny(b) == nil then out[#out + 1] = "milkContainer" end
         end
     end)
     if #out > 0 then BridgeFetch.invalidateAmmoCache() end
@@ -883,23 +1291,37 @@ end
 
 
 function BridgeFetch.primeJob(kind, targets)
-    if not BridgeFetch.available() then return "skip" end
     local missing = BridgeFetch.jobMissing(kind, targets)
-    if #missing == 0 then return "skip" end
+    if #missing == 0 then return "skip", missing end
+    if not BridgeFetch.available() then return "blocked", missing end
     log("job " .. tostring(kind) .. " missing home supplies: " .. table.concat(missing, ","))
     local requested = 0
     for i = 1, #missing do
-        local res = BridgeFetch.pull(missing[i])
+        local res = nil
+        if missing[i] == "seeds" then
+            local kind = BridgeGardening ~= nil and BridgeGardening.sowPick ~= nil
+                and BridgeGardening.sowPick.kind or nil
+            if kind ~= nil then
+                res = BridgeFetch.pullSeeds(kind, BridgeFetch.sowWant(#targets))
+            end
+            if res == nil then res = "absent" end
+        else
+            res = BridgeFetch.pull(missing[i])
+        end
         if res == "requested" then requested = requested + 1 end
         log("  " .. missing[i] .. " -> " .. tostring(res))
     end
-    local remaining = 0
+    local still = {}
     for i = 1, #missing do
-        if not BridgeFetch.has(missing[i]) then remaining = remaining + 1 end
+        if missing[i] == "seeds" then
+            if BridgeFetch.sowNeed(#targets) > 0 then still[#still + 1] = "seeds" end
+        elseif not BridgeFetch.has(missing[i]) then
+            still[#still + 1] = missing[i]
+        end
     end
-    if remaining == 0 then return "ok" end
-    if requested > 0 then return "pending" end
-    return "blocked"
+    if #still == 0 then return "ok", missing end
+    if requested > 0 then return "pending", still end
+    return "blocked", still
 end
 
 
@@ -910,19 +1332,28 @@ function BridgeFetch.tick()
     local now = 0
     pcall(function() now = tonumber(Bridge.time) or 0 end)
     if (now - (ps.since or now)) > PENDING_TIMEOUT then
-        BridgeTask.pendingStart = nil
         log("home fetch timed out for " .. tostring(ps.kind))
-        pcall(function() BridgeTask.speakMissing(ps.kind) end)
+        pcall(function() BridgeTask.speakMissing(ps.kind, ps.missing) end)
+        BridgeTask.pendingStart = nil
         return
     end
-    local danger = false
-    pcall(function() danger = BridgeTask.dangerNear ~= nil and BridgeTask.dangerNear(Bridge.body) end)
-    if danger then
+    if ps.danger == nil or (now - (ps.dangerAt or -99999)) >= 6 then
+        local danger = false
+        pcall(function() danger = BridgeTask.dangerNear ~= nil and BridgeTask.dangerNear(Bridge.body) == true end)
+        ps.danger = danger
+        ps.dangerAt = now
+    end
+    if ps.danger then
         BridgeTask.pendingStart = nil
         log("home fetch aborted (danger) for " .. tostring(ps.kind))
         return
     end
-    local still = BridgeFetch.jobMissing(ps.kind, ps.targets)
+    local still = ps.still
+    if still == nil or (now - (ps.stillAt or -99999)) >= (BridgeFetch.RECHECK_TICKS or 30) then
+        still = BridgeFetch.jobMissing(ps.kind, ps.targets)
+        ps.still = still
+        ps.stillAt = now
+    end
     if #still == 0 then
         BridgeTask.pendingStart = nil
         log("home supplies arrived, starting " .. tostring(ps.kind))
