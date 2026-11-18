@@ -1064,6 +1064,7 @@ U.attachGun = function(body, item)
     end)
     if not ok then return false end
     BridgeGunfight.attached = { slot = slot, item = item, set = set, defType = defType }
+    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.visible, item) end
     return true
 end
 
@@ -1111,6 +1112,7 @@ local function hands(body, item, on)
         end
         body:resetEquippedHandsModels()
     end)
+    if on and BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.visible, item) end
 end
 
 
@@ -1136,6 +1138,7 @@ function BridgeGunfight.syncHands(body)
         if BridgeGunfight.gun ~= nil and BridgeGunfight.gun.twoHanded then body:setSecondaryHandItem(item) end
         body:resetEquippedHandsModels()
     end)
+    if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.visible, item) end
     BridgeGunfight.handSyncAt = Bridge.time
     BridgeGunfight.meleeFallback = false
 end

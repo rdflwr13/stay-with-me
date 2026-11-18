@@ -1434,6 +1434,20 @@ do
 
     function BridgeEFZCompat.updateGrip() return gripUpdate() end
 
+    function BridgeEFZCompat.visible(item)
+        if item == nil or not efzActive() then return false end
+        local R = BridgeEFZCompat.runtime
+        if R == nil then
+            local ok, mod = pcall(require, "TW/Runtime")
+            if not ok or type(mod) ~= "table" then return false end
+            R = mod
+            BridgeEFZCompat.runtime = R
+        end
+        if type(R.visualKey) ~= "function" or type(R.ensureVisible) ~= "function" then return false end
+        pcall(function() if R.visualKey(item) then R.ensureVisible(item) end end)
+        return true
+    end
+
     Events.OnTick.Add(function() pcall(gripUpdate) end)
 
     local SWM_VAR = "NotAloneBody"

@@ -6577,6 +6577,26 @@ local function onInit()
 
         rec.oldIds = nil
     end
+    local migrated, salvaged, preset, failed = 0, 0, 0, 0
+    if BridgeGunRules ~= nil and type(BridgeGunRules.efzMigrateRecord) == "function" then
+        for who, rec in pairs(md.players) do
+            local ok, changed, stats = pcall(BridgeGunRules.efzMigrateRecord, rec)
+            if not ok then
+                failed = failed + 1
+            else
+                if type(changed) == "number" then migrated = migrated + changed end
+                if type(stats) == "table" then
+                    salvaged = salvaged + (stats.salvaged or 0)
+                    preset = preset + (stats.preset or 0)
+                    failed = failed + (stats.failed or 0)
+                end
+            end
+        end
+    end
+    if migrated > 0 or failed > 0 then
+        log(string.format("EFZ gun migration: migrated=%d salvaged=%d preset=%d failed=%d",
+            migrated, salvaged, preset, failed))
+    end
     transmit()
     local ids = 0
     pcall(function() ids = #issuedStore().ids end)

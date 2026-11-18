@@ -4073,6 +4073,11 @@ local function efzTableString(tree)
 end
 
 
+function BridgeGunRules.efzTreeText(tree)
+    return efzTableString(tree)
+end
+
+
 local function noKeys(t)
     for _ in pairs(t) do return false end
     return true
@@ -4216,6 +4221,171 @@ function BridgeGunRules.efzCanRebuild(fullType, tree)
         efzLogOnce("rebuild:" .. key, "EFZ tree rejected for " .. fullType .. ": " .. tostring(why))
     end
     return ok, why
+end
+
+
+local function efzCore()
+    if BridgeGunRules.efzCoreModule ~= nil then return BridgeGunRules.efzCoreModule end
+    local ok, core = pcall(require, "TW/Core")
+    if ok and type(core) == "table" then BridgeGunRules.efzCoreModule = core end
+    return BridgeGunRules.efzCoreModule
+end
+
+
+local function efzHas(list, value)
+    for _, entry in ipairs(list or {}) do if entry == value then return true end end
+    return false
+end
+
+
+function BridgeGunRules.efzSalvageTree(fullType, wp)
+    local D = BridgeGunRules.efzData()
+    local C = efzCore()
+    if D == nil or C == nil then return nil, "no-data" end
+    local key = D.byType[fullType]
+    if key == nil then return nil, "not-efz" end
+
+    local pending = {}
+    for full in string.gmatch(tostring(wp or ""), "[^+]+") do
+        local meta = D.types[full]
+        if meta ~= nil then pending[#pending + 1] = meta.tpl end
+    end
+    local total = #pending
+    local preset = C.presetTree(key)
+    if total == 0 then
+        return preset, { mode = "preset", placed = 0, lost = 0 }
+    end
+
+    local function take(tpl)
+        for i = 1, #pending do
+            if pending[i] == tpl then table.remove(pending, i); return true end
+        end
+        return false
+    end
+
+    local tree = {}
+    local paths = {}
+    for path in pairs(preset) do paths[#paths + 1] = path end
+    table.sort(paths, function(a, b)
+        local da, db = C.depth(a), C.depth(b)
+        if da == db then return a < b end
+        return da < db
+    end)
+    for _, path in ipairs(paths) do
+        local tpl = preset[path]
+        if take(tpl) then
+            local nextTree = C.install(key, tree, path, tpl)
+            if nextTree ~= nil then tree = nextTree else pending[#pending + 1] = tpl end
+        end
+    end
+
+    local progress = true
+    while progress do
+        progress = false
+        local slots = C.availableSlots(key, tree)
+        for i = 1, #pending do
+            local tpl = pending[i]
+            local placed = false
+            for _, slot in ipairs(slots) do
+                if efzHas(slot.definition.allowed, tpl) then
+                    local nextTree = C.install(key, tree, slot.path, tpl)
+                    if nextTree ~= nil then
+                        tree = nextTree
+                        table.remove(pending, i)
+                        progress = true
+                        placed = true
+                        break
+                    end
+                end
+            end
+            if placed then break end
+        end
+    end
+
+    for _ = 1, 40 do
+        local missing = C.requiredMissing(key, tree)
+        if #missing == 0 then break end
+        local moved = false
+        for _, path in ipairs(missing) do
+            local tpl = preset[path]
+            if tpl ~= nil then
+                local nextTree = C.install(key, tree, path, tpl)
+                if nextTree ~= nil then tree = nextTree; moved = true; break end
+            end
+        end
+        if not moved then break end
+    end
+
+    if C.validate(key, tree) == true and #C.requiredMissing(key, tree) == 0 then
+        return tree, { mode = "salvage", placed = total - #pending, lost = #pending }
+    end
+    return preset, { mode = "preset", placed = 0, lost = total }
+end
+
+
+local function efzPlanted(r, key, C)
+    if type(r.ew) ~= "string" then return false end
+    local tree = BridgeGunRules.efzParseTree(r.ew)
+    if tree == nil then return false end
+    if C.validate(key, tree) ~= true then return false end
+    return #C.requiredMissing(key, tree) == 0
+end
+
+
+function BridgeGunRules.efzMigrateItem(r)
+    if r == nil or type(r.t) ~= "string" then return false end
+    local D = BridgeGunRules.efzData()
+    local C = efzCore()
+    if D == nil or C == nil then return false end
+    local key = D.byType[r.t]
+    if key == nil then return false end
+    if efzPlanted(r, key, C) then return false, "ok" end
+
+    local tree, info = nil, nil
+    if type(r.wp) == "string" and r.wp ~= "" then
+        local ok, salvaged, detail = pcall(BridgeGunRules.efzSalvageTree, r.t, r.wp)
+        if ok and type(salvaged) == "table" then tree, info = salvaged, detail end
+    end
+    local mode = (type(info) == "table" and info.mode) or "preset"
+    if tree == nil then tree = C.presetTree(key) end
+    if #C.requiredMissing(key, tree) > 0 then return false, "incomplete" end
+
+    local text = BridgeGunRules.efzTreeText(tree)
+    if type(text) ~= "string" or text == "" then return false, "no-tree" end
+
+    r.ew = text
+    r.wp = nil
+    if type(r.md) == "table" then r.md.TW = nil end
+    return true, mode
+end
+
+
+function BridgeGunRules.efzMigrateRecord(rec)
+    if rec == nil or BridgeItems == nil then return 0, nil end
+    local text = BridgeItems.get(rec)
+    if type(text) ~= "string" or text == "" then return 0, nil end
+    local list = BridgeItems.decode(text)
+    local changed, salvaged, preset, failed = 0, 0, 0, 0
+    for _, r in ipairs(list) do
+        local ok, did, mode = pcall(BridgeGunRules.efzMigrateItem, r)
+        if not ok then
+            failed = failed + 1
+        elseif did == true then
+            changed = changed + 1
+            if mode == "salvage" then salvaged = salvaged + 1 else preset = preset + 1 end
+        end
+    end
+    local stats = { salvaged = salvaged, preset = preset, failed = failed }
+    if changed == 0 then return 0, stats end
+
+    local encoded = BridgeItems.encode(list)
+    if BridgeItems.overBlock() or #BridgeItems.decode(encoded) ~= #list then
+        return 0, { salvaged = 0, preset = 0, failed = failed + changed }
+    end
+    BridgeItems.set(rec, encoded)
+    rec.saved = 1
+    rec.iseq = (tonumber(rec.iseq) or 0) + 1
+    return changed, stats
 end
 
 
