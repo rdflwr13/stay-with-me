@@ -363,6 +363,126 @@ function S.reposition()
     place(S.car, S.seat)
 end
 
+local function rgb(c)
+    if c == nil then return nil end
+    return { c:getRedFloat(), c:getGreenFloat(), c:getBlueFloat() }
+end
+
+local function color(t)
+    if type(t) ~= "table" then return nil end
+    return ImmutableColor.new(t[1], t[2], t[3], 1)
+end
+
+local function captureVisual(iv)
+    if iv == nil then return nil end
+    local rec = {}
+    pcall(function() rec.type = iv:getItemType() end)
+    pcall(function() rec.name = iv:getClothingItemName() end)
+    pcall(function() rec.alt = iv:getAlternateModelName() end)
+    pcall(function() rec.tint = rgb(iv:getTint()) end)
+    pcall(function() rec.hue = iv:getHue() end)
+    pcall(function() rec.base = iv:getBaseTexture() end)
+    pcall(function() rec.choice = iv:getTextureChoice() end)
+    pcall(function() rec.decal = iv:getDecal(iv:getClothingItem()) end)
+    return rec
+end
+
+local function captureLook(body)
+    if body == nil then return nil end
+    local hv = body:getHumanVisual()
+    if hv == nil then return nil end
+    local look = { female = body:isFemale(), body = {}, items = {} }
+    pcall(function() look.skin = hv:getSkinTexture() end)
+    pcall(function() look.skinColor = rgb(hv:getSkinColor()) end)
+    pcall(function() look.hair = hv:getHairModel() end)
+    pcall(function() look.hairColor = rgb(hv:getHairColor()) end)
+    pcall(function() look.beard = hv:getBeardModel() end)
+    pcall(function() look.beardColor = rgb(hv:getBeardColor()) end)
+    pcall(function() look.bodyHair = hv:getBodyHairIndex() end)
+    pcall(function()
+        local bv = hv:getBodyVisuals()
+        for i = 0, bv:size() - 1 do
+            local rec = captureVisual(bv:get(i))
+            if rec ~= nil and rec.type ~= nil then look.body[#look.body + 1] = rec end
+        end
+    end)
+    pcall(function()
+        local visuals = body:getItemVisuals()
+        for i = 0, visuals:size() - 1 do
+            local rec = captureVisual(visuals:get(i))
+            if rec ~= nil and rec.type ~= nil then look.items[#look.items + 1] = rec end
+        end
+    end)
+    log("look capture body=" .. tostring(#look.body) .. " items=" .. tostring(#look.items))
+    return look
+end
+
+local function applyVisual(iv, rec)
+    if iv == nil or type(rec) ~= "table" then return end
+    if rec.name then pcall(function() iv:setClothingItemName(rec.name) end) end
+    if rec.alt then pcall(function() iv:setAlternateModelName(rec.alt) end) end
+    if rec.tint then pcall(function() iv:setTint(color(rec.tint)) end) end
+    if rec.hue then pcall(function() iv:setHue(rec.hue) end) end
+    if rec.base then pcall(function() iv:setBaseTexture(rec.base) end) end
+    if rec.choice then pcall(function() iv:setTextureChoice(rec.choice) end) end
+    if rec.decal then pcall(function() iv:setDecal(rec.decal) end) end
+end
+
+local function dressLook(z, look)
+    if z == nil or type(look) ~= "table" then return false end
+    pcall(function() z:setFemaleEtc(look.female == true) end)
+    local hv = z:getHumanVisual()
+    if hv == nil then return false end
+    pcall(function() hv:removeBlood() end)
+    pcall(function() hv:removeDirt() end)
+    if look.skin then pcall(function() hv:setSkinTextureName(look.skin) end) end
+    if look.skinColor then pcall(function() hv:setSkinColor(color(look.skinColor)) end) end
+    if look.hair then pcall(function() hv:setHairModel(look.hair) end) end
+    if look.hairColor then pcall(function() hv:setHairColor(color(look.hairColor)) end) end
+    if look.beard then pcall(function() hv:setBeardModel(look.beard) end) end
+    if look.beardColor then pcall(function() hv:setBeardColor(color(look.beardColor)) end) end
+    if look.bodyHair then pcall(function() hv:setBodyHairIndex(look.bodyHair) end) end
+    pcall(function()
+        hv:getBodyVisuals():clear()
+        for _, rec in ipairs(look.body or {}) do
+            local iv = hv:addBodyVisualFromItemType(rec.type)
+            if iv ~= nil then applyVisual(iv, rec) end
+        end
+    end)
+    local visuals = z:getItemVisuals()
+    visuals:clear()
+    for _, rec in ipairs(look.items or {}) do
+        pcall(function()
+            local iv = ItemVisual.new()
+            iv:setItemType(rec.type)
+            applyVisual(iv, rec)
+            visuals:add(iv)
+        end)
+    end
+    pcall(function() z:resetModelNextFrame() end)
+    local bn, vn = 0, 0
+    pcall(function() bn = hv:getBodyVisuals():size() end)
+    pcall(function() vn = visuals:size() end)
+    log("look dress body=" .. tostring(bn) .. " items=" .. tostring(vn))
+    return true
+end
+
+local function hookCapture()
+    if Bridge == nil or type(Bridge.despawn) ~= "function" or Bridge.swmSeatLookWrapped then return end
+    local original = Bridge.despawn
+    Bridge.despawn = function(...)
+        if Bridge.body ~= nil then
+            local ok, look = pcall(captureLook, Bridge.body)
+            if ok and look ~= nil then S.look = look end
+        end
+        return original(...)
+    end
+    Bridge.swmSeatLookWrapped = true
+end
+
+hookCapture()
+if Events ~= nil and Events.OnGameStart ~= nil then Events.OnGameStart.Add(hookCapture) end
+
 local function create(car, seat)
     if S.offForEntry then return false end
     if S.losses >= S.MAX_TRIES then
@@ -409,7 +529,9 @@ local function create(car, seat)
     pcall(function() p:setDressInRandomOutfit(false) end)
     pcall(function() p:setCollidable(false) end)
     pcall(function() p:setbClimbing(true) end)
-    if BridgeInventory ~= nil and type(BridgeInventory.dressVisual) == "function" then
+    if S.look ~= nil then
+        pcall(dressLook, p, S.look)
+    elseif BridgeInventory ~= nil and type(BridgeInventory.dressVisual) == "function" then
         pcall(BridgeInventory.dressVisual, p, enc, Bridge.store)
     end
     pcall(function() p:setPrimaryHandItem(nil) end)

@@ -18,6 +18,16 @@ local ICONS = {
     guns = "media/textures/RadialMenu/GunMainMenu.png",
     keep = "media/ui/emotes/followbehind.png",
     work = "media/textures/RadialMenu/WorkMainMenu.png",
+    workLoot = "media/textures/RadialMenu/WorkLootSubmenu.png",
+    animals = "media/textures/RadialMenu/WorkAnimalsSubmenu.png",
+    gardening = "media/textures/RadialMenu/WorkGardeningSubmenu.png",
+    plantSeeds = "media/textures/RadialMenu/WorkTendPlants.png",
+    tendCrops = "media/textures/RadialMenu/WorkTendPlants.png",
+    harvestCrops = "media/textures/RadialMenu/WorkHarvestCrops.png",
+    digFurrows = "media/textures/RadialMenu/WorkDigFurrows.png",
+    tendAnimals = "media/textures/RadialMenu/WorkTendAnimals.png",
+    fillTroughs = "media/textures/RadialMenu/WorkManageTroughs.png",
+    doors = "media/textures/RadialMenu/WorkDoorSubmenu.png",
     depositHome = "media/textures/RadialMenu/WorkDepositAllLoot.png",
     depositArea = "media/textures/RadialMenu/WorkDepositLootInArea.png",
     self = "media/textures/RadialMenu/SelfMenu.png",
@@ -196,6 +206,7 @@ end
 local function texture(path)
     local tex = nil
     pcall(function() tex = getTexture(path or ICONS.fallback) end)
+    if tex == nil and BridgeRadial.debug then dbg("missing texture " .. tostring(path)) end
     if tex == nil then pcall(function() tex = getTexture(ICONS.fallback) end) end
     return tex
 end
@@ -337,24 +348,110 @@ local function jobsBusy()
     return false
 end
 
-local JOB_KINDS = {
-    lootArea = true, depositArea = true, deposit = true, cleanUp = true, clearPlants = true, chopTree = true,
-    moveCorpses = true, pryDoor = true, fillWater = true, emptyFluid = true,
-    washSink = true, openDoors = true, closeDoors = true, harvestCrops = true, digFurrows = true, sowSeeds = true,
-    tendCrops = true,
+local FLAT_WORK = {
+    cleanUp = { flag = "CLEANING_ENABLED", kind = "cleanUp", key = "JobCleanUp", handler = "onJobCleanUp", icon = ICONS.clean },
+    clearPlants = { flag = "CLEARING_ENABLED", kind = "clearPlants", key = "JobClearPlants", handler = "onJobClearPlants", icon = ICONS.plants },
+    chopTree = { flag = "TREECUTTING_ENABLED", kind = "chopTree", key = "JobChopTree", handler = "onJobChopTree", icon = ICONS.chop },
+    moveCorpses = { flag = "MOVE_CORPSES_ENABLED", kind = "moveCorpses", key = "JobMoveCorpses", handler = "onJobMoveCorpses", icon = ICONS.corpses },
 }
 
-local function doingJob()
-    if BridgeQueue ~= nil and type(BridgeQueue.jobs) == "table" and #BridgeQueue.jobs > 0 then return true end
-    if BridgeTask ~= nil and BridgeTask.active == true and JOB_KINDS[BridgeTask.kind] == true then return true end
-    return false
+local CONTAINER_WORK = {
+    loot = { label = "WindowLoot", icon = ICONS.workLoot },
+    animals = { label = "Animals", icon = ICONS.animals },
+    gardening = { label = "Gardening", icon = ICONS.gardening },
+    doors = { label = "Doors", icon = ICONS.doors },
+}
+
+local function lootEntries(playerNum)
+    local out = {}
+    if BridgeTask == nil or BridgeTask.kinds == nil or BridgeMenu == nil then return out end
+    if BridgeTask.LOOTING_ENABLED == 1 and BridgeTask.kinds.lootArea ~= nil then
+        local ok = false
+        pcall(function() ok = BridgeTask.kinds.lootArea.available(Bridge.body) == true end)
+        if ok then
+            out[#out + 1] = make(tr("JobLootArea"), ICONS.loot, BridgeMenu.onJobLootArea)
+        end
+    end
+    if BridgeTask.DEPOSIT_ENABLED == 1 and BridgeDeposit ~= nil then
+        out[#out + 1] = make(tr("JobDepositArea"), ICONS.depositArea, BridgeMenu.onJobDepositArea)
+        local homeOk = false
+        local marksOk = false
+        pcall(function() homeOk = BridgeDeposit.homeHere() == true end)
+        pcall(function() marksOk = BridgeDeposit.hasValidMarks() == true end)
+        if homeOk and marksOk then
+            out[#out + 1] = make(tr("DepositLootHome"), ICONS.depositHome, BridgeMenu.onDepositHome)
+        end
+    end
+    return out
+end
+
+local function animalEntries(playerNum)
+    local out = {}
+    if BridgeTask == nil or BridgeTask.kinds == nil or BridgeMenu == nil then return out end
+    local pet = BridgeTask.PET_ANIMALS_ENABLED == 1 or BridgeTask.HUTCHCARE_ENABLED == 1
+    if pet and BridgeTask.kinds.tendAnimals ~= nil then
+        out[#out + 1] = make(tr("JobTendAnimals"), ICONS.tendAnimals, BridgeMenu.onJobTendAnimals, tr("JobTendAnimalsTip"))
+    end
+    if BridgeTask.TROUGHS_ENABLED == 1 and BridgeTask.kinds.fillTroughs ~= nil then
+        out[#out + 1] = make(tr("JobFillTroughs"), ICONS.fillTroughs, BridgeMenu.onJobFillTroughs)
+    end
+    return out
+end
+
+local function seedEntries(playerNum)
+    local out = {}
+    if BridgeGardening == nil or BridgeMenu == nil then return out end
+    if type(BridgeGardening.seedMenuRows) ~= "function" then return out end
+    local stock = nil
+    pcall(function()
+        if BridgeFetch ~= nil and type(BridgeFetch.seedStock) == "function" then
+            stock = BridgeFetch.seedStock(false)
+        end
+    end)
+    local rows = nil
+    pcall(function() rows = BridgeGardening.seedMenuRows(stock) end)
+    if type(rows) ~= "table" then return out end
+    for i = 1, #rows do
+        local row = rows[i]
+        local kind = row.kind
+        out[#out + 1] = make(row.text, ICONS.plantSeeds, function() BridgeMenu.onJobSowSeeds(kind) end, row.label)
+    end
+    return out
+end
+
+local function gardenEntries(playerNum)
+    local out = {}
+    if BridgeTask == nil or BridgeTask.kinds == nil or BridgeMenu == nil then return out end
+    if BridgeTask.SOWING_ENABLED == 1 and BridgeGardening ~= nil and BridgeTask.kinds.sowSeeds ~= nil then
+        if #seedEntries(playerNum) > 0 then
+            out[#out + 1] = make(tr("JobPlantSeeds"), ICONS.plantSeeds, function()
+                BridgeRadial.showRing("seeds", playerNum)
+            end)
+        end
+    end
+    if BridgeTask.TEND_ENABLED == 1 and BridgeTask.kinds.tendCrops ~= nil then
+        local ok = false
+        pcall(function() ok = BridgeTask.kinds.tendCrops.available(Bridge.body) == true end)
+        if ok then out[#out + 1] = make(tr("TendCrops"), ICONS.tendCrops, BridgeMenu.onJobTendCrops) end
+    end
+    if BridgeTask.HARVESTING_ENABLED == 1 and BridgeTask.kinds.harvestCrops ~= nil then
+        local ok = false
+        pcall(function() ok = BridgeTask.kinds.harvestCrops.available(Bridge.body) == true end)
+        if ok then out[#out + 1] = make(tr("JobHarvestCrops"), ICONS.harvestCrops, BridgeMenu.onJobHarvestCrops) end
+    end
+    if BridgeTask.FURROWS_ENABLED == 1 and BridgeTask.kinds.digFurrows ~= nil then
+        local ok = false
+        pcall(function() ok = BridgeTask.kinds.digFurrows.available(Bridge.body) == true end)
+        if ok then out[#out + 1] = make(tr("DigFurrows"), ICONS.digFurrows, BridgeMenu.onJobDigFurrows) end
+    end
+    return out
 end
 
 local function workEntries(playerNum)
     local out = {}
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 then return out end
     if jobsBusy() then
-        if Bridge.store ~= nil and BridgeData.menuShown(Bridge.store, "cancel") then
+        if Bridge.store ~= nil and BridgeData ~= nil and BridgeData.menuShown(Bridge.store, "cancel") then
             local entry = nil
             pcall(function() entry = BridgeMenu.cancelEntry() end)
             if entry ~= nil then
@@ -363,36 +460,32 @@ local function workEntries(playerNum)
         end
         return out
     end
-    local defs = {
-        { flag = "LOOTING_ENABLED", kind = "lootArea", key = "JobLootArea", handler = BridgeMenu.onJobLootArea, icon = ICONS.loot },
-        { flag = "DEPOSIT_ENABLED", kind = "depositArea", key = "JobDepositArea", handler = BridgeMenu.onJobDepositArea, icon = ICONS.depositArea },
-        { flag = "DEPOSIT_ENABLED", kind = "deposit", key = "DepositLootHome", handler = BridgeMenu.onDepositHome, icon = ICONS.depositHome,
-            when = function() return BridgeDeposit ~= nil and BridgeDeposit.homeHere() end },
-        { flag = "CLEANING_ENABLED", kind = "cleanUp", key = "JobCleanUp", handler = BridgeMenu.onJobCleanUp, icon = ICONS.clean },
-        { flag = "CLEARING_ENABLED", kind = "clearPlants", key = "JobClearPlants", handler = BridgeMenu.onJobClearPlants, icon = ICONS.plants },
-        { flag = "TREECUTTING_ENABLED", kind = "chopTree", key = "JobChopTree", handler = BridgeMenu.onJobChopTree, icon = ICONS.chop },
-        { flag = "MOVE_CORPSES_ENABLED", kind = "moveCorpses", key = "JobMoveCorpses", handler = BridgeMenu.onJobMoveCorpses, icon = ICONS.corpses },
-        { flag = "HARVESTING_ENABLED", kind = "harvestCrops", key = "JobHarvestCrops", handler = BridgeMenu.onJobHarvestCrops, icon = ICONS.plants },
-        { flag = "FURROWS_ENABLED", kind = "digFurrows", key = "DigFurrows", handler = BridgeMenu.onJobDigFurrows, icon = ICONS.plants },
-        { flag = "TEND_ENABLED", kind = "tendCrops", key = "TendCrops", handler = BridgeMenu.onJobTendCrops, icon = ICONS.plants },
-    }
-    for _, def in ipairs(defs) do
-        if BridgeTask[def.flag] == 1 and (def.when == nil or def.when() == true) then
-            local ok = false
-            if def.kind == "depositArea" then
-                ok = BridgeDeposit ~= nil and type(BridgeDeposit.start) == "function"
+    if BridgeData == nil or type(BridgeData.workOrder) ~= "function" or type(BridgeData.workShown) ~= "function" then return out end
+    local st = Bridge.store
+    if st == nil then return out end
+    local order = BridgeData.workOrder(st)
+    for _, id in ipairs(order) do
+        if BridgeData.workShown(st, id) == true then
+            local container = CONTAINER_WORK[id]
+            if container ~= nil then
+                local targetRing = id
+                if #BridgeRadial.ringEntries(targetRing, playerNum) > 0 then
+                    out[#out + 1] = make(tr(container.label), container.icon, function()
+                        BridgeRadial.showRing(targetRing, playerNum)
+                    end)
+                end
             else
-                pcall(function() ok = BridgeTask.kinds[def.kind].available(Bridge.body) == true end)
-            end
-            if ok then
-                out[#out + 1] = make(tr(def.key), def.icon, def.handler)
+                local def = FLAT_WORK[id]
+                if def ~= nil and BridgeTask[def.flag] == 1 and BridgeTask.kinds ~= nil
+                        and BridgeTask.kinds[def.kind] ~= nil and type(BridgeMenu[def.handler]) == "function" then
+                    local ok = false
+                    pcall(function() ok = BridgeTask.kinds[def.kind].available(Bridge.body) == true end)
+                    if ok then
+                        out[#out + 1] = make(tr(def.key), def.icon, BridgeMenu[def.handler])
+                    end
+                end
             end
         end
-    end
-    if BridgeTask.DOORS_ENABLED == 1 then
-        out[#out + 1] = make(tr("Doors"), ICONS.work, function()
-            BridgeRadial.showRing("doors", playerNum)
-        end)
     end
     return out
 end
@@ -401,8 +494,8 @@ local function doorEntries()
     local out = {}
     if BridgeTask == nil or BridgeTask.DOORS_ENABLED ~= 1 then return out end
     if BridgeTask.active then return out end
-    out[#out + 1] = make(tr("JobOpenDoors"), ICONS.work, BridgeMenu.onJobOpenDoors)
-    out[#out + 1] = make(tr("JobCloseDoors"), ICONS.work, BridgeMenu.onJobCloseDoors)
+    out[#out + 1] = make(tr("JobOpenDoors"), ICONS.doors, BridgeMenu.onJobOpenDoors)
+    out[#out + 1] = make(tr("JobCloseDoors"), ICONS.doors, BridgeMenu.onJobCloseDoors)
     return out
 end
 
@@ -520,6 +613,10 @@ function BridgeRadial.ringEntries(ring, playerNum)
     if ring == "fight" then return fightEntries() end
     if ring == "stay" then return stayEntries() end
     if ring == "work" then return workEntries(playerNum) end
+    if ring == "loot" then return lootEntries(playerNum) end
+    if ring == "animals" then return animalEntries(playerNum) end
+    if ring == "gardening" then return gardenEntries(playerNum) end
+    if ring == "seeds" then return seedEntries(playerNum) end
     if ring == "doors" then return doorEntries() end
     if ring == "self" then return selfEntries(playerNum) end
     if ring == "gear" then return gearEntries(playerNum) end
@@ -610,12 +707,10 @@ function BridgeRadial.topEntries(playerNum)
                 out[#out + 1] = make(tr("Keep"), ICONS.keep, function() BridgeRadial.showRing("stay", playerNum) end)
             end
         elseif id == "jobs" then
-            if doingJob() then
-                local entry = nil
-                pcall(function() entry = BridgeMenu.cancelEntry() end)
-                if entry ~= nil then
-                    out[#out + 1] = make(tr("CancelTask"), ICONS.stopWork, entry.handler)
-                end
+            local entry = nil
+            pcall(function() entry = BridgeMenu.cancelEntry() end)
+            if entry ~= nil then
+                out[#out + 1] = make(tr(entry.key), ICONS.stopWork, entry.handler)
             elseif shown and #BridgeRadial.ringEntries("work", playerNum) > 0 then
                 out[#out + 1] = make(tr("Jobs"), ICONS.work, function() BridgeRadial.showRing("work", playerNum) end)
             end
@@ -1008,6 +1103,8 @@ function BridgeRadial.openTop(playerNum)
     guarded(fillTop, playerNum)
 end
 
+local RING_PARENT = { loot = "work", animals = "work", gardening = "work", seeds = "gardening", doors = "work" }
+
 local function fillRing(ring, playerNum)
     local menu = getPlayerRadialMenu(playerNum)
     if menu == nil then return end
@@ -1015,7 +1112,14 @@ local function fillRing(ring, playerNum)
     menu.bridgeTips = {}
     local list = BridgeRadial.ringEntries(ring, playerNum)
     addSlices(menu, list)
-    menu:addSlice(backLabel(), texture(ICONS.back), function() BridgeRadial.openTop(playerNum) end)
+    local parent = RING_PARENT[ring]
+    menu:addSlice(backLabel(), texture(ICONS.back), function()
+        if parent ~= nil then
+            BridgeRadial.showRing(parent, playerNum)
+        else
+            BridgeRadial.openTop(playerNum)
+        end
+    end)
     present(menu, playerNum)
 end
 

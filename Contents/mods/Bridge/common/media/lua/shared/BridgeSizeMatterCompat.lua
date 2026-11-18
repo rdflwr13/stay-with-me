@@ -140,8 +140,16 @@ function M.available()
     return moduleOf("VSMDetails") ~= nil and moduleOf("VSMPolicy") ~= nil
 end
 
+local function isSeatPuppet(z)
+    if z == nil then return false end
+    local puppet = rawget(_G, "BridgeSeatPuppet")
+    if type(puppet) ~= "table" then return false end
+    return puppet.p ~= nil and puppet.p == z
+end
+
 function M.isCompanion(z)
     if z == nil then return false end
+    if isSeatPuppet(z) then return true end
     local bridge = rawget(_G, "Bridge")
     if type(bridge) == "table" and bridge.body ~= nil and bridge.body == z then return true end
     local marked = false
@@ -558,6 +566,13 @@ local function wrapALife(original)
     end
 end
 
+local function wrapManaged(original)
+    return function(z)
+        if isSeatPuppet(z) then return false end
+        return original(z)
+    end
+end
+
 local function hook(tbl, name, wrapper, label)
     if type(tbl) ~= "table" then return "absent" end
     if type(tbl[name]) ~= "function" then return "missing" end
@@ -573,6 +588,7 @@ function M.install()
     local policy = moduleOf("VSMPolicy")
     local morph = moduleOf("VSMMorphPolicy")
     local life = moduleOf("VSMALife")
+    local performance = moduleOf("VSMZombiePerformance")
     local present = 0
     if policy ~= nil then present = present + 1 end
     if morph ~= nil then present = present + 1 end
@@ -582,16 +598,22 @@ function M.install()
     if hook(policy, "assignZombie", wrapHeight, "policy") == "ok" then count = count + 1 end
     if hook(morph, "assignZombie", wrapMorph, "morph") == "ok" then count = count + 1 end
     if hook(life, "assign", wrapALife, "life") == "ok" then count = count + 1 end
+    local managed = false
+    if performance ~= nil then
+        managed = hook(performance, "managed", wrapManaged, "performance") == "ok"
+    end
 
     local result = "partial"
     if present == 0 then
         result = "absent"
-    elseif count == 3 then
+    elseif count == 3 and managed then
         result = "ok"
     end
     if result ~= M.lastResult then
         M.lastResult = result
-        log("install " .. result)
+        local note = ""
+        if result == "partial" and not managed then note = " (managed hook missing)" end
+        log("install " .. result .. note)
     end
     if result == "ok" then
         M.installedOk = true
