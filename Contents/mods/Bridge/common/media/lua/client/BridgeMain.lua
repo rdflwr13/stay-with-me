@@ -3944,6 +3944,28 @@ function Bridge.setMuscle(level)
 end
 
 
+function Bridge.setVsmBody(profile)
+    local clean = nil
+    if BridgeSizeMatterCompat ~= nil and type(BridgeSizeMatterCompat.cleanProfile) == "function" then
+        clean = BridgeSizeMatterCompat.cleanProfile(profile)
+    end
+    if clean == nil then return "bad size" end
+    if Bridge.store ~= nil then BridgeData.appearanceOf(Bridge.store).vsmBody = clean end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { vsmBody = clean }) end)
+    end
+    if Bridge.alive() and Bridge.kind == "zombie" then
+        pcall(function()
+            BridgeInventory.skin(Bridge.body, Bridge.store)
+            Bridge.body:resetModelNextFrame()
+            Bridge.body:resetModel()
+        end)
+    end
+    log(string.format("vsmBody height=%d shape=%d muscle=%d", clean.height, clean.shape, clean.muscle))
+    return string.format("size height=%d shape=%d muscle=%d", clean.height, clean.shape, clean.muscle)
+end
+
+
 function Bridge.setMakeup(list)
     local makeup = BridgeData.cleanMakeup(list)
     if makeup == nil then return "bad makeup" end
@@ -6746,8 +6768,8 @@ CFG.SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follo
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, livingworldselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
     exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, sound = true, meet = true,
-    perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true,
-    look = true, take = true }
+    perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true, farmdebug = true,
+    look = true, take = true, sizeselftest = true }
 
 
 
@@ -7393,6 +7415,20 @@ function Bridge.run(line)
         return "mortal " .. tostring(Bridge.mortal)
     end
 
+    if cmd == "farmdebug" then
+        if BridgeTask == nil then return "farmdebug off (task not loaded)" end
+        local mode = parts[3]
+        if mode == "on" or mode == "1" or mode == "true" then
+            BridgeTask.FARM_DEBUG = true
+            return "farmdebug on"
+        end
+        if mode == "off" or mode == "0" or mode == "false" then
+            BridgeTask.FARM_DEBUG = false
+            return "farmdebug off"
+        end
+        return "farmdebug on|off (currently " .. (BridgeTask.FARM_DEBUG == true and "on" or "off") .. ")"
+    end
+
     if cmd == "sq" then
         local x, y = tonumber(parts[3]), tonumber(parts[4])
         local z = tonumber(parts[5]) or math.floor(BridgeData.owner():getZ())
@@ -7487,6 +7523,13 @@ function Bridge.run(line)
 
 
     if cmd == "itemselftest" then return Bridge.itemselftest() end
+
+    if cmd == "sizeselftest" then
+        if BridgeSizeMatterCompat == nil or type(BridgeSizeMatterCompat.selftest) ~= "function" then
+            return "sizeselftest SKIP (compat not loaded)"
+        end
+        return BridgeSizeMatterCompat.selftest()
+    end
 
     if cmd == "bathselftest" then
         if BridgeBath == nil then return "bath not loaded" end

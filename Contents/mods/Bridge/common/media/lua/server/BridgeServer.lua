@@ -1682,12 +1682,13 @@ BridgeServer.Commands.state = function(player, args)
     end
 
     if args.hair ~= nil or args.skin ~= nil or args.hairColor ~= nil or args.face ~= nil or args.details ~= nil
-        or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil or args.beardColor ~= nil then
+        or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil or args.beardColor ~= nil
+        or args.vsmBody ~= nil then
         pcall(function() BridgeServer.lookAt[player:getUsername()] = getTimestampMs() end)
     end
     if args.hair ~= nil or args.skin ~= nil or args.hairColor ~= nil or args.face ~= nil
         or args.details ~= nil or args.muscle ~= nil or args.makeup ~= nil or args.beard ~= nil
-        or args.beardColor ~= nil or args.voice ~= nil then
+        or args.beardColor ~= nil or args.voice ~= nil or args.vsmBody ~= nil then
         local app = BridgeData.appearanceOf(rec)
         if args.hair ~= nil then
             local hair = BridgeData.cleanHair(args.hair)
@@ -1800,6 +1801,14 @@ BridgeServer.Commands.state = function(player, args)
                     app.voice = voice
                     changed = true
                 end
+            end
+        end
+        if args.vsmBody ~= nil and BridgeSizeMatterCompat ~= nil
+            and type(BridgeSizeMatterCompat.cleanProfile) == "function" then
+            local clean = BridgeSizeMatterCompat.cleanProfile(args.vsmBody)
+            if clean ~= nil and not BridgeSizeMatterCompat.sameProfile(app.vsmBody, clean) then
+                app.vsmBody = clean
+                changed = true
             end
         end
     end

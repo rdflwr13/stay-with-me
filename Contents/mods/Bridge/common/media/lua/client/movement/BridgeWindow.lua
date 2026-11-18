@@ -204,6 +204,10 @@ function BridgeWindow.dollKey(st)
         if type(c) ~= "table" then return "" end
         return tostring(c.r) .. "," .. tostring(c.g) .. "," .. tostring(c.b)
     end
+    local sizeToken = ""
+    if BridgeSizeMatterCompat ~= nil and type(BridgeSizeMatterCompat.profileToken) == "function" then
+        sizeToken = BridgeSizeMatterCompat.profileToken(app ~= nil and app.vsmBody or nil) or ""
+    end
     return table.concat({
         BridgeData.genderOf(st),
         tostring(app ~= nil and app.skin or ""),
@@ -215,6 +219,7 @@ function BridgeWindow.dollKey(st)
         rawList(app ~= nil and app.makeup or nil),
         tostring(app ~= nil and app.beard or ""),
         rawColor(app ~= nil and app.beardColor or nil),
+        sizeToken,
     }, "|")
 end
 
@@ -396,6 +401,9 @@ function BridgeWindowInfo:refreshAvatar()
     local key = BridgeWindow.dollKey(st) .. "|" .. (self.lookItemsKey or "")
     if key == self.avatarKey then return end
     self.avatarKey = key
+    if BridgeSizeMatterCompat ~= nil and type(BridgeSizeMatterCompat.applyPreview) == "function" then
+        pcall(BridgeSizeMatterCompat.applyPreview, self.avatar, st)
+    end
     local ok, err = pcall(function() self.avatar:setSurvivorDesc(BridgeWindow.makeDesc(st)) end)
     if not ok then warn("avatar failed: " .. tostring(err)) end
 end

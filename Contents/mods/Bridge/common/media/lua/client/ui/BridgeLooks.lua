@@ -7,7 +7,7 @@ BridgeLooks.MAX_LOOKS = 100
 
 local READ_CAP = 500
 local KEYS = { "skin", "hair", "color", "face", "details", "muscle", "makeup", "beard", "beardcolor",
-    "voice", "species", "clothing" }
+    "voice", "species", "clothing", "vsmBody" }
 local ESCAPE = {
     ["%"] = "%25", [";"] = "%3B", ["="] = "%3D", ["|"] = "%7C",
     ["\n"] = "%0A", ["\r"] = "%0D", ["\t"] = "%09",
@@ -249,7 +249,7 @@ function BridgeLooks.parse(line)
             end
         end
     end
-    if not (look.has.skin or look.has.hair or look.has.color) then return nil end
+    if not (look.has.skin or look.has.hair or look.has.color or look.has.vsmBody) then return nil end
     return look
 end
 
@@ -461,10 +461,21 @@ function BridgeLooks.capture(c)
         beard = BridgeData.cleanBeard(c.beard) or "",
         beardcolor = { r = beardColor.r, g = beardColor.g, b = beardColor.b },
     }
-    return {
-        has = { skin = true, hair = true, color = true, face = true, details = true, muscle = true, makeup = true, beard = true, beardcolor = true },
+    local sizeToken = nil
+    if BridgeSizeMatterCompat ~= nil and type(BridgeSizeMatterCompat.available) == "function"
+        and BridgeSizeMatterCompat.available() and c.vsmBody ~= nil then
+        local ok, token = pcall(BridgeSizeMatterCompat.profileToken, c.vsmBody)
+        if ok and type(token) == "string" then sizeToken = token end
+    end
+    local out = {
+        has = { skin = true, hair = true, color = true, face = true, details = true, muscle = true, makeup = true, beard = true, beardcolor = true, vsmBody = false },
         raw = rawFrom(fields),
     }
+    if sizeToken ~= nil then
+        out.has.vsmBody = true
+        out.raw.vsmBody = sizeToken
+    end
+    return out
 end
 
 function BridgeLooks.save(name, c, extras)
@@ -601,6 +612,17 @@ function BridgeLooks.same(look, rec)
         local col = colorFrom(raw.beardcolor)
         if col == nil or not colorClose(BridgeData.beardColorOf(rec), col) then return false end
     end
+    if look.has.vsmBody then
+        any = true
+        local compat = BridgeSizeMatterCompat
+        if compat == nil or type(compat.profileFromToken) ~= "function" or type(compat.profileOf) ~= "function" then
+            return false
+        end
+        local want = compat.profileFromToken(raw.vsmBody)
+        local have = compat.profileOf(rec)
+        if want == nil or have == nil then return false end
+        if compat.profileToken(want) ~= compat.profileToken(have) then return false end
+    end
     return any
 end
 
@@ -712,6 +734,13 @@ function BridgeLooks.applyTo(look, c, gender)
     if look.has.beardcolor and g == "male" then
         local col = colorFrom(raw.beardcolor)
         if col ~= nil then c.beardColor = { r = col.r, g = col.g, b = col.b } end
+    end
+    if look.has.vsmBody then
+        local compat = BridgeSizeMatterCompat
+        if compat ~= nil and type(compat.profileFromToken) == "function" then
+            local profile = compat.profileFromToken(raw.vsmBody)
+            if profile ~= nil then c.vsmBody = profile end
+        end
     end
     return true
 end

@@ -242,6 +242,16 @@ function BridgeReport.generate()
     local function line(s) out[#out + 1] = tostring(s) end
     local function section(name) line(""); line("[" .. name .. "]") end
     local function put(k, v) line(tostring(k) .. " = " .. tostring(v)) end
+    local function colorText(c)
+        if type(c) ~= "table" then return "-" end
+        return string.format("%.3f,%.3f,%.3f", tonumber(c.r) or 0, tonumber(c.g) or 0, tonumber(c.b) or 0)
+    end
+    local function listText(t)
+        if type(t) ~= "table" or #t == 0 then return "-" end
+        local out = {}
+        for i = 1, #t do out[i] = tostring(t[i]) end
+        return table.concat(out, ",")
+    end
 
     line("=== Stay With Me - Bug Report ===")
     line("report_format = 1")
@@ -302,6 +312,82 @@ function BridgeReport.generate()
     for _, key in ipairs({ "autoHeal", "redKit", "gifts", "romance", "mood", "xpPopups", "relPopups", "fatigueBar" }) do
         put(key, opt(key))
     end
+
+    section("APPEARANCE")
+    local appearanceOk = false
+    pcall(function()
+        if type(store) ~= "table" then return end
+        local app = BridgeData.appearanceOf(store) or {}
+        local gender = BridgeData.genderOf(store)
+        put("name", BridgeData.nameOf(store))
+        put("gender", gender)
+        put("skin", BridgeData.skinOf(store))
+        put("hair", BridgeData.hairOf(store))
+        put("hair_color", colorText(BridgeData.hairColorOf(store)))
+        put("face", BridgeData.cleanFace(app.face, gender) or "-")
+        put("details", listText(BridgeData.cleanDetails(app.details, gender) or {}))
+        put("muscle", BridgeData.muscleOf(store))
+        put("makeup", listText(BridgeData.cleanMakeup(app.makeup) or {}))
+        local beard = BridgeData.cleanBeard(app.beard)
+        put("beard", (beard ~= nil and beard ~= "") and beard or "-")
+        put("beard_color", colorText(BridgeData.beardColorOf(store)))
+        put("voice", BridgeData.voiceText(store))
+        local species = "Hooman"
+        if Bridge ~= nil and Bridge.body ~= nil and BridgeAppearance ~= nil
+            and type(BridgeAppearance.furSpeciesOf) == "function" then
+            species = BridgeAppearance.furSpeciesOf(Bridge.body)
+        end
+        put("species", tostring(species or "Hooman"))
+        appearanceOk = true
+    end)
+    if not appearanceOk then line("(unavailable)") end
+
+    local sizeOk = false
+    pcall(function()
+        if BridgeSizeMatterCompat == nil then
+            put("size_available", false)
+            sizeOk = true
+            return
+        end
+        local available = false
+        if type(BridgeSizeMatterCompat.available) == "function" then
+            available = BridgeSizeMatterCompat.available() == true
+        end
+        put("size_available", available)
+        local active = false
+        if type(BridgeSizeMatterCompat.active) == "function" then
+            active = BridgeSizeMatterCompat.active() == true
+        end
+        put("size_active", active)
+        local profile = nil
+        if type(BridgeSizeMatterCompat.profileOf) == "function" then
+            profile = BridgeSizeMatterCompat.profileOf(store)
+        end
+        if profile == nil then
+            put("size_profile", "(none)")
+        else
+            put("size_profile", "present")
+            put("size_height", profile.height)
+            put("size_shape", profile.shape)
+            put("size_muscle", profile.muscle)
+            put("size_details", profile.details)
+            put("size_body_model", profile.bodyModel)
+        end
+        if Bridge ~= nil and Bridge.body ~= nil then
+            local md = nil
+            pcall(function() md = Bridge.body:getModData() end)
+            if type(md) == "table" then
+                put("body_size_height", md.ZomboidTest1_HeightCm_v1 or "-")
+                put("body_size_shape", md.VSM_BodyShape or "-")
+                put("body_size_muscle", md.VSM_Muscular or "-")
+                put("body_size_details", md.VSM_Details or "-")
+                put("body_size_model", md.VSM_BodyModel or "-")
+                put("body_size_managed", md.VSM_CompanionManaged == true)
+            end
+        end
+        sizeOk = true
+    end)
+    if not sizeOk then line("(size matters unavailable)") end
 
     section("SANDBOX")
     local SANDBOX_KEYS = {

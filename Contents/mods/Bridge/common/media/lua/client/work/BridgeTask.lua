@@ -108,7 +108,8 @@ BridgeTask.SIT_TIMEOUT = 20 * K.SECOND
 BridgeTask.SIT_SETTLE = 0.30
 BridgeTask.SIT_ANIM_MAX = 240
 
-BridgeTask.READ_TEST = true
+BridgeTask.READ_TEST = false
+BridgeTask.FARM_DEBUG = false
 BridgeTask.SIT_READ_ANIM = "SitChairRead"
 BridgeTask.READ_PROP = "Bridge.ReadBookProp"
 

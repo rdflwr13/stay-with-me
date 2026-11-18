@@ -1908,24 +1908,26 @@ function BridgeMenu.onAnimalMenu(playerNum, context, animalsList, test)
                                     tip(shear, tr("JobProductStressTip"))
                                 end
                             end
-                            local data = nil
-                            pcall(function() data = a:getData() end)
-                            if data ~= nil then
-                                local canHaveMilk = false
-                                pcall(function() canHaveMilk = data:canHaveMilk() == true end)
-                                if canHaveMilk then
-                                    sub:addOption(tr("DebugAnimalMilk"), a, BridgeMenu.onDebugAnimalMilk)
+                            if BridgeTask.FARM_DEBUG == true then
+                                local data = nil
+                                pcall(function() data = a:getData() end)
+                                if data ~= nil then
+                                    local canHaveMilk = false
+                                    pcall(function() canHaveMilk = data:canHaveMilk() == true end)
+                                    if canHaveMilk then
+                                        sub:addOption(tr("DebugAnimalMilk"), a, BridgeMenu.onDebugAnimalMilk)
+                                    end
                                 end
-                            end
-                            local canBeSheared = false
-                            pcall(function() canBeSheared = a:canBeSheared() == true end)
-                            if canBeSheared then
-                                sub:addOption(tr("DebugAnimalWool"), a, BridgeMenu.onDebugAnimalWool)
-                            end
-                            local stress = 0
-                            pcall(function() stress = tonumber(a:getStress()) or 0 end)
-                            if stress > 0 then
-                                sub:addOption(tr("DebugAnimalCalm"), a, BridgeMenu.onDebugAnimalCalm)
+                                local canBeSheared = false
+                                pcall(function() canBeSheared = a:canBeSheared() == true end)
+                                if canBeSheared then
+                                    sub:addOption(tr("DebugAnimalWool"), a, BridgeMenu.onDebugAnimalWool)
+                                end
+                                local stress = 0
+                                pcall(function() stress = tonumber(a:getStress()) or 0 end)
+                                if stress > 0 then
+                                    sub:addOption(tr("DebugAnimalCalm"), a, BridgeMenu.onDebugAnimalCalm)
+                                end
                             end
                         end
                     end
@@ -2044,7 +2046,7 @@ function BridgeMenu.onCropMenu(playerNum, context, worldobjects, test)
         pcall(function() can = BridgeTask.kinds.harvestCrops.available(Bridge.body) == true end)
         if BridgeTask.active or not can then opt.notAvailable = true end
     end
-    if growable and sub:getOptionFromName(tr("DebugRipen")) == nil then
+    if BridgeTask.FARM_DEBUG == true and growable and sub:getOptionFromName(tr("DebugRipen")) == nil then
         sub:addOption(tr("DebugRipen"), target, BridgeMenu.onRipenCrop)
     end
 end
@@ -2977,15 +2979,17 @@ function BridgeMenu.onHutchMenu(playerNum, context, worldobjects, test)
         end
         tip(tend, tr(tipKey))
     end
-    local eggs = nil
-    pcall(function() eggs = rin:getOptionFromName(tr("DebugHutchEggs")) end)
-    if eggs == nil then
-        rin:addOption(tr("DebugHutchEggs"), target, BridgeMenu.onDebugHutchEggs)
-    end
-    local dirty = nil
-    pcall(function() dirty = rin:getOptionFromName(tr("DebugHutchDirty")) end)
-    if dirty == nil then
-        rin:addOption(tr("DebugHutchDirty"), target, BridgeMenu.onDebugHutchDirty)
+    if BridgeTask.FARM_DEBUG == true then
+        local eggs = nil
+        pcall(function() eggs = rin:getOptionFromName(tr("DebugHutchEggs")) end)
+        if eggs == nil then
+            rin:addOption(tr("DebugHutchEggs"), target, BridgeMenu.onDebugHutchEggs)
+        end
+        local dirty = nil
+        pcall(function() dirty = rin:getOptionFromName(tr("DebugHutchDirty")) end)
+        if dirty == nil then
+            rin:addOption(tr("DebugHutchDirty"), target, BridgeMenu.onDebugHutchDirty)
+        end
     end
 end
 
