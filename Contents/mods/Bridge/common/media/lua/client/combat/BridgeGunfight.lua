@@ -1112,6 +1112,7 @@ local function hands(body, item, on)
         end
         body:resetEquippedHandsModels()
     end)
+    pcall(function() Bridge.weaponVar(body) end)
     if on and BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.visible, item) end
 end
 
@@ -1138,6 +1139,7 @@ function BridgeGunfight.syncHands(body)
         if BridgeGunfight.gun ~= nil and BridgeGunfight.gun.twoHanded then body:setSecondaryHandItem(item) end
         body:resetEquippedHandsModels()
     end)
+    pcall(function() Bridge.weaponVar(body) end)
     if BridgeEFZCompat ~= nil then pcall(BridgeEFZCompat.visible, item) end
     BridgeGunfight.handSyncAt = Bridge.time
     BridgeGunfight.meleeFallback = false
@@ -1151,6 +1153,7 @@ function BridgeGunfight.draw(body)
     pcall(function() hand = body:getPrimaryHandItem() end)
     if hand == item then
         pcall(function() body:resetEquippedHandsModels() end)
+        pcall(function() Bridge.weaponVar(body) end)
         BridgeGunfight.drawn = true
         BridgeGunfight.meleeFallback = false
         BridgeGunfight.stance = "gun"
@@ -1196,6 +1199,7 @@ function BridgeGunfight.stow(body)
         body:setSecondaryHandItem(nil)
         body:resetEquippedHandsModels()
     end)
+    pcall(function() Bridge.weaponVar(body) end)
     detachGun(body)
     local attached = U.attachGun(body, item)
     refresh(body)
