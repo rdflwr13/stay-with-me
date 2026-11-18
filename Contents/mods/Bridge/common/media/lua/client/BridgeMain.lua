@@ -6705,7 +6705,8 @@ CFG.SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follo
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, livingworldselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
     exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, sound = true, meet = true,
-    perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true }
+    perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true,
+    look = true, take = true }
 
 
 
@@ -7285,6 +7286,10 @@ function Bridge.run(line)
         return "quiet " .. tostring(Bridge.quietLines)
     end
 
+    if cmd == "look" or cmd == "take" then
+        if BridgeAround == nil then return cmd .. ": not loaded" end
+        return BridgeAround.run(cmd, parts)
+    end
     if cmd == "doors" then
         local red = BridgeData.owner()
         if red == nil then return "doors: no player" end
