@@ -13,6 +13,7 @@ BridgeAppearance = BridgeAppearance or {}
 
 local PAD = 10
 local PREVIEW_W, PREVIEW_H = 260, 300
+local VIEW_GAP = 4
 
 local FONT_S, FONT_M, BTN_H = 0, 0, 0
 local function refreshFonts()
@@ -2493,6 +2494,24 @@ function BridgeAppearance.Window:createChildren()
     self.zoomInBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.zoomInBtn)
 
+    local D = IsoDirections or {}
+    self.viewDirection = D.S
+    self.viewButtons = {}
+    local function viewButton(label, direction)
+        local button = ISButton:new(PAD, 0, 10, BTN_H, label, self,
+            function(window) window:setViewDirection(direction) end)
+        button:initialise()
+        button:instantiate()
+        button.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+        self:addChild(button)
+        self.viewButtons[#self.viewButtons + 1] = { button = button, direction = direction }
+        return button
+    end
+    self.viewFrontBtn = viewButton(tr("ViewFront"), D.S)
+    self.viewSideBtn = viewButton(tr("ViewSide"), D.E)
+    self.viewBackBtn = viewButton(tr("ViewBack"), D.N)
+    self:setViewDirection(D.S)
+
     self.applyText = tr("AppearanceApply")
     self.closeText = tr("Close")
     self.applyBtn = ISButton:new(0, 0, 10, BTN_H, self.applyText, self, BridgeAppearance.Window.onApply)
@@ -2601,15 +2620,18 @@ function BridgeAppearance.Window:layout()
         self.form:layout()
     end
 
-    local zy = th + PAD + previewH + PAD
-    self.zoomOutBtn:setX(PAD)
-    self.zoomOutBtn:setY(zy)
-    self.zoomOutBtn:setWidth(30)
-    self.zoomOutBtn:setHeight(BTN_H)
-    self.zoomInBtn:setX(PAD + 34)
-    self.zoomInBtn:setY(zy)
-    self.zoomInBtn:setWidth(30)
-    self.zoomInBtn:setHeight(BTN_H)
+    local vy = th + PAD + previewH + PAD
+    local row = { self.viewFrontBtn, self.viewSideBtn, self.viewBackBtn, self.zoomInBtn, self.zoomOutBtn }
+    local vw = math.floor((PREVIEW_W - VIEW_GAP * 4) / 5)
+    for i = 1, 5 do
+        local button = row[i]
+        if button ~= nil then
+            button:setX(PAD + (i - 1) * (vw + VIEW_GAP))
+            button:setY(vy)
+            button:setWidth(vw)
+            button:setHeight(BTN_H)
+        end
+    end
 
     local by = self.height - rh - footerH + PAD
     local applyW, closeW, saveW, delW, resetW = self:footerWidths()
@@ -2678,8 +2700,19 @@ function BridgeAppearance.Window:setZoom(zoom)
         pcall(function() self.preview:setYOffset(zoomY(zoom)) end)
         pcall(function() self.preview:setXOffset(0) end)
     end
-    if self.zoomInBtn ~= nil then self.zoomInBtn:setVisible(zoom < BridgeAppearance.ZOOM_MAX) end
-    if self.zoomOutBtn ~= nil then self.zoomOutBtn:setVisible(zoom > BridgeAppearance.ZOOM_MIN) end
+    if self.zoomInBtn ~= nil then self.zoomInBtn:setEnable(zoom < BridgeAppearance.ZOOM_MAX) end
+    if self.zoomOutBtn ~= nil then self.zoomOutBtn:setEnable(zoom > BridgeAppearance.ZOOM_MIN) end
+end
+
+function BridgeAppearance.Window:setViewDirection(direction)
+    if direction == nil then return end
+    self.viewDirection = direction
+    if self.preview ~= nil then
+        pcall(function() self.preview:setDirection(direction) end)
+    end
+    for _, entry in ipairs(self.viewButtons or {}) do
+        if entry.button ~= nil then entry.button:setEnable(entry.direction ~= direction) end
+    end
 end
 
 function BridgeAppearance.Window:applyTabZoom(key)

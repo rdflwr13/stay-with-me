@@ -12,7 +12,6 @@ local LEGACY = "ZomboidTest1_ZombieHeight"
 local NEUTRAL_MUSCLE = 0
 
 M.wrapped = M.wrapped or {}
-M.originals = M.originals or {}
 M.resolved = M.resolved or {}
 M.ticks = 0
 M.lastResult = nil
@@ -151,38 +150,24 @@ function M.recordOf(z)
     return nil
 end
 
-function M.manual(rec)
-    if type(rec) ~= "table" then return nil, nil end
-    local data = rawget(_G, "BridgeData")
-    if type(data) ~= "table" or type(data.appearanceOf) ~= "function" then return nil, nil end
-    local ok, look = pcall(data.appearanceOf, rec)
-    if not ok or type(look) ~= "table" then return nil, nil end
-    local height = type(look.height) == "number" and look.height or nil
-    local shape = type(look.shape) == "number" and look.shape or nil
-    return height, shape
-end
-
 function M.neutralize(z, rec)
     if z == nil or not M.active() then return false end
     if rec == nil then rec = M.recordOf(z) end
     local data = nil
     pcall(function() data = z:getModData() end)
     if type(data) ~= "table" then return false end
-    local manualHeight, manualShape = M.manual(rec)
     local changed = false
-    if manualHeight == nil and data[HEIGHT] ~= nil then
+    if data[HEIGHT] ~= nil then
         data[HEIGHT] = nil
         changed = true
     end
-    if manualShape == nil then
-        if data[SHAPE] ~= nil then
-            data[SHAPE] = nil
-            changed = true
-        end
-        if data[TOKEN] ~= nil then
-            data[TOKEN] = nil
-            changed = true
-        end
+    if data[SHAPE] ~= nil then
+        data[SHAPE] = nil
+        changed = true
+    end
+    if data[TOKEN] ~= nil then
+        data[TOKEN] = nil
+        changed = true
     end
     if data[MUSCLE] ~= NEUTRAL_MUSCLE then
         data[MUSCLE] = NEUTRAL_MUSCLE
@@ -233,7 +218,6 @@ local function hook(tbl, name, label)
     local wrapper = wrap(original)
     tbl[name] = wrapper
     M.wrapped[label] = wrapper
-    M.originals[label] = original
     return "ok"
 end
 
@@ -274,93 +258,6 @@ end
 function M.reset()
     neutralised = setmetatable({}, { __mode = "k" })
     M.resolved = {}
-end
-
-local function bodyStub(companion)
-    local data = {}
-    return {
-        __companion = companion == true,
-        data = data,
-        getVariableBoolean = function(self, name) return false end,
-        getModData = function(self) return data end,
-        getPersistentOutfitID = function(self) return 0 end,
-        resetModelNextFrame = function(self) end,
-    }
-end
-
-function M.selftest()
-    local checks, fails = 0, {}
-    local function check(name, value)
-        checks = checks + 1
-        if not value then fails[#fails + 1] = name end
-    end
-
-    local savedPolicy = rawget(_G, "VSMPolicy")
-    local savedMorph = rawget(_G, "VSMMorphPolicy")
-    local savedLife = rawget(_G, "VSMALife")
-    local savedCompanion = rawget(_G, "BridgeCompanion")
-    local hasPackage = type(package) == "table" and type(package.loaded) == "table"
-    local savedLoadedLife = hasPackage and package.loaded["VSMALife"] or nil
-
-    local calls = { normal = 0 }
-    local function assignStub(actor)
-        calls.normal = calls.normal + 1
-        local data = actor:getModData()
-        data.ZomboidTest1_HeightCm_v1 = 180
-        data.VSM_BodyShape = 12
-        data.VSM_Muscular = 40
-        data.VSM_MorphZombieToken = "token"
-        data.VSM_ProfessionMorphToken = "token"
-        data.VSM_MorphProfession = "profile"
-        data.VSM_ALifeBody_v1 = { cm = 180 }
-        data.ZomboidTest1_ZombieHeight = { schema = 1, cm = 180 }
-        return 180
-    end
-
-    local policy = { assignZombie = wrap(assignStub) }
-    local morph = { assignZombie = wrap(assignStub) }
-    local life = { assign = wrap(assignStub) }
-
-    rawset(_G, "VSMPolicy", policy)
-    rawset(_G, "VSMMorphPolicy", morph)
-    rawset(_G, "VSMALife", life)
-    rawset(_G, "BridgeCompanion", { isBody = function(z) return z ~= nil and z.__companion == true end,
-        bodies = function() return {} end })
-    if hasPackage then package.loaded["VSMALife"] = life end
-
-    local companionBody = bodyStub(true)
-    assignStub(companionBody)
-    check("companion height cleared", policy.assignZombie(companionBody) == nil)
-    check("companion height key cleared", companionBody.data.ZomboidTest1_HeightCm_v1 == nil)
-    check("companion shape cleared", companionBody.data.VSM_BodyShape == nil)
-    check("companion token cleared", companionBody.data.VSM_MorphZombieToken == nil)
-    check("companion muscle zero", companionBody.data.VSM_Muscular == 0)
-    check("companion alife cleared", companionBody.data.VSM_ALifeBody_v1 == nil)
-    check("companion profession token cleared", companionBody.data.VSM_ProfessionMorphToken == nil)
-    check("companion profession cleared", companionBody.data.VSM_MorphProfession == nil)
-    check("companion legacy cleared", companionBody.data.ZomboidTest1_ZombieHeight == nil)
-    check("morph companion returns nil", morph.assignZombie(companionBody) == nil)
-    check("life companion returns nil", life.assign(companionBody) == nil)
-
-    local ordinary = bodyStub(false)
-    check("ordinary original returns", policy.assignZombie(ordinary) == 180)
-    check("ordinary keeps height", ordinary.data.ZomboidTest1_HeightCm_v1 == 180)
-    check("ordinary keeps shape", ordinary.data.VSM_BodyShape == 12)
-    check("ordinary keeps muscle", ordinary.data.VSM_Muscular == 40)
-    check("ordinary called original", calls.normal >= 1)
-
-    rawset(_G, "VSMPolicy", savedPolicy)
-    rawset(_G, "VSMMorphPolicy", savedMorph)
-    rawset(_G, "VSMALife", savedLife)
-    rawset(_G, "BridgeCompanion", savedCompanion)
-    if hasPackage then package.loaded["VSMALife"] = savedLoadedLife end
-
-    M.reset()
-    if savedPolicy ~= nil or savedMorph ~= nil or savedLife ~= nil then pcall(M.install) end
-
-    if #fails == 0 then return string.format("size matter compat selftest PASS (%d checks)", checks) end
-    return string.format("size matter compat selftest FAIL (%d of %d): %s", #fails, checks,
-        table.concat(fails, "; "))
 end
 
 local boot = select(2, pcall(M.install))

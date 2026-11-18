@@ -1692,6 +1692,7 @@ BridgeWindowMain = ISCollapsableWindow:derive("BridgeWindowMain")
 
 function BridgeWindowMain:createChildren()
     ISCollapsableWindow.createChildren(self)
+    self.baseWidth = self.baseWidth or self:getWidth()
     local th = self:titleBarHeight()
     local rh = self:resizeWidgetHeight()
     self.panel = ISTabPanel:new(0, th, self.width, self.height - th - rh)
@@ -1757,6 +1758,11 @@ function BridgeWindowMain:fitHeight()
     local view = self.panel.activeView.view
     local kind = self:kindOf(view)
     if view == nil or kind == nil then return end
+    local base = self.baseWidth
+    if type(base) == "number" and base > 0 then
+        if self:getWidth() ~= base then self:setWidth(base) end
+        if self.panel:getWidth() ~= base then self.panel:setWidth(base) end
+    end
     local value = ""
     if kind == "loot" then
         value = tostring(BridgeWindow.lootMode or "loot")
