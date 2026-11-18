@@ -8,6 +8,22 @@ BridgeHome = BridgeHome or {}
 
 local PAD = 10
 
+local FONT_BODY, FONT_HEAD, FONT_S, FONT_M = UIFont.Small, UIFont.Medium, 0, 0
+
+local function uiFonts()
+    FONT_BODY, FONT_HEAD = UIFont.Small, UIFont.Medium
+    FONT_S = getTextManager():getFontHeight(FONT_BODY)
+    FONT_M = getTextManager():getFontHeight(FONT_HEAD)
+    if BridgeWindow ~= nil and type(BridgeWindow.uiFonts) == "function" then
+        local body, head, smallH, mediumH = BridgeWindow.uiFonts()
+        FONT_BODY = body or FONT_BODY
+        FONT_HEAD = head or FONT_HEAD
+        FONT_S = smallH or FONT_S
+        FONT_M = mediumH or FONT_M
+    end
+    return FONT_BODY, FONT_HEAD, FONT_S, FONT_M
+end
+
 local HOME_R, HOME_G, HOME_B, HOME_A = 0.20, 0.50, 1.00, 0.30
 local SEL_R, SEL_G, SEL_B, SEL_A = 0.20, 0.50, 1.00, 0.35
 local BAD_R, BAD_G, BAD_B = 1.00, 0.10, 0.10
@@ -651,7 +667,8 @@ end
 BridgeHomeTab = ISPanel:derive("BridgeHomeTab")
 
 function BridgeHomeTab.heightFor(width)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local btnH = fontS + 6
     local headerH = fontS + 4
     local _, hintH = BridgeWindow.hintLines(width, "HomeHint", Bridge.companionName())
@@ -669,7 +686,8 @@ end
 
 function BridgeHomeTab:createChildren()
     ISPanel.createChildren(self)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local btnH = fontS + 6
     local headerH = fontS + 4
     self.btnH = btnH
@@ -810,18 +828,19 @@ end
 
 function BridgeHomeTab:render()
     if Bridge == nil or Bridge.store == nil then return end
+    uiFonts()
     local y = PAD
     for _, line in ipairs(self.hintLines or {}) do
-        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
-        y = y + getTextManager():getFontHeight(UIFont.Small) + 2
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, FONT_BODY)
+        y = y + FONT_S + 2
     end
-    self:drawText(tr("HomeZoneSection"), PAD, self.zoneHeaderY, 0.7, 0.7, 0.7, 1, UIFont.Small)
-    self:drawText(BridgeHome.statusText(), PAD, self.statusY, 1, 1, 1, 1, UIFont.Small)
-    self:drawText(tr("HomeStorageSection"), PAD, self.storageHeaderY, 0.7, 0.7, 0.7, 1, UIFont.Small)
+    self:drawText(tr("HomeZoneSection"), PAD, self.zoneHeaderY, 0.7, 0.7, 0.7, 1, FONT_BODY)
+    self:drawText(BridgeHome.statusText(), PAD, self.statusY, 1, 1, 1, 1, FONT_BODY)
+    self:drawText(tr("HomeStorageSection"), PAD, self.storageHeaderY, 0.7, 0.7, 0.7, 1, FONT_BODY)
     local marked = 0
     if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then marked = BridgeDeposit.markedCount() end
-    self:drawText(tr("MarkedCount", marked), PAD, self.markedY, 0.8, 0.8, 0.8, 1, UIFont.Small)
-    self:drawText(tr("HomeBehaviorSection"), PAD, self.behaviorHeaderY, 0.7, 0.7, 0.7, 1, UIFont.Small)
+    self:drawText(tr("MarkedCount", marked), PAD, self.markedY, 0.8, 0.8, 0.8, 1, FONT_BODY)
+    self:drawText(tr("HomeBehaviorSection"), PAD, self.behaviorHeaderY, 0.7, 0.7, 0.7, 1, FONT_BODY)
 end
 
 function BridgeHomeTab:new(x, y, width, height)

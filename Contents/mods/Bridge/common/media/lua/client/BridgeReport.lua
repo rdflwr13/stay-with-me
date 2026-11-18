@@ -3,6 +3,22 @@ require "ISUI/ISButton"
 
 local PAD = 10
 
+local FONT_BODY, FONT_HEAD, FONT_S, FONT_M = UIFont.Small, UIFont.Medium, 0, 0
+
+local function uiFonts()
+    FONT_BODY, FONT_HEAD = UIFont.Small, UIFont.Medium
+    FONT_S = getTextManager():getFontHeight(FONT_BODY)
+    FONT_M = getTextManager():getFontHeight(FONT_HEAD)
+    if BridgeWindow ~= nil and type(BridgeWindow.uiFonts) == "function" then
+        local body, head, smallH, mediumH = BridgeWindow.uiFonts()
+        FONT_BODY = body or FONT_BODY
+        FONT_HEAD = head or FONT_HEAD
+        FONT_S = smallH or FONT_S
+        FONT_M = mediumH or FONT_M
+    end
+    return FONT_BODY, FONT_HEAD, FONT_S, FONT_M
+end
+
 local function tr(key, a)
     if BridgeData ~= nil and type(BridgeData.text) == "function" then return BridgeData.text(key, a) end
     local text = key
@@ -54,21 +70,23 @@ BridgeReport.BUG_PAGE = "https://steamcommunity.com/workshop/filedetails/discuss
 
 
 function BridgeReport.stepLines(width)
+    uiFonts()
     local out = {}
     local raw = {
         tr("ReportStep1a") .. " (" .. BridgeReport.CONSOLE_PATH .. ") " .. tr("ReportStep1b"),
         tr("ReportStep2"),
     }
     for _, s in ipairs(raw) do
-        for _, l in ipairs(wrapText(UIFont.Small, s, width - PAD * 2)) do out[#out + 1] = l end
+        for _, l in ipairs(wrapText(FONT_BODY, s, width - PAD * 2)) do out[#out + 1] = l end
     end
     return out
 end
 
 
 function BridgeReport.logNoteLines(width)
+    uiFonts()
     local out = {}
-    for _, l in ipairs(wrapText(UIFont.Small, tr("ReportLogNote"), width - PAD * 2)) do out[#out + 1] = l end
+    for _, l in ipairs(wrapText(FONT_BODY, tr("ReportLogNote"), width - PAD * 2)) do out[#out + 1] = l end
     return out
 end
 
@@ -369,7 +387,8 @@ end
 BridgeReportTab = ISPanel:derive("BridgeReportTab")
 
 function BridgeReportTab.heightFor(width)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local stepH = #BridgeReport.stepLines(width) * (fontS + 2) + 4
     local noteH = #BridgeReport.logNoteLines(width) * (fontS + 2) + 4
     local btnH = fontS + 6
@@ -379,7 +398,8 @@ end
 
 function BridgeReportTab:createChildren()
     ISPanel.createChildren(self)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local btnH = fontS + 6
     self.hintLines, self.hintH = BridgeWindow.hintLines(self.width, "ReportHint", Bridge.companionName())
     self.stepLines = BridgeReport.stepLines(self.width)
@@ -457,27 +477,28 @@ end
 
 function BridgeReportTab:render()
     if Bridge == nil or Bridge.store == nil then return end
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local y = PAD
     for _, line in ipairs(self.hintLines or {}) do
-        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, FONT_BODY)
         y = y + fontS + 2
     end
     y = PAD + (self.hintH or 0)
     for _, line in ipairs(self.stepLines or {}) do
-        self:drawText(line, PAD, y, 0.85, 0.85, 0.85, 1, UIFont.Small)
+        self:drawText(line, PAD, y, 0.85, 0.85, 0.85, 1, FONT_BODY)
         y = y + fontS + 2
     end
     y = self.noteY or y
     for _, line in ipairs(self.noteLines or {}) do
-        self:drawText(line, PAD, y, 0.8, 0.8, 0.8, 1, UIFont.Small)
+        self:drawText(line, PAD, y, 0.8, 0.8, 0.8, 1, FONT_BODY)
         y = y + fontS + 2
     end
     y = self.statusY or (y + PAD)
     local status = self.status or ""
     if status ~= "" then
-        for _, line in ipairs(wrapText(UIFont.Small, status, self.width - PAD * 2)) do
-            self:drawText(line, PAD, y, 0.75, 0.95, 0.75, 1, UIFont.Small)
+        for _, line in ipairs(wrapText(FONT_BODY, status, self.width - PAD * 2)) do
+            self:drawText(line, PAD, y, 0.75, 0.95, 0.75, 1, FONT_BODY)
             y = y + fontS + 2
         end
     end

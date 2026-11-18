@@ -1,4 +1,8 @@
 {
+    "IGUI_NotAlone_WindowMain": "Main Menu",
+    "IGUI_NotAlone_OptUIScale": "UI size",
+    "IGUI_NotAlone_OptUIScaleAuto": "Auto",
+    "IGUI_NotAlone_OptUIScaleTip": "Size of the companion menu and appearance windows. Auto follows screen height.",
     "IGUI_StayWithMe_PregameNavHint": "RB: sezioni",
     "IGUI_StayWithMe_ControllerWheelHint": "Menu radiale del compagno",
     "IGUI_StayWithMe_ControllerButtonDPadLeft": "Croce direzionale sinistra",

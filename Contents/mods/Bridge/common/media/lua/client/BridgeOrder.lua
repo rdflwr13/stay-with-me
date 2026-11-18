@@ -5,6 +5,22 @@ require "ISUI/ISTickBox"
 
 local PAD = 10
 
+local FONT_BODY, FONT_HEAD, FONT_S, FONT_M = UIFont.Small, UIFont.Medium, 0, 0
+
+local function uiFonts()
+    FONT_BODY, FONT_HEAD = UIFont.Small, UIFont.Medium
+    FONT_S = getTextManager():getFontHeight(FONT_BODY)
+    FONT_M = getTextManager():getFontHeight(FONT_HEAD)
+    if BridgeWindow ~= nil and type(BridgeWindow.uiFonts) == "function" then
+        local body, head, smallH, mediumH = BridgeWindow.uiFonts()
+        FONT_BODY = body or FONT_BODY
+        FONT_HEAD = head or FONT_HEAD
+        FONT_S = smallH or FONT_S
+        FONT_M = mediumH or FONT_M
+    end
+    return FONT_BODY, FONT_HEAD, FONT_S, FONT_M
+end
+
 local function tr(key, a)
     if BridgeData ~= nil and type(BridgeData.text) == "function" then return BridgeData.text(key, a) end
     local text = key
@@ -34,14 +50,15 @@ end
 BridgeOrderList = ISScrollingListBox:derive("BridgeOrderList")
 
 function BridgeOrderList:new(x, y, width, height)
+    uiFonts()
     local o = ISScrollingListBox:new(x, y, width, height)
     setmetatable(o, self)
     self.__index = self
     o.backgroundColor = { r = 0, g = 0, b = 0, a = 0.3 }
     o.borderColor = { r = 1, g = 1, b = 1, a = 0.2 }
     o.drawBorder = true
-    o.font = UIFont.Small
-    o.fontHgt = getTextManager():getFontHeight(UIFont.Small)
+    o.font = FONT_BODY
+    o.fontHgt = FONT_S
     o.itemPadY = 5
     o.tickSize = o.fontHgt
     o.boxSize = o.fontHgt
@@ -197,14 +214,15 @@ local function orderMode()
 end
 
 function BridgeOrder.heightFor(width)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local btnH = fontS + 6
     local gap = PAD / 2
     local kind = orderMode()
     local who = "Rin"
     pcall(function() if Bridge ~= nil and Bridge.companionName ~= nil then who = Bridge.companionName() end end)
     local hintKey = kind == "work" and "MenuOrderHintWork" or "MenuOrderHint"
-    local lines = wrapText(UIFont.Small, tr(hintKey, who), math.max(40, (width or 0) - PAD * 2))
+    local lines = wrapText(FONT_BODY, tr(hintKey, who), math.max(40, (width or 0) - PAD * 2))
     local hintH = #lines * (fontS + 2) + 4
     local rowH = fontS + 10
     local n = 1
@@ -252,7 +270,8 @@ end
 
 function BridgeOrder:createChildren()
     ISPanel.createChildren(self)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local btnH = fontS + 6
     self.btnH = btnH
     self.kind = orderMode()
@@ -284,7 +303,7 @@ function BridgeOrder:createChildren()
     self.list.onToggle = function(item) self:onToggle(item) end
     self:addChild(self.list)
 
-    local labelW = getTextManager():MeasureStringX(UIFont.Small, tr("MenuReset")) + PAD * 2
+    local labelW = getTextManager():MeasureStringX(FONT_BODY, tr("MenuReset")) + PAD * 2
     local bw = math.max(labelW, btnH * 2)
     self.upBtn = ISButton:new(PAD, rowY, bw, btnH, "^", self, BridgeOrder.onUp)
     self.upBtn:initialise()
@@ -317,11 +336,12 @@ function BridgeOrder:createChildren()
 end
 
 function BridgeOrder:buildHints()
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local who = "Rin"
     pcall(function() if Bridge ~= nil and Bridge.companionName ~= nil then who = Bridge.companionName() end end)
-    local menuLines = wrapText(UIFont.Small, tr("MenuOrderHint", who), self.width - PAD * 2)
-    local workLines = wrapText(UIFont.Small, tr("MenuOrderHintWork", who), self.width - PAD * 2)
+    local menuLines = wrapText(FONT_BODY, tr("MenuOrderHint", who), self.width - PAD * 2)
+    local workLines = wrapText(FONT_BODY, tr("MenuOrderHintWork", who), self.width - PAD * 2)
     self.hints = {
         menu = { lines = menuLines, h = #menuLines * (fontS + 2) + 4 },
         work = { lines = workLines, h = #workLines * (fontS + 2) + 4 },
@@ -432,10 +452,11 @@ end
 
 function BridgeOrder:render()
     if Bridge == nil or Bridge.store == nil then return end
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    uiFonts()
+    local fontS = FONT_S
     local y = PAD + (self.btnH or 0) + PAD / 2
     for _, line in ipairs(self.hintLines or {}) do
-        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, FONT_BODY)
         y = y + fontS + 2
     end
 end

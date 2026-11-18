@@ -22,26 +22,69 @@ require "ISUI/ISToolTip"
 require "BridgeOrder"
 require "BridgeReport"
 require "BridgeHome"
+require "BridgeUIScale"
 
 BridgeWindow = BridgeWindow or {}
 
-local PAD = 10
+local BASE_PAD = 10
+local BASE_ROW = 6
+local BASE_BOX = 8
+local BASE_W, BASE_H = 420, 340
+local BASE_AVATAR_W, BASE_AVATAR_H = 128, 256
+local BASE_SKILL_GAP = 2
+
+local PAD = BASE_PAD
 local GROUP = PAD * 2
-local ROW = 6
-local BOX = 8
+local ROW = BASE_ROW
+local BOX = BASE_BOX
 local AVATAR_BORDER = 2
-local AVATAR_W, AVATAR_H = 128, 256
+local AVATAR_W, AVATAR_H = BASE_AVATAR_W, BASE_AVATAR_H
+local SKILL_GAP = BASE_SKILL_GAP
 local BLOCK_TICKS = 15
 local LOOKS_TICKS = 15
 
 
 local FONT_S, FONT_M, BTN_H = 0, 0, 0
+local FONT_BODY, FONT_HEAD = UIFont.Small, UIFont.Medium
+
+local function round(value)
+    if type(value) ~= "number" or value ~= value then return 0 end
+    return math.floor(value + 0.5)
+end
+
 local function refreshFonts()
-    FONT_S = getTextManager():getFontHeight(UIFont.Small)
-    FONT_M = getTextManager():getFontHeight(UIFont.Medium)
-    BTN_H = FONT_S + 6
+    local S = 1
+    if BridgeUIScale ~= nil and type(BridgeUIScale.effectiveFor) == "function" then
+        S = BridgeUIScale.effectiveFor(BASE_W, BASE_H)
+    end
+    PAD = round(BASE_PAD * S)
+    GROUP = PAD * 2
+    ROW = round(BASE_ROW * S)
+    BOX = round(BASE_BOX * S)
+    AVATAR_W = round(BASE_AVATAR_W * S)
+    AVATAR_H = round(BASE_AVATAR_H * S)
+    BridgeWindow.REL_BAR_H = round(8 * S)
+    BridgeWindow.REL_LABEL_GAP = round(18 * S)
+    SKILL_GAP = round(BASE_SKILL_GAP * S)
+    BridgeWindow.WIDTH = round(BASE_W * S)
+    BridgeWindow.HEIGHT = round(BASE_H * S)
+    local body, head, bodyH, headH = FONT_BODY, FONT_HEAD, 0, 0
+    if BridgeUIScale ~= nil and type(BridgeUIScale.fontsFor) == "function" then
+        body, head, bodyH, headH = BridgeUIScale.fontsFor(S)
+    end
+    if type(bodyH) ~= "number" or bodyH <= 0 then bodyH = getTextManager():getFontHeight(body) end
+    if type(headH) ~= "number" or headH <= 0 then headH = getTextManager():getFontHeight(head) end
+    FONT_BODY = body
+    FONT_HEAD = head
+    FONT_S = bodyH
+    FONT_M = headH
+    BTN_H = FONT_S + round(6 * S)
 end
 refreshFonts()
+
+function BridgeWindow.uiFonts()
+    return FONT_BODY, FONT_HEAD, FONT_S, FONT_M
+end
 
 local function textW(font, text)
     local w = 0
@@ -120,7 +163,7 @@ end
 
 function BridgeWindow.hintLines(width, key, who)
     refreshFonts()
-    local lines = wrapHintText(UIFont.Small, tr(key, who), math.max(40, (width or 0) - PAD * 2))
+    local lines = wrapHintText(FONT_BODY, tr(key, who), math.max(40, (width or 0) - PAD * 2))
     return lines, #lines * (FONT_S + 2) + 4
 end
 
@@ -377,7 +420,6 @@ end
 
 BridgeWindow.REL_TICKS = { 20, 45, 75 }
 BridgeWindow.ROM_TICKS = { 20, 45, 75 }
-BridgeWindow.REL_BAR_H = 8
 BridgeWindow.ROM_COLOR = { 0.86, 0.46, 0.64 }
 BridgeWindow.REL_COLORS = {
     Cold = { 0.38, 0.42, 0.50 },
@@ -432,10 +474,8 @@ function BridgeWindowInfo:drawBar(x, y, w, h, fill, cr, cg, cb, ticks)
 end
 
 
-BridgeWindow.REL_LABEL_GAP = 18
-
 function BridgeWindow.relLane(w)
-    local font = UIFont.Small
+    local font = FONT_BODY
     local labelW = math.max(textW(font, tr("RelBarFriendly")), textW(font, tr("RelBarRomance"))) + BridgeWindow.REL_LABEL_GAP
     local barX = labelW + PAD
     local barW = w - barX
@@ -447,7 +487,7 @@ function BridgeWindowInfo:drawRelRow(x, y, label, fill, cr, cg, cb, ticks, lane)
     local h = BridgeWindow.REL_BAR_H
     local barX, barW = lane[1], lane[2]
     local barY = y + math.floor((FONT_S - h) / 2)
-    self:drawText(label, x, y, 1, 1, 1, 1, UIFont.Small)
+    self:drawText(label, x, y, 1, 1, 1, 1, FONT_BODY)
     self:drawBar(x + barX, barY, barW, h, fill, cr, cg, cb, ticks)
 end
 
@@ -469,7 +509,7 @@ function BridgeWindowInfo:drawRelBars(x, y, w)
 end
 
 function BridgeWindowInfo:drawEnds(x, y, w, label, value, lr, lg, lb, vr, vg, vb)
-    local font = UIFont.Small
+    local font = FONT_BODY
     local vw = textW(font, value)
     local lw = textW(font, label)
     local overflow = lw + PAD + vw - w
@@ -495,7 +535,7 @@ function BridgeWindowInfo:render()
     if Bridge == nil or Bridge.store == nil then return end
     local x, y = self.textX, PAD
     local colW = self.width - x - PAD
-    self:drawText(fitText(UIFont.Medium, name(), colW), x, y, 1, 1, 1, 1, UIFont.Medium)
+    self:drawText(fitText(FONT_HEAD, name(), colW), x, y, 1, 1, 1, 1, FONT_HEAD)
     y = y + FONT_M + 2
     self:drawRect(x, y, colW, 1, 1, 0.4, 0.4, 0.4)
     y = y + GROUP
@@ -684,7 +724,23 @@ BridgeWindow.TICKS = {
 function BridgeWindowSettings:createChildren()
     ISPanel.createChildren(self)
     self.hintLines, self.hintH = BridgeWindow.hintLines(self.width, "SettingsHint", name())
-    local y = PAD + self.hintH
+    self.scaleRowY = PAD
+    self.scaleLabelY = PAD + math.floor((BTN_H - FONT_S) / 2)
+    local scaleLabelW = textW(FONT_BODY, tr("OptUIScale")) + PAD * 2
+    local scaleX = PAD + scaleLabelW
+    local scaleW = self.width - PAD - scaleX
+    if scaleW < BTN_H * 3 then scaleW = BTN_H * 3 end
+    self.scaleCombo = ISComboBox:new(scaleX, PAD, scaleW, BTN_H, self, BridgeWindowSettings.onUIScale)
+    self.scaleCombo:initialise()
+    self.scaleCombo:addOptionWithData(tr("OptUIScaleAuto"), 0)
+    self.scaleCombo:addOptionWithData("100%", 1.0)
+    self.scaleCombo:addOptionWithData("125%", 1.25)
+    self.scaleCombo:addOptionWithData("150%", 1.5)
+    self.scaleCombo:addOptionWithData("175%", 1.75)
+    self.scaleCombo:addOptionWithData("200%", 2.0)
+    self:addChild(self.scaleCombo)
+    self.hintY = PAD + BTN_H + PAD
+    local y = self.hintY + self.hintH
     self.ticks = {}
     for i, entry in ipairs(BridgeWindow.TICKS) do
         local tick = ISTickBox:new(PAD, y, self.width - PAD * 2, BTN_H, "", self, BridgeWindowSettings.onTick, entry.key)
@@ -698,7 +754,7 @@ function BridgeWindowSettings:createChildren()
     end
     y = y + PAD
     self.aimLabelY = y + math.floor((BTN_H - FONT_S) / 2)
-    local aimLabelW = textW(UIFont.Small, tr("OptAimSense")) + PAD * 2
+    local aimLabelW = textW(FONT_BODY, tr("OptAimSense")) + PAD * 2
     local aimX = PAD + aimLabelW
     local aimW = self.width - PAD - aimX
     if aimW < BTN_H * 3 then aimW = BTN_H * 3 end
@@ -729,7 +785,7 @@ function BridgeWindowSettings:createChildren()
 
     self.newsY = y + frame.h + PAD
     local newsLabel = tr("NewsButton")
-    local nbw = getTextManager():MeasureStringX(UIFont.Small, newsLabel) + PAD * 2
+    local nbw = getTextManager():MeasureStringX(FONT_BODY, newsLabel) + PAD * 2
     self.newsBtn = ISButton:new(PAD, self.newsY, nbw, BTN_H, newsLabel, self, BridgeWindowSettings.onNews)
     self.newsBtn:initialise()
     self.newsBtn:instantiate()
@@ -741,6 +797,10 @@ function BridgeWindowSettings:prerender()
     ISPanel.prerender(self)
     if Bridge == nil or Bridge.store == nil then return end
 
+    if self.scaleCombo ~= nil and BridgeUIScale ~= nil then
+        local req = BridgeUIScale.requested()
+        if req ~= nil and self.scaleCombo:getSelectedData() ~= req then self.scaleCombo:selectData(req) end
+    end
     for i, entry in ipairs(BridgeWindow.TICKS) do
         local want = BridgeData.optionOf(Bridge.store, entry.key)
         if self.ticks[i]:isSelected(1) ~= want then self.ticks[i]:setSelected(1, want) end
@@ -769,19 +829,22 @@ end
 
 function BridgeWindowSettings:render()
     if Bridge == nil or Bridge.store == nil then return end
-    local hy = PAD
+    if self.scaleCombo ~= nil then
+        self:drawText(fitText(FONT_BODY, tr("OptUIScale"), self.width - PAD * 2), PAD, self.scaleLabelY, 1, 1, 1, 1, FONT_BODY)
+    end
+    local hy = self.hintY or PAD
     for _, line in ipairs(self.hintLines or {}) do
-        self:drawText(line, PAD, hy, 0.75, 0.75, 0.75, 1, UIFont.Small)
-        hy = hy + getTextManager():getFontHeight(UIFont.Small) + 2
+        self:drawText(line, PAD, hy, 0.75, 0.75, 0.75, 1, FONT_BODY)
+        hy = hy + getTextManager():getFontHeight(FONT_BODY) + 2
     end
     if self.frameY == nil then return end
     self:drawRect(self.frameX, self.frameY, self.frameW, self.frameH, 0.4, 0.07, 0.07, 0.07)
     self:drawRectBorder(self.frameX, self.frameY, self.frameW, self.frameH, 0.55, 0.32, 0.32, 0.32)
     local col = self.colW or 0
-    self:drawText(fitText(UIFont.Small, tr("WindowName") .. " " .. name(), col), self.nameLabelX, self.nameLabelY, 1, 1, 1, 1, UIFont.Small)
-    self:drawText(fitText(UIFont.Small, tr("Gender"), col), self.genderLabelX, self.genderLabelY, 1, 1, 1, 1, UIFont.Small)
+    self:drawText(fitText(FONT_BODY, tr("WindowName") .. " " .. name(), col), self.nameLabelX, self.nameLabelY, 1, 1, 1, 1, FONT_BODY)
+    self:drawText(fitText(FONT_BODY, tr("Gender"), col), self.genderLabelX, self.genderLabelY, 1, 1, 1, 1, FONT_BODY)
     if self.aimLabelY ~= nil then
-        self:drawText(fitText(UIFont.Small, tr("OptAimSense"), self.width - PAD * 2), PAD, self.aimLabelY, 1, 1, 1, 1, UIFont.Small)
+        self:drawText(fitText(FONT_BODY, tr("OptAimSense"), self.width - PAD * 2), PAD, self.aimLabelY, 1, 1, 1, 1, FONT_BODY)
     end
     if Bridge.genderNoticeText ~= nil and (Bridge.time or 0) < (Bridge.genderNoticeUntil or 0) then
         local x = PAD
@@ -791,8 +854,8 @@ function BridgeWindowSettings:render()
             w = self.width - x - PAD
         end
         if w > 20 then
-            self:drawText(fitText(UIFont.Small, Bridge.genderNoticeText, w), x,
-                self.newsY + math.floor((BTN_H - FONT_S) / 2), 1, 0.9, 0.45, 1, UIFont.Small)
+            self:drawText(fitText(FONT_BODY, Bridge.genderNoticeText, w), x,
+                self.newsY + math.floor((BTN_H - FONT_S) / 2), 1, 0.9, 0.45, 1, FONT_BODY)
         end
     end
 end
@@ -815,6 +878,14 @@ function BridgeWindowSettings:onAimSense(combo)
     if combo == nil then return end
     local v = combo:getSelectedData()
     if v ~= nil and Bridge ~= nil and type(Bridge.setAimSense) == "function" then Bridge.setAimSense(v) end
+end
+
+function BridgeWindowSettings:onUIScale(combo)
+    if combo == nil then return end
+    local value = combo:getSelectedData()
+    if value == nil then return end
+    if BridgeUIScale ~= nil then BridgeUIScale.set(value) end
+    BridgeWindow.scalePending = true
 end
 
 function BridgeWindowSettings:onRename()
@@ -861,8 +932,8 @@ function BridgeLootList:new(x, y, width, height)
     o.backgroundColor = { r = 0, g = 0, b = 0, a = 0.3 }
     o.borderColor = { r = 1, g = 1, b = 1, a = 0.2 }
     o.drawBorder = true
-    o.font = UIFont.Small
-    o.fontHgt = getTextManager():getFontHeight(UIFont.Small)
+    o.font = FONT_BODY
+    o.fontHgt = getTextManager():getFontHeight(FONT_BODY)
     o.itemheight = math.max(o.fontHgt + LOOT_ROW_PAD * 2, 20)
     return o
 end
@@ -890,11 +961,11 @@ BridgeLootSettings = ISPanel:derive("BridgeLootSettings")
 
 function BridgeLootSettings.lootRowPlan(tickLabel, optLabel, optTexts, btnH)
     local gap = 8
-    local tickW = btnH + gap + textW(UIFont.Small, tr(tickLabel)) + 10
-    local labelW = textW(UIFont.Small, tr(optLabel))
+    local tickW = btnH + gap + textW(FONT_BODY, tr(tickLabel)) + 10
+    local labelW = textW(FONT_BODY, tr(optLabel))
     local comboW = 42
     for i = 1, #optTexts do
-        local tw = textW(UIFont.Small, optTexts[i]) + 42
+        local tw = textW(FONT_BODY, optTexts[i]) + 42
         if tw > comboW then comboW = tw end
     end
     return tickW, labelW, comboW
@@ -913,7 +984,7 @@ end
 
 function BridgeLootSettings.storeCellPlan(key, btnH)
     local gap = 8
-    return btnH + gap + textW(UIFont.Small, tr(BridgeLootSettings.storeLabel(key))) + 10
+    return btnH + gap + textW(FONT_BODY, tr(BridgeLootSettings.storeLabel(key))) + 10
 end
 
 function BridgeLootSettings.storeRowsPlan(btnH)
@@ -932,19 +1003,19 @@ function BridgeLootSettings.storeRowsPlan(btnH)
 end
 
 function BridgeLootSettings.lootOptionsHeight()
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    local fontS = getTextManager():getFontHeight(FONT_BODY)
     local btnH = fontS + 6
     return 2 * (btnH + PAD)
 end
 
 function BridgeLootSettings.storeOptionsHeight()
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    local fontS = getTextManager():getFontHeight(FONT_BODY)
     local btnH = fontS + 6
     return #BridgeWindow.STORE_ROWS * (btnH + PAD)
 end
 
 function BridgeLootSettings.heightFor(width)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    local fontS = getTextManager():getFontHeight(FONT_BODY)
     local btnH = fontS + 6
     local rowH = math.max(fontS + LOOT_ROW_PAD * 2, 20)
     local listH = math.min(#BridgeData.LOOT_CATS * rowH + 4, 260)
@@ -957,7 +1028,7 @@ end
 
 function BridgeLootSettings:createChildren()
     ISPanel.createChildren(self)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    local fontS = getTextManager():getFontHeight(FONT_BODY)
     local btnH = fontS + 6
     self.btnH = btnH
     self.mode = BridgeWindow.lootMode or "loot"
@@ -1162,17 +1233,17 @@ function BridgeLootSettings:render()
     local hint = self.hints ~= nil and self.hints[self.mode] or nil
     local y = PAD + (self.btnH or 0) + PAD
     for _, line in ipairs((hint ~= nil and hint.lines) or {}) do
-        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
-        y = y + getTextManager():getFontHeight(UIFont.Small) + 2
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, FONT_BODY)
+        y = y + getTextManager():getFontHeight(FONT_BODY) + 2
     end
     if self.mode ~= "store" then
-        local fontS = getTextManager():getFontHeight(UIFont.Small)
+        local fontS = getTextManager():getFontHeight(FONT_BODY)
         local dy = ((self.btnH or (fontS + 6)) - fontS) / 2
         if self.weightLabelX ~= nil and self.weightLabelY ~= nil then
-            self:drawText(tr("LootMaxWeight"), self.weightLabelX, self.weightLabelY + dy, 0.7, 0.7, 0.7, 1, UIFont.Small)
+            self:drawText(tr("LootMaxWeight"), self.weightLabelX, self.weightLabelY + dy, 0.7, 0.7, 0.7, 1, FONT_BODY)
         end
         if self.fertLabelX ~= nil and self.fertLabelY ~= nil then
-            self:drawText(tr("LootHutchFertCap"), self.fertLabelX, self.fertLabelY + dy, 0.7, 0.7, 0.7, 1, UIFont.Small)
+            self:drawText(tr("LootHutchFertCap"), self.fertLabelX, self.fertLabelY + dy, 0.7, 0.7, 0.7, 1, FONT_BODY)
         end
     end
 end
@@ -1209,7 +1280,7 @@ end
 
 function BridgeLootSettings:applyHeight(h)
     self:setHeight(h)
-    local fontS = getTextManager():getFontHeight(UIFont.Small)
+    local fontS = getTextManager():getFontHeight(FONT_BODY)
     local btnH = self.btnH or (fontS + 6)
     local lootLines, lootH = BridgeWindow.hintLines(self.width, "LootHint", name())
     local storeLines, storeH = BridgeWindow.hintLines(self.width, "StorageHint", name())
@@ -1303,8 +1374,6 @@ BridgeWindow.SKILLS = {
     }},
 }
 
-local SKILL_GAP = 2
-
 local function skillUnit() return math.max(6, math.floor((FONT_S + 6) / 2)) end
 local function skillRowH() return math.max(skillUnit() + 6, FONT_S + 6) end
 
@@ -1380,7 +1449,7 @@ function BridgeWindow.skillsWidth()
     local labelW = 0
     for _, group in ipairs(BridgeWindow.SKILLS) do
         for _, row in ipairs(group.rows) do
-            labelW = math.max(labelW, textW(UIFont.Small, BridgeWindow.skillLabel(row.perk)))
+            labelW = math.max(labelW, textW(FONT_BODY, BridgeWindow.skillLabel(row.perk)))
         end
     end
     return PAD * 3 + labelW + (10 * skillUnit() + 9 * SKILL_GAP) + 32
@@ -1396,8 +1465,8 @@ function BridgeSkillList:new(x, y, width, height)
     o.backgroundColor = { r = 0, g = 0, b = 0, a = 0.3 }
     o.borderColor = { r = 1, g = 1, b = 1, a = 0.2 }
     o.drawBorder = true
-    o.font = UIFont.Small
-    o.fontHgt = getTextManager():getFontHeight(UIFont.Small)
+    o.font = FONT_BODY
+    o.fontHgt = getTextManager():getFontHeight(FONT_BODY)
     o.itemheight = skillRowH()
     o.selected = -1
     o.unit = skillUnit()
@@ -1447,7 +1516,7 @@ function BridgeSkillList:doDrawItem(y, item, alt)
         return y + item.height
     end
     if item.kind == "header" then
-        self:drawText(item.text, PAD, y, 1, 1, 1, 1, UIFont.Medium)
+        self:drawText(item.text, PAD, y, 1, 1, 1, 1, FONT_HEAD)
         self:drawRect(PAD, y + FONT_M + 2, self.width - PAD * 2, 1, 1, 0.4, 0.4, 0.4)
         return y + item.height
     end
@@ -1457,7 +1526,7 @@ function BridgeSkillList:doDrawItem(y, item, alt)
             self:drawRect(PAD - 2, y, self.width - PAD * 2 + 4, item.height, glow * 0.45, 1, 0.89, 0.38)
         end
         local ty = y + (item.height - FONT_S) / 2
-        self:drawText(item.label, PAD, ty, 1, 1, 1, 1, UIFont.Small)
+        self:drawText(item.label, PAD, ty, 1, 1, 1, 1, FONT_BODY)
         self:drawBar(self.barX, y + (item.height - self.unit) / 2, item.level or 0, item.prog or 0)
         return y + item.height
     end
@@ -1477,7 +1546,7 @@ function BridgeWindowSkills:createChildren()
         for _, row in ipairs(group.rows) do
             local label = BridgeWindow.skillLabel(row.perk)
             self.labels[row.perk] = label
-            self.labelW = math.max(self.labelW, textW(UIFont.Small, label))
+            self.labelW = math.max(self.labelW, textW(FONT_BODY, label))
         end
     end
     self.barX = PAD + self.labelW + PAD
@@ -1590,8 +1659,8 @@ end
 function BridgeWindowSkills:render()
     local y = PAD
     for _, line in ipairs(self.hintLines or {}) do
-        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, UIFont.Small)
-        y = y + getTextManager():getFontHeight(UIFont.Small) + 2
+        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, FONT_BODY)
+        y = y + getTextManager():getFontHeight(FONT_BODY) + 2
     end
 end
 
@@ -1690,9 +1759,7 @@ end
 
 BridgeWindowMain = ISCollapsableWindow:derive("BridgeWindowMain")
 
-function BridgeWindowMain:createChildren()
-    ISCollapsableWindow.createChildren(self)
-    self.baseWidth = self.baseWidth or self:getWidth()
+function BridgeWindowMain:buildPages()
     local th = self:titleBarHeight()
     local rh = self:resizeWidgetHeight()
     self.panel = ISTabPanel:new(0, th, self.width, self.height - th - rh)
@@ -1732,12 +1799,47 @@ function BridgeWindowMain:createChildren()
         self.report = page("report", function(x, y, w, h) return BridgeReportTab:new(x, y, w, h) end)
         self.panel:addView(tr("WindowReport"), self.report)
     end
+end
+
+function BridgeWindowMain:createChildren()
+    ISCollapsableWindow.createChildren(self)
+    self.baseWidth = self.baseWidth or self:getWidth()
+    self:buildPages()
+    self.uiRevision = BridgeUIScale ~= nil and BridgeUIScale.revision or 0
+    self:fitHeight()
+end
+
+function BridgeWindowMain:applyScaleRevision()
+    refreshFonts()
+    local activeName = nil
+    if self.panel ~= nil and self.panel.activeView ~= nil then
+        activeName = self.panel.activeView.name
+    end
+    if self.skills ~= nil and type(self.skills.removeTooltip) == "function" then
+        pcall(function() self.skills:removeTooltip() end)
+    end
+    if self.panel ~= nil then self:removeChild(self.panel) end
+    self.panel = nil
+    self.info, self.skills, self.home, self.loot, self.order, self.settings, self.report =
+        nil, nil, nil, nil, nil, nil, nil
+    self.contentBrand = nil
+    self.baseWidth = BridgeWindow.neededSize()
+    self:setWidth(self.baseWidth)
+    self:buildPages()
+    if activeName ~= nil then
+        pcall(function() self.panel:activateView(activeName) end)
+    end
+    self.uiRevision = BridgeUIScale ~= nil and BridgeUIScale.revision or 0
     self:fitHeight()
 end
 
 function BridgeWindowMain:prerender()
 
-    self.title = ""
+    local rev = BridgeUIScale ~= nil and BridgeUIScale.revision or 0
+    if BridgeWindow.scalePending == true or self.uiRevision ~= rev then
+        BridgeWindow.scalePending = false
+        self:applyScaleRevision()
+    end
     self:fitHeight()
     ISCollapsableWindow.prerender(self)
 end
@@ -1759,7 +1861,11 @@ function BridgeWindowMain:fitHeight()
     local kind = self:kindOf(view)
     if view == nil or kind == nil then return end
     local base = self.baseWidth
+    local sw = getCore():getScreenWidth()
+    local maxW = math.max(1, sw - PAD * 2)
     if type(base) == "number" and base > 0 then
+        if base > maxW then base = maxW end
+        self.baseWidth = base
         if self:getWidth() ~= base then self:setWidth(base) end
         if self.panel:getWidth() ~= base then self.panel:setWidth(base) end
     end
@@ -1803,6 +1909,9 @@ function BridgeWindowMain:fitHeight()
     if self:getY() + self:getHeight() > sh - PAD then
         self:setY(math.max(0, sh - PAD - self:getHeight()))
     end
+    if self:getX() + self:getWidth() > sw - PAD then
+        self:setX(math.max(0, sw - PAD - self:getWidth()))
+    end
 end
 
 function BridgeWindowMain:close()
@@ -1818,12 +1927,9 @@ function BridgeWindowMain:new(x, y, width, height)
     self.__index = self
     o.backgroundColor.a = 0.9
     o:setResizable(false)
-    o.title = ""
+    o.title = tr("WindowMain")
     return o
 end
-
-BridgeWindow.WIDTH = 420
-BridgeWindow.HEIGHT = 340
 
 
 
@@ -1860,7 +1966,7 @@ function BridgeWindow.settingsHeight(width)
     local frameH = BOX + FONT_S + ROW + BTN_H + BOX
     local aimH = BTN_H + PAD
     local _, hintH = BridgeWindow.hintLines(width, "SettingsHint", name())
-    return PAD + hintH + #BridgeWindow.TICKS * (BTN_H + PAD) + PAD + aimH + frameH + PAD + BTN_H + PAD
+    return PAD + BTN_H + PAD + hintH + #BridgeWindow.TICKS * (BTN_H + PAD) + PAD + aimH + frameH + PAD + BTN_H + PAD
 end
 
 function BridgeWindow.contentHeight(kind, width)
@@ -1887,38 +1993,39 @@ function BridgeWindow.neededSize()
     local lookLabel = tr("LookDefault")
     local tierW = 0
     for _, key in ipairs({ "ExTierUntrained", "ExTierWarmingUp", "ExTierRoutine", "ExTierDedicated", "ExTierAthletic", "ExTierPeak" }) do
-        tierW = math.max(tierW, textW(UIFont.Small, tr(key)))
+        tierW = math.max(tierW, textW(FONT_BODY, tr(key)))
     end
     local colW = math.max(
-        textW(UIFont.Medium, name()),
-        textW(UIFont.Small, status),
-        math.max(textW(UIFont.Small, tr("RelBarFriendly")), textW(UIFont.Small, tr("RelBarRomance"))) + BridgeWindow.REL_LABEL_GAP + PAD + 80,
-        textW(UIFont.Small, tr("ExTrainingLevel")) + PAD + tierW + textW(UIFont.Small, " (+100% " .. tr("ExXpWord") .. ")") + BOX * 2,
-        textW(UIFont.Small, tr("ExWorkouts")) + PAD + textW(UIFont.Small, "1000"),
-        textW(UIFont.Small, tr("Goodbye")) + PAD * 2,
-        textW(UIFont.Small, tr("Call", name())) + PAD * 2,
-        textW(UIFont.Small, tr("WindowAppearance")) + PAD + textW(UIFont.Small, lookLabel),
-        textW(UIFont.Small, getText("IGUI_PlayerStats_Change")) + PAD * 2)
+        textW(FONT_HEAD, name()),
+        textW(FONT_BODY, status),
+        math.max(textW(FONT_BODY, tr("RelBarFriendly")), textW(FONT_BODY, tr("RelBarRomance"))) + BridgeWindow.REL_LABEL_GAP + PAD + 80,
+        textW(FONT_BODY, tr("ExTrainingLevel")) + PAD + tierW + textW(FONT_BODY, " (+100% " .. tr("ExXpWord") .. ")") + BOX * 2,
+        textW(FONT_BODY, tr("ExWorkouts")) + PAD + textW(FONT_BODY, "1000"),
+        textW(FONT_BODY, tr("Goodbye")) + PAD * 2,
+        textW(FONT_BODY, tr("Call", name())) + PAD * 2,
+        textW(FONT_BODY, tr("WindowAppearance")) + PAD + textW(FONT_BODY, lookLabel),
+        textW(FONT_BODY, getText("IGUI_PlayerStats_Change")) + PAD * 2)
     local w = textX + colW + PAD
 
     local gap = UI_BORDER_SPACING or 10
     for _, entry in ipairs(BridgeWindow.TICKS) do
-        w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr(entry.label)) + PAD)
+        w = math.max(w, PAD * 2 + BTN_H + gap + textW(FONT_BODY, tr(entry.label)) + PAD)
     end
-    w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("OptAimSense")) + PAD * 4 + textW(UIFont.Small, tr("AimSensNormal")))
-    w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowName") .. " " .. name()))
-    w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowReport")))
+    w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("OptAimSense")) + PAD * 4 + textW(FONT_BODY, tr("AimSensNormal")))
+    w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("WindowName") .. " " .. name()))
+    w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("OptUIScale")) + PAD * 2 + textW(FONT_BODY, "200%") + PAD * 4)
+    w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("WindowReport")))
     if BridgeWindow.STATSMENU_ENABLE == 1 then
         w = math.max(w, BridgeWindow.skillsWidth())
     end
     if BridgeLootSettings ~= nil then
-        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowLootStorage")))
-        w = math.max(w, PAD * 4 + textW(UIFont.Small, tr("WindowLoot")) + textW(UIFont.Small, tr("WindowStorage")))
+        w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("WindowLootStorage")))
+        w = math.max(w, PAD * 4 + textW(FONT_BODY, tr("WindowLoot")) + textW(FONT_BODY, tr("WindowStorage")))
         for _, entry in ipairs(BridgeWindow.LOOT_TICKS) do
-            w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr(entry.label)) + PAD)
+            w = math.max(w, PAD * 2 + BTN_H + gap + textW(FONT_BODY, tr(entry.label)) + PAD)
         end
         for _, entry in ipairs(BridgeWindow.STORE_TICKS) do
-            w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr(entry.label)) + PAD)
+            w = math.max(w, PAD * 2 + BTN_H + gap + textW(FONT_BODY, tr(entry.label)) + PAD)
         end
         local leftW, rightX, rightW = BridgeLootSettings.storeRowsPlan(BTN_H)
         w = math.max(w, rightX + rightW + PAD)
@@ -1932,14 +2039,14 @@ function BridgeWindow.neededSize()
         w = math.max(w, labelX + labelW + PAD)
     end
     if BridgeHomeTab ~= nil then
-        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("WindowHome")))
-        w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr("OptHomeResources")) + PAD)
-        w = math.max(w, PAD * 2 + BTN_H + gap + textW(UIFont.Small, tr("OptHomeAllFloors")) + PAD)
-        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("MarkAllHome")))
-        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("ClearMarks")))
+        w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("WindowHome")))
+        w = math.max(w, PAD * 2 + BTN_H + gap + textW(FONT_BODY, tr("OptHomeResources")) + PAD)
+        w = math.max(w, PAD * 2 + BTN_H + gap + textW(FONT_BODY, tr("OptHomeAllFloors")) + PAD)
+        w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("MarkAllHome")))
+        w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("ClearMarks")))
         local marks = 0
         if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then marks = BridgeDeposit.markedCount() end
-        w = math.max(w, PAD * 2 + textW(UIFont.Small, tr("MarkedCount", marks)))
+        w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("MarkedCount", marks)))
     end
     return math.max(BridgeWindow.WIDTH, math.ceil(w))
 end
@@ -1955,6 +2062,10 @@ function BridgeWindow.toggle(x, y)
     local width = BridgeWindow.WIDTH
     local ok, err = pcall(function() width = BridgeWindow.neededSize() end)
     if not ok then warn("size failed: " .. tostring(err)) end
+    local cap = nil
+    pcall(function() cap = getCore():getScreenWidth() - PAD * 2 end)
+    if type(cap) == "number" and cap > 0 and width > cap then width = cap end
+    if type(width) ~= "number" or width < 1 then width = 1 end
     local w = BridgeWindowMain:new(x or 100, y or 100, width, BridgeWindow.HEIGHT)
 
     pcall(function()
