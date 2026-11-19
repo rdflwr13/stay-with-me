@@ -1296,6 +1296,7 @@ function BridgeFetch.primeJob(kind, targets)
     if not BridgeFetch.available() then return "blocked", missing end
     log("job " .. tostring(kind) .. " missing home supplies: " .. table.concat(missing, ","))
     local requested = 0
+    local noRoom = false
     for i = 1, #missing do
         local res = nil
         if missing[i] == "seeds" then
@@ -1309,6 +1310,7 @@ function BridgeFetch.primeJob(kind, targets)
             res = BridgeFetch.pull(missing[i])
         end
         if res == "requested" then requested = requested + 1 end
+        if res == "noroom" then noRoom = true end
         log("  " .. missing[i] .. " -> " .. tostring(res))
     end
     local still = {}
@@ -1319,10 +1321,10 @@ function BridgeFetch.primeJob(kind, targets)
             still[#still + 1] = missing[i]
         end
     end
-    if #still == 0 then return "ok", missing end
-    if requested > 0 then return "pending", still end
-    return "blocked", still
-end
+    if #still == 0 then return "ok", missing, nil end
+    if requested > 0 then return "pending", still, nil end
+    if noRoom then return "blocked", still, "noroom" end
+    return "blocked", still, "missing" end
 
 
 function BridgeFetch.tick()

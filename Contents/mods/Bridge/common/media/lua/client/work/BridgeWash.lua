@@ -695,6 +695,10 @@ local function spotNear(body, sink)
 end
 
 function BridgeWash.stop(why)
+    if (why == "menu" or why == "command") and BridgeChores ~= nil
+            and type(BridgeChores.noteManualStop) == "function" then
+        pcall(BridgeChores.noteManualStop, "wash")
+    end
     BridgeWash.state = "idle"
     BridgeWash.sink = nil
     BridgeWash.spot = nil
@@ -725,14 +729,14 @@ end
 
 
 
-function BridgeWash.start(why)
+function BridgeWash.start(why, centre, radius, rect, force)
     if Bridge == nil or not Bridge.drivable() then return "no body here" end
     local body = Bridge.body
-    if BridgeWash.dirtyParts(body) == 0 then
+    if force ~= true and BridgeWash.dirtyParts(body) == 0 then
         sayWash("WashClean", "AlreadyClean")
         return "already clean"
     end
-    local list = BridgeWash.waterList(body)
+    local list = BridgeWash.waterList(body, centre, radius, rect)
     if #list == 0 then
         sayWash("WashNoWater", "NoWater")
         return "no water nearby"
@@ -894,6 +898,8 @@ function BridgeWash.update(body)
             BridgeMove.stopPath(body)
             BridgeWash.state = "washing"
             BridgeWash.since = Bridge.time
+            BridgeWash.washTotal = BridgeWash.washTicks(body)
+            BridgeWash.washSoundAt = -120
             return true
         end
 
@@ -941,7 +947,20 @@ function BridgeWash.update(body)
         body:faceLocationF(sq:getX() + 0.5, sq:getY() + 0.5)
     end)
     pcall(function() if body:getBumpType() ~= "washFace" then body:setBumpType("washFace") end end)
-    if (Bridge.time - BridgeWash.since) >= WASH_TICKS then
+    local total = BridgeWash.washTotal or BridgeWash.washTicks(body)
+    if total < 1 then total = 1 end
+    local elapsed = Bridge.time - (BridgeWash.since or Bridge.time)
+    local frac = math.max(0, math.min(1, elapsed / total))
+    if BridgeProgress ~= nil and type(BridgeProgress.show) == "function" then
+        pcall(function() BridgeProgress.show(frac) end)
+    end
+    local sound = BridgeTask ~= nil and BridgeTask.WASH_SOUND or "WashYourself"
+    local every = BridgeTask ~= nil and BridgeTask.WASH_SOUND_EVERY or 120
+    if elapsed - (BridgeWash.washSoundAt or 0) >= every then
+        BridgeWash.washSoundAt = elapsed
+        pcall(function() body:playSound(sound) end)
+    end
+    if elapsed >= total then
         local water, washed = clean(body, sink)
         pcall(function() body:setBumpType("") end)
         log("washed, water used " .. tostring(water) .. ", items washed " .. tostring(washed))

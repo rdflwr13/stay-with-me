@@ -174,16 +174,17 @@ function BridgeExercise.cooldownLeft(rec)
 end
 
 
-function BridgeExercise.setCooldown(rec)
+function BridgeExercise.setCooldown(rec, hours)
     rec = rec or (Bridge ~= nil and Bridge.store) or nil
     local now = worldHours()
     if now == nil then return end
-    local untilH = now + BridgeExercise.COOLDOWN_HOURS
+    local h = tonumber(hours) or BridgeExercise.COOLDOWN_HOURS
+    local untilH = now + h
     if rec ~= nil then rec.exerciseUntil = untilH end
     if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { exerciseUntil = untilH }) end)
     end
-    log(string.format("set cooldown until %.2f (%.1fh)", untilH, BridgeExercise.COOLDOWN_HOURS))
+    log(string.format("set cooldown until %.2f (%.1fh)", untilH, h))
 end
 
 
@@ -383,7 +384,7 @@ end
 BridgeExercise.busy = busyElsewhere
 
 
-function BridgeExercise.start(mirror)
+function BridgeExercise.start(mirror, force)
     if BridgeTask == nil or BridgeTask.start == nil then return "no task" end
     if BridgeTask.active then
         if BridgeTask.kind == "exercise" then return "already" end
@@ -392,8 +393,10 @@ function BridgeExercise.start(mirror)
     if Bridge == nil or not Bridge.alive() then return "no body" end
     if Bridge.drivable ~= nil and not Bridge.drivable() then return "not drivable" end
     if hardBusy() then return "busy" end
-    local ok, why = BridgeExercise.ready(Bridge.store)
-    if not ok then return why end
+    if force ~= true then
+        local ok, why = BridgeExercise.ready(Bridge.store)
+        if not ok then return why end
+    end
     if BridgeTask.dangerNear ~= nil and BridgeTask.dangerNear(Bridge.body) then return "danger" end
     local def = BridgeTask.kinds ~= nil and BridgeTask.kinds.exercise or nil
     if def == nil or (def.available ~= nil and not def.available(Bridge.body)) then return "unavailable" end

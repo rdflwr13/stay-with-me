@@ -1796,6 +1796,11 @@ function BridgeWindowMain:buildPages()
         self.home = page("home", function(x, y, w, h) return BridgeHomeTab:new(x, y, w, h) end)
         self.panel:addView(tr("WindowHome"), self.home)
     end
+    self.chores = nil
+    if BridgeChoresTab ~= nil then
+        self.chores = page("chores", function(x, y, w, h) return BridgeChoresTab:new(x, y, w, h) end)
+        self.panel:addView(tr("WindowChores"), self.chores)
+    end
     self.loot = page("loot", function(x, y, w, h) return BridgeLootSettings:new(x, y, w, h) end)
     self.panel:addView(tr("WindowLootStorage"), self.loot)
     self.order = page("order", function(x, y, w, h) return BridgeOrder:new(x, y, w, h) end)
@@ -1828,8 +1833,8 @@ function BridgeWindowMain:applyScaleRevision()
     end
     if self.panel ~= nil then self:removeChild(self.panel) end
     self.panel = nil
-    self.info, self.skills, self.home, self.loot, self.order, self.settings, self.report =
-        nil, nil, nil, nil, nil, nil, nil
+    self.info, self.skills, self.home, self.chores, self.loot, self.order, self.settings, self.report =
+        nil, nil, nil, nil, nil, nil, nil, nil
     self.contentBrand = nil
     self.baseWidth = BridgeWindow.neededSize()
     self:setWidth(self.baseWidth)
@@ -1857,6 +1862,7 @@ function BridgeWindowMain:kindOf(view)
     if view == self.settings then return "settings" end
     if view == self.skills then return "skills" end
     if view == self.home then return "home" end
+    if view == self.chores then return "chores" end
     if view == self.order then return "order" end
     if view == self.loot then return "loot" end
     if view == self.report then return "report" end
@@ -1984,6 +1990,7 @@ function BridgeWindow.contentHeight(kind, width)
     elseif kind == "settings" then h = BridgeWindow.settingsHeight(width)
     elseif kind == "skills" then h = BridgeWindow.skillsPageHeight(width)
     elseif kind == "home" and BridgeHomeTab ~= nil then h = BridgeHomeTab.heightFor(width)
+    elseif kind == "chores" and BridgeChoresTab ~= nil then h = BridgeChoresTab.heightFor(width)
     elseif kind == "order" and BridgeOrder ~= nil and BridgeOrder.heightFor ~= nil then h = BridgeOrder.heightFor(width)
     elseif kind == "loot" and BridgeLootSettings ~= nil then h = BridgeLootSettings.heightFor(width)
     elseif kind == "report" and BridgeReportTab ~= nil then h = BridgeReportTab.heightFor(width)
@@ -2055,6 +2062,22 @@ function BridgeWindow.neededSize()
         local marks = 0
         if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then marks = BridgeDeposit.markedCount() end
         w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("MarkedCount", marks)))
+    end
+    if BridgeChoresTab ~= nil then
+        w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("WindowChores")))
+        local readyText = tr("ChoreReady", 99)
+        local runW = BridgeChoresTab.RUN_W or 38
+        for _, id in ipairs(BridgeData.CHORE_IDS or {}) do
+            local label = id
+            if type(BridgeChoresTab.labelFor) == "function" then label = BridgeChoresTab.labelFor(id) end
+            w = math.max(w, PAD * 2 + BTN_H + gap + textW(FONT_BODY, label) + PAD
+                + textW(FONT_BODY, readyText) + runW + PAD * 2)
+        end
+        local bw = 0
+        for _, key in ipairs({ "ChoreDebugReset", "ChoreDebugBlacklist", "ChoreDebugRescan", "ChoreDebugCancel" }) do
+            bw = math.max(bw, textW(FONT_BODY, tr(key)) + PAD * 2)
+        end
+        w = math.max(w, PAD * 3 + bw * 2)
     end
     return math.max(BridgeWindow.WIDTH, math.ceil(w))
 end

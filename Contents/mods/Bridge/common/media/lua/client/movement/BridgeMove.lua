@@ -83,6 +83,7 @@ BridgeMove.speedModOverride = nil
 BridgeMove.animOld = false
 BridgeMove.walkSpeedVar = 1.0
 BridgeMove.runBlend = 0.65
+BridgeMove.walkBlend = 0.78
 BridgeMove.runReplan = 1.8
 BridgeMove.runEvery = 30
 BridgeMove.lastRestart = -9999
@@ -642,6 +643,7 @@ function BridgeMove.applyAnimVars(body)
         else
 
             ws = (not redRuns) and redWs or 1.0
+            if not redRuns and redWs ~= nil and redWs >= 0.3 then BridgeMove.walkBlend = redWs end
         end
         if ws == nil or ws < 0.3 then ws = 1.0 end
     end
@@ -4313,6 +4315,19 @@ end
 function BridgeMove.rememberDoor(body, door, kind, cells, north)
     if #cells == 0 then return end
     local rec = { door = door, kind = kind, cells = cells, north = north, tick = Bridge.time }
+    local use = BridgeMove.doorUse[door]
+    if use ~= nil and Bridge.time - (use.at or 0) <= 600 then
+        use.n = (use.n or 0) + 1
+        use.at = Bridge.time
+    else
+        use = { n = 1, at = Bridge.time }
+        BridgeMove.doorUse[door] = use
+    end
+    if use.n >= 4 then
+        BridgeMove.doorLoopDoor = door
+        BridgeMove.doorLoopUntil = Bridge.time + 900
+        log(sformat("door loop guard at %d,%d n=%d", cells[1].x, cells[1].y, use.n))
+    end
     local keep = BridgeMove.keepOpenDoors[door] == true
     if not keep and BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "openDoors" then
         keep = true
@@ -4497,6 +4512,18 @@ function DOOR.closeWait(rec, body, passed)
             wait = "player behind"
         elseif not passed and rd < 3 then
             wait = "player at door"
+        end
+    end
+    if wait == nil and passed then
+        local gx, gy = nil, nil
+        if Bridge.target ~= nil then
+            gx, gy = Bridge.target.x, Bridge.target.y
+        elseif BridgeMove.goal ~= nil then
+            gx, gy = BridgeMove.goal.x, BridgeMove.goal.y
+        end
+        if gx ~= nil and gy ~= nil then
+            local gside = DOOR.doorSide(rec, gx, gy)
+            if gside == rec.side then wait = "goal behind" end
         end
     end
     if wait == nil then
@@ -4777,6 +4804,9 @@ end
 BridgeMove.openingWay = nil
 BridgeMove.openingBlocked = nil
 BridgeMove.holdDoors = false
+BridgeMove.doorLoopDoor = nil
+BridgeMove.doorLoopUntil = 0
+BridgeMove.doorUse = setmetatable({}, { __mode = "k" })
 BridgeMove.doorFail = nil
 BridgeMove.doorFailObj = nil
 BridgeMove.doorFailUntil = 0
@@ -4865,7 +4895,8 @@ local WINDOW_CLOSE_MS = 900
 
 function BridgeMove.noteWindowOpened(body, object)
     if object == nil then return end
-    if BridgeTask == nil or not BridgeTask.active then return end
+    local tracked = BridgeTask ~= nil and BridgeTask.active
+    if not tracked and (Bridge == nil or Bridge.mode ~= "home") then return end
     local x, y, z, fx, fy = nil, nil, nil, nil, nil
     pcall(function()
         local a, b = object:getSquare(), object:getOppositeSquare()
@@ -4901,15 +4932,26 @@ function BridgeMove.closeWindows(body)
             end)
             if not ok or not open or smashed then
                 done = true
-            elseif Bridge.time - rec.tick > WINDOW_CLOSE_MS then
-                done = true
             elseif BridgeMove.pendingClimb == nil and math.abs(bz - rec.z) < 0.5 and not BridgeMove.holdDoors then
                 local near = dist2d(bx, by, rec.x, rec.y)
                 local far = rec.farX ~= nil and dist2d(bx, by, rec.farX, rec.farY) <= 1.0
-                if far or near > 1.6 then
-                    pcall(function() obj:ToggleWindow(body) end)
-                    log("window closed behind")
-                    done = true
+                local goalAway = true
+                if Bridge.target ~= nil and rec.farX ~= nil then
+                    local gx, gy = Bridge.target.x, Bridge.target.y
+                    goalAway = dist2d(gx, gy, rec.farX, rec.farY) <= dist2d(gx, gy, rec.x, rec.y)
+                end
+                if goalAway and (far or near > 1.6) then
+                    if rec.closingAt == nil then
+                        rec.closingAt = Bridge.time
+                        pcall(function() body:setVariable("BumpAnimFinished", false) end)
+                        pcall(function() if body:getBumpType() ~= "WindowClose" then body:setBumpType("WindowClose") end end)
+                        pcall(function() body:playSound("CloseWindow") end)
+                        log("window closing behind")
+                    elseif Bridge.time - rec.closingAt >= 20 then
+                        pcall(function() obj:ToggleWindow(body) end)
+                        log("window closed behind")
+                        done = true
+                    end
                 end
             end
         end
@@ -4922,6 +4964,12 @@ function BridgeMove.routeViaOpening(body, gx, gy, gz)
     local bsq = nil
     pcall(function() bsq = body:getCurrentSquare() end)
     if bsq == nil then BridgeMove.openingWay = nil return nil end
+    if Bridge ~= nil and Bridge.mode == "home" and BridgeHome ~= nil
+            and BridgeHome.contains(body:getX(), body:getY(), body:getZ(), 0)
+            and BridgeHome.contains(gx, gy, gz, 0) then
+        BridgeMove.openingWay = nil
+        return nil
+    end
     local bz = math.floor(gz)
     if math.floor(body:getZ()) ~= bz then BridgeMove.openingWay = nil return nil end
     local cell = getCell()
@@ -5065,6 +5113,12 @@ function BridgeMove.routeViaOpening(body, gx, gy, gz)
     end
     BridgeMove.openingBlocked = nil
     BridgeMove.doorFail = nil
+    if plan.obj ~= nil and plan.obj == BridgeMove.doorLoopDoor
+            and Bridge.time < (BridgeMove.doorLoopUntil or 0) then
+        log("opening loop ignored at " .. tostring(plan.key))
+        BridgeMove.openingWay = nil
+        return nil
+    end
     local nx, ny = plan.near:getX() + 0.5, plan.near:getY() + 0.5
     BridgeMove.openingWay = { x = nx, y = ny, z = bz, key = plan.key, bld = leaving and bK or tK,
         obj = plan.obj, kind = plan.kind, far = plan.far,
@@ -5817,6 +5871,7 @@ end
 
 
 function BridgeMove.crossStep(body)
+    if BridgeMove.noClimb then return false end
     local c = BridgeMove.cross
 
     if c ~= nil and not c.started and Bridge.time - (c.lastFrame or c.tick) > 10 then
@@ -6425,6 +6480,7 @@ end
 
 function BridgeMove.handleObstacle(body)
 
+    if BridgeMove.noClimb then return false end
     if BridgeMove.window then
         local w = BridgeMove.window
         body:faceLocationF(w.x, w.y)
@@ -6448,7 +6504,8 @@ function BridgeMove.handleObstacle(body)
             if window ~= nil and not opened then
                 DOOR.blacklistDoor(body, window, "locked")
                 BridgeMove.obstacle = "window would not open"
-                BridgeMove.window = nil
+BridgeMove.window = nil
+BridgeMove.noClimb = false
                 return false
             end
             if window ~= nil and opened then BridgeMove.noteWindowOpened(body, window) end

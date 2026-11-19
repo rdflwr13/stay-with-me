@@ -260,10 +260,12 @@ function BridgeMenu.statusParts(short)
     if present() then
         local key = "StatusHere"
         if mode == "rest" then key = "StatusResting"
-        elseif mode == "wait" then key = "StatusWaiting" end
+        elseif mode == "wait" then key = "StatusWaiting"
+        elseif mode == "home" then key = "StatusHome" end
         return withTag(line(key))
     end
     if BridgeData.wants(st) and mode ~= "follow" and st ~= nil and st.waitX ~= nil then
+        if mode == "home" then return line("StatusHome"), "" end
         return line("StatusWaiting"), ""
     end
     return line("StatusAway"), ""
@@ -294,6 +296,15 @@ end
 function BridgeMenu.onRest()
     Bridge.setMode("rest")
     Bridge.speak("Rest")
+end
+
+function BridgeMenu.onHome()
+    local res = Bridge.setMode("home")
+    if res == "no home" then
+        Bridge.speakText(tr("HomeNone"))
+    else
+        Bridge.speak("HomeSet")
+    end
 end
 
 function BridgeMenu.onHeal()
@@ -443,6 +454,11 @@ local function buildWait(context, playerNum, env)
         context:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)
     else
         context:addOption(tr("ComeWithMe"), nil, BridgeMenu.onFollow)
+    end
+    local hasHome = false
+    pcall(function() hasHome = BridgeHome ~= nil and BridgeHome.get() ~= nil end)
+    if hasHome and env.mode ~= "home" then
+        context:addOption(tr("HomeMode"), nil, BridgeMenu.onHome)
     end
 end
 

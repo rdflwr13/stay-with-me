@@ -517,6 +517,11 @@ local function selfEntries(playerNum)
     local out = {}
     local st = Bridge.store
     if st == nil then return out end
+    local hasHome = false
+    pcall(function() hasHome = BridgeHome ~= nil and BridgeHome.get() ~= nil end)
+    if hasHome and BridgeData.modeOf(st) ~= "home" then
+        out[#out + 1] = make(tr("HomeMode"), ICONS.wait, BridgeMenu.onHome, tr("HomeModeTip"))
+    end
     if BridgeData.modeOf(st) ~= "rest" then
         out[#out + 1] = make(tr("Rest"), ICONS.rest, BridgeMenu.onRest)
     end

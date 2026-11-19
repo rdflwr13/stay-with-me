@@ -47,6 +47,7 @@ BridgeHome.pendingAllFloors = false
 
 local floorCache = {}
 local includedCache = {}
+local anchorCache = {}
 
 
 local function zoneAvailable()
@@ -83,6 +84,7 @@ end
 function BridgeHome.invalidate()
     floorCache = {}
     includedCache = {}
+    anchorCache = {}
 end
 
 
@@ -315,6 +317,92 @@ function BridgeHome.center()
     local h = BridgeHome.get()
     if h == nil then return nil end
     return h.x + h.w / 2, h.y + h.h / 2, h.z
+end
+
+
+function BridgeHome.anchor(preferZ)
+    local raw = BridgeHome.get()
+    if type(raw) ~= "table" then return nil end
+    local h = BridgeData.cleanHome(raw)
+    if h == nil then return nil end
+    local cell = nil
+    pcall(function() cell = getCell() end)
+    if cell == nil then return nil end
+
+    local wantZ = nil
+    if preferZ ~= nil then wantZ = math.floor(tonumber(preferZ) or h.z) end
+    if wantZ == nil or not BridgeHome.hasFloor(h, wantZ) then wantZ = h.z end
+    if wantZ == nil then return nil end
+
+    local key = BridgeHome.homeKey(h) .. ":" .. tostring(wantZ)
+    local cached = anchorCache[key]
+    if cached ~= nil then
+        local sq = nil
+        pcall(function() sq = cell:getGridSquare(cached.x, cached.y, cached.z) end)
+        if sq ~= nil then
+            local ok = sq:canStand() == true
+            if ok and not BridgeHome.contains(cached.x, cached.y, cached.z, 0) then ok = false end
+            if ok and Bridge ~= nil and Bridge.standSquareOk ~= nil then
+                pcall(function() ok = Bridge.standSquareOk(sq) == true end)
+            end
+            if ok then return cached.x, cached.y, cached.z end
+        end
+        anchorCache[key] = nil
+    end
+
+    local function usable(x, y, z)
+        local sq = nil
+        pcall(function() sq = cell:getGridSquare(x, y, z) end)
+        if sq == nil then return nil end
+        local ok = false
+        pcall(function() ok = sq:canStand() == true and sq:isFree(false) == true end)
+        if not ok then return nil end
+        if not BridgeHome.contains(x, y, z, 0) then return nil end
+        if Bridge ~= nil and Bridge.standSquareOk ~= nil then
+            local walk = false
+            pcall(function() walk = Bridge.standSquareOk(sq) == true end)
+            if not walk then return nil end
+        end
+        return { x = x, y = y, z = z }
+    end
+
+    local cx, cy = h.x + h.w / 2 - 0.5, h.y + h.h / 2 - 0.5
+    local maxR = math.floor(math.max(h.w, h.h) / 2) + 2
+    for r = 0, maxR do
+        local best, bestD = nil, nil
+        for dx = -r, r do
+            for dy = -r, r do
+                if math.abs(dx) == r or math.abs(dy) == r then
+                    local got = usable(math.floor(cx + dx), math.floor(cy + dy), wantZ)
+                    if got ~= nil then
+                        local d = dx * dx + dy * dy
+                        if bestD == nil or d < bestD then best, bestD = got, d end
+                    end
+                end
+            end
+        end
+        if best ~= nil then
+            anchorCache[key] = best
+            return best.x, best.y, best.z
+        end
+    end
+
+    local floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn())
+    for i = 1, #floors do
+        local z = floors[i]
+        if z ~= wantZ then
+            for y = h.y, h.y + h.h - 1 do
+                for x = h.x, h.x + h.w - 1 do
+                    local got = usable(x, y, z)
+                    if got ~= nil then
+                        anchorCache[key] = got
+                        return got.x, got.y, got.z
+                    end
+                end
+            end
+        end
+    end
+    return nil
 end
 
 

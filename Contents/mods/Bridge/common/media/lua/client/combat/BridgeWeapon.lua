@@ -199,6 +199,27 @@ end
 
 
 
+function BridgeWeapon.rebindAttached(body)
+    if body == nil then return nil end
+    local at = nil
+    pcall(function() at = body:getAttachedItems() end)
+    if at == nil then return nil end
+    for i = 0, at:size() - 1 do
+        local it = at:getItemByIndex(i)
+        if it ~= nil then
+            local slot, set, defType = BridgeWeapon.slotFor(body, it)
+            if slot ~= nil then
+                BridgeWeapon.attached = { slot = slot, item = it, set = set, defType = defType }
+                BridgeWeapon.verified = nil
+                return it
+            end
+        end
+    end
+    BridgeWeapon.attached = nil
+    return nil
+end
+
+
 function BridgeWeapon.slotIn(worn, item)
     local slot, set, defType = nil, nil, nil
     pcall(function()
@@ -1268,6 +1289,7 @@ end
 
 function BridgeWeapon.update(body)
 
+    if BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower" then return end
     if BridgeGunfight ~= nil and BridgeGunfight.hasGun ~= nil and BridgeGunfight.hasGun() then return end
     if BridgeGunfight ~= nil and BridgeGunfight.magCareStage ~= nil then return end
     local fightNow = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state == "swing")

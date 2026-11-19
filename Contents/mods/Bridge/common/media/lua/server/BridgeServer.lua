@@ -1616,6 +1616,19 @@ BridgeServer.Commands.state = function(player, args)
             end
         end
     end
+    if args.chores ~= nil then
+        local chores = BridgeData.cleanChores(args.chores)
+        if chores ~= nil then
+            local old = BridgeData.cleanChores(rec.chores) or {}
+            local same = true
+            for k, v in pairs(old) do if chores[k] ~= v then same = false break end end
+            for k, v in pairs(chores) do if old[k] ~= v then same = false break end end
+            if not same then
+                rec.chores = chores
+                changed = true
+            end
+        end
+    end
     if args.storeCats ~= nil then
         local cats = BridgeData.cleanLootCats(args.storeCats)
         if cats ~= nil then

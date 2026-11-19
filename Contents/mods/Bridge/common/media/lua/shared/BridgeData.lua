@@ -19,7 +19,7 @@ BridgeData.LOCAL = "local"
 BridgeData.DEFAULT_NAME = "Rin"
 BridgeData.DEFAULT_MALE_NAME = "Ren"
 BridgeData.NAME_MAX = 20
-BridgeData.MODES = { follow = true, wait = true, rest = true }
+BridgeData.MODES = { follow = true, wait = true, rest = true, home = true }
 BridgeData.MARKER_RANGES = { 250, 500, 750, 1000 }
 
 
@@ -1040,6 +1040,54 @@ function BridgeData.workOrder(rec)
         if not seen[id] then seen[id] = true out[#out + 1] = id end
     end
     return out
+end
+
+
+BridgeData.CHORE_IDS = {
+    "tend", "harvest", "animals", "troughs", "clean", "yard", "chop",
+    "wash", "shower", "exercise", "sit", "roam",
+}
+BridgeData.CHORE_SET = {}
+for _, id in ipairs(BridgeData.CHORE_IDS) do BridgeData.CHORE_SET[id] = true end
+
+BridgeData.CHORE_DEFAULT_ON = {
+    tend = true, harvest = true, animals = true, troughs = true,
+    clean = true, wash = true, shower = true, exercise = true,
+    sit = true, roam = true,
+}
+
+BridgeData.CHORE_LABELS = {
+    tend = "ChoreTend", harvest = "ChoreHarvest", animals = "ChoreAnimals",
+    troughs = "ChoreTroughs", clean = "ChoreClean", yard = "ChoreYard",
+    chop = "ChoreChop", wash = "ChoreWash", shower = "ChoreShower",
+    exercise = "ChoreExercise", sit = "ChoreSit", roam = "ChoreRoam",
+}
+
+
+function BridgeData.cleanChores(value)
+    if type(value) ~= "table" then return nil end
+    local out = {}
+    for k, v in pairs(value) do
+        if BridgeData.CHORE_SET[k] and (v == true or v == false) then out[k] = v end
+    end
+    return out
+end
+
+
+function BridgeData.choresOf(rec)
+    if type(rec) ~= "table" then return {} end
+    if type(rec.chores) ~= "table" then rec.chores = {} end
+    return rec.chores
+end
+
+
+function BridgeData.choreOn(rec, id)
+    if id == nil or not BridgeData.CHORE_SET[id] then return false end
+    if type(rec) == "table" and type(rec.chores) == "table" then
+        local v = rec.chores[id]
+        if v == true or v == false then return v end
+    end
+    return BridgeData.CHORE_DEFAULT_ON[id] == true
 end
 
 

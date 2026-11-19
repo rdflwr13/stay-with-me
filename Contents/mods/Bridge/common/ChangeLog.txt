@@ -359,3 +359,43 @@ Compatibility:
 - Wound Expansion: Added support for Rin to detect and treat wounds like standard injuries without using the more complex systems.
 
 [ ------ ]
+
+[ v0.6.8 ]
+
+Changelog:
+
+New Jobs:
+- Gardening: Dig Furrows, Tend Crops (watering, fertilizing, and insect care), Plant Seeds, and Harvest Crops.
+- Animal Care: Tend Animals (pet animals, shear sheep, or milk cows), Hutch Care (cleans and collects eggs), and Fill Troughs.
+- Note: All jobs require appropriate tools and items for their tasks (shovel, shearing tool, bucket, cleaning tool, seeds, fertilizer, etc.) Additionally, you can specify how many fertilized eggs Rin keeps from hutches when collecting eggs.
+
+Changes:
+- You can now resize the F8 Main Menu in the Settings tab. Choose between Auto (adjusts based on resolution) and 100-200% scaling.
+- Rin can now unload loose fed weapons (shotguns, revolvers, etc.) when ordered.
+- Rin now scores gun targets blocked by the player lower and will retarget others.
+- Rin will now switch to melee if the player blocks a gun target for too long, provided melee switching is enabled and there are no other targets to select.
+- You can now reorganize the Right Click > Work menu inside the Menu tab.
+- Rin now holds rifles and shotguns with the rifle animation set (walk, run, stride, idle, aim, reload, and sneak aim) instead of the two-handed melee carry.
+- Radial Menu > Work Menu now has sub-menus for various jobs.
+
+Bug Fixes:
+- Fixed pre-ingame window settings not saving properly (how many days to spawn and the various checkbox options).
+- Rin can now occupy the primary seat in a 2-seat car if the player moves around.
+- Fixed Rin not using the same voice selected in preview.
+- Multiplayer now has the new Singleplayer speech line system.
+- Fixed bandages disappearing when removed.
+- Fixed Rin rebandaging you when you are no longer injured.
+- Fixed EFZ weapons becoming invisible.
+- Fixed clothing not rendering properly with the car seat puppet.
+- Fixed numerous Lua errors.
+
+Optimizations:
+- Capped fast forward guard, sitting, mag reloading, and meeting marker to 30 Hz.
+
+Compatibility:
+- Living World: Rin will no longer target friendly NPCs.
+- Size Matters: Added full support to the Appearance / Pre-Ingame window. Body values are stored in presets.
+- STFO 3T: Traps, Turrets, and Towers [beta]: Added compatibility to prevent turrets/traps from targeting Rin.
+- Xanny Arms: Added support for magazines; all other gun features work by default.
+
+[ ------ ]

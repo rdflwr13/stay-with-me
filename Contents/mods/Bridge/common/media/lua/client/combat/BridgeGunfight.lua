@@ -5930,6 +5930,16 @@ BridgeGunfight.lastShotTarget = nil
     end
 
     if t == nil then
+        if Bridge.mode == "home" and BridgeGunfight.reloadStage == nil
+                and BridgeGunfight.magCareStage == nil and BridgeGunfight.ammoItem == nil
+                and BridgeGunfight.fireUntil == nil then
+            if BridgeGunfight.drawn then BridgeGunfight.stow(body) end
+            BridgeGunfight.meleeFallback = false
+            BridgeGunfight.stance = "gun"
+            BridgeGunfight.state = "idle"
+            BridgeGunfight.info = "home: no target"
+            return false
+        end
         if BridgeGunfight.standoffMoving then return true end
         U.stopReposition(body)
         local gunUse = BridgeData.gunUseOf(Bridge.store)

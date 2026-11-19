@@ -92,16 +92,17 @@ function BridgeShower.cooldownLeft(rec)
 end
 
 
-function BridgeShower.setCooldown(rec)
+function BridgeShower.setCooldown(rec, hours)
     rec = rec or (Bridge ~= nil and Bridge.store) or nil
     local now = worldHours()
     if now == nil then return end
-    local untilH = now + BridgeShower.COOLDOWN_HOURS
+    local h = tonumber(hours) or BridgeShower.COOLDOWN_HOURS
+    local untilH = now + h
     if rec ~= nil then rec.showerUntil = untilH end
     if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { showerUntil = untilH }) end)
     end
-    log(string.format("set cooldown until %.2f (%.0fh)", untilH, BridgeShower.COOLDOWN_HOURS))
+    log(string.format("set cooldown until %.2f (%.0fh)", untilH, h))
 end
 
 
@@ -221,9 +222,33 @@ function BridgeShower.strip(b)
         end
     end
 
+    local attachedCount = 0
+    pcall(function()
+        local at = b:getAttachedItems()
+        for i = at:size() - 1, 0, -1 do
+            local it = at:getItemByIndex(i)
+            if it ~= nil then
+                attachedCount = attachedCount + 1
+                b:removeAttachedItem(it)
+                local here = false
+                pcall(function() here = inv:contains(it) end)
+                if not here then pcall(function() inv:AddItem(it) end) end
+            end
+        end
+    end)
+    if BridgeWeapon ~= nil and BridgeWeapon.body == b then
+        BridgeWeapon.attached = nil
+    end
+
     pcall(function() if BridgeInventory.redress ~= nil then BridgeInventory.redress(b, true) end end)
+    pcall(function()
+        if BridgeWeapon ~= nil and type(BridgeWeapon.rebindAttached) == "function" then
+            BridgeWeapon.rebindAttached(b)
+        end
+    end)
     log("stripped for shower (" .. tostring(wornCount) .. " worn, "
-        .. tostring(main ~= nil and 1 or 0) .. tostring(sec ~= nil and 1 or 0) .. " hands)")
+        .. tostring(main ~= nil and 1 or 0) .. tostring(sec ~= nil and 1 or 0) .. " hands, "
+        .. tostring(attachedCount) .. " attached)")
     return true
 end
 
@@ -245,6 +270,11 @@ function BridgeShower.restorePreShower(b)
     local ok = true
     pcall(function() BridgeInventory.restore(b, list) end)
     pcall(function() if BridgeInventory.redress ~= nil then BridgeInventory.redress(b, true) end end)
+    pcall(function()
+        if BridgeWeapon ~= nil and type(BridgeWeapon.rebindAttached) == "function" then
+            BridgeWeapon.rebindAttached(b)
+        end
+    end)
     BridgeShower.preShower = nil
     pcall(function() if Bridge ~= nil and Bridge.store ~= nil then Bridge.store.showerOutfit = nil end end)
     log("outfit restored ok=" .. tostring(ok))
@@ -264,6 +294,11 @@ function BridgeShower.restorePersisted(b)
     if list == nil then return false end
     pcall(function() BridgeInventory.restore(b, list) end)
     pcall(function() if BridgeInventory.redress ~= nil then BridgeInventory.redress(b, true) end end)
+    pcall(function()
+        if BridgeWeapon ~= nil and type(BridgeWeapon.rebindAttached) == "function" then
+            BridgeWeapon.rebindAttached(b)
+        end
+    end)
     log("outfit restored from before the interrupted shower")
     return true
 end
@@ -316,10 +351,29 @@ function BridgeShower.spawnShowerWater(sq, facing, hot)
     end)
     pcall(function() sq:AddSpecialObject(obj) end)
     pcall(function() obj:transmitModData() end)
-    pcall(function() triggerEvent("OnObjectAdded", obj) end)
+    local hasShower = false
+    pcall(function()
+        local iso = require("TABAS_Iso")
+        hasShower = iso.getShowerObjectOnSquare(sq, true) ~= nil
+    end)
+    if hasShower then
+        pcall(function() triggerEvent("OnObjectAdded", obj) end)
+    end
     BridgeShower.waterObj = obj
     BridgeShower.waterSq = sq
-    log(string.format("water on at %d,%d hot=%s facing=%s", sq:getX(), sq:getY(), tostring(hot), tostring(facing)))
+    local registered = false
+    local spriteName = "?"
+    pcall(function()
+        local key = tostring(sq:getX()) .. ":" .. tostring(sq:getY()) .. ":" .. tostring(sq:getZ())
+        if TABAS_ShowerFx ~= nil and TABAS_ShowerFx.registered ~= nil then
+            registered = TABAS_ShowerFx.registered[key] ~= nil
+        end
+        local spr = obj:getSprite()
+        if spr ~= nil then spriteName = tostring(spr:getName()) end
+    end)
+    log(string.format("water on at %d,%d hot=%s facing=%s shower=%s fx=%s sprite=%s",
+        sq:getX(), sq:getY(), tostring(hot), tostring(facing), tostring(hasShower),
+        tostring(registered), spriteName))
     return obj
 end
 
@@ -346,29 +400,73 @@ function BridgeShower.showing()
 end
 
 
-function BridgeShower.findNearest()
+function BridgeShower.findNearest(centre, radius, rect)
     local red = owner()
-    if red == nil then return nil end
-    local best, bestD = nil, nil
+    if red == nil and centre == nil and rect == nil then return nil end
+    local best, bestD, bestSq = nil, nil, nil
     pcall(function()
         local iso = require("TABAS_Iso")
         local cell = getCell()
-        local rx, ry, rz = math.floor(red:getX()), math.floor(red:getY()), math.floor(red:getZ())
-        local r = 12
-        for dx = -r, r do
-            for dy = -r, r do
-                local sq = cell:getGridSquare(rx + dx, ry + dy, rz)
-                if sq ~= nil then
-                    local obj = iso.getShowerObjectOnSquare(sq, false)
-                    if obj ~= nil then
-                        local d = dx * dx + dy * dy
-                        if bestD == nil or d < bestD then best, bestD = obj, d end
+        local r = radius or 12
+        local cz = nil
+        if rect ~= nil and rect.z ~= nil then
+            cz = math.floor(rect.z)
+        elseif centre ~= nil and centre.z ~= nil then
+            cz = math.floor(centre.z)
+        elseif red ~= nil then
+            cz = math.floor(red:getZ())
+        end
+        if cz == nil then return end
+        local cx, cy = nil, nil
+        if centre ~= nil then
+            cx, cy = math.floor(centre.x or 0), math.floor(centre.y or 0)
+        elseif red ~= nil then
+            cx, cy = math.floor(red:getX()), math.floor(red:getY())
+        end
+        local function check(x, y)
+            local sq = cell:getGridSquare(x, y, cz)
+            if sq == nil then return end
+            local obj = iso.getShowerObjectOnSquare(sq, false)
+            if obj == nil and BridgeBath ~= nil and type(BridgeBath.sinkFor) == "function" then
+                pcall(function()
+                    local list = sq:getObjects()
+                    local maybeBath = false
+                    for i = 0, list:size() - 1 do
+                        local nm = nil
+                        pcall(function() nm = list:get(i):getName() end)
+                        if nm == nil then
+                            pcall(function() nm = list:get(i):getSprite() and list:get(i):getSprite():getName() end)
+                        end
+                        local low = string.lower(tostring(nm or ""))
+                        if string.find(low, "bath", 1, true) ~= nil or string.find(low, "tub", 1, true) ~= nil then
+                            maybeBath = true
+                            break
+                        end
                     end
-                end
+                    if maybeBath then
+                        local objs = {}
+                        for i = 0, list:size() - 1 do objs[#objs + 1] = list:get(i) end
+                        local sink, source = BridgeBath.sinkFor(objs)
+                        if source ~= nil then obj = source end
+                    end
+                end)
+            end
+            if obj == nil then return end
+            local d = 0
+            if cx ~= nil and cy ~= nil then d = (x - cx) ^ 2 + (y - cy) ^ 2 end
+            if bestD == nil or d < bestD then best, bestD, bestSq = obj, d, sq end
+        end
+        if rect ~= nil then
+            for x = rect.x1, rect.x2 do
+                for y = rect.y1, rect.y2 do check(x, y) end
+            end
+        elseif cx ~= nil and cy ~= nil then
+            for dx = -r, r do
+                for dy = -r, r do check(cx + dx, cy + dy) end
             end
         end
     end)
-    return best
+    return best, bestSq
 end
 
 
@@ -481,7 +579,7 @@ function BridgeShower.guardTabas()
 end
 
 
-function BridgeShower.start(showerObj, sq)
+function BridgeShower.start(showerObj, sq, force)
     if BridgeTask == nil or BridgeTask.start == nil then return "no task" end
     if BridgeTask.active then
         if BridgeTask.kind == "shower" then return "already" end
@@ -509,12 +607,28 @@ function BridgeShower.start(showerObj, sq)
     local sink = nil
     pcall(function() sink = BridgeShower.waterSink(showerObj) end)
     if sink ~= nil and BridgeShower.waterAvailable(sink) < 1 then return "nowater" end
-    local ok, why = BridgeShower.ready(Bridge.store)
-    if not ok then return why end
+    local waterSq = nil
+    if sink ~= nil then
+        pcall(function()
+            local s = sink:getSquare()
+            if s ~= nil then waterSq = { x = s:getX(), y = s:getY(), z = s:getZ() } end
+        end)
+    end
+    if force ~= true then
+        local ok, why = BridgeShower.ready(Bridge.store)
+        if not ok then return why end
+    end
     local def = BridgeTask.kinds ~= nil and BridgeTask.kinds.shower or nil
     if def == nil or (def.available ~= nil and not def.available(Bridge.body)) then return "unavailable" end
 
     local target = sq
+    if target ~= nil and (type(target) ~= "table" or tonumber(target.x) == nil) then
+        local sx, sy, sz = nil, nil, nil
+        pcall(function()
+            sx, sy, sz = target:getX(), target:getY(), target:getZ()
+        end)
+        if sx ~= nil then target = { x = sx, y = sy, z = sz } end
+    end
     if target == nil then
         pcall(function()
             local s = showerObj:getSquare()
@@ -526,6 +640,7 @@ function BridgeShower.start(showerObj, sq)
     local res = BridgeTask.start("shower", { target }, nil, {
         shower = showerObj,
         sq = { x = target.x, y = target.y, z = target.z },
+        waterSq = waterSq,
         facing = BridgeShower.facingOf(showerObj),
     })
     log("start " .. tostring(res))

@@ -1191,7 +1191,9 @@ function BridgeWorkSelect.sortTargets(targets)
         local cell = getCell()
         for _, t in ipairs(targets) do
             local k = nil
-            pcall(function() k = BridgeDoors.enclosureKey(cell:getGridSquare(t.x, t.y, t.z)) end)
+            if type(t) == "table" and tonumber(t.x) ~= nil and tonumber(t.y) ~= nil and tonumber(t.z) ~= nil then
+                pcall(function() k = BridgeDoors.enclosureKey(cell:getGridSquare(t.x, t.y, t.z)) end)
+            end
             keys[t] = k
         end
     end
@@ -1201,7 +1203,11 @@ function BridgeWorkSelect.sortTargets(targets)
             local sc = keys[c] == bodyKey
             if sa ~= sc then return sa end
         end
-        return (a.x - ox) ^ 2 + (a.y - oy) ^ 2 < (c.x - ox) ^ 2 + (c.y - oy) ^ 2
+        local ax, ay = tonumber(a.x), tonumber(a.y)
+        local cx, cy = tonumber(c.x), tonumber(c.y)
+        if ax == nil or ay == nil then return cx ~= nil and cy ~= nil end
+        if cx == nil or cy == nil then return false end
+        return (ax - ox) ^ 2 + (ay - oy) ^ 2 < (cx - ox) ^ 2 + (cy - oy) ^ 2
     end)
 end
 

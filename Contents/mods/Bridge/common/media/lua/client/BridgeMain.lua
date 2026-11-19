@@ -2545,6 +2545,16 @@ end
 function Bridge.setMode(mode)
     if mode == "waitcar" then mode = "wait" end
     if not BridgeData.MODES[mode] then return "unknown mode " .. tostring(mode) end
+    local homeAnchor = nil
+    if mode == "home" then
+        if BridgeHome == nil or type(BridgeHome.anchor) ~= "function" then return "no home" end
+        local az = nil
+        local hb = Bridge.alive() and Bridge.body or nil
+        if hb ~= nil then az = math.floor(hb:getZ()) end
+        local ax, ay, awz = BridgeHome.anchor(az)
+        if ax == nil then return "no home" end
+        homeAnchor = { x = ax, y = ay, z = awz }
+    end
     if BridgeHorse ~= nil and type(BridgeHorse.release) == "function" then pcall(BridgeHorse.release, "mode", true) end
     if BridgeTask ~= nil and BridgeTask.active then BridgeTask.cancel("mode") end
 
@@ -2566,6 +2576,9 @@ function Bridge.setMode(mode)
     if mode == "follow" then
 
         if not seated then Bridge.pose = nil end
+    elseif mode == "home" and homeAnchor ~= nil then
+        wx, wy, wz = homeAnchor.x, homeAnchor.y, homeAnchor.z
+        Bridge.pose = nil
     else
         local b = Bridge.alive() and Bridge.body or BridgeData.owner()
         if b ~= nil then wx, wy, wz = b:getX(), b:getY(), b:getZ() end
@@ -2585,6 +2598,13 @@ function Bridge.setMode(mode)
         st.mode = mode
         st.waitX, st.waitY, st.waitZ = wx, wy, wz
         st.left = nil
+    end
+    if BridgeChores ~= nil then
+        if mode == "home" and type(BridgeChores.arm) == "function" then
+            pcall(BridgeChores.arm)
+        elseif type(BridgeChores.disarm) == "function" then
+            pcall(BridgeChores.disarm)
+        end
     end
     if BridgeCar ~= nil then BridgeCar.leftLocal = nil end
     if Bridge.mp then
@@ -2642,6 +2662,9 @@ function Bridge.applyStoredMode()
     Bridge.follow = (mode == "follow")
     BridgeFight.guardOnly = (mode ~= "follow")
     Bridge.pose = (mode == "rest") and { anim = "Sit" } or nil
+    if mode == "home" and BridgeChores ~= nil and type(BridgeChores.arm) == "function" then
+        pcall(BridgeChores.arm)
+    end
 end
 
 
@@ -3715,6 +3738,23 @@ function Bridge.setWorkShown(id, on)
     end
     log("workShown " .. id .. "=" .. tostring(on == true))
     return id .. "=" .. tostring(on == true)
+end
+
+
+function Bridge.setChore(id, on)
+    if type(id) ~= "string" or not BridgeData.CHORE_SET[id] then return "bad chore: " .. tostring(id) end
+    local map = BridgeData.choresOf(Bridge.store)
+    map[id] = on == true
+    local clean = BridgeData.cleanChores(map) or {}
+    if Bridge.store ~= nil then Bridge.store.chores = clean end
+    if BridgeChores ~= nil and type(BridgeChores.clearStatus) == "function" then
+        pcall(BridgeChores.clearStatus)
+    end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { chores = clean }) end)
+    end
+    log("chore " .. id .. "=" .. tostring(on == true))
+    return tostring(id) .. "=" .. tostring(on == true)
 end
 
 
@@ -5779,6 +5819,14 @@ local function updateZombieBody(body)
         return
     end
 
+    if not ownerDead and BridgeChores ~= nil and type(BridgeChores.tick) == "function" then
+        local okCh, chErr = pcall(BridgeChores.tick, body)
+        if not okCh then
+            BridgeChores.info = "error " .. tostring(chErr)
+            Bridge.logError("chores", chErr)
+        end
+    end
+
     if not ownerDead and BridgeTask ~= nil and BridgeTask.active then
         local okTask, taskBusy = pcall(function() return BridgeTask.update(body) end)
         if not okTask then BridgeTask.info = "error: " .. tostring(taskBusy) Bridge.logError("task", taskBusy) end
@@ -5830,7 +5878,7 @@ local function updateZombieBody(body)
     end
 
 
-    if Bridge.mode ~= "follow" and Bridge.target == nil and Bridge.zombieTicks % 60 == 0
+    if Bridge.mode ~= "follow" and Bridge.mode ~= "home" and Bridge.target == nil and Bridge.zombieTicks % 60 == 0
         and Bridge.time >= (Bridge.waitRetryAt or 0)
         and not (BridgeAim ~= nil and BridgeAim.zone.on) then
         local st = Bridge.store
@@ -5850,7 +5898,7 @@ local function updateZombieBody(body)
     end
 
 
-    if Bridge.mode ~= "follow" and Bridge.target == nil
+    if Bridge.mode ~= "follow" and Bridge.mode ~= "home" and Bridge.target == nil
             and not (Bridge.pose ~= nil and Bridge.pose.staySit == true) then
         pcall(function() BridgeMove.seatAside(body) end)
     end
@@ -6769,7 +6817,7 @@ CFG.SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follo
     friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, livingworldselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
     exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, sound = true, meet = true,
     perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true, farmdebug = true,
-    look = true, take = true, sizeselftest = true }
+    look = true, take = true, sizeselftest = true, chores = true, choresselftest = true }
 
 
 
@@ -6975,6 +7023,7 @@ function Bridge.run(line)
     if cmd == "stop" then
         Bridge.follow = false
         Bridge.target = nil
+        if BridgeTask ~= nil and BridgeTask.active then BridgeTask.cancel("command") end
         if Bridge.alive() then
             BridgeMove.reset(Bridge.body)
             BridgeFight.reset(Bridge.body)
@@ -7539,6 +7588,16 @@ function Bridge.run(line)
     if cmd == "homeselftest" then
         if BridgeHome == nil then return "home not loaded" end
         return BridgeHome.selftest()
+    end
+
+    if cmd == "choresselftest" then
+        if BridgeChores == nil then return "chores not loaded" end
+        return BridgeChores.selftest()
+    end
+
+    if cmd == "chores" then
+        if BridgeChores == nil then return "chores not loaded" end
+        return BridgeChores.command(parts)
     end
 
     if cmd == "depositselftest" then
@@ -8335,6 +8394,9 @@ function Bridge.diagLines()
             pcall(function() add("gun", tostring(BridgeGunfight.assignedId ~= nil) .. " " .. tostring(BridgeGunfight.info)) end)
             add("task", tostring(BridgeTask ~= nil and BridgeTask.active) .. " " .. tostring(BridgeTask ~= nil and BridgeTask.kind)
                 .. " " .. tostring(BridgeTask ~= nil and BridgeTask.phase) .. " " .. tostring(BridgeTask ~= nil and BridgeTask.info or "none"))
+            if BridgeChores ~= nil and type(BridgeChores.statusText) == "function" then
+                pcall(function() add("chores", BridgeChores.statusText()) end)
+            end
             add("fight_target", BridgeFight.targetInfo)
             add("fight_fatigue", string.format("%.2f miss=%.0f crowd=%d", BridgeFight.fatigue or 0, BridgeFight.lastMiss or 0, BridgeFight.crowd or 0))
             add("fight_combat", tostring(BridgeData.combatOf(Bridge.store)) .. " passive=" .. tostring(BridgeFight.mode().passive == true)
