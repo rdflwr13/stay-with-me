@@ -5548,10 +5548,20 @@ local function updateZombieBody(body)
             if BridgeTask ~= nil then
                 if BridgeTask.isSeated ~= nil and BridgeTask.isSeated(body) then posed = true end
                 if BridgeTask.isLying ~= nil and BridgeTask.isLying(body) then posed = true end
+                if BridgeTask.active == true and (BridgeTask.kind == "sit" or BridgeTask.kind == "lay") then
+                    local ph = BridgeTask.phase
+                    if ph == "down" or ph == "up" or ph == "sit" or ph == "lie" then posed = true end
+                end
             end
             if posed then
                 local where = "while seated"
                 if BridgeTask.isLying ~= nil and BridgeTask.isLying(body) then where = "while lying" end
+                if Bridge.keepHealth ~= nil then pcall(Bridge.keepHealth, body) end
+                if BridgeTask.active == true then
+                    BridgeTask.failCount = (BridgeTask.failCount or 0) + 1
+                    pcall(function() BridgeTask.cancel("pose-fell") end)
+                end
+                if BridgeMove ~= nil and type(BridgeMove.sitFlagOff) == "function" then pcall(BridgeMove.sitFlagOff, body) end
                 if Bridge.notePoseFail("fell " .. where) then return end
             end
         end
@@ -8749,14 +8759,20 @@ function Bridge.ensurePresent()
 
 
 
-    if BridgeData.modeOf(st) ~= "follow" and st.waitX ~= nil then
-        local dx, dy = red:getX() - st.waitX, red:getY() - st.waitY
-        if math.sqrt(dx * dx + dy * dy) > CFG.HOME.NEAR or math.abs(red:getZ() - (st.waitZ or 0)) > 3 then return end
-        Bridge.homeParked = false
-        pcall(Bridge.dropLostBody)
-        local res = Bridge.spawnZombie(st.waitX, st.waitY, st.waitZ)
-        log("companion back at waiting place: " .. tostring(res))
-        return
+    if BridgeData.modeOf(st) ~= "follow" then
+        local wx, wy, wz = st.waitX, st.waitY, st.waitZ
+        if st.lastBodyX ~= nil and st.lastBodyY ~= nil then
+            wx, wy, wz = st.lastBodyX, st.lastBodyY, st.lastBodyZ
+        end
+        if wx ~= nil then
+            local dx, dy = red:getX() - wx, red:getY() - wy
+            if math.sqrt(dx * dx + dy * dy) > CFG.HOME.NEAR or math.abs(red:getZ() - (wz or 0)) > 3 then return end
+            Bridge.homeParked = false
+            pcall(Bridge.dropLostBody)
+            local res = Bridge.spawnZombie(wx, wy, wz)
+            log("companion back at last place: " .. tostring(res))
+            return
+        end
     end
 
     if red:getVehicle() ~= nil then

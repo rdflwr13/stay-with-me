@@ -1246,6 +1246,7 @@ end
 function BridgeDeposit.start(destTargets, opts)
     if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.DEPOSIT_ENABLED ~= 1 then return "disabled" end
     local cfg = opts or {}
+    local quiet = cfg.quiet == true
     local body = selfBody()
     if body == nil then return "no body" end
     local items = BridgeDeposit.storableItems(body)
@@ -1260,7 +1261,7 @@ function BridgeDeposit.start(destTargets, opts)
             if #why > 12 then shown[#shown + 1] = string.format("+%d more", #why - 12) end
             log("unavailable: nothing storable; " .. table.concat(shown, ", "))
         end
-        if Bridge ~= nil then Bridge.speak("JobNoStore") end
+        if Bridge ~= nil and not quiet then Bridge.speak("JobNoStore") end
         return "unavailable"
     end
     local dests = nil
@@ -1275,7 +1276,7 @@ function BridgeDeposit.start(destTargets, opts)
     end
     if waiting and #dests == 0 then
         log("unavailable: no destination (waiting)")
-        if Bridge ~= nil then
+        if Bridge ~= nil and not quiet then
             if cfg.home == true then Bridge.speak("JobNoMarked") else Bridge.speak("JobNoStorage") end
         end
         return "unavailable"
@@ -1294,7 +1295,7 @@ function BridgeDeposit.start(destTargets, opts)
     end
     if not fit then
         log(string.format("unavailable: no destination fits %d item(s) in %d container(s)", #items, #dests))
-        if Bridge ~= nil then
+        if Bridge ~= nil and not quiet then
             if cfg.home == true and #dests == 0 then Bridge.speak("JobNoMarked") else Bridge.speak("JobNoStorage") end
         end
         return "unavailable"
@@ -1309,10 +1310,11 @@ function BridgeDeposit.start(destTargets, opts)
     return res
 end
 
-function BridgeDeposit.startHome()
+function BridgeDeposit.startHome(opts)
     local targets = BridgeDeposit.depositTargets()
+    local cfg = opts or {}
     log(string.format("startHome stored=%d resolved=%d", BridgeDeposit.markedCount(), #targets))
-    return BridgeDeposit.start(targets, { remote = true, home = true })
+    return BridgeDeposit.start(targets, { remote = true, home = true, quiet = cfg.quiet == true })
 end
 
 function BridgeDeposit.homeHere()
@@ -1606,6 +1608,7 @@ local function updateTransfers(body, job)
                     if moved and it ~= nil then movedItems[#movedItems + 1] = it end
                 end
                 job.count = (job.count or 0) + #movedItems
+                BridgeTask.doneCount = (BridgeTask.doneCount or 0) + #movedItems
                 if #movedItems > 0 then
                     sayFor(job, job.pending)
                     if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end

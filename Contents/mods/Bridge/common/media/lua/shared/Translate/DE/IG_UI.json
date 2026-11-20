@@ -1,4 +1,6 @@
 {
+    "IGUI_NotAlone_ChoreDeposit": "Put away loot",
+    "IGUI_NotAlone_ChoreNoMarked": "No marked storage",
     "IGUI_NotAlone_WindowMain": "Hauptmenü",
     "IGUI_NotAlone_OptUIScale": "UI-Größe",
     "IGUI_NotAlone_OptUIScaleAuto": "Auto",

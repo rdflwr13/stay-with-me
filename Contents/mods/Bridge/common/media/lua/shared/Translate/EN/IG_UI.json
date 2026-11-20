@@ -1901,6 +1901,8 @@
     "IGUI_NotAlone_ChoreExercise": "Exercise",
     "IGUI_NotAlone_ChoreSit": "Sit and read",
     "IGUI_NotAlone_ChoreRoam": "Roam the home",
+    "IGUI_NotAlone_ChoreDeposit": "Put away loot",
+    "IGUI_NotAlone_ChoreNoMarked": "No marked storage",
     "IGUI_NotAlone_ChoreReady": "Ready (%1)",
     "IGUI_NotAlone_ChoreCooldown": "Cooldown %1h",
     "IGUI_NotAlone_ChoreNoSupply": "No supply",

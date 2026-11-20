@@ -722,20 +722,33 @@ function BridgeMove.followTarget(body, red)
     local bx, by = body:getX(), body:getY()
     local d = dist2d(bx, by, rx, ry)
     if d > SEE_FAR then return nil end
-    if BridgeMove.lineClear(body, rx, ry, rz) then return rx, ry, rz, "player", d end
+    local sameEnclosure = true
+    local bsq, psq = nil, nil
+    pcall(function() bsq = body:getCurrentSquare() end)
+    pcall(function() psq = red:getCurrentSquare() end)
+    if bsq ~= nil and psq ~= nil and BridgeDoors ~= nil and type(BridgeDoors.enclosureKey) == "function" then
+        local a, b = nil, nil
+        pcall(function() a = BridgeDoors.enclosureKey(bsq) end)
+        pcall(function() b = BridgeDoors.enclosureKey(psq) end)
+        if a ~= nil and b ~= nil and a ~= b then sameEnclosure = false end
+    end
+    if sameEnclosure and BridgeMove.lineClear(body, rx, ry, rz) then return rx, ry, rz, "player", d end
     local t = BridgeMove.trail
     local tail = 0
     local prevx, prevy = rx, ry
-    for i = #t, math.max(1, #t - 25), -1 do
+    for i = #t, math.max(1, #t - 60), -1 do
         local c = t[i]
         tail = tail + dist2d(prevx, prevy, c.x, c.y)
         prevx, prevy = c.x, c.y
 
 
-        if tail > 9 then break end
+        if tail > 26 then break end
         if dist2d(bx, by, c.x, c.y) <= SEE_FAR and BridgeMove.lineClear(body, c.x, c.y, c.z) then
             return c.x, c.y, c.z, "trail", dist2d(bx, by, c.x, c.y) + tail
         end
+    end
+    if not sameEnclosure and BridgeMove.lineClear(body, rx, ry, rz) then
+        return rx, ry, rz, "player", d
     end
     return nil
 end
@@ -1974,6 +1987,20 @@ function BridgeMove.sitFlagTick(body)
         return
     end
     if BridgeMove.isOnChair(body) then
+        local fell = false
+        pcall(function()
+            local asn = tostring(body:getActionStateName())
+            fell = string.find(asn, "falldown", 1, true) == 1
+                or string.find(asn, "onground", 1, true) == 1
+                or string.find(asn, "knockeddown", 1, true) == 1
+                or string.find(asn, "hitreaction", 1, true) == 1
+                or string.find(asn, "staggerback", 1, true) == 1
+                or string.find(asn, "getup", 1, true) == 1
+        end)
+        if fell then
+            BridgeMove.sitFlagOff(body)
+            return
+        end
         if BridgeTask ~= nil and BridgeTask.isSeated ~= nil and BridgeTask.isSeated(body) then
             local asn, bump = "", ""
             pcall(function() asn = tostring(body:getActionStateName()) end)
@@ -3065,7 +3092,26 @@ local function followTrailStep(body)
         if Bridge.verbose then
             log(sformat("engine path released after %d ticks: %s", Bridge.time - H.tick, why))
         end
+        if why ~= "no progress" then F.detourFails = nil end
         if why == "no progress" then
+            F.detourFails = F.detourFails or 0
+            if F.detourFails >= 2 then
+                F.detourFails = nil
+                F.engineHold = nil
+                F.kind = "path"
+                BridgeMove.holdEnginePath(body)
+                BridgeMove.setCollide(body, true)
+                BridgeMove.endFollowBump(body, "")
+                if BridgeMove.steering then
+                    BridgeMove.steering = false
+                    BridgeMove.pathing = false
+                end
+                if Bridge.verbose then
+                    log(sformat("follow detour: 2 failed detours at %.2f,%.2f, engine path",
+                        body:getX(), body:getY()))
+                end
+                return false
+            end
             local dnav = BridgeMove.navState()
             local p = nil
             if dnav ~= nil and BridgeNav ~= nil and BridgeNav.detour ~= nil then
@@ -3076,6 +3122,7 @@ local function followTrailStep(body)
                       end })
             end
             if p ~= nil then
+                F.detourFails = F.detourFails + 1
                 dnav.status = "detour"
                 tx, ty, tz, kind = p.x, p.y, p.z, "detour"
                 along = dist2d(body:getX(), body:getY(), tx, ty)
@@ -3083,9 +3130,12 @@ local function followTrailStep(body)
                     log(sformat("follow detour: no progress at %.2f,%.2f, going to %.1f,%.1f",
                         body:getX(), body:getY(), tx, ty))
                 end
-            elseif Bridge.verbose then
-                log(sformat("follow detour: none available at %.2f,%.2f",
-                    body:getX(), body:getY()))
+            else
+                F.detourFails = nil
+                if Bridge.verbose then
+                    log(sformat("follow detour: none available at %.2f,%.2f",
+                        body:getX(), body:getY()))
+                end
             end
         end
         F.engineHold = nil
@@ -3928,8 +3978,9 @@ end
 local WALK_REACH_DIRS = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
 local WALK_REACH_KEY = 2097152
 
-function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
+function BridgeMove.walkReach(body, tx, ty, tz, maxNodes, passDoors, blockSeats)
     local ok = false
+    local visited, doorHits = 0, 0
     pcall(function()
         local cell = getCell()
         local bz = math.floor(body:getZ())
@@ -3943,7 +3994,6 @@ function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
         local dirs = WALK_REACH_DIRS
         local seen = { [bx * WALK_REACH_KEY + by] = true }
         local queue, head = { start }, 1
-        local visited = 0
         while head <= #queue and visited < budget do
             local cur = queue[head]
             head = head + 1
@@ -3960,7 +4010,35 @@ function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
                         local okHop, hopType = pcall(BridgeMove.edgeBetween, body, cur, nb)
                         local hop = okHop and hopType == "fence"
                         local step = hop or (not cur:isBlockedTo(nb) and not stepNeedsClimb(cur, nb))
-                        if step and not cur:isDoorTo(nb) and not underCar(nb) and nb:isFree(false) then
+                        local door = cur:isDoorTo(nb)
+                        local doorOk = true
+                        if door then
+                            doorHits = doorHits + 1
+                            doorOk = false
+                            if passDoors then
+                                local d = nil
+                                pcall(function() d = cur:getDoorTo(nb) end)
+                                if d == nil then
+                                    doorOk = true
+                                elseif BridgeDoors ~= nil and type(BridgeDoors.isPassable) == "function" then
+                                    doorOk = BridgeDoors.isPassable(d) == true
+                                else
+                                    doorOk = true
+                                end
+                            end
+                        end
+                        if door and doorOk then step = true end
+                        local seatBlocked = false
+                        if blockSeats and math.abs(nb:getX() - tx) + math.abs(nb:getY() - ty) <= 2
+                                and BridgeTask ~= nil and type(BridgeTask.seatIsSeat) == "function" then
+                            pcall(function()
+                                local objs = nb:getObjects()
+                                for i = 0, objs:size() - 1 do
+                                    if BridgeTask.seatIsSeat(objs:get(i)) then seatBlocked = true break end
+                                end
+                            end)
+                        end
+                        if step and doorOk and not seatBlocked and not underCar(nb) and nb:isFree(false) then
                             if nx == tx and ny == ty then ok = true return end
                             seen[key] = true
                             queue[#queue + 1] = nb
@@ -3970,6 +4048,12 @@ function BridgeMove.walkReach(body, tx, ty, tz, maxNodes)
             end
         end
     end)
+    if BridgeTask ~= nil and BridgeTask.seatTrace == true then
+        log(string.format("walkReach %d,%d,%d found=%s visited=%d doorHits=%d budget=%d doors=%s seats=%s",
+            math.floor(tx or 0), math.floor(ty or 0), math.floor(tz or 0),
+            tostring(ok), visited, doorHits, maxNodes or 240,
+            tostring(passDoors == true), tostring(blockSeats == true)))
+    end
     return ok
 end
 
@@ -5609,7 +5693,26 @@ function BridgeMove.shouldCross(body, kind, from, to)
     if not safe then return false, blockedWhy end
     if BridgeMove.steering and not BridgeMove.forceCross then
         local yes, why = BridgeMove.trailCrosses(body, from, to)
-        return yes, why
+        if yes then return true, why end
+        if kind == "window" or kind == "frame" then
+            local free = false
+            pcall(function() free = to:isFree(false) == true end)
+            local w = nil
+            pcall(function() w = from:getWindowTo(to) end)
+            if w == nil then pcall(function() w = to:getWindowTo(from) end) end
+            if w == nil then pcall(function() w = from:getWindowFrameTo(to) end) end
+            if w == nil then pcall(function() w = to:getWindowFrameTo(from) end) end
+            local bar = false
+            if w ~= nil then pcall(function() bar = w:isBarricaded() == true end) end
+            local locked = false
+            if w ~= nil then pcall(function() locked = w:isLocked() == true end) end
+            local danger = false
+            if BridgeTask ~= nil and type(BridgeTask.dangerNear) == "function" then
+                pcall(function() danger = BridgeTask.dangerNear(body) == true end)
+            end
+            if free and not bar and not locked and not danger then return true, "safe window" end
+        end
+        return false, why
     end
     if Bridge.time < BridgeMove.noGapUntil then return true, "gap suppressed" end
     local g = BridgeMove.goal
@@ -5623,10 +5726,10 @@ function BridgeMove.shouldCross(body, kind, from, to)
     local a, b = BridgeMove.passNear(body, from, to, radius)
     if a ~= nil then
         local around = dist2d(bx, by, a:getX() + 0.5, a:getY() + 0.5) + 1 + dist2d(b:getX() + 0.5, b:getY() + 0.5, g.x, g.y)
-        if around <= over then
-            return false, sformat("pass near %.1f <= climb %.1f", around, over), a, b
+        if around < over then
+            return false, sformat("pass near %.1f < climb %.1f", around, over), a, b
         end
-        return true, sformat("climb %.1f < pass %.1f", over, around)
+        return true, sformat("climb %.1f <= pass %.1f", over, around)
     end
     return true, "no pass near: " .. tostring(BridgeMove.passWhy)
 end

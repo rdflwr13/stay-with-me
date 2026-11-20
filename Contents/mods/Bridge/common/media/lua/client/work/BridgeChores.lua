@@ -28,6 +28,7 @@ local ROWS = {
     clean = { kind = "cleanUp", group = "cleanUp", flag = "CLEANING_ENABLED", cooldownH = 2, weight = 4 },
     yard = { kind = "clearPlants", group = "clearPlants", flag = "CLEARING_ENABLED", cooldownH = 2, weight = 2 },
     chop = { kind = "chopTree", group = "chopTree", flag = "TREECUTTING_ENABLED", cooldownH = 4, weight = 2 },
+    deposit = { kind = "deposit", flag = "DEPOSIT_ENABLED", cooldownH = 1 },
     wash = { idle = true, cooldownH = 1 },
     shower = { idle = true },
     exercise = { idle = true },
@@ -120,7 +121,7 @@ local KIND_ROW = {
     tendCrops = "tend", harvestCrops = "harvest",
     tendAnimals = "animals", animalCare = "animals", petAnimals = "animals",
     fillTroughs = "troughs", cleanUp = "clean", clearPlants = "yard",
-    chopTree = "chop", shower = "shower", exercise = "exercise",
+    chopTree = "chop", deposit = "deposit", shower = "shower", exercise = "exercise",
     wash = "wash", sit = "sit", roam = "roam",
 }
 
@@ -128,8 +129,15 @@ function BridgeChores.noteManualStop(kind)
     local id = KIND_ROW[kind]
     if id == nil then return end
     local now = Bridge.time or 0
-    S.cooldown[id] = now + MANUAL_STOP_TIME
-    S.retry[id] = nil
+    if id == "deposit" then
+        S.retry[id] = now + MANUAL_STOP_TIME
+        S.cooldown[id] = nil
+        if S.running ~= nil and S.running.row == "deposit" then S.running = nil end
+        if S.waiting ~= nil and S.waiting.row == "deposit" then S.waiting = nil end
+    else
+        S.cooldown[id] = now + MANUAL_STOP_TIME
+        S.retry[id] = nil
+    end
     S.statusCache[id] = nil
     S.nextDecisionAt = now + DECISION_GAP
     S.nextIdleAt = now + IDLE_GAP
@@ -140,6 +148,12 @@ function BridgeChores.noteManualStop(kind)
         pcall(BridgeExercise.setCooldown, Bridge.store, MANUAL_STOP_HOURS)
     end
     log("manual stop cooldown " .. tostring(id) .. " " .. tostring(MANUAL_STOP_HOURS) .. "h")
+end
+
+function BridgeChores.noteSeat(x, y, z)
+    if x == nil or y == nil then return end
+    S.lastSeat = math.floor(x) .. ":" .. math.floor(y) .. ":" .. math.floor(z or 0)
+    log("sit success seat=" .. S.lastSeat)
 end
 
 if Events ~= nil and Events.OnInventoryTransferActionPerform ~= nil then
@@ -639,7 +653,7 @@ local function finishJobRow()
     local done = (BridgeTask.doneCount or 0) - (r.done0 or 0)
     local fail = BridgeTask.failCount or 0
     local succeeded = done > 0
-    if r.idle == true and fail == 0 then succeeded = true end
+    if r.idle == true and fail == 0 and not (r.row == "deposit" and done <= 0) then succeeded = true end
     if succeeded then
         startOk(r.row)
         local row = ROWS[r.row]
@@ -910,12 +924,32 @@ local function seatTargets(body, h)
     local z = bodyZ(body)
     local key = BridgeHome.homeKey(h) .. ":" .. math.floor(body:getX()) .. ":" .. math.floor(body:getY()) .. ":" .. z
     local now = nowMs()
+    local t0 = now
+    local scanCalls = 0
+    if not S.seatReady then
+        local guard = 0
+        while not S.seatReady and guard < 256 do
+            seatScanStep(h)
+            scanCalls = scanCalls + 1
+            guard = guard + 1
+        end
+        if S.seatReady then S.seatKey = nil end
+    end
+    local chunkCount = 0
+    for _ in pairs(S.seatChunks) do chunkCount = chunkCount + 1 end
+    log(string.format("seat scan ready=%s chunks=%d calls=%d ms=%d",
+        tostring(S.seatReady), chunkCount, scanCalls, nowMs() - t0))
     if S.seatKey == key and (now - (S.seatAt or 0)) < 10000 and S.seatList ~= nil then
+        log("seat cache hit n=" .. tostring(#S.seatList))
         return S.seatList
     end
     local out = {}
     S.seatKey, S.seatAt, S.seatList = key, now, out
-    if not S.seatReady or BridgeTask == nil or type(BridgeTask.seatIsSeat) ~= "function" then return out end
+    if not S.seatReady or BridgeTask == nil or type(BridgeTask.seatIsSeat) ~= "function" then
+        log("seat scan unavailable ready=" .. tostring(S.seatReady))
+        S.seatKey, S.seatAt = nil, 0
+        return out
+    end
     local bodyKey = nil
     pcall(function()
         local bs = body:getCurrentSquare()
@@ -945,7 +979,13 @@ local function seatTargets(body, h)
             if fz ~= z and floorReachable(h, z, fz) then addFloor(fz) end
         end
     end
-    if #cands == 0 then return out end
+    if #cands == 0 then
+        log("seat cands=0 home filter")
+        S.seatKey, S.seatAt = nil, 0
+        return out
+    end
+    log("seat cands=" .. tostring(#cands))
+    local bodySq = math.floor(body:getX()) .. ":" .. math.floor(body:getY()) .. ":" .. z
     table.sort(cands, function(a, b)
         if a.same ~= b.same then return a.same end
         return a.d < b.d
@@ -955,21 +995,32 @@ local function seatTargets(body, h)
         local c = cands[i]
         local rec = c.seat
         local plan = rec.plan
-        if rec.planAt == nil or (now - rec.planAt) >= 30000 then
+        local tPlan = nowMs()
+        if rec.planKey ~= bodySq or rec.planAt == nil or (now - rec.planAt) >= 30000 then
             plan = nil
+            BridgeTask.seatTrace = true
             pcall(function() plan = BridgeTask.seatPlan(body, c.obj) end)
-            rec.plan, rec.planAt = plan, now
+            BridgeTask.seatTrace = nil
+            if plan ~= nil then
+                rec.plan, rec.planAt, rec.planKey = plan, now, bodySq
+            else
+                rec.plan, rec.planAt, rec.planKey = nil, nil, nil
+            end
         end
-        local taken = plan == nil
+        local taken = false
         if plan ~= nil then
             pcall(function() taken = BridgeTask.seatTaken(plan, body) == true end)
         end
+        log(string.format("seat plan %d,%d -> %s taken=%s ms=%d", c.x, c.y,
+            plan ~= nil and "ok" or "nil", tostring(taken), nowMs() - tPlan))
         if plan ~= nil and not taken then
             out[#out + 1] = { obj = c.obj, x = c.x, y = c.y, z = c.z, read = true }
         end
     end
     table.sort(out, function(a, b) return distanceTo(body, a) < distanceTo(body, b) end)
     S.seatList = out
+    if #out == 0 then S.seatKey, S.seatAt = nil, 0 end
+    log(string.format("seat out=%d totalMs=%d", #out, nowMs() - t0))
     return out
 end
 
@@ -1078,6 +1129,48 @@ local function invalidateRow(id)
     sh.ready = false
 end
 
+local function depositFull(body)
+    if BridgeTask == nil or type(BridgeTask.lootDests) ~= "function" then return false end
+    local dests = BridgeTask.lootDests(body)
+    for i = 1, #dests do
+        local left = BridgeTask.remainingCapacity(dests[i], BridgeData.owner())
+        if type(left) == "number" and left > 0.001 then return false end
+    end
+    return true
+end
+
+local function startDeposit(body, h, now, force)
+    if BridgeTask == nil or BridgeTask.DEPOSIT_ENABLED ~= 1 then return false, "disabled" end
+    if BridgeDeposit == nil or type(BridgeDeposit.startHome) ~= "function" then
+        return false, "unavailable"
+    end
+    if not on("deposit") then return false, "off" end
+    if not insideHome(body, 0) then return false, "not home" end
+    local marks = 0
+    pcall(function() marks = BridgeDeposit.markedCount() end)
+    if marks <= 0 then return false, "no marks" end
+    local full = depositFull(body)
+    if force ~= true then
+        if not full and now < cooldownUntil("deposit") then return false, "cooldown" end
+        if now < retryUntil("deposit") then return false, "backoff" end
+    end
+    local n = 0
+    pcall(function() n = #BridgeDeposit.storableItems(body) end)
+    if n <= 0 then return false, "nothing" end
+    local res = BridgeDeposit.startHome({ quiet = true })
+    if res == "started" then
+        startOk("deposit")
+        S.running = {
+            row = "deposit", kind = "deposit", idle = true,
+            startedAt = now, done0 = BridgeTask.doneCount or 0, need = n,
+            changedAt = now, sig = nil,
+        }
+        return true, "started"
+    end
+    startFail("deposit", res)
+    return false, res
+end
+
 local function startRow(body, cand, h, quiet)
     local kind = cand.kind
     local res = nil
@@ -1174,21 +1267,32 @@ local function startIdle(id, body, h, now, force)
         end
         local seats = seatTargets(body, h)
         if #seats == 0 then return false, "no seat" end
-        local seat = seats[1]
-        local seatKey = seat.x .. ":" .. seat.y .. ":" .. seat.z
-        if #seats > 1 and S.lastSeat == seatKey then
-            seat = seats[2]
-            seatKey = seat.x .. ":" .. seat.y .. ":" .. seat.z
+        local first = 1
+        if force ~= true and #seats > 1 then
+            local firstKey = seats[1].x .. ":" .. seats[1].y .. ":" .. seats[1].z
+            if S.lastSeat == firstKey then first = 2 end
         end
-        S.lastSeat = seatKey
+        local order = {}
+        order[1] = seats[first]
+        for i = 1, #seats do
+            if i ~= first then order[#order + 1] = seats[i] end
+        end
+        local targets = {}
+        for i = 1, #order do
+            local s = order[i]
+            targets[i] = { obj = s.obj, x = s.x, y = s.y, z = s.z, read = true }
+        end
+        log(string.format("sit choose force=%s last=%s first=%d,%d n=%d",
+            tostring(force == true), tostring(S.lastSeat),
+            order[1].x, order[1].y, #order))
         local res = nil
         pcall(function()
-            res = BridgeTask.start("sit", { { obj = seat.obj, x = seat.x, y = seat.y, z = seat.z, read = true } })
+            res = BridgeTask.start("sit", targets)
         end)
         if res == "started" then
             startOk("sit")
             S.running = { row = "sit", kind = "sit", idle = true, startedAt = now,
-                done0 = BridgeTask.doneCount or 0, need = 1, targets = seats, changedAt = now, sig = nil }
+                done0 = BridgeTask.doneCount or 0, need = 1, targets = order, changedAt = now, sig = nil }
             return true, "started"
         end
         startFail("sit", res)
@@ -1511,13 +1615,14 @@ function BridgeChores.tick(body)
 
     if stairSettle(body) then return end
 
+    seatScanStep(h)
+
     if not insideHome(body, 3) then
         returnToAnchor(body)
         return
     end
 
     scanStep(body)
-    seatScanStep(h)
     if not S.scanReady and scanIsComplete() then S.scanReady = true end
     if BridgeLog ~= nil and BridgeLog.on() then BridgeChores.diag() end
 
@@ -1529,6 +1634,9 @@ function BridgeChores.tick(body)
     local now = Bridge.time or 0
     if now < (S.nextDecisionAt or 0) then return end
     S.nextDecisionAt = now + DECISION_GAP
+
+    local startedDeposit = startDeposit(body, h, now)
+    if startedDeposit then return end
 
     local cands = candidates(body)
     for i = 1, #cands do
@@ -1565,6 +1673,20 @@ local function computeStatus(id)
     end
     if now < retryUntil(id) then
         return tr("ChoreCooldown", string.format("%.1f", (retryUntil(id) - now) / (3600 * FLOOR)))
+    end
+    if id == "deposit" then
+        local marks = 0
+        if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then
+            pcall(function() marks = BridgeDeposit.markedCount() end)
+        end
+        if marks <= 0 then return tr("ChoreNoMarked") end
+        local n = 0
+        if BridgeDeposit ~= nil and type(BridgeDeposit.storableItems) == "function" then
+            local body = Bridge.body or BridgeData.owner()
+            if body ~= nil then pcall(function() n = #BridgeDeposit.storableItems(body) end) end
+        end
+        if n <= 0 then return tr("ChoreNone") end
+        return tr("ChoreReady", n)
     end
     if row ~= nil and row.idle == true then
         local rec = Bridge.store
@@ -1791,7 +1913,7 @@ function BridgeChores.debugForce(id, index)
     BridgeChores.arm()
     if BridgeTask == nil then return "task not loaded" end
     local row0 = ROWS[id]
-    if row0 ~= nil and row0.idle ~= true then
+    if id ~= "deposit" and row0 ~= nil and row0.idle ~= true then
         if choreKind(id) == nil then return "disabled" end
         local sh0 = S.scan[id]
         if sh0 == nil or #sh0.list == 0 then
@@ -1819,6 +1941,13 @@ function BridgeChores.debugForce(id, index)
     local now = Bridge.time or 0
     local row = ROWS[id]
     local ok, res
+    if id == "deposit" then
+        local dok, dres = startDeposit(body, h, now, true)
+        local out = tostring(dres or (dok and "started" or "failed"))
+        S.statusCache[id] = nil
+        log("debug force " .. id .. " -> " .. out)
+        return out
+    end
     if row ~= nil and row.idle == true then
         if id ~= "roam" then S.forceRoam = false end
         ok, res = startIdle(id, body, h, now, true)
@@ -1946,6 +2075,8 @@ function BridgeChores.selftest()
     check("clean yard", clean.yard, true, fails, checks)
     check("choreOn default on", BridgeData.choreOn({}, "tend"), true, fails, checks)
     check("choreOn default off", BridgeData.choreOn({}, "yard"), false, fails, checks)
+    check("deposit registered", BridgeData.CHORE_SET.deposit, true, fails, checks)
+    check("deposit default on", BridgeData.choreOn({}, "deposit"), true, fails, checks)
     check("choreOn stored on", BridgeData.choreOn({ chores = { yard = true } }, "yard"), true, fails, checks)
     check("choreOn stored off", BridgeData.choreOn({ chores = { tend = false } }, "tend"), false, fails, checks)
     check("backoff 1", backoff(1), START_FAIL, fails, checks)

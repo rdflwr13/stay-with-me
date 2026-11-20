@@ -2031,7 +2031,7 @@ end
 
 
 
-function BridgeTask.markUnreachable(reason)
+function BridgeTask.markUnreachable(reason, quiet)
     BridgeTask.failCount = (BridgeTask.failCount or 0) + 1
     local failed = BridgeTask.current
     if type(failed) == "table" then
@@ -2052,6 +2052,7 @@ function BridgeTask.markUnreachable(reason)
     if reason ~= nil and BridgeTask.blockedReason == nil then
         BridgeTask.blockedReason = reason
     end
+    if quiet then return end
     if BridgeTask.spokeUnreachable then return end
     BridgeTask.spokeUnreachable = true
     BridgeTask.spokeNoPath = true
@@ -2064,8 +2065,8 @@ end
 
 
 
-function BridgeTask.dropTarget(reason)
-    BridgeTask.markUnreachable(reason)
+function BridgeTask.dropTarget(reason, quiet)
+    BridgeTask.markUnreachable(reason, quiet)
 
 
     local body = Bridge ~= nil and Bridge.body or nil
@@ -2083,6 +2084,14 @@ function BridgeTask.dropTarget(reason)
     BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
     BridgeTask.openingSince = nil
     BridgeTask.routeReset()
+    if BridgeMove ~= nil then
+        BridgeMove.gapWay = nil
+        BridgeMove.passFirst = 0
+        BridgeMove.passCount = 0
+        BridgeMove.noGapUntil = 0
+        BridgeMove.edgeSeen = nil
+        BridgeMove.edgeLogged = nil
+    end
     if (BridgeTask.doneCount or 0) == 0 and (BridgeTask.failCount or 0) >= BridgeTask.ABORT_AFTER_FAILS
             and #BridgeTask.queue > 0 then
         BridgeTask.info = "area unreachable, stopping"
@@ -2420,7 +2429,7 @@ function BridgeTask.noteWindowAttempts(body)
 end
 
 
-function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
+function BridgeTask.walkTo(body, target, reach, reachClear, onTarget, clearFn)
     if body == nil or type(target) ~= "table" then return "unreachable", "badTarget" end
     local tx, ty, tz = tonumber(target.x), tonumber(target.y), tonumber(target.z)
     if tx == nil or ty == nil or tz == nil then return "unreachable", "badTarget" end
@@ -2428,9 +2437,10 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
     local targetSq = nil
     pcall(function() targetSq = getCell():getGridSquare(tx, ty, tz) end)
     local sameFloor = targetSq == nil or math.floor(targetSq:getZ()) == bodyZ
+    local clearOk = clearFn or BridgeTask.adjacentClear
 
     local d = math.sqrt((body:getX() - (tx + 0.5)) ^ 2 + (body:getY() - (ty + 0.5)) ^ 2)
-    if sameFloor and d <= reach and (not reachClear or BridgeTask.adjacentClear(body, targetSq)) then
+    if sameFloor and d <= reach and (not reachClear or clearOk(body, targetSq)) then
         BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
         BridgeTask.openingSince = nil
         Bridge.target = nil
@@ -2513,7 +2523,7 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
         end
     end
     if sameFloor and dSpot <= (onTarget and reach or BridgeTask.STOP_DIST)
-            and (not reachClear or BridgeTask.adjacentClear(body, targetSq)) then
+            and (not reachClear or clearOk(body, targetSq)) then
         BridgeTask.openingRef, BridgeTask.openingKey, BridgeTask.openingTries = nil, nil, nil
         BridgeTask.openingSince = nil
         Bridge.target = nil
@@ -2587,6 +2597,8 @@ function BridgeTask.walkTo(body, target, reach, reachClear, onTarget)
                     target.x, target.y, tostring(isDoor), tostring(blockedTo), U.doorDebugDist(body, standSq))
             end
             U.log(string.format("stalled: stepping around via %d,%d%s", dpx, dpy, stallExtra))
+        else
+            U.log("stalled: no safe detour")
         end
         if BridgeTask.spot ~= nil then
             local key = BridgeTask.spot.x .. "," .. BridgeTask.spot.y
@@ -8854,13 +8866,31 @@ local function sitWalkable(walkSq, seatSq)
         if not walkSq:isSolidFloor() or walkSq:HasStairs() then ok = false return end
         local ddx = math.abs(walkSq:getX() - seatSq:getX())
         local ddy = math.abs(walkSq:getY() - seatSq:getY())
-        if ddx + ddy == 1 then
-            if seatSq:isWallTo(walkSq) or seatSq:getDoorTo(walkSq) ~= nil or seatSq:getWindowTo(walkSq) ~= nil then
-                ok = false
-            end
+        if ddx + ddy ~= 1 then ok = false return end
+        if seatSq:isWallTo(walkSq) or walkSq:isWallTo(seatSq) then ok = false return end
+        if seatSq:getDoorTo(walkSq) ~= nil or walkSq:getDoorTo(seatSq) ~= nil then ok = false return end
+        if seatSq:getWindowTo(walkSq) ~= nil or walkSq:getWindowTo(seatSq) ~= nil then ok = false return end
+        if walkSq:isHoppableTo(seatSq) == true or seatSq:isHoppableTo(walkSq) == true then ok = false return end
+        if BridgeGunRules ~= nil and type(BridgeGunRules.edgeStopsBullet) == "function" then
+            local blocked = BridgeGunRules.edgeStopsBullet(walkSq, seatSq)
+            if blocked == true then ok = false return end
+        end
+        if BridgeDoors ~= nil and type(BridgeDoors.enclosureKey) == "function" then
+            local a = BridgeDoors.enclosureKey(walkSq)
+            local b = BridgeDoors.enclosureKey(seatSq)
+            if a ~= -1 and b ~= -1 and a ~= b then ok = false return end
         end
     end)
     return ok
+end
+
+local function sitArrivalClear(body, sq)
+    if body == nil or sq == nil then return false end
+    local bs = nil
+    pcall(function() bs = body:getCurrentSquare() end)
+    if bs == nil then return false end
+    if bs == sq then return true end
+    return sitWalkable(bs, sq)
 end
 
 local function sitWalkSquareFor(seatSq, sx, sy)
@@ -8931,10 +8961,13 @@ function BridgeTask.seatPlan(body, obj)
     pcall(function() sm = SeatingManager.getInstance() end)
 
     local facing = sitObjFacing(obj)
+    U.log(string.format("seatPlan seat=%d,%d body=%.2f,%.2f facing=%s",
+        seatSq:getX(), seatSq:getY(), bx, by, tostring(facing)))
 
     local eng = nil
     if sm ~= nil then
         local best, bestD = nil, nil
+        local engValid = 0
         for _, dir in ipairs(K.SIT_DIRS) do
             for _, side in ipairs(K.SIT_SIDES) do
                 local pos = nil
@@ -8949,9 +8982,10 @@ function BridgeTask.seatPlan(body, obj)
                         local sx, sy = pos:x(), pos:y()
                         local wsq = sitWalkSquareFor(seatSq, sx, sy)
                         if wsq ~= nil and wsq ~= seatSq and sitWalkable(wsq, seatSq) then
+                            engValid = engValid + 1
                             local d = sitDist(bx, by, sx, sy)
                             if bestD == nil or d < bestD then
-                                best = { dir = dir, side = side, standX = sx, standY = sy,
+                                best = { dir = dir, side = side, standX = wsq:getX() + 0.5, standY = wsq:getY() + 0.5,
                                     sx = wsq:getX(), sy = wsq:getY() }
                                 bestD = d
                             end
@@ -8961,6 +8995,7 @@ function BridgeTask.seatPlan(body, obj)
             end
         end
         eng = best
+        U.log("seatPlan engine valid=" .. tostring(engValid))
     end
 
     local dir = facing or (eng and eng.dir)
@@ -8981,10 +9016,14 @@ function BridgeTask.seatPlan(body, obj)
     end
 
     local function sitReachable(sqx, sqy)
-        if sitSeatBlocks(sqx + 0.5, sqy + 0.5) then return false end
+        if sitSeatBlocks(sqx + 0.5, sqy + 0.5) then
+            U.log(string.format("sitReachable %d,%d blocked by seat line", sqx, sqy))
+            return false
+        end
         if BridgeMove == nil or BridgeMove.walkReach == nil then return true end
         local res = true
-        pcall(function() res = BridgeMove.walkReach(body, sqx, sqy, z, 4000) ~= false end)
+        pcall(function() res = BridgeMove.walkReach(body, sqx, sqy, z, 4000, true, true) ~= false end)
+        U.log(string.format("sitReachable %d,%d -> %s", sqx, sqy, tostring(res)))
         return res
     end
 
@@ -8993,13 +9032,20 @@ function BridgeTask.seatPlan(body, obj)
         local fo = K.SIT_FACING_OFF[dir]
         if fo ~= nil then
             local cand = getCell():getGridSquare(seatSq:getX() - fo[1], seatSq:getY() - fo[2], z)
-            if sitWalkable(cand, seatSq) and sitReachable(cand:getX(), cand:getY()) then
+            local fw = sitWalkable(cand, seatSq)
+            local fr = fw and sitReachable(cand:getX(), cand:getY()) or false
+            U.log(string.format("seatPlan facing %s walkable=%s reachable=%s", tostring(dir), tostring(fw), tostring(fr)))
+            if fw and fr then
                 standX, standY, sx, sy = cand:getX() + 0.5, cand:getY() + 0.5, cand:getX(), cand:getY()
             end
         end
     end
-    if standX == nil and eng ~= nil and sitReachable(eng.sx, eng.sy) then
-        standX, standY, sx, sy = eng.standX, eng.standY, eng.sx, eng.sy
+    if standX == nil and eng ~= nil then
+        local er = sitReachable(eng.sx, eng.sy)
+        U.log(string.format("seatPlan engine stand=%d,%d reachable=%s", eng.sx, eng.sy, tostring(er)))
+        if er then
+            standX, standY, sx, sy = eng.standX, eng.standY, eng.sx, eng.sy
+        end
     end
     if standX == nil then
         local bestD = nil
@@ -9007,7 +9053,12 @@ function BridgeTask.seatPlan(body, obj)
             for dy = -1, 1 do
                 if not (dx == 0 and dy == 0) then
                     local cand = getCell():getGridSquare(seatSq:getX() + dx, seatSq:getY() + dy, z)
-                    if sitWalkable(cand, seatSq) and sitReachable(cand:getX(), cand:getY()) then
+                    local cw = sitWalkable(cand, seatSq)
+                    local cr = cw and sitReachable(cand:getX(), cand:getY()) or false
+                    U.log(string.format("seatPlan brute %d,%d walkable=%s reachable=%s",
+                        cand ~= nil and cand:getX() or -1, cand ~= nil and cand:getY() or -1,
+                        tostring(cw), tostring(cr)))
+                    if cw and cr then
                         local d = sitDist(bx, by, cand:getX() + 0.5, cand:getY() + 0.5)
                         if bestD == nil or d < bestD then
                             standX, standY, sx, sy = cand:getX() + 0.5, cand:getY() + 0.5, cand:getX(), cand:getY()
@@ -9018,7 +9069,10 @@ function BridgeTask.seatPlan(body, obj)
             end
         end
     end
-    if standX == nil then return nil end
+    if standX == nil then
+        U.log("seatPlan result=nil")
+        return nil
+    end
 
     if dir == nil then
         if math.abs(cx - standX) >= math.abs(cy - standY) then
@@ -9035,7 +9089,12 @@ function BridgeTask.seatPlan(body, obj)
             if xln ~= nil then tx, ty = xln:x(), xln:y() end
         end)
     end
-    if math.abs(tx) > K.SIT_MAX_TRANSLATION or math.abs(ty) > K.SIT_MAX_TRANSLATION then return nil end
+    if math.abs(tx) > K.SIT_MAX_TRANSLATION or math.abs(ty) > K.SIT_MAX_TRANSLATION then
+        U.log(string.format("seatPlan result=nil translation=%.2f,%.2f", tx, ty))
+        return nil
+    end
+    U.log(string.format("seatPlan result stand=%d,%d dir=%s tx=%.2f ty=%.2f",
+        sx, sy, tostring(dir), tx, ty))
     return { obj = obj, dir = dir, side = "Front", standX = standX, standY = standY,
         sx = sx, sy = sy, seatX = cx + tx, seatY = cy + ty, z = z,
         walkX = sx + 0.5, walkY = sy + 0.5,
@@ -9187,6 +9246,9 @@ end
 local function bedStandOk(sq, bedSq)
     if sq == nil or bedSq == nil then return false end
     if sq == bedSq then return false end
+    local ddx = math.abs(sq:getX() - bedSq:getX())
+    local ddy = math.abs(sq:getY() - bedSq:getY())
+    if ddx + ddy ~= 1 then return false end
 
     local window = nil
     pcall(function() window = sq:getWindow() end)
@@ -9208,6 +9270,16 @@ local function bedStandOk(sq, bedSq)
     if bedSq:isWindowTo(sq) or sq:isWindowTo(bedSq) then return false end
     if bedSq:isWallTo(sq) or sq:isWallTo(bedSq) then return false end
     if bedSq:getDoorTo(sq) ~= nil or sq:getDoorTo(bedSq) ~= nil then return false end
+    if sq:isHoppableTo(bedSq) == true or bedSq:isHoppableTo(sq) == true then return false end
+    if BridgeGunRules ~= nil and type(BridgeGunRules.edgeStopsBullet) == "function" then
+        local blocked = BridgeGunRules.edgeStopsBullet(sq, bedSq)
+        if blocked == true then return false end
+    end
+    if BridgeDoors ~= nil and type(BridgeDoors.enclosureKey) == "function" then
+        local a = BridgeDoors.enclosureKey(sq)
+        local b = BridgeDoors.enclosureKey(bedSq)
+        if a ~= -1 and b ~= -1 and a ~= b then return false end
+    end
 
     return true
 end
@@ -9232,6 +9304,14 @@ function BridgeTask.bedPlan(body, obj)
                 pcall(function()
                     spot = U.freeAdjacent(body, { x = info.x + info.stepX, y = info.y + info.stepY, z = info.z }, bedStandOk)
                 end)
+                if spot ~= nil then
+                    local headSq, spotSq = nil, nil
+                    pcall(function()
+                        headSq = getCell():getGridSquare(info.x, info.y, info.z)
+                        spotSq = getCell():getGridSquare(spot.x, spot.y, info.z)
+                    end)
+                    if headSq ~= nil and spotSq ~= nil and not bedStandOk(spotSq, headSq) then spot = nil end
+                end
             end
             if spot ~= nil then
                 local pdist = sitDist(px, py, info.lieX, info.lieY)
@@ -9303,16 +9383,14 @@ function BridgeTask.bedPlan(body, obj)
                             pcall(function()
                                 ok = sq:canStand() == true
                                     and not sq:isSomethingTo(bedSq)
-                                    and not bedSq:isWindowTo(sq)
-                                    and bedSq:getDoorTo(sq) == nil
-                                    and not bedSq:isWallTo(sq)
+                                    and bedStandOk(sq, bedSq)
                             end)
                             if ok and not isBadSpot(x, y) and not U.sealedBetween(sq, bedSq) then
                                 used[x .. "," .. y] = true
                                 local reach = true
                                 if BridgeMove ~= nil and BridgeMove.walkReach ~= nil then
                                     local r = nil
-                                    pcall(function() r = BridgeMove.walkReach(body, x, y, bz, 4000) end)
+                                    pcall(function() r = BridgeMove.walkReach(body, x, y, bz, 4000, true, true) end)
                                     reach = r ~= false
                                 end
                                 local dd = (body:getX() - (x + 0.5)) ^ 2 + (body:getY() - (y + 0.5)) ^ 2
@@ -9343,10 +9421,36 @@ function BridgeTask.bedPlan(body, obj)
     return best
 end
 
+local function poseFell(body)
+    if body == nil then return false end
+    local asn = ""
+    pcall(function() asn = tostring(body:getActionStateName()) end)
+    if asn == "" then return false end
+    return string.find(asn, "falldown", 1, true) == 1
+        or string.find(asn, "onground", 1, true) == 1
+        or string.find(asn, "knockeddown", 1, true) == 1
+        or string.find(asn, "hitreaction", 1, true) == 1
+        or string.find(asn, "staggerback", 1, true) == 1
+        or string.find(asn, "getup", 1, true) == 1
+end
+
 local function sitApplyDown(body, plan)
+    local bsq, ssq = nil, nil
+    pcall(function() bsq = body:getCurrentSquare() end)
+    pcall(function() ssq = getCell():getGridSquare(plan.sx, plan.sy, math.floor(plan.z)) end)
+    if ssq == nil then
+        U.log("sit: stand square missing")
+        return false
+    end
+    if bsq ~= nil and bsq ~= ssq and not sitWalkable(bsq, ssq) then
+        U.log(string.format("sit: stand edge blocked stand=%d,%d body=%d,%d",
+            ssq:getX(), ssq:getY(), bsq:getX(), bsq:getY()))
+        return false
+    end
     pcall(function() BridgeMove.stopPath(body) end)
     if BridgeMove ~= nil then BridgeMove.moving = false end
     local face = sitFaceOf(plan.side, plan.dir)
+    pcall(function() plan.obj:setSatChair(true) end)
     pcall(function() body:setSitOnFurnitureObject(plan.obj) end)
     pcall(function()
         body:setX(plan.standX) body:setY(plan.standY)
@@ -9355,14 +9459,16 @@ local function sitApplyDown(body, plan)
     BridgeTask.sitFromX, BridgeTask.sitFromY = plan.standX, plan.standY
     BridgeTask.sitSlideAt = Bridge.time
     pcall(function() if face ~= nil then body:setSitOnFurnitureDirection(face) end end)
+    pcall(function() body:setIsResting(true) end)
+    pcall(function() body:setBed(plan.obj) end)
     pcall(function() body:setSittingOnFurniture(true) end)
     pcall(function() body:setCollidable(false) end)
     pcall(function() body:setVariable("SitOnFurnitureDirection", plan.side) end)
     pcall(function() body:setVariable("SitOnFurnitureStarted", true) end)
-    pcall(function() plan.obj:setSatChair(true) end)
     pcall(function() if face ~= nil then body:faceDirection(face) end end)
     pcall(function() body:setVariable("BumpAnimFinished", false) end)
     pcall(function() body:setBumpType("SitChairDown") end)
+    return true
 end
 
 local function sitClear(body, plan)
@@ -9372,6 +9478,8 @@ local function sitClear(body, plan)
             body:setSitOnFurnitureObject(nil)
             body:setCollidable(true)
         end)
+        pcall(function() body:setIsResting(false) end)
+        pcall(function() body:setBed(nil) end)
         pcall(function() body:clearVariable("SitOnFurnitureDirection") end)
         pcall(function() body:clearVariable("SitOnFurnitureStarted") end)
         if BridgeTask.sitBook ~= nil then
@@ -9511,6 +9619,18 @@ end
 function BridgeTask.kinds.sit.update(body)
     if BridgeTask.SIT_ENABLED ~= 1 then return BridgeTask.finish() end
 
+    if BridgeTask.sitPlan ~= nil and BridgeTask.phase ~= nil and BridgeTask.phase ~= "walk"
+            and poseFell(body) then
+        if Bridge ~= nil and type(Bridge.keepHealth) == "function" then pcall(Bridge.keepHealth, body) end
+        if BridgeMove ~= nil and type(BridgeMove.sitFlagOff) == "function" then pcall(BridgeMove.sitFlagOff, body) end
+        sitClear(body, BridgeTask.sitPlan)
+        BridgeTask.sitPlan = nil
+        BridgeTask.sitUp = nil
+        BridgeTask.info = "sit: pose fell, released"
+        BridgeTask.failCount = (BridgeTask.failCount or 0) + 1
+        return BridgeTask.finish()
+    end
+
     local target = BridgeTask.current
     if target == nil then
         if #BridgeTask.queue == 0 then return BridgeTask.finish() end
@@ -9519,15 +9639,27 @@ function BridgeTask.kinds.sit.update(body)
         if obj == nil then
             pcall(function() obj = getCell():getGridSquare(target.x, target.y, target.z) end)
         end
+        BridgeTask.seatTrace = true
         local plan = BridgeTask.seatPlan(body, obj)
+        BridgeTask.seatTrace = nil
         if plan == nil then
             BridgeTask.info = "sit: no seat plan"
-            BridgeTask.markUnreachable(nil)
-            return BridgeTask.finish()
+            U.log("sit: no plan queue=" .. tostring(#BridgeTask.queue))
+            BridgeTask.sitPlan = nil
+            BridgeTask.phase = nil
+            BridgeTask.sitUp = nil
+            BridgeTask.sitSeatNoted = nil
+            return BridgeTask.dropTarget(nil, #BridgeTask.queue > 0)
         end
         if BridgeTask.seatTaken(plan, body) then
-            Bridge.speak("SitOccupied")
             BridgeTask.info = "sit: seat occupied"
+            U.log("sit: occupied queue=" .. tostring(#BridgeTask.queue))
+            BridgeTask.sitPlan = nil
+            BridgeTask.phase = nil
+            BridgeTask.sitUp = nil
+            BridgeTask.sitSeatNoted = nil
+            if #BridgeTask.queue > 0 then return BridgeTask.dropTarget(nil, true) end
+            Bridge.speak("SitOccupied")
             return BridgeTask.finish()
         end
         BridgeTask.current = target
@@ -9539,7 +9671,16 @@ function BridgeTask.kinds.sit.update(body)
         BridgeTask.sitFailTick = nil
         BridgeTask.sitBestD = nil
         BridgeTask.sitCloseAt = nil
+        BridgeTask.sitSeatNoted = false
         BridgeTask.sitFromX, BridgeTask.sitFromY, BridgeTask.sitSlideAt = nil, nil, nil
+        if BridgeMove ~= nil then
+            BridgeMove.gapWay = nil
+            BridgeMove.passFirst = 0
+            BridgeMove.passCount = 0
+            BridgeMove.noGapUntil = 0
+            BridgeMove.edgeSeen = nil
+            BridgeMove.edgeLogged = nil
+        end
     BridgeTask.layPlan = nil
     BridgeTask.layUp = nil
     BridgeTask.laySleep = false
@@ -9561,7 +9702,6 @@ function BridgeTask.kinds.sit.update(body)
         if BridgeMove ~= nil then
             BridgeMove.forcedWalk = "Walk"
             BridgeMove.blendOverride = BridgeMove.walkBlend or 1.0
-            BridgeMove.noClimb = true
         end
         pcall(function()
             local sq = plan.obj:getSquare()
@@ -9579,19 +9719,43 @@ function BridgeTask.kinds.sit.update(body)
         local sx, sy = plan.sx, plan.sy
         if sx == nil or sy == nil then
             BridgeTask.info = "sit: no stand square"
-            BridgeTask.markUnreachable(nil)
-            return BridgeTask.finish()
+            U.log("sit: no stand queue=" .. tostring(#BridgeTask.queue))
+            BridgeTask.sitPlan = nil
+            BridgeTask.phase = nil
+            BridgeTask.sitUp = nil
+            BridgeTask.sitSeatNoted = nil
+            return BridgeTask.dropTarget(nil, #BridgeTask.queue > 0)
+        end
+        local standKey = sx .. "," .. sy
+        if BridgeTask.badSpots ~= nil and BridgeTask.badSpots[standKey] == true then
+            U.log(string.format("sit: stand marked bad %s queue=%d", standKey, #BridgeTask.queue))
+            BridgeTask.sitPlan = nil
+            BridgeTask.phase = nil
+            BridgeTask.sitUp = nil
+            BridgeTask.sitSeatNoted = nil
+            BridgeTask.sitCloseAt = nil
+            return BridgeTask.dropTarget("sit-stand-bad", #BridgeTask.queue > 0)
         end
         local walk, why = BridgeTask.walkTo(body, { x = sx, y = sy, z = plan.z },
-            BridgeTask.STOP_DIST, true, true)
+            BridgeTask.STOP_DIST, true, true, sitArrivalClear)
         if walk == "unreachable" then
             BridgeTask.info = "sit: no path to seat"
-            BridgeTask.markUnreachable(why)
-            return BridgeTask.finish()
+            U.log(string.format("sit: stand unreachable %d,%d reason=%s queue=%d",
+                sx, sy, tostring(why), #BridgeTask.queue))
+            BridgeTask.sitPlan = nil
+            BridgeTask.phase = nil
+            BridgeTask.sitUp = nil
+            BridgeTask.sitSeatNoted = nil
+            BridgeTask.sitCloseAt = nil
+            return BridgeTask.dropTarget(why, #BridgeTask.queue > 0)
         end
         local d = sitDist(body:getX(), body:getY(), sx + 0.5, sy + 0.5)
+        local bsq, ssq = nil, nil
+        pcall(function() bsq = body:getCurrentSquare() end)
+        pcall(function() ssq = getCell():getGridSquare(sx, sy, math.floor(plan.z)) end)
+        local onStand = bsq ~= nil and ssq ~= nil and bsq == ssq
         local arrive = walk == "arrived"
-        if not arrive and d <= 0.75 then
+        if not arrive and d <= 0.75 and onStand then
             BridgeTask.sitCloseAt = BridgeTask.sitCloseAt or Bridge.time
             if (Bridge.time - BridgeTask.sitCloseAt) > 0.5 * K.SECOND then arrive = true end
         elseif not arrive then
@@ -9604,7 +9768,15 @@ function BridgeTask.kinds.sit.update(body)
             BridgeTask.phase = "down"
             BridgeTask.since = Bridge.time
             BridgeTask.sitAnimSeen = false
-            sitApplyDown(body, plan)
+            if sitApplyDown(body, plan) == false then
+                BridgeTask.info = "sit: stand blocked"
+                BridgeTask.phase = nil
+                BridgeTask.sitPlan = nil
+                BridgeTask.sitCloseAt = nil
+                BridgeTask.sitUp = nil
+                BridgeTask.sitSeatNoted = nil
+                return BridgeTask.dropTarget("sit-stand-blocked", #BridgeTask.queue > 0)
+            end
             Bridge.speak("Sit")
             return true
         end
@@ -9646,6 +9818,23 @@ function BridgeTask.kinds.sit.update(body)
             Bridge.pose = { anim = "SitChair", seat = true }
             pcall(function() BridgeMove.sendSit("chair") end)
             U.log("sit: seated")
+            if BridgeTask.sitSeatNoted ~= true then
+                BridgeTask.sitSeatNoted = true
+                BridgeTask.failCount = 0
+                BridgeTask.blockedReason = nil
+                local nx, ny, nz = target.x, target.y, target.z
+                if nx == nil then
+                    pcall(function()
+                        local q = plan.obj:getSquare()
+                        if q ~= nil then nx, ny, nz = q:getX(), q:getY(), q:getZ() end
+                    end)
+                end
+                pcall(function()
+                    if BridgeChores ~= nil and type(BridgeChores.noteSeat) == "function" then
+                        BridgeChores.noteSeat(nx, ny, nz)
+                    end
+                end)
+            end
             if BridgeTask.sitReadWanted then BridgeTask.sitReadStart(body) end
         end
         BridgeTask.info = "sit: sitting down"
@@ -9729,6 +9918,7 @@ function BridgeTask.kinds.sit.leave(body)
     sitClear(body, BridgeTask.sitPlan)
     BridgeTask.sitPlan = nil
     BridgeTask.sitUp = nil
+    BridgeTask.sitSeatNoted = nil
 end
 
 
@@ -9959,6 +10149,17 @@ end
 function BridgeTask.kinds.lay.update(body)
     if BridgeTask.LAY_ENABLED ~= 1 then return BridgeTask.finish() end
 
+    if BridgeTask.layPlan ~= nil and BridgeTask.phase ~= nil and BridgeTask.phase ~= "walk"
+            and poseFell(body) then
+        if Bridge ~= nil and type(Bridge.keepHealth) == "function" then pcall(Bridge.keepHealth, body) end
+        if BridgeMove ~= nil and type(BridgeMove.sitFlagOff) == "function" then pcall(BridgeMove.sitFlagOff, body) end
+        bedClear(body, BridgeTask.layPlan)
+        BridgeTask.layPlan = nil
+        BridgeTask.info = "lay: pose fell, released"
+        BridgeTask.failCount = (BridgeTask.failCount or 0) + 1
+        return BridgeTask.finish()
+    end
+
     local target = BridgeTask.current
     if target == nil then
         if #BridgeTask.queue == 0 then return BridgeTask.finish() end
@@ -10176,6 +10377,15 @@ Events.OnTickEvenPaused.Add(function()
     if BridgeTask.kind == "exercise" then
         BridgeTask.exerciseRepMark = Bridge.time
         return
+    end
+    if BridgeMove ~= nil then
+        if BridgeMove.cross ~= nil or BridgeMove.pendingClimb ~= nil
+                or (BridgeMove.climbUntil or 0) > Bridge.time then
+            return
+        end
+        local asn = ""
+        pcall(function() asn = tostring(body:getActionStateName()) end)
+        if asn == "climbwindow" or asn == "climbfence" then return end
     end
     if BridgeTask.kind == "sit" or BridgeTask.kind == "lay" then
         local posed = false
