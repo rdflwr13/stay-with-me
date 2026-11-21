@@ -1953,6 +1953,10 @@ function Bridge.adoptServerBody(zombie)
     pcall(function() BridgeWeapon.reset() end)
     Bridge.body = zombie
     Bridge.kind = "zombie"
+    local adoptedId = -1
+    pcall(function() adoptedId = zombie:getPersistentOutfitID() end)
+    log("adopted body id=" .. tostring(adoptedId))
+    Bridge.companionCensus("adopt " .. tostring(adoptedId))
     Bridge.clearSpeechOverlay()
     Bridge.noteSpawned()
     Bridge.target = nil
@@ -2238,6 +2242,9 @@ function Bridge.despawn(skipSave)
         Bridge.restoreRed()
         local id = Bridge.store and Bridge.store.bodyId or nil
         local items = Bridge.rebuildSnap
+        log("despawn ask id=" .. tostring(id) .. " byCommand=" .. tostring(Bridge.despawnByCommand == true)
+            .. " mine=" .. tostring(Bridge.body ~= nil))
+        Bridge.companionCensus("despawn ask")
         pcall(function()
             sendClientCommand(BridgeData.owner(), "Bridge", "despawn",
                 { byCommand = Bridge.despawnByCommand == true, id = id, items = BridgeItems.store(items) })
@@ -5713,6 +5720,11 @@ local function updateZombieBody(body)
             Bridge.holdPos = { body:getX(), body:getY(), body:getZ() }
         elseif shoved and Bridge.pose == nil then
             Bridge.holdPos = { body:getX(), body:getY(), body:getZ() }
+            pcall(function()
+                if BridgeCallout ~= nil and type(BridgeCallout.bumpPush) == "function" then
+                    BridgeCallout.bumpPush()
+                end
+            end)
         elseif Bridge.pose ~= nil and Bridge.poseNudged(body) then
 
 
@@ -9035,9 +9047,22 @@ function Bridge.dropStale(id, oid, x, y, z)
             end
         end
         local found = byId
-        if #found == 0 then found = byOid end
-        if #found == 0 and best ~= nil then found = { best } end
+        local how = "id"
+        if #found == 0 then found = byOid; how = "oid" end
+        if #found == 0 and best ~= nil then found = { best }; how = "position" end
+        Bridge.companionCensus("stale sweep id=" .. tostring(id))
         for _, b in ipairs(found) do
+            local bid, boid, alpha, remote, marked, bx, by, bz = -1, -1, -1, false, false, 0, 0, 0
+            pcall(function() bid = b:getPersistentOutfitID() end)
+            pcall(function() boid = b:getOnlineID() end)
+            pcall(function() alpha = b:getAlpha(0) end)
+            pcall(function() remote = b:isRemoteZombie() == true end)
+            pcall(function() marked = b:getVariableBoolean(CFG.BODY.VAR) == true end)
+            pcall(function() bx, by, bz = b:getX(), b:getY(), b:getZ() end)
+            log(string.format("stale remove match=%s want id=%s oid=%s at=%s,%s,%s got id=%s oid=%s at %d,%d,%d alpha=%.2f remote=%s current=%s marked=%s",
+                how, tostring(id), tostring(oid), tostring(x), tostring(y), tostring(z),
+                tostring(bid), tostring(boid), math.floor(bx), math.floor(by), math.floor(bz),
+                alpha, tostring(remote), tostring(b == Bridge.body), tostring(marked)))
             pcall(function() b:setUseless(true) end)
             pcall(function() b:setNoTeeth(true) end)
             pcall(function() b:setTarget(nil) end)
@@ -9062,6 +9087,49 @@ function Bridge.bodyInClientList(id)
         end
     end)
     return found
+end
+
+
+function Bridge.companionBodies()
+    local out = {}
+    pcall(function()
+        local list = getCell():getZombieList()
+        if list == nil then return end
+        for i = 0, list:size() - 1 do
+            local z = list:get(i)
+            if z ~= nil then
+                local mine = false
+                pcall(function() mine = z:getVariableBoolean(CFG.BODY.VAR) == true end)
+                if mine then
+                    local rec = { z = z, id = -1, oid = -1, alpha = -1, x = 0, y = 0, zz = 0,
+                        remote = false, current = z == Bridge.body }
+                    pcall(function() rec.id = z:getPersistentOutfitID() end)
+                    pcall(function() rec.oid = z:getOnlineID() end)
+                    pcall(function() rec.alpha = z:getAlpha(0) end)
+                    pcall(function() rec.x, rec.y, rec.zz = z:getX(), z:getY(), z:getZ() end)
+                    pcall(function() rec.remote = z:isRemoteZombie() == true end)
+                    out[#out + 1] = rec
+                end
+            end
+        end
+    end)
+    return out
+end
+
+
+function Bridge.companionCensus(tag)
+    local list = Bridge.companionBodies()
+    local parts = {}
+    for i = 1, #list do
+        local b = list[i]
+        parts[#parts + 1] = string.format("%s%d id=%s oid=%s at %d,%d,%d a=%.2f%s",
+            b.current and "*" or "", i, tostring(b.id), tostring(b.oid),
+            math.floor(b.x), math.floor(b.y), math.floor(b.zz), b.alpha,
+            b.remote and " remote" or "")
+    end
+    log(string.format("companion bodies %s: %d%s", tostring(tag), #list,
+        #parts > 0 and (" | " .. table.concat(parts, " | ")) or ""))
+    return list
 end
 
 local function lostReset()
@@ -9120,6 +9188,7 @@ function Bridge.lostBodyCheck()
     pcall(function() loaded = getCell():getGridSquare(x, y, z) ~= nil end)
     log(string.format("body id=%s not in client list for %.1f s, respawn ask %d at %d %d %d (square loaded=%s)",
         tostring(st.bodyId), (Bridge.time - Bridge.lostSince) / 60, Bridge.lostTries, x, y, z, tostring(loaded)))
+    Bridge.companionCensus("lost " .. tostring(st.bodyId) .. " ask " .. tostring(Bridge.lostTries))
     Bridge.spawnAsked = Bridge.time
     Bridge.askedNext = true
 
@@ -10427,6 +10496,23 @@ function Bridge.onServerCommand(module, command, args)
         if args.existed then Bridge.askedNext = nil end
     elseif command == "stale" then
 
+        if type(args) == "table" then
+            local parts = {}
+            if type(args.items) == "table" then
+                for i = 1, #args.items do
+                    local it = args.items[i]
+                    if type(it) == "table" then
+                        parts[#parts + 1] = string.format("id=%s oid=%s at=%s,%s,%s",
+                            tostring(it.id), tostring(it.oid), tostring(it.x), tostring(it.y), tostring(it.z))
+                    end
+                end
+            else
+                parts[1] = string.format("id=%s oid=%s at=%s,%s,%s",
+                    tostring(args.id), tostring(args.oid), tostring(args.x), tostring(args.y), tostring(args.z))
+            end
+            log("stale from server: " .. tostring(#parts) .. " " .. table.concat(parts, " | "))
+        end
+
         if type(args.items) == "table" then
             local n = 0
             for _, it in ipairs(args.items) do
@@ -10453,6 +10539,7 @@ function Bridge.onServerCommand(module, command, args)
         end
     elseif command == "despawned" then
         Bridge.result = "server despawned body, found=" .. tostring(args.found)
+        log(Bridge.result)
         if Bridge.claimParked ~= nil then Bridge.claimAnswer() end
     elseif command == "claimCleared" then
         Bridge.result = "server took away " .. tostring(args.n) .. " companions for the claim"
@@ -10599,6 +10686,15 @@ Bridge.zombieUpdateHandler = timedZombieUpdate
 
 local function onZombieCreateVoice(z)
     if Bridge.creating and z ~= nil then pcall(BridgeVoice.ensure, z) end
+    if z == nil then return end
+    local mine, mark = false, -1
+    pcall(function() mine = z:getVariableBoolean(CFG.BODY.VAR) == true end)
+    pcall(function() mark = z:getPersistentOutfitID() end)
+    local issued = false
+    if mark > 0 and BridgeRemnant ~= nil and type(BridgeRemnant.hasMark) == "function" then
+        pcall(function() issued = BridgeRemnant.hasMark(mark) == true end)
+    end
+    if mine or issued then Bridge.companionCensus("create id=" .. tostring(mark)) end
 end
 
 Events.OnZombieUpdate.Add(Bridge.zombieUpdateHandler)

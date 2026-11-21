@@ -175,6 +175,8 @@ BridgeCallout.SAY = {
     EvAfterFightGun = 1,
     EvAfterFightHard = 1,
     EvAfterFightLong = 1,
+    EvBumpAside  = 1,
+    EvBumpPush   = 1,
 }
 
 
@@ -236,6 +238,8 @@ BridgeCallout.EVENTS = {
     EvAfterFightGun = { slot = "AfterFight", cooldown = 120 },
     EvAfterFightHard = { slot = "AfterFight", cooldown = 120 },
     EvAfterFightLong = { slot = "AfterFight", cooldown = 120 },
+    EvBumpAside  = { slot = "Bump",       cooldown = 20 },
+    EvBumpPush   = { slot = "Bump",       cooldown = 20 },
 }
 
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeCallout] " .. tostring(text)) end end
@@ -833,6 +837,30 @@ end
 
 function BridgeCallout.shove()
     return say("EvShove")
+end
+
+
+local function bumpSay(event)
+    if Bridge == nil or not Bridge.follow then return false end
+    if Bridge.mode == "rest" then return false end
+    local body = Bridge.body
+    if body == nil then return false end
+    if type(Bridge.speechContext) == "function" and Bridge.speechContext() ~= "foot" then
+        return false
+    end
+    if BridgeTask ~= nil and type(BridgeTask.dangerNear) == "function"
+            and BridgeTask.dangerNear(body) then
+        return false
+    end
+    return say(event)
+end
+
+function BridgeCallout.bumpAside()
+    return bumpSay("EvBumpAside")
+end
+
+function BridgeCallout.bumpPush()
+    return bumpSay("EvBumpPush")
 end
 
 function BridgeCallout.noRoom()

@@ -359,7 +359,7 @@ local CONTAINER_WORK = {
     loot = { label = "WindowLoot", icon = ICONS.workLoot },
     animals = { label = "Animals", icon = ICONS.animals },
     gardening = { label = "Gardening", icon = ICONS.gardening },
-    doors = { label = "Doors", icon = ICONS.doors },
+    doors = { label = "Openings", icon = ICONS.doors },
 }
 
 local function lootEntries(playerNum)
@@ -492,10 +492,16 @@ end
 
 local function doorEntries()
     local out = {}
-    if BridgeTask == nil or BridgeTask.DOORS_ENABLED ~= 1 then return out end
+    if BridgeTask == nil then return out end
     if BridgeTask.active then return out end
-    out[#out + 1] = make(tr("JobOpenDoors"), ICONS.doors, BridgeMenu.onJobOpenDoors)
-    out[#out + 1] = make(tr("JobCloseDoors"), ICONS.doors, BridgeMenu.onJobCloseDoors)
+    if BridgeTask.DOORS_ENABLED == 1 then
+        out[#out + 1] = make(tr("JobOpenDoors"), ICONS.doors, BridgeMenu.onJobOpenDoors)
+        out[#out + 1] = make(tr("JobCloseDoors"), ICONS.doors, BridgeMenu.onJobCloseDoors)
+    end
+    if BridgeTask.WINDOWS_ENABLED == 1 and not (BridgeCar ~= nil and BridgeCar.isInside()) then
+        out[#out + 1] = make(tr("JobOpenWindows"), ICONS.doors, BridgeMenu.onJobOpenWindows)
+        out[#out + 1] = make(tr("JobCloseWindows"), ICONS.doors, BridgeMenu.onJobCloseWindows)
+    end
     return out
 end
 

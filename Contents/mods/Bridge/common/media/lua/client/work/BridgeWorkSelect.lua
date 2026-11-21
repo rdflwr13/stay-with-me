@@ -17,7 +17,8 @@ BridgeWorkSelect.MAX_STAINS = 80
 BridgeWorkSelect.MAX_PLANTS = 80
 BridgeWorkSelect.MAX_LOOT_ITEMS = 80
 BridgeWorkSelect.MAX_CORPSES = 40
-BridgeWorkSelect.MAX_DOORS = 80
+BridgeWorkSelect.MAX_DOORS = 25
+BridgeWorkSelect.MAX_WINDOWS = 25
 
 local function acquireLock()
     if BridgeWorkSelect.lockCount == 0 then
@@ -846,6 +847,92 @@ function BridgeWorkSelect.doorsIn(b, mode)
     return list
 end
 
+local function addWindow(list, seen, obj, sq, north, inside, wantOpen)
+    if obj == nil or seen[obj] then return end
+    seen[obj] = true
+    local keep = false
+    pcall(function()
+        keep = obj:IsOpen() == wantOpen and obj:isDestroyed() ~= true and obj:isSmashed() ~= true
+            and obj:isBarricaded() ~= true and obj:getObjectIndex() >= 0
+    end)
+    if not keep then return end
+    local anchor, opp = sq, nil
+    pcall(function()
+        anchor = obj:getSquare() or sq
+        opp = obj:getOppositeSquare()
+    end)
+    if anchor == nil then return end
+    local inBox = inside(anchor:getX(), anchor:getY())
+    if not inBox and opp ~= nil then pcall(function() inBox = inside(opp:getX(), opp:getY()) end) end
+    if not inBox then return end
+    local isNorth = north == true
+    pcall(function() isNorth = obj:getNorth() == true end)
+    if #list >= BridgeWorkSelect.MAX_WINDOWS then return end
+    list[#list + 1] = { x = anchor:getX(), y = anchor:getY(), z = anchor:getZ(), north = isNorth, obj = obj }
+end
+
+
+function BridgeWorkSelect.windowsIn(b, mode)
+    local list = {}
+    if b == nil then return list end
+    local wantOpen = mode ~= "open"
+    local inside = function(x, y)
+        return x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2
+    end
+    local seen = {}
+    local cell = getCell()
+    for x = b.x1 - 1, b.x2 + 1 do
+        for y = b.y1 - 1, b.y2 + 1 do
+            local sq = nil
+            pcall(function() sq = cell:getGridSquare(x, y, b.z) end)
+            if sq ~= nil and #list < BridgeWorkSelect.MAX_WINDOWS then
+                for _, north in ipairs({ true, false }) do
+                    local obj = nil
+                    if BridgeDoors ~= nil and type(BridgeDoors.windowOnEdge) == "function" then
+                        pcall(function() obj = BridgeDoors.windowOnEdge(sq, north) end)
+                    end
+                    if obj ~= nil then addWindow(list, seen, obj, sq, north, inside, wantOpen) end
+                end
+                pcall(function()
+                    local objs = sq:getObjects()
+                    if objs == nil then return end
+                    local n = objs:size()
+                    for i = 0, n - 1 do
+                        local o = objs:get(i)
+                        if o ~= nil and instanceof(o, "IsoWindow") then
+                            addWindow(list, seen, o, sq, o:getNorth() == true, inside, wantOpen)
+                        end
+                    end
+                end)
+                pcall(function()
+                    local objs = sq:getSpecialObjects()
+                    if objs == nil then return end
+                    local n = objs:size()
+                    for i = 0, n - 1 do
+                        local o = objs:get(i)
+                        if o ~= nil and instanceof(o, "IsoWindow") then
+                            addWindow(list, seen, o, sq, o:getNorth() == true, inside, wantOpen)
+                        end
+                    end
+                end)
+                pcall(function()
+                    local objs = sq:getWorldObjects()
+                    if objs == nil then return end
+                    local n = objs:size()
+                    for i = 0, n - 1 do
+                        local o = objs:get(i)
+                        if o ~= nil and instanceof(o, "IsoWindow") then
+                            addWindow(list, seen, o, sq, o:getNorth() == true, inside, wantOpen)
+                        end
+                    end
+                end)
+            end
+        end
+    end
+    return list
+end
+
+
 function BridgeWorkSelect.troughsIn(b)
     local out = {}
     if type(b) ~= "table" then return out end
@@ -1107,16 +1194,30 @@ BridgeWorkSelect.kinds = {
     openDoors = {
         collect = function(b) return BridgeWorkSelect.doorsIn(b, "open") end,
         max = BridgeWorkSelect.MAX_DOORS,
-        maxSide = 10,
+        maxSide = 12,
         min = 1,
         noneSay = "JobNoDoorsOpen",
     },
     closeDoors = {
         collect = function(b) return BridgeWorkSelect.doorsIn(b, "close") end,
         max = BridgeWorkSelect.MAX_DOORS,
-        maxSide = 10,
+        maxSide = 12,
         min = 1,
         noneSay = "JobNoDoorsClose",
+    },
+    closeWindows = {
+        collect = function(b) return BridgeWorkSelect.windowsIn(b, "close") end,
+        max = BridgeWorkSelect.MAX_WINDOWS,
+        maxSide = 12,
+        min = 1,
+        noneSay = "JobNoWindowsOpen",
+    },
+    openWindows = {
+        collect = function(b) return BridgeWorkSelect.windowsIn(b, "open") end,
+        max = BridgeWorkSelect.MAX_WINDOWS,
+        maxSide = 12,
+        min = 1,
+        noneSay = "JobNoWindowsClose",
     },
     digFurrows = {
         collect = function(b) return BridgeGardening.furrowSpots(b) end,
@@ -1231,6 +1332,7 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "tendAnimals" and BridgeTask.HUTCHCARE_ENABLED ~= 1
             and BridgeTask.PET_ANIMALS_ENABLED ~= 1 then return nil end
     if (kind == "openDoors" or kind == "closeDoors") and BridgeTask.DOORS_ENABLED ~= 1 then return nil end
+    if (kind == "closeWindows" or kind == "openWindows") and BridgeTask.WINDOWS_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)
     BridgeWorkSelect.active = ui

@@ -125,6 +125,27 @@ function BridgeSound.sfxAt(body, sound, volume)
 end
 
 
+function BridgeSound.world(sound, square, radius, gain)
+    if sound == nil or square == nil then return nil end
+    local r = tonumber(radius) or 10
+    local g = tonumber(gain) or 1.0
+    local id = nil
+    pcall(function()
+        id = getSoundManager():PlayWorldSound(tostring(sound), square, 0, r, g, true)
+    end)
+    local sx, sy = -1, -1
+    pcall(function() sx, sy = square:getX(), square:getY() end)
+    BridgeSound.info = string.format("%s world %d,%d r=%s g=%s id=%s",
+        tostring(sound), sx, sy, tostring(r), tostring(g), tostring(id))
+    local key = "world:" .. tostring(sound)
+    if BridgeSound.logged[key] ~= true then
+        BridgeSound.logged[key] = true
+        log("world " .. BridgeSound.info)
+    end
+    return id
+end
+
+
 function BridgeSound.fenceMaterial(body, high)
     local found = nil
     pcall(function()

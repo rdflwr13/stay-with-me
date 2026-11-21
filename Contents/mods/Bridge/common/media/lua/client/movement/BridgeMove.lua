@@ -2821,6 +2821,11 @@ local function stepAside(body, F, A, d)
     BridgeMove.pathResult = "follow-aside"
     trackStep(body)
     BridgeMove.traceFrame(body, d, false, false)
+    pcall(function()
+        if BridgeCallout ~= nil and type(BridgeCallout.bumpAside) == "function" then
+            BridgeCallout.bumpAside()
+        end
+    end)
     return true
 end
 
@@ -2876,6 +2881,11 @@ function BridgeMove.backStart(body, F, red, vx, vy, d)
     if Bridge.verbose then
         log(sformat("follow back: d %.2f, goal %.2f %.2f, player %.2f %.2f", d, gx, gy, red:getX(), red:getY()))
     end
+    pcall(function()
+        if BridgeCallout ~= nil and type(BridgeCallout.bumpAside) == "function" then
+            BridgeCallout.bumpAside()
+        end
+    end)
     return true
 end
 
@@ -4302,10 +4312,31 @@ function DOOR.carInDoorway(cells)
 end
 
 
+DOOR.SOUND_RADIUS = 10
+DOOR.SOUND_GAIN = 0.7
+
+
+function DOOR.playerFarFromSquare(sq)
+    if sq == nil then return true end
+    local red = BridgeData ~= nil and BridgeData.owner() or nil
+    if red == nil then return true end
+    local far = true
+    pcall(function()
+        if math.abs(red:getZ() - sq:getZ()) >= 0.5 then return end
+        far = dist2d(red:getX(), red:getY(), sq:getX() + 0.5, sq:getY() + 0.5) > DOOR.SOUND_RADIUS
+    end)
+    return far
+end
+
+
 function BridgeMove.toggleDoor(body, door, kind)
     kind = kind or DOOR.doorKind(door)
     local wasOpen = door:IsOpen()
+    local sq = nil
+    pcall(function() sq = door:getSquare() end)
+    local far = DOOR.playerFarFromSquare(sq)
     local byGame = false
+    local engineSound = false
     if kind == "double" then
         local blocked = true
         pcall(function() blocked = IsoDoor.isDoubleDoorObstructed(door) end)
@@ -4330,7 +4361,8 @@ function BridgeMove.toggleDoor(body, door, kind)
 
 
 
-        local actor = BridgeData.owner()
+        local actor = nil
+        if not far and BridgeData ~= nil then actor = BridgeData.owner() end
         if not wasOpen and BridgeDoors ~= nil then
             local locked = false
             pcall(function() locked = door:isLocked() == true or door:isLockedByKey() == true end)
@@ -4340,26 +4372,44 @@ function BridgeMove.toggleDoor(body, door, kind)
             pcall(function() door:ToggleDoor(actor) end)
             byGame = door:IsOpen() ~= wasOpen
         end
+        engineSound = byGame
         if not byGame then
-            local square = door:getSquare()
-            door:DirtySlice()
-            IsoGridSquare.RecalcLightTime = -1.0
-            square:InvalidateSpecialObjectPaths()
-            door:ToggleDoorSilent()
-            square:RecalcProperties()
-            pcall(function() door:syncIsoObject(false, 1, nil, nil) end)
-            pcall(function() LuaEventManager.triggerEvent("OnContainerUpdate") end)
-            pcall(function() door:invalidateRenderChunkLevel(FBORenderChunk.DIRTY_OBJECT_MODIFY) end)
+            if sq ~= nil then
+                door:DirtySlice()
+                IsoGridSquare.RecalcLightTime = -1.0
+                sq:InvalidateSpecialObjectPaths()
+                door:ToggleDoorSilent()
+                sq:RecalcProperties()
+                pcall(function() door:syncIsoObject(false, 1, nil, nil) end)
+                pcall(function() LuaEventManager.triggerEvent("OnContainerUpdate") end)
+                pcall(function() door:invalidateRenderChunkLevel(FBORenderChunk.DIRTY_OBJECT_MODIFY) end)
+            else
+                pcall(function() door:ToggleDoorSilent() end)
+            end
         end
     end
     local open = door:IsOpen()
-    log(sformat("toggleDoor kind=%s open=%s wasOpen=%s byGame=%s", tostring(kind), tostring(open), tostring(wasOpen), tostring(byGame)))
+    local sound = "-"
+    if open ~= wasOpen and not engineSound then
+        local prefix = "WoodDoor"
+        pcall(function() prefix = door:getSoundPrefix() or "WoodDoor" end)
+        sound = prefix .. (open and "Open" or "Close")
+        if sq ~= nil then
+            if BridgeSound ~= nil and type(BridgeSound.world) == "function" then
+                BridgeSound.world(sound, sq, DOOR.SOUND_RADIUS, DOOR.SOUND_GAIN)
+            else
+                pcall(function()
+                    getSoundManager():PlayWorldSound(sound, sq, 0, DOOR.SOUND_RADIUS, DOOR.SOUND_GAIN, true)
+                end)
+            end
+        end
+    end
+    local sx, sy = -1, -1
+    if sq ~= nil then pcall(function() sx, sy = sq:getX(), sq:getY() end) end
+    log(sformat("toggleDoor kind=%s open=%s wasOpen=%s far=%s engineSound=%s sound=%s at=%s,%s",
+        tostring(kind), tostring(open), tostring(wasOpen), tostring(far), tostring(engineSound),
+        tostring(sound), tostring(sx), tostring(sy)))
     if open == wasOpen then return false end
-    if byGame then return true end
-
-    local prefix = "WoodDoor"
-    pcall(function() prefix = door:getSoundPrefix() or "WoodDoor" end)
-    pcall(function() body:playSound(prefix .. (open and "Open" or "Close")) end)
     return true
 end
 
@@ -4977,7 +5027,7 @@ end
 BridgeMove.openWindows = BridgeMove.openWindows or {}
 local WINDOW_CLOSE_MS = 900
 
-function BridgeMove.noteWindowOpened(body, object)
+function BridgeMove.noteWindowOpened(body, object, behind)
     if object == nil then return end
     local tracked = BridgeTask ~= nil and BridgeTask.active
     if not tracked and (Bridge == nil or Bridge.mode ~= "home") then return end
@@ -4988,13 +5038,40 @@ function BridgeMove.noteWindowOpened(body, object)
         if b ~= nil then fx, fy = b:getX() + 0.5, b:getY() + 0.5 end
     end)
     if x == nil then return end
+    local flag = behind == true or nil
     BridgeMove.openWindows = BridgeMove.openWindows or {}
     for _, rec in ipairs(BridgeMove.openWindows) do
-        if rec.obj == object then rec.tick = Bridge.time return end
+        if rec.obj == object then
+            rec.tick = Bridge.time
+            rec.behind = flag
+            return
+        end
     end
     BridgeMove.openWindows[#BridgeMove.openWindows + 1] =
-        { obj = object, x = x, y = y, z = z, farX = fx, farY = fy, tick = Bridge.time }
+        { obj = object, x = x, y = y, z = z, farX = fx, farY = fy, tick = Bridge.time, behind = flag }
 end
+
+
+function BridgeMove.beginWindow(body, obj, opening)
+    if body == nil or obj == nil then return end
+    local bump = opening and "WindowOpen" or "WindowClose"
+    local sound = opening and "OpenWindow" or "CloseWindow"
+    pcall(function() body:setVariable("BumpAnimFinished", false) end)
+    pcall(function() if body:getBumpType() ~= bump then body:setBumpType(bump) end end)
+    pcall(function() body:playSound(sound) end)
+end
+
+
+function BridgeMove.toggleWindow(body, obj)
+    if obj == nil then return false end
+    local wasOpen = false
+    pcall(function() wasOpen = obj:IsOpen() == true end)
+    pcall(function() obj:ToggleWindow(body) end)
+    local nowOpen = wasOpen
+    pcall(function() nowOpen = obj:IsOpen() == true end)
+    return nowOpen ~= wasOpen
+end
+
 
 function BridgeMove.closeWindows(body)
     local list = BridgeMove.openWindows
@@ -5027,12 +5104,10 @@ function BridgeMove.closeWindows(body)
                 if goalAway and (far or near > 1.6) then
                     if rec.closingAt == nil then
                         rec.closingAt = Bridge.time
-                        pcall(function() body:setVariable("BumpAnimFinished", false) end)
-                        pcall(function() if body:getBumpType() ~= "WindowClose" then body:setBumpType("WindowClose") end end)
-                        pcall(function() body:playSound("CloseWindow") end)
+                        BridgeMove.beginWindow(body, obj, false)
                         log("window closing behind")
                     elseif Bridge.time - rec.closingAt >= 20 then
-                        pcall(function() obj:ToggleWindow(body) end)
+                        BridgeMove.toggleWindow(body, obj)
                         log("window closed behind")
                         done = true
                     end
@@ -5301,6 +5376,10 @@ function BridgeMove.climbStep(body)
     local asn = ""
     pcall(function() asn = tostring(body:getActionStateName()) end)
     if asn == "climbwindow" or asn == "climbfence" then
+        if asn == "climbwindow" and c.kind == "window" and c.object ~= nil
+                and BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "closeWindows" then
+            pcall(function() BridgeMove.noteWindowOpened(body, c.object, true) end)
+        end
         BridgeMove.pendingClimb = nil
         BridgeMove.climbUntil = Bridge.time + 150
         return true
@@ -6331,14 +6410,21 @@ function BridgeMove.openDoor(body, object)
     end
     local refuse = locked and not inRoom and not behindRed and not hasKey
     if refuse and ra == nil and rb == nil then
-        local actor = BridgeData.owner()
-        local wasOpen = false
-        pcall(function() wasOpen = object:IsOpen() end)
-        if actor ~= nil then
+        local actor = BridgeData ~= nil and BridgeData.owner() or nil
+        local near = false
+        pcall(function()
+            local dsq = object:getSquare()
+            near = dsq ~= nil and not DOOR.playerFarFromSquare(dsq)
+        end)
+        if actor ~= nil and near then
+            local wasOpen = false
+            pcall(function() wasOpen = object:IsOpen() end)
             local tried = pcall(function() object:ToggleDoor(actor) end)
             local nowOpen = false
             pcall(function() nowOpen = object:IsOpen() end)
             if tried and nowOpen ~= wasOpen then refuse = false end
+        elseif not near then
+            log("door locked probe skipped: player far")
         end
     end
     if refuse or object:isObstructed() then

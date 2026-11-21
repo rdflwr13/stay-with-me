@@ -4899,5 +4899,16 @@
     "IGUI_NotAlone_Say_JobHutchEggs": "Eier geholt.",
     "IGUI_NotAlone_Say_JobHutchClean": "Stall ist sauber.",
     "IGUI_NotAlone_Say_JobHutchFull": "Ich habe keinen Platz für weitere Eier.",
+    "IGUI_NotAlone_JobCloseWindows": "Close windows",
+    "IGUI_NotAlone_Say_JobNoWindowsOpen": "No open windows here.",
+    "IGUI_NotAlone_Say_WindowsCloseStart": "Closing the windows.",
+    "IGUI_NotAlone_Say_WindowsCloseProgress": "Shutting them up.",
+    "IGUI_NotAlone_Say_WindowsCloseDone": "Windows are shut.",
+    "IGUI_NotAlone_Openings": "Openings",
+    "IGUI_NotAlone_JobOpenWindows": "Open windows",
+    "IGUI_NotAlone_Say_JobNoWindowsClose": "No closed windows here.",
+    "IGUI_NotAlone_Say_WindowsOpenStart": "Opening the windows.",
+    "IGUI_NotAlone_Say_WindowsOpenProgress": "Opening them up.",
+    "IGUI_NotAlone_Say_WindowsOpenDone": "Windows are open.",
     "IGUI_perks_Agriculture": "Landwirtschaft"
 }

@@ -701,13 +701,25 @@ local function addAnimalMenu(jobs)
 end
 
 local function buildWorkDoors(jobs)
-    if BridgeTask == nil or BridgeTask.DOORS_ENABLED ~= 1 then return end
-    local doorsOption = jobs:addOption(tr("Doors"))
+    if BridgeTask == nil then return end
+    local doorsOn = BridgeTask.DOORS_ENABLED == 1
+    local windowsOn = BridgeTask.WINDOWS_ENABLED == 1
+    if not doorsOn and not windowsOn then return end
+    local doorsOption = jobs:addOption(tr("Openings"))
     local doors = ISContextMenu:getNew(jobs)
     jobs:addSubMenu(doorsOption, doors)
-    local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
-    local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
-    if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
+    if doorsOn then
+        local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
+        local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
+        if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
+    end
+    if windowsOn then
+        local inCar = BridgeCar ~= nil and BridgeCar.isInside()
+        local blocked = BridgeTask.active or inCar or Bridge == nil or not Bridge.alive()
+        local openWin = doors:addOption(tr("JobOpenWindows"), nil, BridgeMenu.onJobOpenWindows)
+        local shut = doors:addOption(tr("JobCloseWindows"), nil, BridgeMenu.onJobCloseWindows)
+        if blocked then openWin.notAvailable = true; shut.notAvailable = true end
+    end
 end
 
 
@@ -755,7 +767,7 @@ BridgeMenu.WORK_ORDERABLE = {
     { id = "loot", label = "WindowLoot", build = addLootWorkMenu },
     { id = "animals", label = "Animals", build = addAnimalMenu },
     { id = "gardening", label = "Gardening", build = addGardeningMenu },
-    { id = "doors", label = "Doors", build = buildWorkDoors },
+    { id = "doors", label = "Openings", build = buildWorkDoors },
     { id = "cleanUp", label = "JobCleanUp", build = buildWorkCleanUp },
     { id = "clearPlants", label = "JobClearPlants", build = buildWorkClearPlants },
     { id = "chopTree", label = "JobChopTree", build = buildWorkChopTree },
@@ -1603,6 +1615,20 @@ function BridgeMenu.onJobCloseDoors()
     if BridgeTask == nil or BridgeWorkSelect == nil then return end
     if not Bridge.alive() and not (BridgeCar ~= nil and BridgeCar.isInside()) then return end
     BridgeWorkSelect.begin(BridgeData.owner(), "closeDoors")
+end
+
+function BridgeMenu.onJobOpenWindows()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() then return end
+    if BridgeCar ~= nil and BridgeCar.isInside() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "openWindows")
+end
+
+function BridgeMenu.onJobCloseWindows()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() then return end
+    if BridgeCar ~= nil and BridgeCar.isInside() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "closeWindows")
 end
 
 function BridgeMenu.onJobHarvestCrops()
