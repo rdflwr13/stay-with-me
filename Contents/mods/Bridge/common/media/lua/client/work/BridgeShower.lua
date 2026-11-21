@@ -404,8 +404,11 @@ function BridgeShower.findNearest(centre, radius, rect)
     local red = owner()
     if red == nil and centre == nil and rect == nil then return nil end
     local best, bestD, bestSq = nil, nil, nil
+    local isoOk, showerFn, checked = false, false, 0
     pcall(function()
         local iso = require("TABAS_Iso")
+        isoOk = true
+        showerFn = type(iso.getShowerObjectOnSquare) == "function"
         local cell = getCell()
         local r = radius or 12
         local cz = nil
@@ -426,6 +429,7 @@ function BridgeShower.findNearest(centre, radius, rect)
         local function check(x, y)
             local sq = cell:getGridSquare(x, y, cz)
             if sq == nil then return end
+            checked = checked + 1
             local obj = iso.getShowerObjectOnSquare(sq, false)
             if obj == nil and BridgeBath ~= nil and type(BridgeBath.sinkFor) == "function" then
                 pcall(function()
@@ -466,6 +470,16 @@ function BridgeShower.findNearest(centre, radius, rect)
             end
         end
     end)
+    if rect ~= nil then
+        local at = "-"
+        if bestSq ~= nil then
+            pcall(function() at = tostring(bestSq:getX()) .. "," .. tostring(bestSq:getY()) end)
+        end
+        log(string.format("findNearest rect=%s,%s..%s,%s z=%s iso=%s fn=%s checked=%d found=%s at=%s",
+            tostring(rect.x1), tostring(rect.y1), tostring(rect.x2), tostring(rect.y2),
+            tostring(math.floor(rect.z or 0)), tostring(isoOk), tostring(showerFn), checked,
+            tostring(best ~= nil), at))
+    end
     return best, bestSq
 end
 

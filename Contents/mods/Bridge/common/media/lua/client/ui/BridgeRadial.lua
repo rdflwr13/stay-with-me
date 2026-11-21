@@ -225,7 +225,7 @@ local function addSlices(menu, list, append)
     end
     for i = 1, #list do
         local entry = list[i]
-        local run = entry.run
+        local run = entry.run or function() end
         menu.bridgeTips[offset + i] = entry.tip
         menu:addSlice(entry.label, texture(entry.icon), function() guarded(run) end)
     end
@@ -245,10 +245,16 @@ local function socialEntries(builder, icons)
     pcall(function() opts = BridgeSocial[builder]() end)
     if opts == nil then return out end
     for _, option in ipairs(opts) do
-        if option.blocked == nil then
+        local iconKey = nil
+        if option.id ~= nil then iconKey = icons[option.id] end
+        local tip = nil
+        pcall(function() tip = BridgeSocial.optionTip(option, tr) end)
+        local run = nil
+        if option.help ~= true and option.id ~= nil then
             local id = option.id
-            out[#out + 1] = make(tr(option.label), ICONS[icons[id] or "hug"], function() BridgeSocial.talk(id) end)
+            run = function() BridgeSocial.talk(id) end
         end
+        out[#out + 1] = make(tr(option.label), ICONS[iconKey or "hug"], run, tip)
     end
     return out
 end
@@ -502,6 +508,10 @@ local function doorEntries()
         out[#out + 1] = make(tr("JobOpenWindows"), ICONS.doors, BridgeMenu.onJobOpenWindows)
         out[#out + 1] = make(tr("JobCloseWindows"), ICONS.doors, BridgeMenu.onJobCloseWindows)
     end
+    if BridgeTask.CURTAINS_ENABLED == 1 and not (BridgeCar ~= nil and BridgeCar.isInside()) then
+        out[#out + 1] = make(tr("JobOpenCurtains"), ICONS.doors, BridgeMenu.onJobOpenCurtains)
+        out[#out + 1] = make(tr("JobCloseCurtains"), ICONS.doors, BridgeMenu.onJobCloseCurtains)
+    end
     return out
 end
 
@@ -672,6 +682,8 @@ function BridgeRadial.topEntries(playerNum)
         out[1] = make(tr("Call", companionName()), ICONS.call, BridgeMenu.onCall)
         return out
     end
+    local affTip = nil
+    pcall(function() affTip = BridgeSocial.affectionHint() end)
     local order = BridgeRadial.order(st)
     local gearDone = false
     local affectionShown = false
@@ -696,7 +708,7 @@ function BridgeRadial.topEntries(playerNum)
             end
             if #BridgeRadial.ringEntries("affection", playerNum) > 0 then
                 affectionShown = true
-                out[#out + 1] = make(tr("Affection"), ICONS.interactionSubMenu, function() BridgeRadial.showRing("affection", playerNum) end)
+                out[#out + 1] = make(tr("Affection"), ICONS.interactionSubMenu, function() BridgeRadial.showRing("affection", playerNum) end, affTip)
             end
         elseif shown and id == "heal" then
             local alive = Bridge.alive() == true
@@ -737,7 +749,7 @@ function BridgeRadial.topEntries(playerNum)
         out[1] = make(tr("Call", companionName()), ICONS.call, BridgeMenu.onCall)
     end
     if not affectionShown and #BridgeRadial.ringEntries("affection", playerNum) > 0 then
-        out[#out + 1] = make(tr("Affection"), ICONS.interactionSubMenu, function() BridgeRadial.showRing("affection", playerNum) end)
+        out[#out + 1] = make(tr("Affection"), ICONS.interactionSubMenu, function() BridgeRadial.showRing("affection", playerNum) end, affTip)
     end
     return out
 end

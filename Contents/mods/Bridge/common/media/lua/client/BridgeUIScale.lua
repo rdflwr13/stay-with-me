@@ -114,6 +114,12 @@ function BridgeUIScale.set(value)
     end
     local data = playerModData()
     if data ~= nil then data[BridgeUIScale.MODDATA_KEY] = v end
+    if type(isClient) == "function" and isClient() then
+        local p = localPlayer()
+        if p ~= nil and type(p.transmitModData) == "function" then
+            pcall(function() p:transmitModData() end)
+        end
+    end
     BridgeUIScale.revision = BridgeUIScale.revision + 1
     if BridgeLog ~= nil and type(BridgeLog.on) == "function" and BridgeLog.on() then
         local S = BridgeUIScale.effectiveFor(BridgeUIScale.AUTO_BASE_H, BridgeUIScale.AUTO_BASE_H)

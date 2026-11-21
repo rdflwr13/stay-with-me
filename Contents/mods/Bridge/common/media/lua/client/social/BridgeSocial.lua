@@ -399,6 +399,13 @@ function BridgeSocial.relCommand(sub, a, b)
         BridgeSocial.save(true)
         return string.format("rel f=%d r=%d", r.f, r.r)
     end
+    if sub == "days" then
+        local d = tonumber(a)
+        if d == nil then return "rel days needs a number: rel days <days>" end
+        r.days = math.max(0, math.floor(d))
+        BridgeSocial.save(true)
+        return string.format("rel days=%d", r.days)
+    end
     if sub == "gift" or sub == "gifts" then return BridgeSocial.giftCommand("show") end
     if sub == "giftreset" then return BridgeSocial.giftCommand("reset") end
     if sub == "cooldown" or sub == "cooldowns" then return BridgeSocial.giftCommand("cooldown") end
@@ -406,7 +413,7 @@ function BridgeSocial.relCommand(sub, a, b)
     if sub == "forget" then return BridgeSocial.giftCommand("forget", a) end
     if sub == "list" then return BridgeSocial.giftCommand("list") end
     if sub == "preview" then return BridgeSocial.giftCommand("preview", a) end
-    return "rel [show | add <f> [r] | remove <f> [r] | set <f> [r] | reset | giftreset | cooldown | nextday | forget [type] | list | preview [type]]"
+    return "rel [show | add <f> [r] | remove <f> [r] | set <f> [r] | days <n> | reset | giftreset | cooldown | nextday | forget [type] | list | preview [type]]"
 end
 
 
@@ -1772,6 +1779,21 @@ local function physOn()
     return on
 end
 
+
+local function reqGate(req)
+    if req == nil then return function() return true end end
+    return function(r)
+        if r == nil then return false end
+        if req.physical and not physOn() then return false end
+        if req.romance and not BridgeSocial.romanceOn() then return false end
+        if req.romanceOpen and not BridgeSocial.romanceOpen(r) then return false end
+        if req.f ~= nil and r.f < req.f then return false end
+        if req.r ~= nil and r.r < req.r then return false end
+        if req.days ~= nil and r.days < req.days then return false end
+        return true
+    end
+end
+
 BridgeSocial.ACTIONS = {
     { id = "Chat", gate = function(r) return true end, tiered = true,
       chance = function(r) return 0.75 + r.f / 400 end, good = { 2, 0 }, bad = { 0, 0 }, anim = { "Yes", "Shrug" } },
@@ -1783,24 +1805,24 @@ BridgeSocial.ACTIONS = {
       chance = function(r) return 0.9 end, good = { 1, 0 }, bad = { 0, 0 }, anim = { "Yes", "Shrug" } },
     { id = "Comfort", gate = function(r) return r.f >= 20 end, tiered = true,
       chance = function(r) return 0.5 + r.f / 200 end, good = { 3, 0 }, bad = { 0, 0 }, anim = { "Yes", "No" } },
-    { id = "Flirt", gate = function(r) return BridgeSocial.romanceOpen(r) end, romantic = true, tiered = true,
+    { id = "Flirt", gate = reqGate{ romanceOpen = true }, req = { romanceOpen = true }, romantic = true, tiered = true,
       chance = function(r) return 0.2 + (r.f - 30) / 150 + r.r / 150 end, good = { 1, 3 }, bad = { -1, -2 }, anim = { "WaveHi", "No" } },
-    { id = "Handshake", gate = function(r) return physOn() and r.f >= 10 end, physical = true, noRoll = true,
+    { id = "Handshake", gate = reqGate{ physical = true, f = 10 }, req = { physical = true, f = 10 }, physical = true, noRoll = true,
       group = "greetings", animId = "Handshake", mood = "Handshake", romantic = false,
       good = { 2, 0 }, bad = { 0, 0 } },
-    { id = "FistBump", gate = function(r) return physOn() and r.f >= 20 end, physical = true, noRoll = true,
+    { id = "FistBump", gate = reqGate{ physical = true, f = 20 }, req = { physical = true, f = 20 }, physical = true, noRoll = true,
       group = "greetings", animId = "FistBump", mood = "FistBump", romantic = false,
       good = { 2, 0 }, bad = { 0, 0 } },
-    { id = "ShoulderMassage", gate = function(r) return physOn() and r.f >= 30 end, physical = true, noRoll = true,
+    { id = "ShoulderMassage", gate = reqGate{ physical = true, f = 30 }, req = { physical = true, f = 30 }, physical = true, noRoll = true,
       group = "relax", animId = "ShoulderMassage", mood = "ShoulderMassage", romantic = false,
       good = { 3, 0 }, bad = { 0, 0 } },
-    { id = "Hug", gate = function(r) return physOn() and r.f >= 45 and r.r >= 15 and r.days >= 4 and BridgeSocial.romanceOn() end,
+    { id = "Hug", gate = reqGate{ physical = true, romance = true, f = 45, r = 15, days = 4 }, req = { physical = true, romance = true, f = 45, r = 15, days = 4 },
       physical = true, noRoll = true, group = "affection", animId = "Hug", mood = "Hug", romantic = true,
       good = { 3, 4 }, bad = { 0, 0 } },
-    { id = "SlowDance", gate = function(r) return physOn() and BridgeSocial.romanceOpen(r) and r.r >= 25 and r.f >= 45 and r.days >= 3 end,
+    { id = "SlowDance", gate = reqGate{ physical = true, romanceOpen = true, f = 45, r = 25, days = 3 }, req = { physical = true, romanceOpen = true, f = 45, r = 25, days = 3 },
       physical = true, noRoll = true, group = "affection", animId = "SlowDance", mood = "SlowDance", romantic = true,
       good = { 2, 3 }, bad = { 0, 0 } },
-    { id = "Kiss", gate = function(r) return physOn() and BridgeSocial.romanceOpen(r) and r.r >= 40 and r.f >= 55 and r.days >= 5 end,
+    { id = "Kiss", gate = reqGate{ physical = true, romanceOpen = true, f = 55, r = 40, days = 5 }, req = { physical = true, romanceOpen = true, f = 55, r = 40, days = 5 },
       physical = true, noRoll = true, group = "affection", animId = "Kiss", mood = "Kiss", romantic = true,
       good = { 2, 5 }, bad = { 0, 0 } },
 }
@@ -1833,10 +1855,145 @@ function BridgeSocial.blockTip(entry, tr)
 end
 
 
+local HINT_FALLBACK = {
+    TalkRequirePG = "Physical affection needs the PZ Relationship (PlayerGreetings) mod.",
+    TalkRomanceOff = "Romance is off. Turn it on in the companion settings.",
+    TalkAffectionLocked = "Affection unavailable",
+    TalkRomanceLocked = "Romance is off",
+    TalkNeedNotYet = "Not yet.",
+    TalkAnimTooFar = "Move closer.",
+    TalkAnimMoving = "Stand still for a moment.",
+    TalkAnimBusy = "The companion is busy right now.",
+    TalkAnimVehicle = "Get out of the vehicle first.",
+    TalkAnimSeated = "The companion is sitting or lying down.",
+    TalkAnimFloor = "You are on another floor.",
+}
+
+local NEED_FALLBACK = {
+    TalkNeedFriend = "Friendship %d/%d",
+    TalkNeedRomance = "Romance %d/%d",
+    TalkNeedDays = "Days together %d/%d",
+}
+
+local ANIM_TIP_KEYS = {
+    ["Requires PZ Relationship (PlayerGreetings)"] = "TalkRequirePG",
+    ["Player is too far away"] = "TalkAnimTooFar",
+    ["Player is moving"] = "TalkAnimMoving",
+    ["Companion is busy"] = "TalkAnimBusy",
+    ["Companion is in a vehicle"] = "TalkAnimVehicle",
+    ["Companion is seated or lying down"] = "TalkAnimSeated",
+    ["Player is on another floor"] = "TalkAnimFloor",
+}
+
+local function hintText(key)
+    if key == nil then return "" end
+    local text = nil
+    pcall(function() text = BridgeData.text(key) end)
+    if type(text) == "string" and text ~= "" and text ~= key and text ~= ("IGUI_NotAlone_" .. key) then
+        return text
+    end
+    return HINT_FALLBACK[key] or key
+end
+
+local function needText(row)
+    if row == nil then return "" end
+    if row.key == "TalkRequirePG" or row.key == "TalkRomanceOff" then return hintText(row.key) end
+    local have = math.floor(tonumber(row.have) or 0)
+    local need = math.floor(tonumber(row.need) or 0)
+    local text = nil
+    pcall(function() text = BridgeData.text(row.key, have, need) end)
+    if type(text) == "string" and text ~= "" and text ~= row.key and text ~= ("IGUI_NotAlone_" .. row.key) then
+        return text
+    end
+    local pattern = NEED_FALLBACK[row.key]
+    if pattern ~= nil then
+        local ok, out = pcall(string.format, pattern, have, need)
+        if ok then return out end
+    end
+    return row.key
+end
+
+function BridgeSocial.unmet(a, r)
+    if a == nil or a.req == nil or r == nil then return {} end
+    local req = a.req
+    if req.physical and not physOn() then
+        return { { key = "TalkRequirePG" } }
+    end
+    if req.romance and not BridgeSocial.romanceOn() then
+        return { { key = "TalkRomanceOff" } }
+    end
+    if req.romanceOpen and not BridgeSocial.romanceOn() then
+        return { { key = "TalkRomanceOff" } }
+    end
+    local effF = req.f
+    local effDays = req.days
+    if req.romanceOpen then
+        local sandboxFriend = BridgeData.sandboxNumber("RomanceRequirementFriend", 30, 0, 100)
+        local sandboxDays = BridgeData.sandboxNumber("RomanceRequirementDays", 2, 0, 30)
+        effF = math.max(req.f or -math.huge, sandboxFriend)
+        effDays = math.max(req.days or -math.huge, sandboxDays)
+    end
+    local rows = {}
+    if effF ~= nil and r.f < effF then
+        rows[#rows + 1] = { key = "TalkNeedFriend", have = r.f, need = effF }
+    end
+    if req.r ~= nil and r.r < req.r then
+        rows[#rows + 1] = { key = "TalkNeedRomance", have = r.r, need = req.r }
+    end
+    if effDays ~= nil and r.days < effDays then
+        rows[#rows + 1] = { key = "TalkNeedDays", have = math.floor(r.days), need = effDays }
+    end
+    return rows
+end
+
+function BridgeSocial.animTip(why)
+    if why == nil then return nil end
+    local key = ANIM_TIP_KEYS[why]
+    if key == nil then return why end
+    local text = nil
+    if type(getTextOrNull) == "function" then
+        pcall(function() text = getTextOrNull("IGUI_NotAlone_" .. key) end)
+    end
+    if type(text) == "string" and text ~= "" and text ~= ("IGUI_NotAlone_" .. key) then return text end
+    return hintText(key)
+end
+
+function BridgeSocial.optionTip(entry, tr)
+    if entry == nil then return nil end
+    if entry.help then return hintText(entry.hint or entry.label) end
+    if entry.locked then
+        local parts = {}
+        for _, row in ipairs(entry.unmet or {}) do
+            local text = needText(row)
+            if type(text) == "string" and text ~= "" then parts[#parts + 1] = text end
+        end
+        if #parts == 0 then return hintText("TalkNeedNotYet") end
+        return table.concat(parts, " | ")
+    end
+    if entry.blocked ~= nil then
+        local text = BridgeSocial.blockTip(entry, tr)
+        if entry.blocked == "NoAnim" and entry.animWhy ~= nil then
+            local extra = BridgeSocial.animTip(entry.animWhy)
+            if type(extra) == "string" and extra ~= "" then
+                if type(text) == "string" and text ~= "" then return text .. " " .. extra end
+                return extra
+            end
+        end
+        return text
+    end
+    return nil
+end
+
+function BridgeSocial.affectionHint()
+    if not physOn() then return hintText("TalkRequirePG") end
+    if not BridgeSocial.romanceOn() then return hintText("TalkRomanceOff") end
+    return nil
+end
+
+
 function BridgeSocial.talkBlock(id, r, calm, busy, animWhy)
     if busy then return "Busy" end
     local a = actionById(id)
-    if a ~= nil and a.physical and animWhy ~= nil then return "NoAnim" end
     if a ~= nil and a.romantic and recentFight() then return "AfterFight" end
     local since = Bridge.time - (BridgeSocial.last[id] or -999999)
     if since < BridgeSocial.repeatSec(id, r, calm) * 60 then return "Repeat" end
@@ -1851,6 +2008,7 @@ function BridgeSocial.talkBlock(id, r, calm, busy, animWhy)
             end
         end
     end
+    if a ~= nil and a.physical and animWhy ~= nil then return "NoAnim" end
     return nil
 end
 
@@ -2261,17 +2419,23 @@ local function animReason()
 end
 
 
-local function optionList(filter, r, calm, busy, animWhy)
+local function optionList(filter, r, calm, busy, animWhy, includeLocked)
     local list = {}
     for _, a in ipairs(BridgeSocial.ACTIONS) do
-        if filter(a) and a.gate(r) then
-            list[#list + 1] = {
-                id = a.id,
-                label = "Talk_" .. a.id,
-                romantic = a.romantic == true,
-                group = a.group,
-                blocked = BridgeSocial.talkBlock(a.id, r, calm, busy, animWhy),
-            }
+        if filter(a) then
+            local locked = not a.gate(r)
+            if not locked or includeLocked == true then
+                list[#list + 1] = {
+                    id = a.id,
+                    label = "Talk_" .. a.id,
+                    romantic = a.romantic == true,
+                    group = a.group,
+                    locked = locked,
+                    unmet = locked and BridgeSocial.unmet(a, r) or nil,
+                    blocked = (not locked) and BridgeSocial.talkBlock(a.id, r, calm, busy, animWhy) or nil,
+                    animWhy = animWhy,
+                }
+            end
         end
     end
     return list
@@ -2298,7 +2462,19 @@ end
 
 
 function BridgeSocial.affectionOptions(r, calm, busy, animWhy)
-    return optionList(function(a) return a.physical == true and a.group ~= "greetings" end, r, calm, busy, animWhy)
+    if not physOn() then
+        return { { label = "TalkAffectionLocked", hint = "TalkRequirePG", help = true } }
+    end
+    local list = optionList(function(a) return a.physical == true and a.group ~= "greetings" end, r, calm, busy, animWhy, true)
+    if not BridgeSocial.romanceOn() then
+        local out = {}
+        for _, entry in ipairs(list) do
+            if entry.romantic ~= true then out[#out + 1] = entry end
+        end
+        out[#out + 1] = { label = "TalkRomanceLocked", hint = "TalkRomanceOff", help = true }
+        return out
+    end
+    return list
 end
 
 
@@ -2308,7 +2484,11 @@ local function menuContext()
     rollDay(r)
     local busy = zombiesNear(BUSY_DIST)
     local calm = BridgeSocial.relaxed(r)
-    return r, calm, busy, animReason()
+    local animWhy = animReason()
+    log(string.format("menu f=%d r=%d days=%d hours=%.1f busy=%s calm=%s romance=%s pg=%s anim=%s",
+        r.f, r.r, r.days, r.hours, tostring(busy), tostring(calm), tostring(BridgeSocial.romanceOn()),
+        tostring(physOn()), tostring(animWhy)))
+    return r, calm, busy, animWhy
 end
 
 
@@ -2344,6 +2524,18 @@ function BridgeSocial.fillMenu(context, tr)
     local calm = BridgeSocial.relaxed(r)
     local animWhy = animReason()
     local function addEntry(target, entry)
+        if entry.help then
+            local opt = target:addOption(tr(entry.label))
+            opt.notAvailable = true
+            menuTip(opt, BridgeSocial.optionTip(entry, tr))
+            return
+        end
+        if entry.locked then
+            local opt = target:addOption(tr(entry.label))
+            opt.notAvailable = true
+            menuTip(opt, BridgeSocial.optionTip(entry, tr))
+            return
+        end
         local opt
         if entry.ask then
             opt = target:addOption(tr(entry.label), nil, BridgeSocial.ask)
@@ -2352,7 +2544,7 @@ function BridgeSocial.fillMenu(context, tr)
         end
         if entry.blocked ~= nil then
             opt.notAvailable = true
-            menuTip(opt, BridgeSocial.blockTip(entry, tr))
+            menuTip(opt, BridgeSocial.optionTip(entry, tr))
         end
     end
     local affection = BridgeSocial.affectionOptions(r, calm, busy, animWhy)

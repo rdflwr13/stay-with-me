@@ -11,7 +11,7 @@ BridgeChoresTab = ISPanel:derive("BridgeChoresTab")
 local PAD = 10
 local ROW_PAD = 4
 local GAP = 4
-local MAX_LIST_H = 360
+local MAX_LIST_H = 260
 local RUN_W = 38
 local RUN_MARGIN = 14
 

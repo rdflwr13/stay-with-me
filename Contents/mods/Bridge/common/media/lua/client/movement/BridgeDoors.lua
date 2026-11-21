@@ -420,6 +420,84 @@ function BridgeDoors.isOpenableWindow(obj)
     return yes
 end
 
+
+function BridgeDoors.isCurtain(obj)
+    local yes = false
+    pcall(function() yes = obj ~= nil and instanceof(obj, "IsoCurtain") end)
+    return yes
+end
+
+
+function BridgeDoors.curtainOpen(curtain)
+    if curtain == nil then return nil end
+    local open = nil
+    pcall(function()
+        if type(curtain.IsOpen) == "function" then
+            open = curtain:IsOpen() == true
+        elseif type(curtain.isCurtainOpen) == "function" then
+            open = curtain:isCurtainOpen() == true
+        end
+    end)
+    return open
+end
+
+
+function BridgeDoors.curtainParent(curtain)
+    if curtain == nil then return nil end
+    local parent = nil
+    pcall(function()
+        if type(curtain.getObjectAttachedTo) == "function" then parent = curtain:getObjectAttachedTo() end
+    end)
+    if parent ~= nil and (instanceof(parent, "IsoWindow") or instanceof(parent, "IsoDoor")) then return parent end
+    local sq = nil
+    pcall(function() sq = curtain:getSquare() end)
+    if sq == nil then return nil end
+    local function scan(s)
+        if s == nil then return nil end
+        local found = nil
+        local function check(list)
+            if list == nil or found ~= nil then return end
+            local n = list:size()
+            for i = 0, n - 1 do
+                local o = list:get(i)
+                if o ~= nil and (instanceof(o, "IsoWindow") or instanceof(o, "IsoDoor")) then
+                    local c = nil
+                    pcall(function() c = o:HasCurtains() end)
+                    if c == curtain then found = o return end
+                end
+            end
+        end
+        pcall(function() check(s:getObjects()) end)
+        pcall(function() check(s:getSpecialObjects()) end)
+        pcall(function() check(s:getWorldObjects()) end)
+        return found
+    end
+    local found = scan(sq)
+    if found ~= nil then return found end
+    local opp = nil
+    pcall(function() opp = curtain:getOppositeSquare() end)
+    if opp ~= nil and opp ~= sq then found = scan(opp) end
+    return found
+end
+
+
+function BridgeDoors.curtainBlocked(curtain)
+    if curtain == nil then return "gone" end
+    local gone, idx = false, 0
+    pcall(function()
+        gone = type(curtain.isDestroyed) == "function" and curtain:isDestroyed() == true
+        idx = type(curtain.getObjectIndex) == "function" and tonumber(curtain:getObjectIndex()) or 0
+    end)
+    if gone or idx < 0 then return "gone" end
+    local parent = BridgeDoors.curtainParent(curtain)
+    local smashed = false
+    if parent ~= nil then
+        pcall(function() smashed = instanceof(parent, "IsoWindow") and parent:isSmashed() == true end)
+    end
+    if smashed then return "broken" end
+    return nil
+end
+
 function BridgeDoors.usableWindow(obj)
     if obj == nil then return false end
     return BridgeDoors.isClimbable(obj) or BridgeDoors.isOpenableWindow(obj)

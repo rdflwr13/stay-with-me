@@ -462,6 +462,8 @@ function BridgeWash.waterList(body, centre, radius, rect)
         local home = nil
         pcall(function() local sq = body:getCurrentSquare() if sq ~= nil then home = sq:getBuilding() end end)
         local r = radius or RADIUS
+        local scanZ = bz
+        if rect ~= nil and rect.z ~= nil then scanZ = math.floor(rect.z) end
         local xs, ys = {}, {}
         if rect ~= nil then
             for x = rect.x1, rect.x2 do xs[#xs + 1] = x end
@@ -480,7 +482,7 @@ function BridgeWash.waterList(body, centre, radius, rect)
         for xi = 1, #xs do
             for yi = 1, #ys do
                 local x, y = xs[xi], ys[yi]
-                local sq = cell:getGridSquare(x, y, bz)
+                local sq = cell:getGridSquare(x, y, scanZ)
                 if sq ~= nil then
                     local objects = sq:getObjects()
                     local added = false

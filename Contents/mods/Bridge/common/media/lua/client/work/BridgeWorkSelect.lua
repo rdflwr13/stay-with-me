@@ -19,6 +19,7 @@ BridgeWorkSelect.MAX_LOOT_ITEMS = 80
 BridgeWorkSelect.MAX_CORPSES = 40
 BridgeWorkSelect.MAX_DOORS = 25
 BridgeWorkSelect.MAX_WINDOWS = 25
+BridgeWorkSelect.MAX_CURTAINS = 25
 
 local function acquireLock()
     if BridgeWorkSelect.lockCount == 0 then
@@ -115,6 +116,9 @@ function UI:start(b)
     if targets == nil then targets = def.collect(b) end
     self:close()
     if #targets == 0 then
+        if BridgeLog ~= nil and BridgeLog.on() then
+            print("[BridgeWorkSelect] none " .. tostring(kind) .. " " .. tostring(def.noneSay))
+        end
         if Bridge ~= nil then Bridge.speak(def.noneSay) end
         return
     end
@@ -933,6 +937,77 @@ function BridgeWorkSelect.windowsIn(b, mode)
 end
 
 
+local function addCurtain(list, seen, obj, sq, mode, inside)
+    if obj == nil or seen[obj] then return end
+    seen[obj] = true
+    if BridgeDoors == nil or type(BridgeDoors.curtainBlocked) ~= "function" then return end
+    if BridgeDoors.curtainBlocked(obj) ~= nil then return end
+    local open = BridgeDoors.curtainOpen(obj)
+    if open == nil then return end
+    local wantOpen = mode ~= "open"
+    if open ~= wantOpen then return end
+    local anchor, opp = sq, nil
+    pcall(function()
+        anchor = obj:getSquare() or sq
+        opp = obj:getOppositeSquare()
+    end)
+    if anchor == nil then return end
+    local inBox = inside(anchor:getX(), anchor:getY())
+    if not inBox and opp ~= nil then pcall(function() inBox = inside(opp:getX(), opp:getY()) end) end
+    if not inBox then return end
+    if #list >= BridgeWorkSelect.MAX_CURTAINS then return end
+    list[#list + 1] = { x = anchor:getX(), y = anchor:getY(), z = anchor:getZ(), north = false, obj = obj }
+end
+
+
+function BridgeWorkSelect.curtainsIn(b, mode)
+    local list = {}
+    if b == nil then return list end
+    local inside = function(x, y)
+        return x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2
+    end
+    local seen = {}
+    local cell = getCell()
+    for x = b.x1 - 1, b.x2 + 1 do
+        for y = b.y1 - 1, b.y2 + 1 do
+            local sq = nil
+            pcall(function() sq = cell:getGridSquare(x, y, b.z) end)
+            if sq ~= nil and #list < BridgeWorkSelect.MAX_CURTAINS then
+                local function scan(listObj)
+                    if listObj == nil then return end
+                    local n = listObj:size()
+                    for i = 0, n - 1 do
+                        local o = listObj:get(i)
+                        if o ~= nil and instanceof(o, "IsoCurtain") then
+                            addCurtain(list, seen, o, sq, mode, inside)
+                        end
+                    end
+                end
+                pcall(function() scan(sq:getObjects()) end)
+                pcall(function() scan(sq:getSpecialObjects()) end)
+                pcall(function() scan(sq:getWorldObjects()) end)
+                local function scanParent(listObj)
+                    if listObj == nil then return end
+                    local n = listObj:size()
+                    for i = 0, n - 1 do
+                        local o = listObj:get(i)
+                        if o ~= nil and (instanceof(o, "IsoWindow") or instanceof(o, "IsoDoor")) then
+                            local c = nil
+                            pcall(function() c = o:HasCurtains() end)
+                            if c ~= nil then addCurtain(list, seen, c, sq, mode, inside) end
+                        end
+                    end
+                end
+                pcall(function() scanParent(sq:getObjects()) end)
+                pcall(function() scanParent(sq:getSpecialObjects()) end)
+                pcall(function() scanParent(sq:getWorldObjects()) end)
+            end
+        end
+    end
+    return list
+end
+
+
 function BridgeWorkSelect.troughsIn(b)
     local out = {}
     if type(b) ~= "table" then return out end
@@ -1219,6 +1294,20 @@ BridgeWorkSelect.kinds = {
         min = 1,
         noneSay = "JobNoWindowsClose",
     },
+    openCurtains = {
+        collect = function(b) return BridgeWorkSelect.curtainsIn(b, "open") end,
+        max = BridgeWorkSelect.MAX_CURTAINS,
+        maxSide = 12,
+        min = 1,
+        noneSay = "JobNoCurtainsClose",
+    },
+    closeCurtains = {
+        collect = function(b) return BridgeWorkSelect.curtainsIn(b, "close") end,
+        max = BridgeWorkSelect.MAX_CURTAINS,
+        maxSide = 12,
+        min = 1,
+        noneSay = "JobNoCurtainsOpen",
+    },
     digFurrows = {
         collect = function(b) return BridgeGardening.furrowSpots(b) end,
         max = BridgeGardening.MAX_FURROWS,
@@ -1332,6 +1421,7 @@ function BridgeWorkSelect.begin(playerObj, kind)
     if kind == "tendAnimals" and BridgeTask.HUTCHCARE_ENABLED ~= 1
             and BridgeTask.PET_ANIMALS_ENABLED ~= 1 then return nil end
     if (kind == "openDoors" or kind == "closeDoors") and BridgeTask.DOORS_ENABLED ~= 1 then return nil end
+    if (kind == "openCurtains" or kind == "closeCurtains") and BridgeTask.CURTAINS_ENABLED ~= 1 then return nil end
     if (kind == "closeWindows" or kind == "openWindows") and BridgeTask.WINDOWS_ENABLED ~= 1 then return nil end
     if BridgeWorkSelect.active ~= nil then BridgeWorkSelect.active:close() end
     local ui = UI:new(playerObj, kind)

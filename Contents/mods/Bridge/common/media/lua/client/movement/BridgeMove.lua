@@ -4435,7 +4435,7 @@ DOOR.BACK = 180
 
 DOOR.PASSED = 0.5
 DOOR.EDGE = 0.4
-DOOR.REACH = 2.0
+DOOR.REACH = 2.3
 DOOR.BACK_OFF = 1.2
 local OWN_BEHIND = 4.0
 local OWN_AT_DOOR = 3.0
@@ -4717,7 +4717,8 @@ function BridgeMove.closeBehind(body)
                 detail = sformat(" d=%.2f limit=%.1f", DOOR.doorReach(rec, bx, by), DOOR.REACH)
             end
             BridgeMove.doorLast = sformat("%s: %s at %d,%d%s", why, rec.kind, rec.cells[1].x, rec.cells[1].y, detail)
-            log("door " .. BridgeMove.doorLast)
+            local taskKind = BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind or nil
+            log("door " .. BridgeMove.doorLast .. (taskKind ~= nil and (" task=" .. tostring(taskKind)) or ""))
         end
     end
 end
@@ -5073,6 +5074,23 @@ function BridgeMove.toggleWindow(body, obj)
 end
 
 
+function BridgeMove.toggleCurtain(body, curtain)
+    if curtain == nil or BridgeDoors == nil then return false end
+    local wasOpen = BridgeDoors.curtainOpen(curtain)
+    if wasOpen == nil then return false end
+    pcall(function() curtain:ToggleDoor(body) end)
+    local nowOpen = BridgeDoors.curtainOpen(curtain)
+    if nowOpen == wasOpen and type(curtain.ToggleDoorSilent) == "function" then
+        pcall(function() curtain:ToggleDoorSilent() end)
+        pcall(function() curtain:sendObjectChange(IsoObjectChange.STATE) end)
+        pcall(function() syncIsoObject(false, 1, nil, nil) end)
+        nowOpen = BridgeDoors.curtainOpen(curtain)
+    end
+    if nowOpen ~= wasOpen then log("curtain toggle was=" .. tostring(wasOpen) .. " now=" .. tostring(nowOpen)) end
+    return nowOpen ~= wasOpen
+end
+
+
 function BridgeMove.closeWindows(body)
     local list = BridgeMove.openWindows
     if list == nil or #list == 0 then return end
@@ -5105,7 +5123,13 @@ function BridgeMove.closeWindows(body)
                     if rec.closingAt == nil then
                         rec.closingAt = Bridge.time
                         BridgeMove.beginWindow(body, obj, false)
-                        log("window closing behind")
+                        local taskKind = BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind or nil
+                        local cur = BridgeTask ~= nil and BridgeTask.current or nil
+                        local curText = cur ~= nil and string.format("%d,%d,%d", cur.x, cur.y, cur.z) or "-"
+                        local pathObj = BridgeMove.openingWay ~= nil and BridgeMove.openingWay.obj or nil
+                        log(string.format("window closing behind at %d,%d task=%s target=%s path=%s behind=%s",
+                            rec.x, rec.y, tostring(taskKind), curText, tostring(pathObj ~= nil and pathObj == obj),
+                            tostring(rec.behind)))
                     elseif Bridge.time - rec.closingAt >= 20 then
                         BridgeMove.toggleWindow(body, obj)
                         log("window closed behind")
@@ -5277,6 +5301,17 @@ function BridgeMove.routeViaOpening(body, gx, gy, gz)
         log("opening loop ignored at " .. tostring(plan.key))
         BridgeMove.openingWay = nil
         return nil
+    end
+    if BridgeTask ~= nil and (BridgeTask.kind == "closeDoors" or BridgeTask.kind == "closeWindows")
+            and plan.obj ~= nil then
+        local target = BridgeTask.current
+        local targetObj = target ~= nil and target.obj or nil
+        local open = false
+        pcall(function() open = plan.obj:IsOpen() == true end)
+        if plan.obj ~= targetObj and not open then
+            BridgeMove.openingWay = nil
+            return nil
+        end
     end
     local nx, ny = plan.near:getX() + 0.5, plan.near:getY() + 0.5
     BridgeMove.openingWay = { x = nx, y = ny, z = bz, key = plan.key, bld = leaving and bK or tK,

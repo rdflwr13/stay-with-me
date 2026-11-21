@@ -1435,7 +1435,7 @@ local function validTargetUncached(z, body, red, mode)
     if zsRisen(z, red) then return false end
     local okKill, killDone = pcall(z.isOnKillDone, z)
     local alive = okKill and zsAlive(z) and zsHealth(z) and not (killDone == true)
-    if not alive or zsHarmless(z) then return false end
+    if not alive or zsHarmless(z) or isBody(z) then return false end
     if remoteZombie(z) then
         local reach = 1.0
         pcall(function() reach = weapon(body):getMaxRange() end)

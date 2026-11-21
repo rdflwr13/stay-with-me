@@ -704,7 +704,8 @@ local function buildWorkDoors(jobs)
     if BridgeTask == nil then return end
     local doorsOn = BridgeTask.DOORS_ENABLED == 1
     local windowsOn = BridgeTask.WINDOWS_ENABLED == 1
-    if not doorsOn and not windowsOn then return end
+    local curtainsOn = BridgeTask.CURTAINS_ENABLED == 1
+    if not doorsOn and not windowsOn and not curtainsOn then return end
     local doorsOption = jobs:addOption(tr("Openings"))
     local doors = ISContextMenu:getNew(jobs)
     jobs:addSubMenu(doorsOption, doors)
@@ -719,6 +720,13 @@ local function buildWorkDoors(jobs)
         local openWin = doors:addOption(tr("JobOpenWindows"), nil, BridgeMenu.onJobOpenWindows)
         local shut = doors:addOption(tr("JobCloseWindows"), nil, BridgeMenu.onJobCloseWindows)
         if blocked then openWin.notAvailable = true; shut.notAvailable = true end
+    end
+    if curtainsOn then
+        local inCar = BridgeCar ~= nil and BridgeCar.isInside()
+        local blocked = BridgeTask.active or inCar or Bridge == nil or not Bridge.alive()
+        local openCur = doors:addOption(tr("JobOpenCurtains"), nil, BridgeMenu.onJobOpenCurtains)
+        local shutCur = doors:addOption(tr("JobCloseCurtains"), nil, BridgeMenu.onJobCloseCurtains)
+        if blocked then openCur.notAvailable = true; shutCur.notAvailable = true end
     end
 end
 
@@ -1629,6 +1637,20 @@ function BridgeMenu.onJobCloseWindows()
     if not Bridge.alive() then return end
     if BridgeCar ~= nil and BridgeCar.isInside() then return end
     BridgeWorkSelect.begin(BridgeData.owner(), "closeWindows")
+end
+
+function BridgeMenu.onJobOpenCurtains()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() then return end
+    if BridgeCar ~= nil and BridgeCar.isInside() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "openCurtains")
+end
+
+function BridgeMenu.onJobCloseCurtains()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() then return end
+    if BridgeCar ~= nil and BridgeCar.isInside() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "closeCurtains")
 end
 
 function BridgeMenu.onJobHarvestCrops()

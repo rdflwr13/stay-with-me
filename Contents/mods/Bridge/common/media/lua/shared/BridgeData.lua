@@ -1045,6 +1045,7 @@ end
 
 BridgeData.CHORE_IDS = {
     "tend", "harvest", "animals", "troughs", "clean", "yard", "chop", "deposit",
+    "closeDoors", "closeWindows",
     "wash", "shower", "exercise", "sit", "roam",
 }
 BridgeData.CHORE_SET = {}
@@ -1053,7 +1054,7 @@ for _, id in ipairs(BridgeData.CHORE_IDS) do BridgeData.CHORE_SET[id] = true end
 BridgeData.CHORE_DEFAULT_ON = {
     tend = true, harvest = true, animals = true, troughs = true,
     clean = true, wash = true, shower = true, exercise = true,
-    sit = true, roam = true, deposit = true,
+    sit = true, roam = true, deposit = true, closeWindows = true,
 }
 
 BridgeData.CHORE_LABELS = {
@@ -1061,6 +1062,7 @@ BridgeData.CHORE_LABELS = {
     troughs = "ChoreTroughs", clean = "ChoreClean", yard = "ChoreYard",
     chop = "ChoreChop", deposit = "ChoreDeposit", wash = "ChoreWash", shower = "ChoreShower",
     exercise = "ChoreExercise", sit = "ChoreSit", roam = "ChoreRoam",
+    closeDoors = "ChoreCloseDoors", closeWindows = "ChoreCloseWindows",
 }
 
 

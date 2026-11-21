@@ -10,6 +10,7 @@ local FLOOR = 60
 local SCAN_CHUNK = 8
 local TTL_OCCUPIED_MS = 45 * 1000
 local TTL_EMPTY_MS = 5 * 60 * 1000
+local TTL_DOOR_EMPTY_MS = 5 * 1000
 local DECISION_GAP = 1 * FLOOR
 local IDLE_GAP = 30 * FLOOR
 local ROAM_DWELL = 2 * FLOOR
@@ -29,6 +30,8 @@ local ROWS = {
     yard = { kind = "clearPlants", group = "clearPlants", flag = "CLEARING_ENABLED", cooldownH = 2, weight = 2 },
     chop = { kind = "chopTree", group = "chopTree", flag = "TREECUTTING_ENABLED", cooldownH = 4, weight = 2 },
     deposit = { kind = "deposit", flag = "DEPOSIT_ENABLED", cooldownH = 1 },
+    closeDoors = { kind = "closeDoors", group = "doors", flag = "DOORS_ENABLED", cooldownH = 1, weight = 1 },
+    closeWindows = { kind = "closeWindows", group = "doors", flag = "WINDOWS_ENABLED", cooldownH = 1, weight = 1 },
     wash = { idle = true, cooldownH = 1 },
     shower = { idle = true },
     exercise = { idle = true },
@@ -36,7 +39,7 @@ local ROWS = {
     roam = { idle = true },
 }
 
-local SCAN_ROWS = { "animals", "troughs", "tend", "harvest", "clean", "yard", "chop" }
+local SCAN_ROWS = { "animals", "troughs", "tend", "harvest", "clean", "yard", "chop", "closeDoors", "closeWindows" }
 
 local S = {
     scan = {},
@@ -123,6 +126,7 @@ local KIND_ROW = {
     fillTroughs = "troughs", cleanUp = "clean", clearPlants = "yard",
     chopTree = "chop", deposit = "deposit", shower = "shower", exercise = "exercise",
     wash = "wash", sit = "sit", roam = "roam",
+    closeDoors = "closeDoors", closeWindows = "closeWindows",
 }
 
 function BridgeChores.noteManualStop(kind)
@@ -412,8 +416,9 @@ end
 local function hasStair(h, z)
     local key = BridgeHome.homeKey(h) .. ":" .. tostring(z)
     local hit = S.stair[key]
-    if hit ~= nil then return hit end
+    if hit ~= nil then return hit, true end
     local yes = false
+    local seen = 0
     local cell = nil
     pcall(function() cell = getCell() end)
     if cell ~= nil and Bridge.onStairs ~= nil then
@@ -423,14 +428,15 @@ local function hasStair(h, z)
                 local sq = nil
                 pcall(function() sq = cell:getGridSquare(x, y, z) end)
                 if sq ~= nil then
+                    seen = seen + 1
                     pcall(function() yes = Bridge.onStairs(sq) == true end)
                     if yes then break end
                 end
             end
         end
     end
-    S.stair[key] = yes
-    return yes
+    if seen > 0 then S.stair[key] = yes end
+    return yes, seen > 0
 end
 
 local function buildLinks(h)
@@ -439,15 +445,21 @@ local function buildLinks(h)
     local floors = BridgeHome.includedFloors(h, true)
     local adj = {}
     for i = 1, #floors do adj[floors[i]] = adj[floors[i]] or {} end
+    local definitive = true
     for i = 1, #floors - 1 do
         local a, b = floors[i], floors[i + 1]
-        if b == a + 1 and hasStair(h, a) and hasStair(h, b) then
-            adj[a][b] = true
-            adj[b][a] = true
+        if b == a + 1 then
+            local sa, da = hasStair(h, a)
+            local sb, db = hasStair(h, b)
+            if not da or not db then definitive = false end
+            if sa or sb then
+                adj[a][b] = true
+                adj[b][a] = true
+            end
         end
     end
     S.links = adj
-    S.linkKey = key
+    if definitive then S.linkKey = key else S.linkKey = nil end
     return adj
 end
 
@@ -533,12 +545,49 @@ local function candidates(body)
         local id = BridgeData.CHORE_IDS[i]
         local row = ROWS[id]
         if row ~= nil and row.idle ~= true and on(id) and shown(row.group) then
+            local doorRow = (id == "closeDoors" or id == "closeWindows")
             local kind = choreKind(id)
             local sh = S.scan[id]
-            if kind ~= nil and sh ~= nil and sh.ready == true
+            if kind ~= nil and (doorRow or (sh ~= nil and sh.ready == true))
                     and (Bridge.time or 0) >= cooldownUntil(id)
                     and (Bridge.time or 0) >= retryUntil(id) then
-                local list = filterList(id, sh.list, h, z)
+                local list = nil
+                if doorRow then
+                    list = {}
+                    if BridgeWorkSelect ~= nil then
+                        local floors = nil
+                        pcall(function() floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn()) end)
+                        if type(floors) ~= "table" or #floors == 0 then floors = { z } end
+                        local ordered = {}
+                        for _, fz in ipairs(floors) do if fz == z then ordered[#ordered + 1] = fz end end
+                        for _, fz in ipairs(floors) do if fz ~= z then ordered[#ordered + 1] = fz end end
+                        for _, fz in ipairs(ordered) do
+                            local rect = { x1 = h.x, y1 = h.y, x2 = h.x + h.w - 1, y2 = h.y + h.h - 1, z = fz }
+                            local got = nil
+                            if id == "closeDoors" and type(BridgeWorkSelect.doorsIn) == "function" then
+                                got = BridgeWorkSelect.doorsIn(rect, "close")
+                            elseif id == "closeWindows" and type(BridgeWorkSelect.windowsIn) == "function" then
+                                got = BridgeWorkSelect.windowsIn(rect, "close")
+                            end
+                            if got ~= nil and #got > 0 then list = got break end
+                        end
+                    end
+                else
+                    list = filterList(id, sh.list, h, z)
+                end
+                if doorRow and #list > 1 then
+                    local bx, by = body:getX(), body:getY()
+                    table.sort(list, function(a, b)
+                        local ax, ay, az = targetPos(a)
+                        local bx2, by2, bz2 = targetPos(b)
+                        local af = az == z
+                        local bf = bz2 == z
+                        if af ~= bf then return af end
+                        local ad = (ax - bx) ^ 2 + (ay - by) ^ 2
+                        local bd = (bx2 - bx) ^ 2 + (by2 - by) ^ 2
+                        return ad < bd
+                    end)
+                end
                 if #list > 0 then
                     local same, best = false, nil
                     for j = 1, #list do
@@ -623,8 +672,12 @@ local function blacklistFailed()
     local failed = BridgeTask ~= nil and BridgeTask.lastFailedTarget or nil
     if type(failed) == "table" and failed.x ~= nil and failed.y ~= nil then
         local key = math.floor(failed.x) .. ":" .. math.floor(failed.y) .. ":" .. math.floor(failed.z or 0)
-        S.blacklist[key] = (Bridge.time or 0) + BLACKLIST
-        log("blacklist " .. key .. " reason=" .. tostring(failed.reason))
+        if failed.reason == nil then
+            log("blacklist skip " .. key .. " reason=nil")
+        else
+            S.blacklist[key] = (Bridge.time or 0) + BLACKLIST
+            log("blacklist " .. key .. " reason=" .. tostring(failed.reason))
+        end
     end
     if BridgeTask ~= nil then BridgeTask.lastFailedTarget = nil end
 end
@@ -800,6 +853,7 @@ local function scanStep(body)
     for step = 1, n do
         local idx = ((S.scanRow + step - 1) % n) + 1
         local id = SCAN_ROWS[idx]
+        local doorsRow = (id == "closeDoors" or id == "closeWindows")
         local kind = choreKind(id)
         local collect = collector(kind)
         if collect ~= nil then
@@ -807,15 +861,15 @@ local function scanStep(body)
             local due = nil
             for i = 1, #sh.order do
                 local ch = sh.order[i]
-                if ch.z == z or normalFloor(ch.z) or allowOther then
-                    local ttl = ch.empty and TTL_EMPTY_MS or TTL_OCCUPIED_MS
+                if doorsRow or ch.z == z or normalFloor(ch.z) or allowOther then
+                    local ttl = ch.empty and (doorsRow and TTL_DOOR_EMPTY_MS or TTL_EMPTY_MS) or TTL_OCCUPIED_MS
                     if ch.at == nil or (start - ch.at) >= ttl then due = ch break end
                 end
             end
             if due == nil then
                 for i = 1, #sh.order do
                     local ch = sh.order[i]
-                    local ttl = ch.empty and TTL_EMPTY_MS or TTL_OCCUPIED_MS
+                    local ttl = ch.empty and (doorsRow and TTL_DOOR_EMPTY_MS or TTL_EMPTY_MS) or TTL_OCCUPIED_MS
                     if ch.at == nil or (start - ch.at) >= ttl then due = ch break end
                 end
             end
@@ -1025,23 +1079,45 @@ local function seatTargets(body, h)
 end
 
 local function showerTarget(body, h)
-    if BridgeShower == nil or type(BridgeShower.findNearest) ~= "function" then return nil end
+    if BridgeShower == nil or type(BridgeShower.findNearest) ~= "function" then
+        log("shower search result=nil reason=BridgeShower missing")
+        return nil
+    end
     local z = bodyZ(body)
     local key = BridgeHome.homeKey(h) .. ":" .. tostring(z)
     local now = nowMs()
     if S.showerKey == key and (now - (S.showerAt or 0)) < 30000 then
+        log(string.format("shower cache z=%d found=%s", z, tostring(S.showerObj ~= nil)))
         return S.showerObj, S.showerSq
     end
     S.showerKey, S.showerAt, S.showerObj, S.showerSq = key, now, nil, nil
     local ok = false
     pcall(function() ok = BridgeShower.isTabas() == true end)
-    if not ok then return nil end
-    local floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn())
+    if not ok then
+        log(string.format("shower search z=%d result=nil reason=no tabas", z))
+        return nil
+    end
+    local all = BridgeHome.allFloorsOn()
+    local floors = BridgeHome.includedFloors(h, all)
+    log(string.format("shower search z=%d tabas=%s all=%s floors=%s range=%s..%s rect=%d,%d..%d,%d",
+        z, tostring(ok), tostring(all), table.concat(floors, ","),
+        tostring(h.z1), tostring(h.z2), h.x, h.y, h.x + h.w - 1, h.y + h.h - 1))
+    for i = 1, #floors do
+        local fz = floors[i]
+        if fz ~= z then
+            log(string.format("shower floor fz=%d reach=%s stairFrom=%s stairTo=%s",
+                fz, tostring(floorReachable(h, z, fz)), tostring(hasStair(h, z)), tostring(hasStair(h, fz))))
+        end
+    end
     for pass = 1, 2 do
         for i = 1, #floors do
             local fz = floors[i]
             if (pass == 1 and fz == z) or (pass == 2 and fz ~= z and floorReachable(h, z, fz)) then
                 local obj, sq = BridgeShower.findNearest(nil, nil, rectFor(h, fz))
+                local at = "-"
+                if sq ~= nil then at = tostring(sq:getX()) .. "," .. tostring(sq:getY()) end
+                log(string.format("shower scan pass=%d fz=%d found=%s at=%s",
+                    pass, fz, tostring(obj ~= nil), at))
                 if obj ~= nil then
                     S.showerObj, S.showerSq = obj, sq
                     return obj, sq
@@ -1049,6 +1125,7 @@ local function showerTarget(body, h)
             end
         end
     end
+    log("shower search result=nil reason=no fixture on eligible floors")
     return nil
 end
 
@@ -1212,7 +1289,24 @@ local function startIdle(id, body, h, now, force)
         pcall(function() dirty = BridgeWash.dirtyParts(body, "self") end)
         if force ~= true and dirty < WASH_MIN_DIRTY then return false, "clean" end
         local res = nil
-        pcall(function() res = BridgeWash.start("chores", nil, nil, rectFor(h, bodyZ(body)), force == true) end)
+        local z0 = bodyZ(body)
+        local floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn())
+        if type(floors) ~= "table" or #floors == 0 then floors = { z0 } end
+        local ordered = {}
+        for i = 1, #floors do
+            if floors[i] == z0 then ordered[#ordered + 1] = floors[i] end
+        end
+        for i = 1, #floors do
+            if floors[i] ~= z0 then ordered[#ordered + 1] = floors[i] end
+        end
+        local chosen = nil
+        for i = 1, #ordered do
+            local r = rectFor(h, ordered[i])
+            local list = {}
+            pcall(function() list = BridgeWash.waterList(body, nil, nil, r) end)
+            if #list > 0 then chosen = r break end
+        end
+        pcall(function() res = BridgeWash.start("chores", nil, nil, chosen or rectFor(h, z0), force == true) end)
         if res == "going to wash" then
             S.running = { row = "wash", idle = true, startedAt = now, changedAt = now }
             return true, "started"
@@ -1915,11 +2009,14 @@ function BridgeChores.debugForce(id, index)
     local row0 = ROWS[id]
     if id ~= "deposit" and row0 ~= nil and row0.idle ~= true then
         if choreKind(id) == nil then return "disabled" end
-        local sh0 = S.scan[id]
-        if sh0 == nil or #sh0.list == 0 then
-            invalidateRow(id)
-            S.statusCache[id] = nil
-            return "scanning"
+        local doorRow = (id == "closeDoors" or id == "closeWindows")
+        if not doorRow then
+            local sh0 = S.scan[id]
+            if sh0 == nil or #sh0.list == 0 then
+                invalidateRow(id)
+                S.statusCache[id] = nil
+                return "scanning"
+            end
         end
     end
     local active = BridgeTask.active == true
@@ -2077,6 +2174,10 @@ function BridgeChores.selftest()
     check("choreOn default off", BridgeData.choreOn({}, "yard"), false, fails, checks)
     check("deposit registered", BridgeData.CHORE_SET.deposit, true, fails, checks)
     check("deposit default on", BridgeData.choreOn({}, "deposit"), true, fails, checks)
+    check("closeDoors registered", BridgeData.CHORE_SET.closeDoors, true, fails, checks)
+    check("closeWindows registered", BridgeData.CHORE_SET.closeWindows, true, fails, checks)
+    check("closeDoors default off", BridgeData.choreOn({}, "closeDoors"), false, fails, checks)
+    check("closeWindows default on", BridgeData.choreOn({}, "closeWindows"), true, fails, checks)
     check("choreOn stored on", BridgeData.choreOn({ chores = { yard = true } }, "yard"), true, fails, checks)
     check("choreOn stored off", BridgeData.choreOn({ chores = { tend = false } }, "tend"), false, fails, checks)
     check("backoff 1", backoff(1), START_FAIL, fails, checks)
