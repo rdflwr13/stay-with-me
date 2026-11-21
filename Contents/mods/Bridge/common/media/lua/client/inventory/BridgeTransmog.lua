@@ -365,18 +365,22 @@ function BridgeTransmog.sync(body, force)
 end
 
 local MESSAGES = {
-    stale = "Her outfit changed, try the transmog again",
-    ["not found"] = "That item moved before the transmog applied, try again",
-    ["not transmoggable"] = "That item cannot be transmogrified",
-    unavailable = "Transmog is not available right now",
-    ["too far"] = "Too far from her to change her look",
-    batch = "Batch transmog is not available for her",
+    stale = { "IGUI_NotAlone_TransmogStale", "Her outfit changed, try the transmog again" },
+    ["not found"] = { "IGUI_NotAlone_TransmogNotFound", "That item moved before the transmog applied, try again" },
+    ["not transmoggable"] = { "IGUI_NotAlone_TransmogNotAllowed", "That item cannot be transmogrified" },
+    unavailable = { "IGUI_NotAlone_TransmogUnavailable", "Transmog is not available right now" },
+    ["too far"] = { "IGUI_NotAlone_TransmogTooFar", "Too far from her to change her look" },
+    batch = { "IGUI_NotAlone_TransmogBatch", "Batch transmog is not available for her" },
 }
+local MESSAGE_FAILED = { "IGUI_NotAlone_TransmogFailed", "Transmog request failed" }
 
 function BridgeTransmog.badMessage(why)
     local player = getSpecificPlayer(0)
     if player == nil then return end
-    local text = MESSAGES[why] or "Transmog request failed"
+    local entry = MESSAGES[why] or MESSAGE_FAILED
+    local text = nil
+    pcall(function() text = getTextOrNull(entry[1]) end)
+    if text == nil or text == "" then text = entry[2] end
     pcall(function() HaloTextHelper.addBadText(player, text) end)
 end
 
