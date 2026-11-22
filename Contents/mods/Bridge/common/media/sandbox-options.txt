@@ -70,6 +70,15 @@ option StayWithMe.CarryCapacityBonus
     translation = StayWithMe_CarryCapacityBonus,
 }
 
+option StayWithMe.SkillXpShare
+{
+    type = enum, numValues = 5, default = 3,
+    page = StayWithMe,
+    translation = StayWithMe_SkillXpShare,
+    valueTranslation = StayWithMe_SkillXpShare_Values,
+}
+
+
 option StayWithMe.ForceSpawnNearPlayer
 {
     type = boolean, default = false,
@@ -209,7 +218,7 @@ option StayWithMe.CompanionWheelController
 
 option StayWithMe.CompanionWheelControllerButton
 {
-    type = enum, numValues = 6, default = 3,
+    type = enum, numValues = 15, default = 3,
     page = StayWithMe,
     translation = StayWithMe_CompanionWheelControllerButton,
     valueTranslation = StayWithMe_CompanionWheelControllerButton_Values,
@@ -217,7 +226,7 @@ option StayWithMe.CompanionWheelControllerButton
 
 option StayWithMe.CompanionWheelSelectButton
 {
-    type = enum, numValues = 6, default = 1,
+    type = enum, numValues = 16, default = 1,
     page = StayWithMe,
     translation = StayWithMe_CompanionWheelSelectButton,
     valueTranslation = StayWithMe_CompanionWheelSelectButton_Values,

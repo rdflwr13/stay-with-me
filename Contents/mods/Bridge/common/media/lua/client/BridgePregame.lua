@@ -752,6 +752,9 @@ function BridgePregame.consumeInto(store, force)
                 if not hasBody then
                     store.meetState = "pending"
                     store.want = false
+                    store.meetAnnounced = nil
+                    store.meetPending = nil
+                    store.meetResolved = nil
                     if store.meetMode == 3 then
                         store.meetAt = meetWorldAge() + store.meetDays * 24
                     else

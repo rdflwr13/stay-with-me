@@ -18,6 +18,7 @@ local PLAYER_KEEP_OUT = 20
 local VISITED_BLOCK_HOURS = 24
 local VISITED_MAX = 200
 local ROAD_SCAN = 120
+local MEET_DRIFT = 24
 
 BridgeMeet.testMode = false
 BridgeMeet.testZombies = {}
@@ -33,7 +34,6 @@ BridgeMeet.retryAt = 0
 BridgeMeet.sally = nil
 BridgeMeet.sallyDoor = nil
 BridgeMeet.buildingId = nil
-BridgeMeet.pendingScene = false
 BridgeMeet.poseBody = nil
 BridgeMeet.readDone = false
 BridgeMeet.wander = true
@@ -291,6 +291,46 @@ local function fmtSpot(x, y, z)
     return string.format("%d,%d,%d", math.floor(x), math.floor(y), math.floor(z))
 end
 
+local function locatorSpot(st)
+    if not hasSpot(st) then return nil end
+    local x, y, z = spotOf(st)
+    if not bodyAlive() then
+        local wx, wy, wz = tonumber(st.waitX), tonumber(st.waitY), tonumber(st.waitZ)
+        if wx ~= nil and wy ~= nil and wz ~= nil then return wx, wy, wz end
+    end
+    return x, y, z
+end
+
+local function announceSpot(st)
+    if st == nil or stateOf(st) ~= "placed" then return end
+    if not hasSpot(st) or hintOf(st) == 0 then return end
+    if st.meetPending == true then return end
+    if bodyAlive() then return end
+    local red = owner()
+    if red == nil then return end
+    local paused, asleep = false, false
+    pcall(function() paused = UIManager.getSpeedControls():getCurrentGameSpeed() == 0 end)
+    pcall(function() asleep = red:isAsleep() == true end)
+    if paused or asleep then return end
+    local x, y, z = locatorSpot(st)
+    if x == nil then return end
+    local key = fmtSpot(x, y, z)
+    if st.meetAnnounced == key then return end
+    local d = dist2d(red:getX(), red:getY(), x, y)
+    local dir = dir8(x - red:getX(), y - red:getY())
+    local metres = math.floor(d + 0.5)
+    local text = nil
+    if dir == "here" or d < 1 then
+        text = BridgeData.text("MeetHint2", metres)
+    else
+        text = BridgeData.text("MeetHint", dir, metres)
+    end
+    if type(text) ~= "string" or text == "" then return end
+    pcall(function() HaloTextHelper.addText(red, text, "[br/]", HaloTextHelper.getGoodColor()) end)
+    st.meetAnnounced = key
+    log(string.format("hint dir=%s dist=%.1f spot=%s", dir, d, key))
+end
+
 local function randomScene()
     return SCENES[ZombRand(1, #SCENES + 1)]
 end
@@ -309,6 +349,7 @@ local function clearRuntime()
     Bridge.homeParked = false
     Bridge.target = nil
     BridgeMeet.leftFar = false
+    if Bridge.store ~= nil then Bridge.store.meetAnnounced = nil end
 end
 
 local function setWait(st, x, y, z)
@@ -785,11 +826,12 @@ local function spawnRoadCar(x, y, z, orientation)
     return vehicle
 end
 
-local function findRoadSpawn(tx, ty, z)
+local function findRoadSpawn(tx, ty, z, maxR)
     local cell = getCell()
     if cell == nil then return nil end
     local zz = math.floor(z)
-    for r = 0, ROAD_SCAN do
+    local limit = tonumber(maxR) or ROAD_SCAN
+    for r = 0, limit do
         local step = 1
         if r >= 64 then step = 8
         elseif r >= 16 then step = 4
@@ -845,7 +887,8 @@ local function driverResultForCar(car)
     }
 end
 
-local function placeDriver(tx, ty, z)
+local function placeDriver(tx, ty, z, cap)
+    local limit = tonumber(cap) or MEET_DRIFT
     local car = nil
     local best = nil
     local nearestCar = nil
@@ -854,19 +897,23 @@ local function placeDriver(tx, ty, z)
         if v ~= nil then
             local d = dist2d(v:getX(), v:getY(), tx, ty)
             if nearestD == nil or d < nearestD then nearestCar, nearestD = v, d end
-            if d <= 10 and (best == nil or d < best) then
+            if d <= 10 and d <= limit and (best == nil or d < best) then
                 car, best = v, d
             end
         end
     end
     if car == nil then
-        local rx, ry, rz, orientation = findRoadSpawn(tx, ty, z)
+        local rx, ry, rz, orientation = findRoadSpawn(tx, ty, z, limit)
         local onRoad = rx ~= nil
         if not onRoad then
-            local existing = driverResultForCar(nearestCar)
-            if existing ~= nil then return existing end
+            if nearestCar ~= nil and nearestD ~= nil and nearestD <= limit then
+                local existing = driverResultForCar(nearestCar)
+                if existing ~= nil and dist2d(existing.x, existing.y, tx, ty) <= limit then
+                    return existing
+                end
+            end
             local sq = fallbackCarSquare(tx, ty, z)
-            if sq ~= nil then
+            if sq ~= nil and dist2d(sq:getX(), sq:getY(), tx, ty) <= limit then
                 rx, ry, rz = sq:getX(), sq:getY(), sq:getZ()
                 orientation = "X"
             end
@@ -874,7 +921,8 @@ local function placeDriver(tx, ty, z)
         if rx ~= nil then
             local vehicle = spawnRoadCar(rx, ry, rz, orientation)
             local spot = freeBeside(rx, ry, rz)
-            if vehicle ~= nil and spot ~= nil then
+            if vehicle ~= nil and spot ~= nil
+                and dist2d(spot:getX(), spot:getY(), tx, ty) <= limit then
                 return {
                     scene = "driver",
                     x = spot:getX(), y = spot:getY(), z = spot:getZ(),
@@ -886,7 +934,9 @@ local function placeDriver(tx, ty, z)
         end
         local sx, sy, sz = tx, ty, z
         local sq = fallbackCarSquare(tx, ty, z)
-        if sq ~= nil then sx, sy, sz = sq:getX(), sq:getY(), sq:getZ() end
+        if sq ~= nil and dist2d(sq:getX(), sq:getY(), tx, ty) <= limit then
+            sx, sy, sz = sq:getX(), sq:getY(), sq:getZ()
+        end
         local result = placeScavenger(sx, sy, sz)
         result.fallback = "no_car"
         return result
@@ -894,6 +944,11 @@ local function placeDriver(tx, ty, z)
     local cx, cy, cz = car:getX(), car:getY(), car:getZ()
     local sx, sy, sz = Bridge.spawnSpot(cx, cy, cz, false)
     if sx == nil then sx, sy, sz = math.floor(cx), math.floor(cy), math.floor(cz) end
+    if dist2d(sx, sy, tx, ty) > limit then
+        local result = placeScavenger(tx, ty, z)
+        result.fallback = "no_car"
+        return result
+    end
     return {
         scene = "driver",
         x = sx, y = sy, z = sz,
@@ -992,8 +1047,9 @@ local function probeBuildings(cx, cy, z)
     return list
 end
 
-local function placeHoldout(tx, ty, z)
+local function placeHoldout(tx, ty, z, cap)
     local red = owner()
+    local limit = tonumber(cap) or MEET_DRIFT
     local function accept(building)
         return not isProtectedBuilding(building, math.floor(z))
     end
@@ -1016,6 +1072,22 @@ local function placeHoldout(tx, ty, z)
             end
         end
         if #valid > 0 then building = valid[ZombRand(1, #valid + 1)] end
+    end
+    if building == nil then
+        return placeScavenger(tx, ty, z)
+    end
+    local def = nil
+    pcall(function() def = building:getDef() end)
+    if def == nil then
+        building = nil
+    else
+        local nx = clamp(tx, def:getX(), def:getX2())
+        local ny = clamp(ty, def:getY(), def:getY2())
+        if dist2d(nx, ny, tx, ty) > limit then
+            local r = placeScavenger(tx, ty, z)
+            r.fallback = "drift"
+            return r
+        end
     end
     if building == nil then
         return placeScavenger(tx, ty, z)
@@ -1159,9 +1231,10 @@ local function placeScene(scene, tx, ty, z)
     BridgeMeet.sallyDoor = nil
     BridgeMeet.buildingId = nil
     local name = sceneOk(scene) and scene or "scavenger"
-    if name == "holdout" then return placeHoldout(tx, ty, z) end
+    local cap = MEET_DRIFT
+    if name == "holdout" then return placeHoldout(tx, ty, z, cap) end
     if name == "scavenger" then return placeScavenger(tx, ty, z) end
-    if name == "driver" then return placeDriver(tx, ty, z) end
+    if name == "driver" then return placeDriver(tx, ty, z, cap) end
     return placeScavenger(tx, ty, z)
 end
 
@@ -1175,7 +1248,8 @@ local function applyResult(st, result)
     Bridge.setMode("wait")
     setWait(st, result.x, result.y, result.z)
     BridgeMeet.poseBody = nil
-    BridgeMeet.pendingScene = false
+    st.meetPending = false
+    st.meetResolved = true
 end
 
 local function applyPose(st)
@@ -1215,26 +1289,80 @@ local function townPoint(box)
     return math.floor(x), math.floor(y)
 end
 
+local function anchorUsable(x, y, z, strict)
+    local cell = getCell()
+    if cell == nil then return false, false end
+    local sq = nil
+    pcall(function() sq = cell:getGridSquare(x, y, z) end)
+    if sq == nil then return false, false end
+    if strict then
+        if Bridge == nil or type(Bridge.standSquareOk) ~= "function" then return false, true end
+        local ok = false
+        pcall(function() ok = Bridge.standSquareOk(sq) == true end)
+        return ok == true, true
+    end
+    local water = false
+    pcall(function() water = sq:isWaterSquare() == true end)
+    return not water, true
+end
+
 local function armSpot(st)
     local red = owner()
     if red == nil then return nil end
-    local z = math.floor(red:getZ())
-    local mode = modeOf(st)
+    local z = 0
     local min, max = distanceBand(st)
     local tx, ty = nil, nil
     local town = st.meetTown
     if town ~= nil and town ~= "near" then
         local box = findTownBox(town)
         if box ~= nil then
-            tx, ty = townPoint(box)
-            z = 0
+            local strictX, strictY = nil, nil
+            local relaxedX, relaxedY = nil, nil
+            local unloadedX, unloadedY = nil, nil
+            for _ = 1, 8 do
+                local sx, sy = townPoint(box)
+                local ok, loaded = anchorUsable(sx, sy, z, true)
+                if not loaded then
+                    if unloadedX == nil then unloadedX, unloadedY = sx, sy end
+                elseif ok then
+                    if strictX == nil then strictX, strictY = sx, sy end
+                elseif relaxedX == nil then
+                    local dry = anchorUsable(sx, sy, z, false)
+                    if dry then relaxedX, relaxedY = sx, sy end
+                end
+            end
+            if strictX ~= nil then
+                tx, ty = strictX, strictY
+            elseif relaxedX ~= nil then
+                tx, ty = relaxedX, relaxedY
+            elseif unloadedX ~= nil then
+                tx, ty = unloadedX, unloadedY
+            else
+                tx, ty = math.floor(red:getX()), math.floor(red:getY())
+            end
         end
     end
     if tx == nil then
-        local angle = ZombRandFloat(0, math.pi * 2)
-        local radius = ZombRandFloat(min, max)
-        tx = math.floor(red:getX() + math.cos(angle) * radius)
-        ty = math.floor(red:getY() + math.sin(angle) * radius)
+        local lastX, lastY = nil, nil
+        for _ = 1, 8 do
+            local angle = ZombRandFloat(0, math.pi * 2)
+            local radius = ZombRandFloat(min, max)
+            local sx = math.floor(red:getX() + math.cos(angle) * radius)
+            local sy = math.floor(red:getY() + math.sin(angle) * radius)
+            local ok = anchorUsable(sx, sy, z, true)
+            lastX, lastY = sx, sy
+            if ok then
+                tx, ty = sx, sy
+                break
+            end
+        end
+        if tx == nil and lastX ~= nil then
+            local dry, loaded = anchorUsable(lastX, lastY, z, false)
+            if not loaded or dry then tx, ty = lastX, lastY end
+        end
+        if tx == nil then
+            tx, ty = math.floor(red:getX()), math.floor(red:getY())
+        end
     end
     local loaded = false
     pcall(function() loaded = getCell():getGridSquare(tx, ty, z) ~= nil end)
@@ -1249,7 +1377,8 @@ local function armSpot(st)
         st.want = true
         Bridge.setMode("wait")
         setWait(st, tx, ty, z)
-        BridgeMeet.pendingScene = true
+        st.meetPending = true
+        st.meetResolved = false
         BridgeMeet.poseBody = nil
         log(string.format("arm scene=%s target=%d,%d,%d unloaded, resolves on approach", scene, tx, ty, z))
         return true
@@ -1264,7 +1393,9 @@ local function armSpot(st)
         return false
     end
     applyResult(st, result)
-    log(string.format("arm scene=%s spot=%s fallback=%s", result.scene, fmtSpot(result.x, result.y, result.z), result.fallback))
+    log(string.format("arm scene=%s spot=%s target=%s drift=%.0f fallback=%s",
+        result.scene, fmtSpot(result.x, result.y, result.z), fmtSpot(tx, ty, z),
+        dist2d(result.x, result.y, tx, ty), result.fallback))
     return true
 end
 
@@ -1294,7 +1425,7 @@ local function armTick(st)
 end
 
 local function resolveTarget(st)
-    if not BridgeMeet.pendingScene then return end
+    if st == nil or st.meetPending ~= true or st.meetResolved == true then return end
     local x, y, z = spotOf(st)
     local red = owner()
     if x == nil or red == nil then return end
@@ -1304,7 +1435,9 @@ local function resolveTarget(st)
     if dist2d(red:getX(), red:getY(), x, y) > 55 then return end
     local result = placeScene(st.meetScene, x, y, z)
     applyResult(st, result)
-    log(string.format("resolved scene=%s spot=%s fallback=%s", result.scene, fmtSpot(result.x, result.y, result.z), result.fallback))
+    log(string.format("resolved scene=%s spot=%s target=%s drift=%.0f fallback=%s",
+        result.scene, fmtSpot(result.x, result.y, result.z), fmtSpot(x, y, z),
+        dist2d(result.x, result.y, x, y), result.fallback))
 end
 
 local function leftTick(st)
@@ -1428,6 +1561,9 @@ local function applyDraftFallback(st)
     if st.meetMode > 1 and st.meetState == nil and not bodyAlive() then
         st.meetState = "pending"
         st.want = false
+        st.meetAnnounced = nil
+        st.meetPending = nil
+        st.meetResolved = nil
         if st.meetMode == 3 then
             st.meetAt = worldAge() + st.meetDays * 24
         else
@@ -1531,6 +1667,7 @@ function BridgeMeet.tick()
     if state == "placed" or state == "left" then
         resolveTarget(st)
         leftTick(st)
+        announceSpot(st)
         if bodyAlive() then applyPose(st) end
         sightTick(st)
         wanderTick(st)
@@ -1830,12 +1967,13 @@ function BridgeMeet.diagLine()
     end
     local sally = "none"
     if BridgeMeet.sally ~= nil then sally = string.format("%d,%d", BridgeMeet.sally.x, BridgeMeet.sally.y) end
-    return string.format("mode=%d days=%d hint=%d state=%s scene=%s spot=%s dist=%.1f seen=%s help=%s try=%s body=%s want=%s arm=%.1f forts=%d tagged=%d sally=%s",
+    return string.format("mode=%d days=%d hint=%d state=%s scene=%s spot=%s dist=%.1f seen=%s help=%s try=%s body=%s want=%s arm=%.1f forts=%d tagged=%d sally=%s pending=%s resolved=%s",
         modeOf(st), effectiveDays(st), hintOf(st), stateOf(st) or "none", st.meetScene or "none", spot,
         spotDist(st), tostring(st.meetSeen == true), tostring(st.meetHelp == true), tostring(st.meetTry or 0),
         tostring(bodyAlive()), tostring(st.want ~= false),
         modeOf(st) == 3 and math.max(0, (tonumber(st.meetAt) or 0) - worldAge()) or 0,
-        BridgeMeet.lastForts or 0, tagged, sally)
+        BridgeMeet.lastForts or 0, tagged, sally,
+        tostring(st.meetPending == true), tostring(st.meetResolved == true))
 end
 
 local function resetFields(st, hard)
@@ -1847,13 +1985,17 @@ local function resetFields(st, hard)
     st.meetRetryScene = nil
     st.meetRetryTX, st.meetRetryTY, st.meetRetryTZ = nil, nil, nil
     st.meetAt = 0
+    st.meetPending = nil
+    st.meetAnnounced = nil
     if hard then
+        st.meetResolved = nil
         st.meetScene, st.meetX, st.meetY, st.meetZ = nil, nil, nil, nil
         st.meetTargetX, st.meetTargetY, st.meetTargetZ, st.meetPose = nil, nil, nil, nil
         st.meetState = "pending"
         st.want = false
         return "reset=hard state=pending scene=none spot=none body=0 want=0"
     end
+    st.meetResolved = hasSpot(st) and true or nil
     if hasSpot(st) then
         st.meetState = "placed"
         st.want = true
@@ -1885,7 +2027,6 @@ local function resetRun(st, hard)
         Bridge.setMode("wait")
         setWait(st, st.meetX, st.meetY, st.meetZ)
     end
-    BridgeMeet.pendingScene = false
     BridgeMeet.poseBody = nil
     return text
 end
@@ -1974,7 +2115,7 @@ local function doPlace(seq, args)
     local dy = tonumber(args[3]) or 4
     local red = owner()
     if red == nil then return reply(seq, "place=FAIL no_player") end
-    local z = math.floor(red:getZ())
+    local z = 0
     local tx = math.floor(red:getX()) + dx
     local ty = math.floor(red:getY()) + dy
     local loaded = false
@@ -1983,7 +2124,7 @@ local function doPlace(seq, args)
         if scene == "driver" then
             tx = math.floor(red:getX())
             ty = math.floor(red:getY())
-            z = math.floor(red:getZ())
+            z = 0
         else
             st.meetState = "pending"
             st.want = false
@@ -2219,7 +2360,7 @@ function BridgeMeet.run(parts, line)
     if sub == "status" then return reply(seq, BridgeMeet.statusText()) end
     if sub == "where" then return reply(seq, whereText()) end
     if sub == "diag" then
-        return reply(seq, string.format("diag mode=%d days=%d hint=%d state=%s scene=%s spot=%s target=%s seen=%s help=%s try=%s body=%s want=%s arm=%.1f gates=menu:%s,window:%s,speak:%s,map:%s,heal:%s audit=%s",
+        return reply(seq, string.format("diag mode=%d days=%d hint=%d state=%s scene=%s spot=%s target=%s seen=%s help=%s try=%s body=%s want=%s arm=%.1f pending=%s resolved=%s gates=menu:%s,window:%s,speak:%s,map:%s,heal:%s audit=%s",
             modeOf(Bridge.store), effectiveDays(Bridge.store), hintOf(Bridge.store), stateOf(Bridge.store) or "none",
             Bridge.store and Bridge.store.meetScene or "none",
             hasSpot(Bridge.store) and fmtSpot(Bridge.store.meetX, Bridge.store.meetY, Bridge.store.meetZ) or "none",
@@ -2227,6 +2368,7 @@ function BridgeMeet.run(parts, line)
             tostring(Bridge.store and Bridge.store.meetSeen == true), tostring(Bridge.store and Bridge.store.meetHelp == true),
             tostring(Bridge.store and Bridge.store.meetTry or 0), tostring(bodyAlive()), tostring(Bridge.store and Bridge.store.want ~= false),
             modeOf(Bridge.store) == 3 and math.max(0, (tonumber(Bridge.store and Bridge.store.meetAt) or 0) - worldAge()) or 0,
+            tostring(Bridge.store and Bridge.store.meetPending == true), tostring(Bridge.store and Bridge.store.meetResolved == true),
             gateState(), gateState(), gateState(), gateState(), gateState(), auditText()))
     end
     if sub == "audit" then return reply(seq, auditText()) end
@@ -2332,7 +2474,7 @@ function BridgeMeet.markerTarget()
     local state = stateOf(st)
     if state ~= "placed" and state ~= "left" then return nil end
     if hintOf(st) == 0 then return nil end
-    local x, y, z = spotOf(st)
+    local x, y, z = locatorSpot(st)
     if x == nil then return nil end
     local bx, by = bodyPos()
     if bx ~= nil then x, y = bx, by end

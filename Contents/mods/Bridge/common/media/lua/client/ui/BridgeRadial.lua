@@ -678,6 +678,13 @@ function BridgeRadial.topEntries(playerNum)
     local out = {}
     local st = Bridge.store
     if Bridge == nil or st == nil then return out end
+    if BridgeMeet ~= nil and type(BridgeMeet.unjoined) == "function" and BridgeMeet.unjoined() then
+        out[1] = make(tr("MeetNotYet"), ICONS.call, function()
+            local red = BridgeData.owner()
+            if red ~= nil then pcall(function() HaloTextHelper.addBadText(red, tr("MeetNotYet")) end) end
+        end)
+        return out
+    end
     if not BridgeMenu.isPresent() or not BridgeMenu.inTalkRange() then
         out[1] = make(tr("Call", companionName()), ICONS.call, BridgeMenu.onCall)
         return out
@@ -774,6 +781,16 @@ local CONTROLLER_SELECT_BUTTONS = {
     { id = "a",       joypads = { "AButton" },            labelKey = "IGUI_StayWithMe_SelectButtonA",      fallback = "A" },
     { id = "x",       joypads = { "XButton" },            labelKey = "IGUI_StayWithMe_SelectButtonX",      fallback = "X" },
     { id = "y",       joypads = { "YButton" },            labelKey = "IGUI_StayWithMe_SelectButtonY",      fallback = "Y" },
+    { id = "b",       joypads = { "BButton" },            labelKey = "IGUI_StayWithMe_SelectButtonB",      fallback = "B" },
+    { id = "dpadLeft", joypads = { "DPadLeft" },          labelKey = "IGUI_StayWithMe_SelectButtonDPadLeft", fallback = "D-Pad Left" },
+    { id = "dpadRight", joypads = { "DPadRight" },        labelKey = "IGUI_StayWithMe_SelectButtonDPadRight", fallback = "D-Pad Right" },
+    { id = "dpadUp",  joypads = { "DPadUp" },             labelKey = "IGUI_StayWithMe_SelectButtonDPadUp",  fallback = "D-Pad Up" },
+    { id = "dpadDown", joypads = { "DPadDown" },          labelKey = "IGUI_StayWithMe_SelectButtonDPadDown", fallback = "D-Pad Down" },
+    { id = "lstick",  joypads = { "LStickButton" },       labelKey = "IGUI_StayWithMe_SelectButtonL3",      fallback = "L3" },
+    { id = "rstick",  joypads = { "RStickButton" },       labelKey = "IGUI_StayWithMe_SelectButtonR3",      fallback = "R3" },
+    { id = "start",   joypads = { "Start" },              labelKey = "IGUI_StayWithMe_SelectButtonStart",   fallback = "Start" },
+    { id = "back",    joypads = { "Back" },               labelKey = "IGUI_StayWithMe_SelectButtonBack",    fallback = "Back" },
+    { id = "guide",   joypads = { "Other" },              labelKey = "IGUI_StayWithMe_SelectButtonGuide",   fallback = "Guide" },
 }
 
 local function configuredSelectButton()
@@ -1029,6 +1046,15 @@ local CONTROLLER_BUTTONS = {
     { id = "dpadDown",  joypad = "DPadDown",   dpad = "down",  labelKey = "IGUI_StayWithMe_ControllerButtonDPadDown",  fallback = "D-Pad Down" },
     { id = "lstick",    joypad = "LStickButton",                labelKey = "IGUI_StayWithMe_ControllerButtonL3",        fallback = "L3" },
     { id = "rstick",    joypad = "RStickButton",                labelKey = "IGUI_StayWithMe_ControllerButtonR3",        fallback = "R3" },
+    { id = "a",         joypad = "AButton",                     labelKey = "IGUI_StayWithMe_ControllerButtonA",         fallback = "A" },
+    { id = "b",         joypad = "BButton",                     labelKey = "IGUI_StayWithMe_ControllerButtonB",         fallback = "B" },
+    { id = "x",         joypad = "XButton",                     labelKey = "IGUI_StayWithMe_ControllerButtonX",         fallback = "X" },
+    { id = "y",         joypad = "YButton",                     labelKey = "IGUI_StayWithMe_ControllerButtonY",         fallback = "Y" },
+    { id = "lb",        joypad = "LBumper",                     labelKey = "IGUI_StayWithMe_ControllerButtonL1",        fallback = "L1" },
+    { id = "rb",        joypad = "RBumper",                     labelKey = "IGUI_StayWithMe_ControllerButtonR1",        fallback = "R1" },
+    { id = "start",     joypad = "Start",                       labelKey = "IGUI_StayWithMe_ControllerButtonStart",     fallback = "Start" },
+    { id = "back",      joypad = "Back",                        labelKey = "IGUI_StayWithMe_ControllerButtonBack",      fallback = "Back" },
+    { id = "guide",     joypad = "Other",                       labelKey = "IGUI_StayWithMe_ControllerButtonGuide",     fallback = "Guide" },
 }
 
 local function configuredControllerButton()

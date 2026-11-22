@@ -17,6 +17,20 @@ BridgeShare.EVERY = 15
 BridgeShare.SHARE = 0.5
 BridgeShare.CATCHUP = 0.75
 BridgeShare.RANGE = 12
+BridgeShare.SHARE_PRESETS = { 0.0, 0.25, 0.5, 0.75, 1.0 }
+BridgeShare.SHARE_DEFAULT_INDEX = 3
+
+local function shareFraction()
+    local idx = BridgeShare.SHARE_DEFAULT_INDEX
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        pcall(function()
+            idx = math.floor(tonumber(BridgeData.sandboxNumber("SkillXpShare", 3, 1, 5)) or 3)
+        end)
+    end
+    if idx < 1 then idx = 1 end
+    if idx > #BridgeShare.SHARE_PRESETS then idx = #BridgeShare.SHARE_PRESETS end
+    return BridgeShare.SHARE_PRESETS[idx] or BridgeShare.SHARE
+end
 
 BridgeShare.who = nil
 BridgeShare.xp = {}
@@ -68,8 +82,12 @@ end
 
 
 local function fracFor(perk, red)
-    if BridgeSkills.level(perk) < playerLevel(red, perk) then return BridgeShare.CATCHUP end
-    return BridgeShare.SHARE
+    local share = shareFraction()
+    if share <= 0 then return 0 end
+    if BridgeSkills.level(perk) < playerLevel(red, perk) then
+        return math.max(share, BridgeShare.CATCHUP)
+    end
+    return share
 end
 
 function BridgeShare.tick()
@@ -97,8 +115,9 @@ function BridgeShare.tick()
                 local prev = BridgeShare.xp[perk]
                 BridgeShare.xp[perk] = now
 
-                if prev ~= nil and now > prev and near then
-                    BridgeSkills.add(perk, (now - prev) * fracFor(perk, red), "share", true)
+                local frac = fracFor(perk, red)
+                if prev ~= nil and now > prev and near and frac > 0 then
+                    BridgeSkills.add(perk, (now - prev) * frac, "share", true)
                 end
             end
         end
@@ -114,6 +133,7 @@ end
 local function mirrorCap(red, perk, amount, reason)
     if red == nil or not inRange(red) then return end
     if amount == nil or amount <= 0 then return end
+    if fracFor(perk, red) <= 0 then return end
     if playerLevel(red, perk) < BridgeSkills.MAX_LEVEL then return end
     if BridgeSkills.level(perk) >= BridgeSkills.MAX_LEVEL then return end
     BridgeSkills.add(perk, amount * fracFor(perk, red), "mirror:" .. reason, true)

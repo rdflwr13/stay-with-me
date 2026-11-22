@@ -1759,6 +1759,8 @@
     "IGUI_NotAlone_ReportStep1b": "a pastebin.com.",
     "IGUI_NotAlone_ReportStep2": "2. Publica los enlaces de pastebin en la página de Workshop de Stay With Me, en Bug reports.",
     "IGUI_NotAlone_ReportButton": "Crear informe",
+    "IGUI_NotAlone_ReportMenuButton": "Crear informe de error",
+    "IGUI_NotAlone_ReportMenuTip": "Escribe un informe de error en Zomboid\\Lua\\bridge y lo copia al portapapeles. Sube el archivo del informe y console.txt a pastebin.com, y publica los enlaces en la página de Workshop de Stay With Me en Bug reports. Se muestra mientras Rin no está contigo.",
     "IGUI_NotAlone_ReportOpenPage": "Abrir informes de errores del Workshop",
     "IGUI_NotAlone_ReportLogOff": "Registro detallado: desactivado",
     "IGUI_NotAlone_ReportLogOn": "Registro detallado: activado",

@@ -253,6 +253,9 @@ function BridgeMenu.statusParts(short)
         if tag ~= "" then return text, tag end
         return text, ""
     end
+    if BridgeMeet ~= nil and type(BridgeMeet.unjoined) == "function" and BridgeMeet.unjoined() then
+        return withTag(tr("MeetNotYet"))
+    end
     if BridgeCar ~= nil and BridgeCar.inCarForMenu() then
         if BridgeMenu.inCarWithRed() then return withTag(line("StatusInCar")) end
         return line("StatusInCar"), ""
@@ -281,6 +284,33 @@ end
 function BridgeMenu.onCall()
     if not present() then Bridge.greetOnReveal = true end
     Bridge.call()
+end
+
+function BridgeMenu.onReport()
+    if BridgeReport == nil or type(BridgeReport.generate) ~= "function" then return end
+    local ok, text, path, wrote, copied = pcall(BridgeReport.generate)
+    local player = nil
+    if BridgeData ~= nil and type(BridgeData.owner) == "function" then player = BridgeData.owner() end
+    local msg = nil
+    local good = false
+    if not ok then
+        msg = "error: " .. tostring(text)
+    elseif wrote == false then
+        msg = "Could not write " .. tostring(path)
+    elseif copied then
+        msg = tr("ReportDone", "Zomboid\\Lua\\" .. tostring(path))
+        good = true
+    else
+        msg = "Zomboid\\Lua\\" .. tostring(path) .. " (clipboard unavailable)"
+    end
+    if player ~= nil then
+        if good then
+            pcall(function() HaloTextHelper.addGoodText(player, msg) end)
+        else
+            pcall(function() HaloTextHelper.addBadText(player, msg) end)
+        end
+    end
+    log("report menu path=" .. tostring(path) .. " wrote=" .. tostring(wrote) .. " copied=" .. tostring(copied))
 end
 
 function BridgeMenu.onFollow()
@@ -1059,6 +1089,28 @@ function BridgeMenu.onButtonMenu(panel, button)
     local x = panel:getAbsoluteX() + button:getRight() + 4
     local y = panel:getAbsoluteY() + button:getY()
     local context = ISContextMenu.get(playerNum, x, y)
+    if BridgeMeet ~= nil and type(BridgeMeet.unjoined) == "function" and BridgeMeet.unjoined()
+        and BridgeReport ~= nil and type(BridgeReport.generate) == "function" then
+        local label = tr("ReportMenuButton")
+        if type(label) ~= "string" or label == "" or label == "ReportMenuButton" or label == "IGUI_NotAlone_ReportMenuButton" then
+            label = "Generate bug report"
+        end
+        local option = context:addOption(label, nil, BridgeMenu.onReport)
+        if option ~= nil then
+            local tip = nil
+            if ISWorldObjectContextMenu ~= nil and type(ISWorldObjectContextMenu.addToolTip) == "function" then
+                tip = ISWorldObjectContextMenu.addToolTip()
+            elseif ISToolTip ~= nil then
+                tip = ISToolTip:new()
+                tip:initialise()
+            end
+            if tip ~= nil then
+                tip:setName(label)
+                tip.description = tr("ReportMenuTip")
+                option.toolTip = tip
+            end
+        end
+    end
     BridgeMenu.fill(context, playerNum, true)
 end
 

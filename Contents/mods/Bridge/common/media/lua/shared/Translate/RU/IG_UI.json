@@ -1712,6 +1712,8 @@
     "IGUI_NotAlone_ReportStep1b": "на pastebin.com.",
     "IGUI_NotAlone_ReportStep2": "2. Выложи ссылки pastebin на странице Stay With Me в мастерской, в разделе Bug reports.",
     "IGUI_NotAlone_ReportButton": "Создать отчёт",
+    "IGUI_NotAlone_ReportMenuButton": "Создать отчёт об ошибке",
+    "IGUI_NotAlone_ReportMenuTip": "Записывает отчёт об ошибке в Zomboid\\Lua\\bridge и копирует его в буфер обмена. Загрузите файл отчёта и console.txt на pastebin.com, затем опубликуйте ссылки на странице Workshop Stay With Me в разделе Bug reports. Показывается, пока Рин не с вами.",
     "IGUI_NotAlone_ReportOpenPage": "Открыть Bug reports в мастерской",
     "IGUI_NotAlone_ReportLogOff": "Подробный лог: выкл",
     "IGUI_NotAlone_ReportLogOn": "Подробный лог: вкл",
