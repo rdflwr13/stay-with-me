@@ -976,8 +976,13 @@ function BridgeWash.update(body)
         local blocked = false
         pcall(function() blocked = st ~= nil and st.waitX ~= nil and BridgeMove.seatBlocks(st.waitX, st.waitY, st.waitZ or 0) end)
         if Bridge.mode ~= "follow" and st ~= nil and st.waitX ~= nil and not blocked then
-            Bridge.target = { x = st.waitX, y = st.waitY, z = st.waitZ or 0 }
-            Bridge.targetSince = Bridge.time
+            local target = { x = st.waitX, y = st.waitY, z = st.waitZ or 0 }
+            local spec = { owner = "wash", body = Bridge.body, target = target, reach = 0.7, onTarget = false }
+            local wst = BridgeRoute.request(spec)
+            if wst == "walking" then
+                BridgeRoute.state.spec = spec
+                Bridge.targetSince = Bridge.time
+            end
         end
     end
     return true

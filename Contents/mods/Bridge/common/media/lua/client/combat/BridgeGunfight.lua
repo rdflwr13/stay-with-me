@@ -4691,8 +4691,8 @@ local function reloadFleeMove(body, red, mode, S)
         end
         BridgeGunfight.reloadFleeStartX, BridgeGunfight.reloadFleeStartY = bx, by
         BridgeGunfight.reloadFleeStuckAt = now
-        if BridgeNav ~= nil and BridgeNav.newState ~= nil then
-            BridgeGunfight.reloadFleeNav = BridgeNav.newState()
+        if BridgeRoute ~= nil and BridgeRoute.newState ~= nil then
+            BridgeGunfight.reloadFleeNav = BridgeRoute.newState()
             BridgeGunfight.reloadFleeNav.progressAt = now
             BridgeGunfight.reloadFleeNav.since = now
         end
@@ -4744,14 +4744,14 @@ local function reloadFleeMove(body, red, mode, S)
     end
 
     local nav = BridgeGunfight.reloadFleeNav
-    if nav ~= nil and BridgeNav ~= nil then
+    if nav ~= nil and BridgeRoute ~= nil then
         local goalD = math.sqrt(BridgeGunRules.dist2(body:getX(), body:getY(), gx, gy))
         if nav.bestD == nil or goalD < nav.bestD - 0.3 then
             nav.bestD = goalD
             nav.progressAt = now
             nav.pathFails = 0
         end
-        local stall = BridgeNav.stall(body, nav, {
+        local stall = BridgeRoute.stall(body, nav, {
             ticks = 90,
             move = 0.3,
             exempt = function()
@@ -4763,7 +4763,7 @@ local function reloadFleeMove(body, red, mode, S)
         if stall == "stalled" then
             local px, py = nil, nil
             pcall(function()
-                local point = BridgeNav.detour(body, gx, gy, bz, nav, { step = 1.6, ticks = 150 })
+                local point = BridgeRoute.detour(body, gx, gy, bz, nav, { step = 1.6, ticks = 150 })
                 if point ~= nil then px, py = point.x, point.y end
             end)
             local safe = px ~= nil and standoffClear(body, px, py, bz)
@@ -4797,16 +4797,16 @@ local function reloadFleeMove(body, red, mode, S)
                 return false
             end
         end
-        local pf = BridgeNav.notePathFail(nav, { limit = 2 })
+        local pf = BridgeRoute.notePathFail(nav, { limit = 2 })
         if pf == "failed" then
-            U.vlog("reload flee path failed " .. tostring(BridgeNav.blockedReason()))
+            U.vlog("reload flee path failed " .. tostring(BridgeRoute.blockedReason()))
             BridgeGunfight.reloadFleeHoldUntil = now + 60
             clearReloadFleeMove(body)
             return false
         end
-        local prog = BridgeNav.progress(nav, { noProgress = 300, timeout = 600 })
+        local prog = BridgeRoute.progress(nav, { noProgress = 300, timeout = 600 })
         if prog == "timeout" then
-            U.vlog("reload flee no progress " .. tostring(BridgeNav.blockedReason()))
+            U.vlog("reload flee no progress " .. tostring(BridgeRoute.blockedReason()))
             BridgeGunfight.reloadFleeHoldUntil = now + 60
             clearReloadFleeMove(body)
             return false
@@ -5168,7 +5168,7 @@ end
 
 
 local function standoffDetourTick(body, red, threat, mode, retreatAt, now)
-    if BridgeMove == nil or threat == nil or BridgeNav == nil then return false end
+    if BridgeMove == nil or threat == nil or BridgeRoute == nil then return false end
     local untilAt = BridgeGunfight.standoffDetourUntil
     if untilAt ~= nil then
         local gx, gy, gz = BridgeGunfight.standoffDetourX, BridgeGunfight.standoffDetourY, BridgeGunfight.standoffDetourZ
@@ -5192,12 +5192,12 @@ local function standoffDetourTick(body, red, threat, mode, retreatAt, now)
     end
     local nav = BridgeGunfight.standoffNav
     if nav == nil then
-        nav = BridgeNav.newState()
+        nav = BridgeRoute.newState()
         nav.since = now
         nav.progressAt = now
         BridgeGunfight.standoffNav = nav
     end
-    local stall = BridgeNav.stall(body, nav, {
+    local stall = BridgeRoute.stall(body, nav, {
         ticks = 60,
         move = 0.3,
         exempt = function()
@@ -5209,7 +5209,7 @@ local function standoffDetourTick(body, red, threat, mode, retreatAt, now)
     if stall ~= "stalled" then return false end
     local px, py = nil, nil
     pcall(function()
-        local p = BridgeNav.detour(body, threat:getX(), threat:getY(), threat:getZ(), nav,
+        local p = BridgeRoute.detour(body, threat:getX(), threat:getY(), threat:getZ(), nav,
             { step = 1.6, ticks = 150 })
         if p ~= nil then px, py = p.x, p.y end
     end)

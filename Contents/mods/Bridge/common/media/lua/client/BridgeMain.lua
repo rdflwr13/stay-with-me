@@ -2024,6 +2024,7 @@ Bridge.teleportSquareOk = teleportSquareOk
 
 
 function Bridge.spawnSpot(cx, cy, z, aroundPlayer)
+    if BridgeRoute ~= nil then BridgeRoute.reset() end
     local cell = getCell()
     if cell == nil then return nil end
     local from = nil
@@ -2537,6 +2538,7 @@ function Bridge.teleportToRed(prefer)
 
 
     BridgeMove.reset(Bridge.body)
+    if BridgeRoute ~= nil then BridgeRoute.reset() end
     BridgeFight.reset(Bridge.body)
     Bridge.holdPos = nil
 
@@ -2574,7 +2576,7 @@ function Bridge.setMode(mode)
     Bridge.follow = (mode == "follow")
     Bridge.target = nil
     BridgeMove.moving = false
-    if BridgeMove.navReset ~= nil then BridgeMove.navReset() end
+    if BridgeRoute ~= nil then BridgeRoute.reset() end
     BridgeFight.guardOnly = (mode ~= "follow")
     if Bridge.alive() then BridgeMove.stopPath(Bridge.body) end
     local wx, wy, wz = nil, nil, nil
@@ -5759,7 +5761,7 @@ local function updateZombieBody(body)
     if ownerDead then
         if Bridge.mourning ~= nil or Bridge.mournAware(body, red) then
             local m0 = probeT()
-    if not Bridge.mournFrame(body, red) then BridgeMove.update(body) end
+    if not Bridge.mournFrame(body, red) then BridgeRoute.step(body) end
     probeAdd("move", m0, probeT())
             return
         end
@@ -5910,8 +5912,14 @@ local function updateZombieBody(body)
             local blocked = false
             pcall(function() blocked = BridgeMove.seatBlocks(st.waitX, st.waitY, st.waitZ or 0) end)
             if dx * dx + dy * dy > 4 and not blocked then
-                Bridge.target = { x = st.waitX, y = st.waitY, z = st.waitZ or 0 }
-                Bridge.targetSince = Bridge.time
+                local target = { x = st.waitX, y = st.waitY, z = st.waitZ or 0 }
+                local spec = { owner = "wait", body = body, target = target, reach = 0.7, onTarget = false }
+                local wst = BridgeRoute.request(spec)
+                if wst == "walking" then
+                    BridgeRoute.state.spec = spec
+                    Bridge.target = target
+                    Bridge.targetSince = Bridge.time
+                end
 
 
                 Bridge.pose = nil
@@ -5922,7 +5930,7 @@ local function updateZombieBody(body)
 
     if Bridge.mode ~= "follow" and Bridge.mode ~= "home" and Bridge.target == nil
             and not (Bridge.pose ~= nil and Bridge.pose.staySit == true) then
-        pcall(function() BridgeMove.seatAside(body) end)
+        pcall(function() BridgeRoute.seatAside(body) end)
     end
 
     if Bridge.follow then
@@ -6016,7 +6024,7 @@ local function updateZombieBody(body)
 
     BridgeMove.followDebug("main-before-update", body, "call")
     local m1 = probeT()
-    BridgeMove.update(body)
+    BridgeRoute.step(body)
     probeAdd("move", m1, probeT())
     handProbe(body, "frame end")
 end
@@ -7195,7 +7203,13 @@ function Bridge.run(line)
         if x == nil or y == nil then return "goto needs x y z" end
         if not Bridge.alive() then return "no body" end
         Bridge.follow = false
-        Bridge.target = { x = x, y = y, z = z or 0 }
+        local target = { x = x, y = y, z = z or 0 }
+        local spec = { owner = "goto", body = Bridge.body, target = target, reach = 0.7, onTarget = false }
+        local gst = BridgeRoute.request(spec)
+        if gst == "walking" then
+            BridgeRoute.state.spec = spec
+            Bridge.target = target
+        end
         BridgeMove.pathing = false
         Bridge.holdPos = nil
         return "going"
@@ -8409,7 +8423,7 @@ function Bridge.diagLines()
             add("body_pathing", tostring(BridgeMove.pathing))
             add("body_moving", tostring(BridgeMove.moving))
             add("path_result", BridgeMove.pathResult)
-            pcall(function() add("nav", BridgeMove.navInfo()) end)
+            pcall(function() add("nav", BridgeRoute.navInfo()) end)
             add("obstacle", BridgeMove.obstacle)
             pcall(function() add("doors", BridgeMove.doorInfo()) end)
             add("fight", tostring(BridgeFight.enabled) .. " " .. BridgeFight.state .. " " .. BridgeFight.info)
@@ -9589,6 +9603,7 @@ function Bridge.floorPullTick(red)
                             end
                             Bridge.floorPull = nil
                             Bridge.floorMismatchSince = nil
+                            if BridgeRoute ~= nil then BridgeRoute.reset() end
                         elseif not pull.failedLogged then
                             pull.failedLogged = true
                             log("vertical: pull failed: " .. tostring(result))

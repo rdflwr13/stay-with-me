@@ -632,15 +632,22 @@ local function returnToAnchor(body)
         local res = BridgeTask.start("roam", { { x = ax, y = ay, z = az } })
         if res == "started" then
             S.running = { row = "roam", kind = "roam", idle = true, startedAt = Bridge.time,
-                done0 = BridgeTask.doneCount or 0, need = 1, changedAt = Bridge.time, sig = nil }
+                done0 = BridgeTask.doneCount or 0, need = 1, changedAt = Bridge.time, sig = nil,
+                jobId = BridgeTask.jobId }
             S.nextIdleAt = 0
             return
         end
     end
-    if Bridge.target == nil or math.abs((Bridge.target.x or -9999) - ax) > 0.6
-            or math.abs((Bridge.target.y or -9999) - ay) > 0.6 then
-        Bridge.target = { x = ax, y = ay, z = az }
-        Bridge.targetSince = Bridge.time
+    local ct = BridgeRoute.state.target
+    if ct == nil or math.abs((ct.x or -9999) - ax) > 0.6
+            or math.abs((ct.y or -9999) - ay) > 0.6 then
+        local target = { x = ax, y = ay, z = az }
+        local spec = { owner = "chore", body = body, target = target, reach = 0.7, onTarget = false }
+        local st = BridgeRoute.request(spec)
+        if st == "walking" then
+            BridgeRoute.state.spec = spec
+            Bridge.targetSince = Bridge.time
+        end
     end
 end
 
@@ -725,7 +732,8 @@ local function finishJobRow()
             S.nextIdleAt = (Bridge.time or 0) + IDLE_GAP
         end
     end
-    log("job end " .. tostring(r.row) .. " done=" .. tostring(done) .. " fail=" .. tostring(fail)
+    log("job end row=" .. tostring(r.row) .. " id=" .. tostring(r.jobId or "-")
+        .. " done=" .. tostring(done) .. " fail=" .. tostring(fail)
         .. " blocked=" .. tostring(BridgeTask.blockedReason))
     blacklistFailed()
     if type(r.targets) == "table" then markDirty(r.row, r.targets) end
@@ -761,6 +769,7 @@ local function watch(body)
                 row = w.row, kind = BridgeTask.kind or w.kind, idle = w.idle == true,
                 startedAt = Bridge.time, done0 = BridgeTask.doneCount or 0,
                 need = w.need or 0, targets = w.targets, sig = nil, changedAt = Bridge.time,
+                jobId = BridgeTask.jobId,
             }
             return true
         end
@@ -1240,7 +1249,7 @@ local function startDeposit(body, h, now, force)
         S.running = {
             row = "deposit", kind = "deposit", idle = true,
             startedAt = now, done0 = BridgeTask.doneCount or 0, need = n,
-            changedAt = now, sig = nil,
+            changedAt = now, sig = nil, jobId = BridgeTask.jobId,
         }
         return true, "started"
     end
@@ -1263,7 +1272,7 @@ local function startRow(body, cand, h, quiet)
         S.running = {
             row = cand.row, kind = kind, idle = false, startedAt = Bridge.time,
             done0 = BridgeTask.doneCount or 0, need = cand.need or 0, targets = cand.list,
-            sig = nil, changedAt = Bridge.time,
+            sig = nil, changedAt = Bridge.time, jobId = BridgeTask.jobId,
         }
         return true, "started"
     end
@@ -1329,7 +1338,8 @@ local function startIdle(id, body, h, now, force)
         if res == "started" then
             startOk("shower")
             S.running = { row = "shower", kind = "shower", idle = true, startedAt = now,
-                done0 = BridgeTask.doneCount or 0, need = 0, changedAt = now, sig = nil }
+                done0 = BridgeTask.doneCount or 0, need = 0, changedAt = now, sig = nil,
+                jobId = BridgeTask.jobId }
             return true, "started"
         end
         startFail("shower", res)
@@ -1348,7 +1358,8 @@ local function startIdle(id, body, h, now, force)
         if res == "started" then
             startOk("exercise")
             S.running = { row = "exercise", kind = "exercise", idle = true, startedAt = now,
-                done0 = BridgeTask.doneCount or 0, need = 0, changedAt = now, sig = nil }
+                done0 = BridgeTask.doneCount or 0, need = 0, changedAt = now, sig = nil,
+                jobId = BridgeTask.jobId }
             return true, "started"
         end
         startFail("exercise", res)
@@ -1386,7 +1397,8 @@ local function startIdle(id, body, h, now, force)
         if res == "started" then
             startOk("sit")
             S.running = { row = "sit", kind = "sit", idle = true, startedAt = now,
-                done0 = BridgeTask.doneCount or 0, need = 1, targets = order, changedAt = now, sig = nil }
+                done0 = BridgeTask.doneCount or 0, need = 1, targets = order, changedAt = now, sig = nil,
+                jobId = BridgeTask.jobId }
             return true, "started"
         end
         startFail("sit", res)
@@ -1402,7 +1414,8 @@ local function startIdle(id, body, h, now, force)
         end)
         if res == "started" then
             S.running = { row = "roam", kind = "roam", idle = true, startedAt = now,
-                done0 = BridgeTask.doneCount or 0, need = 1, changedAt = now, sig = nil }
+                done0 = BridgeTask.doneCount or 0, need = 1, changedAt = now, sig = nil,
+                jobId = BridgeTask.jobId }
             return true, "started"
         end
         startFail("roam", res)
