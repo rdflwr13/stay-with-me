@@ -526,9 +526,7 @@ local function filterList(id, list, h, z)
             local untilT = S.blacklist[key]
             local nearSpot = false
             if spot ~= nil and tz == spot.z then
-                local dx = x - spot.x
-                local dy = y - spot.y
-                if dx * dx + dy * dy <= skipR * skipR then nearSpot = true end
+                if BridgeData.corpseHas(spot, x, y, tz, skipR) then nearSpot = true end
             end
             if not nearSpot and (untilT == nil or untilT <= now)
                     and BridgeHome.contains(x, y, tz) and floorReachable(h, z, tz) then
@@ -567,21 +565,28 @@ local function candidates(body)
         local row = ROWS[id]
         if row ~= nil and row.idle ~= true and on(id) and shown(row.group) then
             local doorRow = (id == "closeDoors" or id == "closeWindows")
+            local corpseRow = (id == "corpses")
             local kind = choreKind(id)
             local sh = S.scan[id]
-            if kind ~= nil and (doorRow or (sh ~= nil and sh.ready == true))
+            if kind ~= nil and (doorRow or corpseRow or (sh ~= nil and sh.ready == true))
                     and (Bridge.time or 0) >= cooldownUntil(id)
                     and (Bridge.time or 0) >= retryUntil(id) then
                 local list = nil
-                if doorRow then
+                if doorRow or corpseRow then
                     list = {}
                     if BridgeWorkSelect ~= nil then
                         local floors = nil
                         pcall(function() floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn()) end)
-                        if type(floors) ~= "table" or #floors == 0 then floors = { z } end
+                        if type(floors) ~= "table" then floors = {} end
+                        local seenFz = {}
                         local ordered = {}
-                        for _, fz in ipairs(floors) do if fz == z then ordered[#ordered + 1] = fz end end
-                        for _, fz in ipairs(floors) do if fz ~= z then ordered[#ordered + 1] = fz end end
+                        if z ~= nil then seenFz[z] = true ordered[#ordered + 1] = z end
+                        if h.z ~= nil and not seenFz[h.z] then seenFz[h.z] = true ordered[#ordered + 1] = h.z end
+                        for _, fz in ipairs(floors) do
+                            if not seenFz[fz] then seenFz[fz] = true ordered[#ordered + 1] = fz end
+                        end
+                        log(string.format("doorsIn floors=[%s] bodyZ=%s homeZ=%s",
+                            table.concat(ordered, ","), tostring(z), tostring(h.z)))
                         for _, fz in ipairs(ordered) do
                             local rect = { x1 = h.x, y1 = h.y, x2 = h.x + h.w - 1, y2 = h.y + h.h - 1, z = fz }
                             local got = nil
@@ -589,14 +594,24 @@ local function candidates(body)
                                 got = BridgeWorkSelect.doorsIn(rect, "close")
                             elseif id == "closeWindows" and type(BridgeWorkSelect.windowsIn) == "function" then
                                 got = BridgeWorkSelect.windowsIn(rect, "close")
+                            elseif corpseRow and type(BridgeWorkSelect.corpsesIn) == "function" then
+                                got = BridgeWorkSelect.corpsesIn(rect)
+                                if got ~= nil and #got > 0 then got = filterList("corpses", got, h, z) end
                             end
-                            if got ~= nil and #got > 0 then list = got break end
+                            if got ~= nil and #got > 0 then
+                                if doorRow then
+                                    for gi = 1, #got do list[#list + 1] = got[gi] end
+                                else
+                                    list = got
+                                    break
+                                end
+                            end
                         end
                     end
                 else
                     list = filterList(id, sh.list, h, z)
                 end
-                if doorRow and #list > 1 then
+                if (doorRow or corpseRow) and #list > 1 then
                     local bx, by = body:getX(), body:getY()
                     table.sort(list, function(a, b)
                         local ax, ay, az = targetPos(a)
@@ -2107,13 +2122,42 @@ function BridgeChores.debugForce(id, index)
         S.forceRoam = false
         local kind = choreKind(id)
         if kind == nil then return "disabled" end
-        local sh = S.scan[id]
-        if sh == nil or #sh.list == 0 then
-            invalidateRow(id)
-            S.statusCache[id] = nil
-            return "scanning"
+        local z = bodyZ(body)
+        local doorRow = (id == "closeDoors" or id == "closeWindows")
+        local corpseRow = (id == "corpses")
+        local list = nil
+        if doorRow or corpseRow then
+            list = {}
+            if BridgeWorkSelect ~= nil then
+                local floors = nil
+                pcall(function() floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn()) end)
+                if type(floors) ~= "table" or #floors == 0 then floors = { z } end
+                local ordered = {}
+                for _, fz in ipairs(floors) do if fz == z then ordered[#ordered + 1] = fz end end
+                for _, fz in ipairs(floors) do if fz ~= z then ordered[#ordered + 1] = fz end end
+                for _, fz in ipairs(ordered) do
+                    local rect = { x1 = h.x, y1 = h.y, x2 = h.x + h.w - 1, y2 = h.y + h.h - 1, z = fz }
+                    local got = nil
+                    if id == "closeDoors" and type(BridgeWorkSelect.doorsIn) == "function" then
+                        got = BridgeWorkSelect.doorsIn(rect, "close")
+                    elseif id == "closeWindows" and type(BridgeWorkSelect.windowsIn) == "function" then
+                        got = BridgeWorkSelect.windowsIn(rect, "close")
+                    elseif corpseRow and type(BridgeWorkSelect.corpsesIn) == "function" then
+                        got = BridgeWorkSelect.corpsesIn(rect)
+                        if got ~= nil and #got > 0 then got = filterList("corpses", got, h, z) end
+                    end
+                    if got ~= nil and #got > 0 then list = got break end
+                end
+            end
+        else
+            local sh = S.scan[id]
+            if sh == nil or #sh.list == 0 then
+                invalidateRow(id)
+                S.statusCache[id] = nil
+                return "scanning"
+            end
+            list = filterList(id, sh.list, h, z)
         end
-        local list = filterList(id, sh.list, h, bodyZ(body))
         if index ~= nil then
             local n = tonumber(index)
             local one = n ~= nil and list[n] or nil
@@ -2121,7 +2165,9 @@ function BridgeChores.debugForce(id, index)
             list = { one }
         end
         if #list == 0 then return "no targets" end
-        ok, res = startRow(body, { row = id, kind = kind, list = list, need = #list }, h, true)
+        local dest = nil
+        if id == "corpses" then dest = BridgeData.corpseSpotOf(Bridge.store) end
+        ok, res = startRow(body, { row = id, kind = kind, list = list, need = #list, dest = dest }, h, true)
     end
     local out = tostring(res or (ok and "started" or "failed"))
     S.statusCache[id] = nil

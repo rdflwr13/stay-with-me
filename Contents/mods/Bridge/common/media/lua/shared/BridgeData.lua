@@ -1247,7 +1247,26 @@ function BridgeData.cleanCorpseSpot(t)
         if v == nil or v ~= v then return nil end
         out[k] = math.floor(v)
     end
+    local w = tonumber(t.w)
+    local h = tonumber(t.h)
+    out.w = (w ~= nil and w == w) and math.floor(w) or 1
+    out.h = (h ~= nil and h == h) and math.floor(h) or 1
+    if out.w < 1 then out.w = 1 end
+    if out.h < 1 then out.h = 1 end
+    if out.w > BridgeData.HOME_MAX then out.w = BridgeData.HOME_MAX end
+    if out.h > BridgeData.HOME_MAX then out.h = BridgeData.HOME_MAX end
     return out
+end
+
+
+function BridgeData.corpseHas(spot, x, y, z, margin)
+    if type(spot) ~= "table" or x == nil or y == nil or z == nil then return false end
+    if math.floor(z) ~= spot.z then return false end
+    margin = tonumber(margin) or 0
+    local w = tonumber(spot.w) or 1
+    local h = tonumber(spot.h) or 1
+    return x >= (spot.x - margin) and x <= (spot.x + w - 1 + margin)
+        and y >= (spot.y - margin) and y <= (spot.y + h - 1 + margin)
 end
 
 

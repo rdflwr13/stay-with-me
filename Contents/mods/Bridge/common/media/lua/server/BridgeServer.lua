@@ -2040,7 +2040,14 @@ BridgeServer.Commands.state = function(player, args)
     end
     if args.corpseSpot ~= nil then
         local spot = BridgeData.cleanCorpseSpot(args.corpseSpot)
-        if spot ~= nil and dist(player, spot.x, spot.y) <= 20 then
+        local near = false
+        if spot ~= nil then
+            local px, py = player:getX(), player:getY()
+            local nx = math.max(spot.x, math.min(px, spot.x + (tonumber(spot.w) or 1) - 1))
+            local ny = math.max(spot.y, math.min(py, spot.y + (tonumber(spot.h) or 1) - 1))
+            near = dist(player, nx, ny) <= 20
+        end
+        if spot ~= nil and near then
             rec.corpseSpot = spot
             changed = true
         else

@@ -171,6 +171,7 @@
     "IGUI_NotAlone_Say_JobNoDoorsClose": "Nothing to close here.",
     "IGUI_NotAlone_Say_DoorsOpenStart": "Opening up.",
     "IGUI_NotAlone_Say_DoorsCloseStart": "Closing up.",
+    "IGUI_NotAlone_Say_DoorWaitPlayer": "I'll close it once you step away.",
     "IGUI_NotAlone_Say_JobCarStop": "Stop the car so I can get out.",
     "IGUI_NotAlone_Say_JobNoStains": "Nothing to clean here.",
     "IGUI_NotAlone_Say_JobNoPlants": "Nothing to clear here.",

@@ -2080,6 +2080,18 @@ function Bridge.adoptServerBody(zombie)
     pcall(function() adoptedId = zombie:getPersistentOutfitID() end)
     log("adopted body id=" .. tostring(adoptedId))
     Bridge.companionCensus("adopt " .. tostring(adoptedId))
+    pcall(function()
+        local list = Bridge.companionBodies()
+        for i = 1, #list do
+            local b = list[i]
+            if b ~= nil and b.z ~= nil and b.z ~= zombie and not b.current and not b.remote then
+                pcall(function() b.z:removeFromSquare() end)
+                pcall(function() b.z:removeFromWorld() end)
+                log(string.format("removed stale companion body id=%s at %d,%d,%d",
+                    tostring(b.id), math.floor(b.x), math.floor(b.y), math.floor(b.zz)))
+            end
+        end
+    end)
     Bridge.clearSpeechOverlay()
     Bridge.noteSpawned()
     Bridge.target = nil
@@ -2702,6 +2714,10 @@ function Bridge.setMode(mode)
     if BridgeRoute ~= nil then BridgeRoute.reset() end
     BridgeFight.guardOnly = (mode ~= "follow")
     if Bridge.alive() then BridgeMove.stopPath(Bridge.body) end
+    if Bridge.alive() and BridgeMove.follow ~= nil
+            and (BridgeMove.follow.back ~= nil or BridgeMove.backActive) then
+        pcall(BridgeMove.backEnd, Bridge.body, BridgeMove.follow, "mode", nil)
+    end
     local wx, wy, wz = nil, nil, nil
 
     local seated = Bridge.pose ~= nil and Bridge.pose.seat == true
@@ -2871,8 +2887,8 @@ function Bridge.saveCorpseSpot(spot)
     if Bridge.mp then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { corpseSpot = clean }) end)
     end
-    log(string.format("corpse spot saved %d,%d z%d mp=%s", clean.x, clean.y, clean.z,
-        tostring(Bridge.mp == true)))
+    log(string.format("corpse spot saved %d,%d z%d %dx%d mp=%s", clean.x, clean.y, clean.z,
+        clean.w, clean.h, tostring(Bridge.mp == true)))
     return "corpse spot set"
 end
 
@@ -7176,15 +7192,17 @@ function Bridge.run(line)
             if sq == nil then return "corpsespot: no square" end
             return Bridge.saveCorpseSpot({ x = sq:getX(), y = sq:getY(), z = sq:getZ() })
         elseif sub == "set" then
-            return Bridge.saveCorpseSpot({ x = tonumber(parts[4]), y = tonumber(parts[5]), z = tonumber(parts[6]) })
+            return Bridge.saveCorpseSpot({ x = tonumber(parts[4]), y = tonumber(parts[5]), z = tonumber(parts[6]),
+                w = tonumber(parts[7]), h = tonumber(parts[8]) })
         elseif sub == "clear" then
             return Bridge.clearCorpseSpot()
         elseif sub == "status" then
             local spot = BridgeData.corpseSpotOf(Bridge.store)
             if spot == nil then return "corpsespot: none" end
-            return string.format("corpsespot: %d,%d z%d", spot.x, spot.y, spot.z)
+            return string.format("corpsespot: %d,%d z%d %dx%d", spot.x, spot.y, spot.z,
+                tonumber(spot.w) or 1, tonumber(spot.h) or 1)
         end
-        return "corpsespot: here|set x y z|clear|status"
+        return "corpsespot: here|set x y z [w h]|clear|status"
     end
 
 

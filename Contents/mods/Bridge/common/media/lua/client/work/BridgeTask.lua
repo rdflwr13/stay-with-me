@@ -278,7 +278,7 @@ BridgeTask.TRANSFER_WEIGHT_BUDGET = 3.0
 BridgeTask.TRANSFER_MAX_BATCH = 100
 BridgeTask.TRANSFER_MIN_BATCH = 1
 BridgeTask.transferMode = "weight"
-BridgeTask.OPENING_GIVE_UP = 6 * K.SECOND
+BridgeTask.OPENING_GIVE_UP = 15 * K.SECOND
 
 
 
@@ -643,8 +643,28 @@ end
 
 
 function BridgeTask.doorOpen(door)
+    local dkey = nil
+    pcall(function() dkey = BridgeDoors ~= nil and BridgeDoors.key(door) or nil end)
+    local rec = dkey ~= nil and BridgeMove ~= nil and BridgeMove.doorState
+        and BridgeMove.doorState[dkey] or nil
+    if rec ~= nil and (Bridge.time or 0) - (rec.at or 0) < 600 then
+        return rec.open == true
+    end
     local open = false
     pcall(function() open = door:IsOpen() == true end)
+    if not open then
+        local alt = false
+        pcall(function() alt = door:isOpen() == true end)
+        if alt then open = true end
+    end
+    if not open and IsoDoor ~= nil and IsoDoor.getDoubleDoorObject ~= nil then
+        pcall(function()
+            for i = 1, 4 do
+                local p = IsoDoor.getDoubleDoorObject(door, i)
+                if p ~= nil and p ~= door and p:IsOpen() then open = true break end
+            end
+        end)
+    end
     return open
 end
 
@@ -701,7 +721,7 @@ function BridgeTask.doorPreflight(targets, mode)
 end
 
 
-function U.doorNeighbors(sq)
+function U.doorNeighbors(sq, cardinalOnly)
     local out = {}
     if sq == nil then return out end
     local x, y, z = sq:getX(), sq:getY(), sq:getZ()
@@ -709,9 +729,11 @@ function U.doorNeighbors(sq)
     for dx = -1, 1 do
         for dy = -1, 1 do
             if dx ~= 0 or dy ~= 0 then
-                local s = nil
-                pcall(function() s = cell:getGridSquare(x + dx, y + dy, z) end)
-                if s ~= nil then out[#out + 1] = s end
+                if not cardinalOnly or dx == 0 or dy == 0 then
+                    local s = nil
+                    pcall(function() s = cell:getGridSquare(x + dx, y + dy, z) end)
+                    if s ~= nil then out[#out + 1] = s end
+                end
             end
         end
     end
@@ -719,7 +741,7 @@ function U.doorNeighbors(sq)
 end
 
 
-function BridgeTask.doorStand(body, door, label)
+function BridgeTask.doorStand(body, door, label, farSide, preferOutside)
     if body == nil or door == nil then return nil end
     label = label or "door"
     local dsq, osq = nil, nil
@@ -735,6 +757,25 @@ function BridgeTask.doorStand(body, door, label)
         local odx, ody = from:getX() - osq:getX(), from:getY() - osq:getY()
         nearDsq = (ddx * ddx + ddy * ddy) <= (odx * odx + ody * ody)
     end
+    if farSide then nearDsq = not nearDsq end
+    local preferDsq = nearDsq
+    if preferOutside then
+        local dRoom, oRoom = nil, nil
+        pcall(function() dRoom = dsq:getRoom() end)
+        if osq ~= nil then pcall(function() oRoom = osq:getRoom() end) end
+        if dRoom == nil and oRoom ~= nil then preferDsq = true
+        elseif oRoom == nil and dRoom ~= nil then preferDsq = false
+        elseif osq ~= nil then
+            local red = BridgeData ~= nil and BridgeData.owner() or nil
+            local rsq = nil
+            if red ~= nil then pcall(function() rsq = red:getCurrentSquare() end) end
+            if rsq ~= nil then
+                local ddx, ddy = rsq:getX() - dsq:getX(), rsq:getY() - dsq:getY()
+                local odx, ody = rsq:getX() - osq:getX(), rsq:getY() - osq:getY()
+                preferDsq = (ddx * ddx + ddy * ddy) <= (odx * odx + ody * ody)
+            end
+        end
+    end
     local face = nil
     if label == "window" then
         face = nearDsq and dsq or osq
@@ -746,8 +787,12 @@ function BridgeTask.doorStand(body, door, label)
     end
     local seen = {}
     local best, bestScore = face, nil
+    local axisX = osq ~= nil and dsq:getX() == osq:getX()
+    local axisY = osq ~= nil and dsq:getY() == osq:getY()
     local function consider(sq, sameSide)
         if sq == nil or sq == dsq or (osq ~= nil and sq == osq) then return end
+        if axisX and sq:getX() ~= dsq:getX() then return end
+        if axisY and sq:getY() ~= dsq:getY() then return end
         local key = sq:getX() .. ":" .. sq:getY() .. ":" .. sq:getZ()
         if seen[key] then return end
         seen[key] = true
@@ -759,11 +804,11 @@ function BridgeTask.doorStand(body, door, label)
         if best == nil or score < bestScore then best, bestScore = sq, score end
     end
     if best == nil then
-        local list = U.doorNeighbors(dsq)
-        for i = 1, #list do consider(list[i], nearDsq) end
+        local list = U.doorNeighbors(dsq, true)
+        for i = 1, #list do consider(list[i], preferDsq) end
         if osq ~= nil then
-            list = U.doorNeighbors(osq)
-            for i = 1, #list do consider(list[i], not nearDsq) end
+            list = U.doorNeighbors(osq, true)
+            for i = 1, #list do consider(list[i], not preferDsq) end
         end
     end
     if best == nil then
@@ -921,11 +966,14 @@ function U.openingUpdate(body, mode, spec)
     if not BridgeTask.doorOrdered then
         BridgeTask.doorOrdered = true
         local bx, by = body:getX(), body:getY()
+        local bz = body:getZ()
         table.sort(BridgeTask.queue, function(a, b)
+            local af = a.z == bz
+            local bf = b.z == bz
+            if af ~= bf then return af end
             local da = (a.x - bx) ^ 2 + (a.y - by) ^ 2
             local db = (b.x - bx) ^ 2 + (b.y - by) ^ 2
-            if mode == "open" then return da < db end
-            return da > db
+            return da < db
         end)
     end
 
@@ -985,7 +1033,9 @@ function U.openingUpdate(body, mode, spec)
         if BridgeTask.openingStandTarget == target and BridgeTask.openingStand ~= nil then
             stand = BridgeTask.openingStand
         else
-            stand = spec.stand(body, obj)
+            local preferOutside = (mode == "close" and spec.label == "door"
+                and U.roomExitCount(body, obj) == 0)
+            stand = spec.stand(body, obj, false, preferOutside)
             BridgeTask.openingStand = stand
             BridgeTask.openingStandTarget = target
         end
@@ -1005,6 +1055,22 @@ function U.openingUpdate(body, mode, spec)
             U.log(string.format("%s walk walk=%s why=%s dDoor=%.2f dStand=%.2f body=%s stand=%d,%d %s",
                 spec.label, tostring(walk), tostring(why), U.doorDebugDist(body, dsq), U.doorDebugDist(body, standSq),
                 U.doorDebugSq(body), stand.x, stand.y, spec.debug(body, obj)))
+        end
+        if walk == "unreachable" then
+            local farStand = spec.stand(body, obj, true)
+            if farStand ~= nil and (farStand.x ~= stand.x or farStand.y ~= stand.y) then
+                BridgeTask.openingStand = farStand
+                BridgeTask.openingStandTarget = target
+                local walk2, why2 = BridgeTask.walkTo(body, farStand, spec.reach or BridgeTask.DOOR_REACH, false, true)
+                if walk2 ~= "unreachable" then
+                    U.log(string.format("%s stand fallback far=%d,%d walk=%s why=%s",
+                        spec.label, farStand.x, farStand.y, tostring(walk2), tostring(why2)))
+                    stand = farStand
+                    walk = walk2
+                    why = why2
+                    pcall(function() standSq = getCell():getGridSquare(farStand.x, farStand.y, farStand.z) end)
+                end
+            end
         end
         if walk == "unreachable" then
             U.log(spec.label .. " drop why=" .. tostring(why))
@@ -1092,15 +1158,88 @@ function U.doorPlayerInOpening(obj)
 end
 
 
+function U.roomExitCount(body, skipDoor)
+    local bs = nil
+    pcall(function() bs = body:getCurrentSquare() end)
+    if bs == nil then return -1 end
+    local room = nil
+    pcall(function() room = bs:getRoom() end)
+    if room == nil then return -1 end
+    local def = nil
+    pcall(function() def = room:getRoomDef() end)
+    if def == nil then return -1 end
+    local x1, y1, x2, y2 = nil, nil, nil, nil
+    pcall(function() x1, y1, x2, y2 = def:getX(), def:getY(), def:getX2(), def:getY2() end)
+    if x1 == nil or y1 == nil or x2 == nil or y2 == nil then return -1 end
+    local z = bs:getZ()
+    local cell = getCell()
+    if cell == nil then return 0 end
+    local count, seen = 0, {}
+    for x = x1 - 1, x2 + 1 do
+        for y = y1 - 1, y2 + 1 do
+            if x == x1 - 1 or x == x2 + 1 or y == y1 - 1 or y == y2 + 1 then
+                local sq = nil
+                pcall(function() sq = cell:getGridSquare(x, y, z) end)
+                if sq ~= nil then
+                    local lists = {}
+                    pcall(function() lists[#lists + 1] = sq:getObjects() end)
+                    pcall(function() lists[#lists + 1] = sq:getSpecialObjects() end)
+                    for li = 1, #lists do
+                        local list = lists[li]
+                        if list then
+                            for i = 0, list:size() - 1 do
+                                local o = list:get(i)
+                                if o ~= nil and o ~= skipDoor and not seen[o] then
+                                    local isDoor, isWin = false, false
+                                    pcall(function()
+                                        isDoor = instanceof(o, "IsoDoor")
+                                            or (instanceof(o, "IsoThumpable") and o:isDoor())
+                                    end)
+                                    pcall(function() isWin = instanceof(o, "IsoWindow") end)
+                                    if isDoor or isWin then
+                                        seen[o] = true
+                                        count = count + 1
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return count
+end
+
+
 U.doorSpec = {
     label = "door",
     reach = BridgeTask.DOOR_REACH,
     objectAt = function(target) return BridgeTask.doorObjectAt(target) end,
     isOpen = function(obj) return BridgeTask.doorOpen(obj) end,
     blocked = function(obj, mode) return BridgeTask.doorBlocked(obj, mode) end,
-    stand = function(body, obj) return BridgeTask.doorStand(body, obj, "door") end,
+    stand = function(body, obj, farSide, preferOutside) return BridgeTask.doorStand(body, obj, "door", farSide, preferOutside) end,
     beginAct = function(body, obj) pcall(function() body:setBumpType("Stand") end) end,
-    finishAct = function(body, obj) BridgeMove.toggleDoor(body, obj) end,
+    finishAct = function(body, obj, mode)
+        if mode == "close" then
+            local exits = U.roomExitCount(body, obj)
+            if exits == 0 then
+                local br, pr = nil, nil
+                local red = BridgeData ~= nil and BridgeData.owner() or nil
+                pcall(function() br = body:getCurrentSquare():getRoom() end)
+                if red ~= nil then pcall(function() pr = red:getCurrentSquare():getRoom() end) end
+                if br ~= pr then
+                    BridgeTask.info = "kept open: only exit, player away"
+                    local dsq = nil
+                    pcall(function() dsq = obj:getSquare() end)
+                    U.log(string.format("door kept open: only exit, player away at %s",
+                        dsq ~= nil and (dsq:getX() .. "," .. dsq:getY()) or "?"))
+                    return false
+                end
+            end
+        end
+        return BridgeMove.toggleDoor(body, obj)
+    end,
     handTicks = function(mode)
         return mode == "open" and BridgeTask.DOOR_HAND_OPEN or BridgeTask.DOOR_HAND_CLOSE
     end,
@@ -1126,7 +1265,7 @@ U.windowSpec = {
     objectAt = function(target) return U.windowObjectAt(target) end,
     isOpen = function(obj) return U.windowOpen(obj) end,
     blocked = function(obj, mode) return U.windowBlocked(obj) end,
-    stand = function(body, obj) return BridgeTask.doorStand(body, obj, "window") end,
+    stand = function(body, obj, farSide) return BridgeTask.doorStand(body, obj, "window", farSide) end,
     beginAct = function(body, obj, mode)
         local opening = mode == "open"
         if BridgeTask.windowProgressSaid ~= true then
@@ -1308,7 +1447,7 @@ function BridgeTask.closeOpenedDoors()
     for i = #list, 1, -1 do
         local rec = list[i]
         local door = rec ~= nil and rec.door or nil
-        table.remove(list, i)
+        local keep = false
         if door ~= nil then
             local open, dead, block = false, false, false
             pcall(function() open = door:IsOpen() == true end)
@@ -1321,11 +1460,18 @@ function BridgeTask.closeOpenedDoors()
                     pcall(function() a = door:getSquare(); b = door:getOppositeSquare() end)
                     skip = (rsq == a or rsq == b)
                 end
-                if not skip then
+                if skip then
+                    keep = true
+                else
+                    table.remove(list, i)
                     local ok, done = pcall(function() return BridgeMove.toggleDoor(body, door, rec.kind) == true end)
                     if ok and done then n = n + 1 end
                 end
+            else
+                table.remove(list, i)
             end
+        else
+            table.remove(list, i)
         end
     end
     return n
@@ -2728,7 +2874,7 @@ function BridgeTask.noteWindowAttempts(body)
     for _, rec in ipairs(list) do
         local tick = rec.tick
         if tick ~= nil and tick > newest then newest = tick end
-        if tick ~= nil and tick > (seen.tick or -1) and rec.behind ~= true then
+        if tick ~= nil and tick > (seen.tick or -1) then
             local key = nil
             if rec.obj ~= nil and BridgeDoors ~= nil and BridgeDoors.key ~= nil then
                 pcall(function() key = BridgeDoors.key(rec.obj) end)
@@ -11651,9 +11797,25 @@ end
 
 function U.resolveDropSquare(dest)
     if dest == nil then return nil end
-    local maxR = BridgeTask.CORPSE_DROP_SEARCH
-    local best, bestD = nil, nil
     local cell = getCell()
+    local best, bestD = nil, nil
+    local w = tonumber(dest.w) or 1
+    local h = tonumber(dest.h) or 1
+    if w > 1 or h > 1 then
+        local cx, cy = dest.x + (w - 1) / 2, dest.y + (h - 1) / 2
+        for x = dest.x, dest.x + w - 1 do
+            for y = dest.y, dest.y + h - 1 do
+                local sq = nil
+                pcall(function() sq = cell:getGridSquare(x, y, dest.z) end)
+                if U.dropSquareValid(sq) then
+                    local d = (x - cx) ^ 2 + (y - cy) ^ 2
+                    if bestD == nil or d < bestD then best, bestD = sq, d end
+                end
+            end
+        end
+        return best
+    end
+    local maxR = BridgeTask.CORPSE_DROP_SEARCH
     for dx = -maxR, maxR do
         for dy = -maxR, maxR do
             local sq = nil
@@ -11952,9 +12114,20 @@ end
 
 function BridgeTask.kinds.moveCorpses.haul(body)
     local dest = BridgeTask.corpseDest
+    if dest == nil and BridgeData ~= nil and type(BridgeData.corpseSpotOf) == "function" then
+        dest = BridgeData.corpseSpotOf(Bridge.store)
+        BridgeTask.corpseDest = dest
+    end
     if dest == nil then return BridgeTask.kinds.moveCorpses.dropHere(body) end
 
-    local walk, why = BridgeTask.walkTo(body, dest, BridgeTask.CORPSE_RANGE, false, true, nil, BridgeTask.CORPSE_WALK_OPTS)
+    local walkDest = dest
+    local dw = tonumber(dest.w) or 1
+    local dh = tonumber(dest.h) or 1
+    if dw > 1 or dh > 1 then
+        walkDest = { x = dest.x + math.floor((dw - 1) / 2), y = dest.y + math.floor((dh - 1) / 2), z = dest.z }
+    end
+
+    local walk, why = BridgeTask.walkTo(body, walkDest, BridgeTask.CORPSE_RANGE, false, true, nil, BridgeTask.CORPSE_WALK_OPTS)
     if walk == "unreachable" then
         BridgeTask.markUnreachable(why, true)
         return BridgeTask.kinds.moveCorpses.dropHere(body, true)
@@ -11975,7 +12148,7 @@ function BridgeTask.kinds.moveCorpses.haul(body)
         return BridgeTask.kinds.moveCorpses.dropHere(body)
     end
 
-    pcall(function() body:faceLocationF(dest.x + 0.5, dest.y + 0.5) end)
+    pcall(function() body:faceLocationF(walkDest.x + 0.5, walkDest.y + 0.5) end)
 
     if corpseBend(body, BridgeTask.CORPSE_DROP_MS) then
         local sq = U.resolveDropSquare(dest)

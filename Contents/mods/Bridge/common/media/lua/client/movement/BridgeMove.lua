@@ -3406,6 +3406,14 @@ function BridgeMove.toggleDoor(body, door, kind)
     log(sformat("toggleDoor kind=%s open=%s wasOpen=%s far=%s engineSound=%s sound=%s at=%s,%s",
         tostring(kind), tostring(open), tostring(wasOpen), tostring(far), tostring(engineSound),
         tostring(sound), tostring(sx), tostring(sy)))
+    local dkey = nil
+    if BridgeDoors ~= nil and type(BridgeDoors.key) == "function" then
+        pcall(function() dkey = BridgeDoors.key(door) end)
+    end
+    if dkey ~= nil then
+        BridgeMove.doorState = BridgeMove.doorState or {}
+        BridgeMove.doorState[dkey] = { open = not wasOpen, at = Bridge.time }
+    end
     if open == wasOpen then return false end
     return true
 end
@@ -3424,7 +3432,7 @@ end
 function BridgeMove.clearKeepOpen(door)
     if door ~= nil then BridgeMove.keepOpenDoors[door] = nil end
 end
-DOOR.FORGET = 1800
+DOOR.FORGET = 6000
 DOOR.BACK = 180
 
 
@@ -3463,6 +3471,10 @@ function BridgeMove.rememberDoor(body, door, kind, cells, north)
     if not keep and BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "openDoors" then
         keep = true
         BridgeMove.keepOpenDoors[door] = true
+    end
+    if not keep and BridgeTask ~= nil and BridgeTask.active
+            and BridgeMove.openingWay ~= nil and BridgeMove.openingWay.obj == door then
+        keep = true
     end
     rec.keepOpen = keep
     rec.edge = north and cells[1].y or cells[1].x
@@ -3696,13 +3708,31 @@ function BridgeMove.closeBehind(body)
             local back = side == rec.side and off >= DOOR.BACK_OFF and (Bridge.time - rec.tick) >= DOOR.BACK
             if (passed or back) and BridgeMove.doorAct == nil and Bridge.time >= (rec.retryAt or 0)
                 and not BridgeMove.holdDoors then
-                local wait = DOOR.closeWait(rec, body, passed)
-                if wait ~= nil then
-                    if wait ~= rec.wait then log("door close waits: " .. wait) end
-                    rec.wait = wait
+                local alone = false
+                if passed then
+                    local red = BridgeData.owner()
+                    if red ~= nil then
+                        local rside = DOOR.doorSide(rec, red:getX(), red:getY())
+                        local rd = dist2d(red:getX(), red:getY(), rec.cx, rec.cy)
+                        if rside == rec.side and rd >= 4 then alone = true end
+                    end
+                end
+                if alone then
+                    why = "left open: alone inside"
                 else
+                    local wait = DOOR.closeWait(rec, body, passed)
+                    if wait ~= nil then
+                        if wait ~= rec.wait then
+                            log("door close waits: " .. wait)
+                            if wait == "player behind" or wait == "player at door" then
+                                pcall(function() if Bridge ~= nil and type(Bridge.speak) == "function" then Bridge.speak("DoorWaitPlayer") end end)
+                            end
+                        end
+                        rec.wait = wait
+                    else
 
-                    BridgeMove.startDoorAct(body, "close", rec.door, rec, rec.cx, rec.cy, passed)
+                        BridgeMove.startDoorAct(body, "close", rec.door, rec, rec.cx, rec.cy, passed)
+                    end
                 end
             end
         end
@@ -3736,7 +3766,12 @@ function BridgeMove.closeNow(body, rec, passed)
     else
         local wait = DOOR.closeWait(rec, body, passed)
         if wait ~= nil then
-            if wait ~= rec.wait then log("door close waits: " .. wait) end
+            if wait ~= rec.wait then
+                log("door close waits: " .. wait)
+                if wait == "player behind" or wait == "player at door" then
+                    pcall(function() if Bridge ~= nil and type(Bridge.speak) == "function" then Bridge.speak("DoorWaitPlayer") end end)
+                end
+            end
             rec.wait = wait
             return wait
         end

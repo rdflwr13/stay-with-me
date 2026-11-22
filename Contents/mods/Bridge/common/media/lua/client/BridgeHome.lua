@@ -53,6 +53,9 @@ end
 BridgeHome.HANDLE_TYPE = "BridgeHome"
 BridgeHome.handles = {}
 BridgeHome.handleKey = nil
+BridgeHome.PILE_HANDLE_TYPE = "BridgeCorpsePile"
+BridgeHome.pileHandles = {}
+BridgeHome.pileHandleKey = nil
 BridgeHome.pendingAllFloors = false
 
 local floorCache = {}
@@ -116,18 +119,20 @@ local function zoneId(zone)
 end
 
 
-local function purgeStrayZones()
+local function purgeStrayZones(zoneType, handles)
     if BridgeHome.purging then return 0 end
     if type(DesignationZone) ~= "table" then return 0 end
     if type(DesignationZone.getAllZonesByType) ~= "function" then return 0 end
     if type(DesignationZone.removeZone) ~= "function" then return 0 end
+    zoneType = zoneType or BridgeHome.HANDLE_TYPE
+    handles = handles or BridgeHome.handles
     local keep = {}
-    for _, handle in pairs(BridgeHome.handles or {}) do
+    for _, handle in pairs(handles or {}) do
         local id = zoneId(handle)
         if id ~= nil then keep[id] = true end
     end
     local zones = nil
-    local ok = pcall(function() zones = DesignationZone.getAllZonesByType(BridgeHome.HANDLE_TYPE) end)
+    local ok = pcall(function() zones = DesignationZone.getAllZonesByType(zoneType) end)
     if not ok or zones == nil then return 0 end
     local removed, kept = 0, 0
     BridgeHome.purging = true
@@ -154,7 +159,48 @@ local function purgeStrayZones()
 end
 
 
+local function destroyPileHandles()
+    local list = BridgeHome.pileHandles or {}
+    BridgeHome.pileHandles = {}
+    BridgeHome.pileHandleKey = nil
+    for _, handle in pairs(list) do
+        if handle ~= nil then pcall(function() DesignationZone.removeZone(handle, true) end) end
+    end
+end
+
+
+function BridgeHome.syncPileHandle()
+    local st = Bridge ~= nil and Bridge.store or nil
+    local raw = BridgeData ~= nil and BridgeData.corpseSpotOf(st) or nil
+    local p = BridgeData ~= nil and BridgeData.cleanCorpseSpot(raw) or nil
+    local key = nil
+    if p ~= nil then
+        key = string.format("%d:%d:%d:%d:%d", p.x, p.y, p.z, p.w, p.h)
+    end
+    if key == BridgeHome.pileHandleKey then return end
+    destroyPileHandles()
+    if p == nil then
+        log("pile zone cleared: no pile")
+        return
+    end
+    BridgeHome.pileHandleKey = key
+    if not zoneAvailable() then
+        log("pile zone skipped: DesignationZone unavailable")
+        return
+    end
+    local ok, err = pcall(function()
+        local handle = DesignationZone.new(BridgeHome.PILE_HANDLE_TYPE, tr("HomeSetCorpsePile"),
+            p.x, p.y, p.z, p.x + p.w - 1, p.y + p.h - 1, false)
+        BridgeHome.pileHandles[p.z] = handle
+    end)
+    if not ok then log("pile handle failed z" .. tostring(p.z) .. ": " .. tostring(err)) end
+    log(string.format("pile zone z%d %dx%d", p.z, p.w, p.h))
+    purgeStrayZones(BridgeHome.PILE_HANDLE_TYPE, BridgeHome.pileHandles)
+end
+
+
 function BridgeHome.syncHandle()
+    BridgeHome.syncPileHandle()
     local st = Bridge ~= nil and Bridge.store or nil
     local home = BridgeData ~= nil and BridgeData.homeOf(st) or nil
     local h = BridgeData ~= nil and BridgeData.cleanHome(home) or nil
@@ -166,7 +212,7 @@ function BridgeHome.syncHandle()
             local now = Bridge.time or 0
             if now >= (BridgeHome.purgeAt or 0) then
                 BridgeHome.purgeAt = now + 2 * 60
-                purgeStrayZones()
+                purgeStrayZones(BridgeHome.HANDLE_TYPE, BridgeHome.handles)
             end
         end
         return
@@ -197,7 +243,7 @@ function BridgeHome.syncHandle()
     local z1, z2 = BridgeData.homeRange(h, all)
     log(string.format("zones home z%s..z%s all=%s floors=%s", tostring(z1), tostring(z2),
         all and "on" or "off", table.concat(made, ",")))
-    purgeStrayZones()
+    purgeStrayZones(BridgeHome.HANDLE_TYPE, BridgeHome.handles)
 end
 
 
@@ -548,6 +594,11 @@ function SelectUI:reason(b)
     if b == nil then return "HomeTooSmall" end
     local w = b.x2 - b.x1 + 1
     local h = b.y2 - b.y1 + 1
+    if self.mode == "pile" then
+        if w < 1 or h < 1 then return "HomeTooSmall" end
+        if w > BridgeData.HOME_MAX or h > BridgeData.HOME_MAX then return "HomeTooBig" end
+        return nil
+    end
     if w < BridgeData.HOME_MIN or h < BridgeData.HOME_MIN then return "HomeTooSmall" end
     if w > BridgeData.HOME_MAX or h > BridgeData.HOME_MAX then return "HomeTooBig" end
     return nil
@@ -578,12 +629,16 @@ end
 
 
 function SelectUI:apply(rect)
-    Bridge.setHome(rect)
+    if self.mode == "pile" then
+        Bridge.saveCorpseSpot(rect)
+    else
+        Bridge.setHome(rect)
+    end
     BridgeHome.syncHandle()
     self:close()
     pcall(function()
         if BridgeMenu ~= nil and BridgeMenu.isPresent() and BridgeMenu.inTalkRange() then
-            Bridge.speak("HomeSet")
+            Bridge.speak(self.mode == "pile" and "CorpsePileSet" or "HomeSet")
         end
     end)
 end
@@ -638,7 +693,13 @@ function SelectUI:onMouseUpOutside(x, y)
         return true
     end
     local rect = { x = b.x1, y = b.y1, z = b.z, w = b.x2 - b.x1 + 1, h = b.y2 - b.y1 + 1 }
-    if BridgeHome.get() ~= nil then
+    local exists = false
+    if self.mode == "pile" then
+        exists = BridgeData.corpseSpotOf(Bridge.store) ~= nil
+    else
+        exists = BridgeHome.get() ~= nil
+    end
+    if exists then
         self:confirmReplace(rect)
         return true
     end
@@ -665,9 +726,10 @@ function SelectUI:prerender()
 end
 
 
-function SelectUI:new(playerObj)
+function SelectUI:new(playerObj, mode)
     local o = ISPanel.new(self, -1000, -1000, 1, 1)
     o.playerObj = playerObj
+    o.mode = mode or "home"
     o.playerNum = playerObj:getPlayerNum()
     local sq = nil
     pcall(function() sq = playerObj:getCurrentSquare() end)
@@ -685,23 +747,23 @@ function SelectUI:new(playerObj)
 end
 
 
-function BridgeHome.beginSelect(playerObj)
+function BridgeHome.beginSelect(playerObj, mode)
     if playerObj == nil then playerObj = BridgeData.owner() end
     if playerObj == nil then return nil end
     if BridgeHome.select ~= nil then BridgeHome.select:close() end
-    local ui = SelectUI:new(playerObj)
+    local ui = SelectUI:new(playerObj, mode)
     BridgeHome.select = ui
     acquireLock()
     ui:initialise()
     ui:addToUIManager()
-    log("selection begun")
+    log("selection begun mode=" .. tostring(ui.mode))
     return ui
 end
 
 
-function BridgeHome.requestSet(playerObj)
+function BridgeHome.requestSet(playerObj, mode)
     if playerObj == nil then playerObj = BridgeData.owner() end
-    return BridgeHome.beginSelect(playerObj)
+    return BridgeHome.beginSelect(playerObj, mode)
 end
 
 
@@ -782,6 +844,14 @@ function BridgeHome.selftest()
     check("on outside range", BridgeData.homeHas(home, 10, 10, 3, 0, true) == false)
     check("margin edge", BridgeData.homeHas(home, 14, 10, 0, 1, false) == true)
     check("margin outside", BridgeData.homeHas(home, 15, 10, 0, 1, false) == false)
+
+    local point = BridgeData.cleanCorpseSpot({ x = 1, y = 2, z = 0 })
+    check("corpse point 1x1", point ~= nil and point.w == 1 and point.h == 1)
+    local pile = BridgeData.cleanCorpseSpot({ x = 1, y = 2, z = 0, w = 3, h = 2 })
+    check("corpse rect kept", pile ~= nil and pile.w == 3 and pile.h == 2)
+    check("corpse inside", BridgeData.corpseHas(pile, 3, 3, 0, 0) == true)
+    check("corpse outside", BridgeData.corpseHas(pile, 4, 3, 0, 0) == false)
+    check("corpse wrong floor", BridgeData.corpseHas(pile, 2, 2, 1, 0) == false)
 
     if #fails == 0 then return string.format("homeselftest PASS (%d checks)", ran) end
     return string.format("homeselftest FAIL (%d of %d): %s", #fails, ran, table.concat(fails, "; "))
@@ -941,14 +1011,12 @@ function BridgeHomeTab:onClear()
 end
 
 function BridgeHomeTab:onSetPile()
-    local p = BridgeData.owner()
-    local sq = p ~= nil and p:getCurrentSquare() or nil
-    if sq == nil then return end
-    Bridge.saveCorpseSpot({ x = sq:getX(), y = sq:getY(), z = sq:getZ() })
+    BridgeHome.requestSet(BridgeData.owner(), "pile")
 end
 
 function BridgeHomeTab:onClearPile()
     Bridge.clearCorpseSpot()
+    BridgeHome.syncHandle()
 end
 
 function BridgeHomeTab:onMarkAll()
@@ -992,17 +1060,17 @@ function BridgeHomeTab:prerender()
         local want = BridgeData.optionOf(Bridge.store, "homeAllFloors")
         if self.allTick:isSelected(1) ~= want then self.allTick:setSelected(1, want) end
     end
-    if h ~= nil then
-        local pn, see, pz = 0, false, nil
-        pcall(function()
-            local p = BridgeData.owner()
-            if p ~= nil then
-                pn = p:getPlayerNum()
-                see = p:isSeeDesignationZone() == true
-                pz = math.floor(p:getZ())
-            end
-        end)
-        if not see then
+    local pn, see, pz = 0, false, nil
+    pcall(function()
+        local p = BridgeData.owner()
+        if p ~= nil then
+            pn = p:getPlayerNum()
+            see = p:isSeeDesignationZone() == true
+            pz = math.floor(p:getZ())
+        end
+    end)
+    if not see then
+        if h ~= nil then
             local floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn())
             for index = 1, #floors do
                 local z = floors[index]
@@ -1012,6 +1080,12 @@ function BridgeHomeTab:prerender()
                 end
                 addAreaHighlightForPlayer(pn, h.x, h.y, h.x + h.w, h.y + h.h, z, r, g, b, a)
             end
+        end
+        local pile = BridgeData.corpseSpotOf(Bridge.store)
+        local p = BridgeData.cleanCorpseSpot(pile)
+        if p ~= nil and (pz == nil or p.z == pz) then
+            addAreaHighlightForPlayer(pn, p.x, p.y, p.x + p.w, p.y + p.h, p.z,
+                BAD_R, 0.55, 0.10, 0.35)
         end
     end
 end

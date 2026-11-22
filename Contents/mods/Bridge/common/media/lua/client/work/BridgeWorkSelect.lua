@@ -720,41 +720,45 @@ function BridgeWorkSelect.corpsesIn(b)
     local list = {}
     if b == nil then return list end
     local seen = {}
+    local scanned, raw, dup, animal, burnSq = 0, 0, 0, 0, 0
     for x = b.x1, b.x2 do
         for y = b.y1, b.y2 do
             local sq = nil
             pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
             if sq ~= nil then
+                scanned = scanned + 1
                 pcall(function()
                     local burn = false
                     pcall(function() burn = sq:has(IsoFlagType.burning) == true end)
-                    if burn then return end
+                    if burn then burnSq = burnSq + 1 return end
                     local mv = sq:getStaticMovingObjects()
                     local n = (mv and mv:size() or 0)
+                    local sqRaw, sqKept = 0, 0
                     for i = 0, n - 1 do
                         local c = mv:get(i)
-                        if c ~= nil and instanceof(c, "IsoDeadBody") and not c:isAnimal() then
-                            local id = nil
-                            pcall(function() id = c:getObjectIDAsLong() end)
-                            if type(id) ~= "number" or id == 0 then
-                                id = nil
-                                pcall(function()
-                                    local v = c:getObjectID()
-                                    if type(v) == "number" and v ~= 0 then id = v end
-                                end)
-                            end
-                            if id == nil then id = x .. ":" .. y .. ":" .. i end
-                            local key = tostring(id)
-                            if not seen[key] then
-                                seen[key] = true
+                        if c ~= nil and instanceof(c, "IsoDeadBody") then
+                            sqRaw = sqRaw + 1
+                            raw = raw + 1
+                            if c:isAnimal() then
+                                animal = animal + 1
+                            elseif seen[c] then
+                                dup = dup + 1
+                            else
+                                seen[c] = true
                                 list[#list + 1] = { x = x, y = y, z = b.z }
+                                sqKept = sqKept + 1
                             end
                         end
+                    end
+                    if sqRaw > 0 then
+                        log(string.format("corpsesIn sq=%d,%d mv=%d dead=%d kept=%d", x, y, n, sqRaw, sqKept))
                     end
                 end)
             end
         end
     end
+    log(string.format("corpsesIn rect=%d,%d..%d,%d z%d squares=%d dead=%d kept=%d dup=%d animal=%d burnSq=%d",
+        b.x1, b.y1, b.x2, b.y2, b.z, scanned, raw, #list, dup, animal, burnSq))
     return list
 end
 
@@ -786,6 +790,8 @@ function BridgeWorkSelect.doorsIn(b, mode)
         return x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2
     end
     local seen = {}
+    local scanned = 0
+    local found, openCount = 0, 0
     local function add(door, sq)
         if door == nil or seen[door] then return end
         local parts = doorPartObjects(door)
@@ -800,8 +806,39 @@ function BridgeWorkSelect.doorsIn(b, mode)
             pcall(function() inBox = inside(osq:getX(), osq:getY()) end)
         end
         if not inBox then return end
+        found = found + 1
         local open = false
-        pcall(function() open = door:IsOpen() == true end)
+        local dkey = nil
+        pcall(function() dkey = BridgeDoors ~= nil and BridgeDoors.key(door) or nil end)
+        local rec = dkey ~= nil and BridgeMove ~= nil and BridgeMove.doorState
+            and BridgeMove.doorState[dkey] or nil
+        if rec ~= nil and (Bridge.time or 0) - (rec.at or 0) < 600 then
+            open = rec.open == true
+        else
+            pcall(function() open = door:IsOpen() == true end)
+            if not open then
+                for i = 1, #parts do
+                    local p = parts[i]
+                    if p ~= nil and p ~= door then
+                        local po = false
+                        pcall(function() po = p:IsOpen() == true end)
+                        if po then
+                            open = true
+                            log(string.format("doorOpen alt part open @%d,%d",
+                                dsq and dsq:getX() or -1, dsq and dsq:getY() or -1))
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if open then openCount = openCount + 1 end
+        local idx = -1
+        pcall(function() idx = door:getObjectIndex() end)
+        if dsq ~= nil then
+            log(string.format("doorFound @%d,%d open=%s idx=%d mode=%s", dsq:getX(), dsq:getY(),
+                tostring(open), idx, tostring(mode)))
+        end
         if mode == "open" and open then return end
         if mode ~= "open" and not open then return end
         if #list >= BridgeWorkSelect.MAX_DOORS then return end
@@ -818,6 +855,7 @@ function BridgeWorkSelect.doorsIn(b, mode)
             local sq = nil
             pcall(function() sq = cell:getGridSquare(x, y, b.z) end)
             if sq ~= nil then
+                scanned = scanned + 1
                 pcall(function()
                     local objs = sq:getObjects()
                     if objs ~= nil then
@@ -848,6 +886,8 @@ function BridgeWorkSelect.doorsIn(b, mode)
             end
         end
     end
+    log(string.format("doorsIn rect=%d,%d..%d,%d z%d squares=%d mode=%s found=%d open=%d kept=%d",
+        b.x1, b.y1, b.x2, b.y2, b.z, scanned, tostring(mode), found, openCount, #list))
     return list
 end
 
