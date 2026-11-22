@@ -432,15 +432,53 @@ function BridgeReport.generate()
     line("(none)")
 
     section("RECENT_ERRORS")
-    line("# tick  ingame  source  count  first_tick..last_tick  message")
     local buf = Bridge ~= nil and Bridge.errBuf or {}
-    if #buf == 0 then
+    local cfg = Bridge ~= nil and Bridge.CFG or nil
+    local raw = cfg ~= nil and cfg.ERR_RAW or "auto"
+    if raw == "summary" then
+        line("# tick  ingame  source  count  first_tick..last_tick  message")
+        if #buf == 0 then
+            line("(none)")
+        else
+            for _, e in ipairs(buf) do
+                line(string.format("%d  %s  %s  x%d  %d..%d  %s",
+                    tonumber(e.last_tick) or 0, tostring(e.ingame or "-"), tostring(e.source or "?"),
+                    tonumber(e.count) or 1, tonumber(e.first_tick) or 0, tonumber(e.last_tick) or 0, tostring(e.msg)))
+            end
+        end
+    elseif #buf == 0 then
         line("(none)")
     else
-        for _, e in ipairs(buf) do
-            line(string.format("%d  %s  %s  x%d  %d..%d  %s",
-                tonumber(e.last_tick) or 0, tostring(e.ingame or "-"), tostring(e.source or "?"),
-                tonumber(e.count) or 1, tonumber(e.first_tick) or 0, tonumber(e.last_tick) or 0, tostring(e.msg)))
+        local cap = (cfg ~= nil and tonumber(cfg.ERR_REPORT_BYTES)) or 24576
+        local used = 0
+        local omitted = 0
+        local blocks = {}
+        for i = #buf, 1, -1 do
+            local e = buf[i]
+            local text = tostring(e.text or e.msg or "")
+            local bytes = #text
+            local head = string.format("--- %s lua x%d %d..%d %s %d ---",
+                tostring(e.source or "?"), tonumber(e.count) or 1,
+                tonumber(e.first_tick) or 0, tonumber(e.last_tick) or 0,
+                tostring(e.ingame or "-"), bytes)
+            local block = head .. "\n" .. text
+            if used + #block > cap then
+                omitted = i
+                break
+            end
+            used = used + #block
+            blocks[#blocks + 1] = block
+        end
+        line("# id  tick  ingame  source  count  first..last  bytes")
+        if #blocks == 0 then
+            line("(none)")
+        else
+            for i = #blocks, 1, -1 do
+                line(blocks[i])
+            end
+        end
+        if omitted > 0 then
+            line(string.format("# %d older entries omitted (byte cap)", omitted))
         end
     end
 

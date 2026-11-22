@@ -45,6 +45,9 @@ function M.install()
     if type(data) ~= "table" or type(data.foreignPeaceful) ~= "function" then
         return "absent"
     end
+    if rawget(_G, "Theodore") == nil then
+        return "absent"
+    end
     if M.installed == true then return "ok" end
 
     local original = data.foreignPeaceful
@@ -116,6 +119,12 @@ function M.selftest()
         end,
     }
     rawset(_G, "BridgeData", data)
+    local untouched = data.foreignPeaceful
+    rawset(_G, "Theodore", nil)
+    M.installed, M.wrapper, M.original, M.seen = nil, nil, nil, nil
+    check("install absent without Theodore", M.install() == "absent")
+    check("no wrap without Theodore", data.foreignPeaceful == untouched)
+    rawset(_G, "Theodore", { isHisZombie = function(z) return z == his end })
     M.installed, M.wrapper, M.original, M.seen = nil, nil, nil, nil
 
     check("install ok", M.install() == "ok")

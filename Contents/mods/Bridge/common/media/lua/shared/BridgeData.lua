@@ -137,6 +137,12 @@ function BridgeData.friendlyNpc(z)
             if z:getVariableBoolean(vars[i]) then yes = true return end
         end
     end)
+    if yes then return true end
+    if BridgeQuestSurvivors ~= nil
+        and type(BridgeQuestSurvivors.peaceful) == "function"
+        and BridgeQuestSurvivors.peaceful(z) then
+        return true
+    end
     return yes
 end
 
@@ -886,7 +892,7 @@ function BridgeData.lootMaxWeight(rec)
 end
 
 
-BridgeData.MENU_ORDER_IDS = { "cancel", "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs" }
+BridgeData.MENU_ORDER_IDS = { "cancel", "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs", "home" }
 BridgeData.MENU_ORDER_SET = {}
 for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do BridgeData.MENU_ORDER_SET[id] = true end
 
@@ -1045,7 +1051,7 @@ end
 
 BridgeData.CHORE_IDS = {
     "tend", "harvest", "animals", "troughs", "clean", "yard", "chop", "deposit",
-    "closeDoors", "closeWindows",
+    "closeDoors", "closeWindows", "corpses",
     "wash", "shower", "exercise", "sit", "roam",
 }
 BridgeData.CHORE_SET = {}
@@ -1055,6 +1061,7 @@ BridgeData.CHORE_DEFAULT_ON = {
     tend = true, harvest = true, animals = true, troughs = true,
     clean = true, wash = true, shower = true, exercise = true,
     sit = true, roam = true, deposit = true, closeWindows = true,
+    corpses = true,
 }
 
 BridgeData.CHORE_LABELS = {
@@ -1063,6 +1070,7 @@ BridgeData.CHORE_LABELS = {
     chop = "ChoreChop", deposit = "ChoreDeposit", wash = "ChoreWash", shower = "ChoreShower",
     exercise = "ChoreExercise", sit = "ChoreSit", roam = "ChoreRoam",
     closeDoors = "ChoreCloseDoors", closeWindows = "ChoreCloseWindows",
+    corpses = "ChoreCorpses",
 }
 
 
@@ -1228,6 +1236,24 @@ end
 function BridgeData.homeOf(rec)
     if type(rec) ~= "table" then return nil end
     return rec.home
+end
+
+
+function BridgeData.cleanCorpseSpot(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    for _, k in ipairs({ "x", "y", "z" }) do
+        local v = tonumber(t[k])
+        if v == nil or v ~= v then return nil end
+        out[k] = math.floor(v)
+    end
+    return out
+end
+
+
+function BridgeData.corpseSpotOf(rec)
+    if type(rec) ~= "table" then return nil end
+    return rec.corpseSpot
 end
 
 

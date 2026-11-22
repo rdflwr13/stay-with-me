@@ -258,6 +258,7 @@ local function markHuman(body)
     pcall(function() body:setVariable("SurvivorNPC", true) end)
     pcall(function() body:setVariable("NotAloneBody", true) end)
     pcall(function() body:getModData().notAloneBody = true end)
+    pcall(function() if BridgeQuestSurvivors ~= nil then BridgeQuestSurvivors.markCompanion(body) end end)
 
 
     pcall(function() body:getModData().arcadiaRVAuthorizedDiscoveryZombie = true end)
@@ -276,6 +277,8 @@ local function unmarkHuman(body)
     pcall(function() body:clearVariable("SurvivorNPC") end)
     pcall(function() body:clearVariable("NotAloneBody") end)
     pcall(function() body:getModData().notAloneBody = nil end)
+    pcall(function() if BridgeCompanion ~= nil then BridgeCompanion.unmark(body) end end)
+    pcall(function() if BridgeQuestSurvivors ~= nil then BridgeQuestSurvivors.clearCompanion(body) end end)
     pcall(function() body:getModData().arcadiaRVAuthorizedDiscoveryZombie = nil end)
     pcall(function() body:getModData().ST_Ignore = nil end)
     pcall(function() body:getModData().RandomZedsExcluded = nil end)
@@ -310,6 +313,7 @@ local function companionFlags(body)
     pcall(function() body:setInvulnerable(true) end)
     pcall(function() body:setGodMod(true, true) end)
     markHuman(body)
+    pcall(function() if BridgeCompanion ~= nil then BridgeCompanion.mark(body) end end)
     pcall(BridgeVoice.ensure, body)
     local pid = nil
     pcall(function() pid = body:getPersistentOutfitID() end)
@@ -2030,7 +2034,20 @@ BridgeServer.Commands.state = function(player, args)
         end
     elseif args.clearHome then
         rec.home = nil
+        rec.corpseSpot = nil
         log("home cleared for " .. tostring(player:getUsername()))
+        changed = true
+    end
+    if args.corpseSpot ~= nil then
+        local spot = BridgeData.cleanCorpseSpot(args.corpseSpot)
+        if spot ~= nil and dist(player, spot.x, spot.y) <= 20 then
+            rec.corpseSpot = spot
+            changed = true
+        else
+            log("corpse spot rejected from " .. tostring(player:getUsername()))
+        end
+    elseif args.clearCorpseSpot then
+        rec.corpseSpot = nil
         changed = true
     end
     if genderDenied ~= nil then

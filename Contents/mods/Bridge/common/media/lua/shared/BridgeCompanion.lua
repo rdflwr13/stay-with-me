@@ -134,6 +134,29 @@ function C.masked(fn, ...)
     return unpackFn(result, 2)
 end
 
+function C.mark(z)
+    if z == nil then return false end
+    local ok, data = pcall(function() return z:getModData() end)
+    if not ok or type(data) ~= "table" then return false end
+    local before = data.ProjectALifeUID
+    if before ~= nil and before ~= "" and before ~= C.MASK_UID then return false end
+    if before == C.MASK_UID then return true end
+    data.ProjectALifeUID = C.MASK_UID
+    if BridgeLog ~= nil and type(BridgeLog.on) == "function" and BridgeLog.on() then
+        print("[BridgeCompanion] marked body as " .. C.MASK_UID)
+    end
+    return true
+end
+
+function C.unmark(z)
+    if z == nil then return false end
+    local ok, data = pcall(function() return z:getModData() end)
+    if not ok or type(data) ~= "table" then return false end
+    if data.ProjectALifeUID ~= C.MASK_UID then return false end
+    data.ProjectALifeUID = nil
+    return true
+end
+
 function C.reset()
     bodiesCache = {}
     setCache = {}

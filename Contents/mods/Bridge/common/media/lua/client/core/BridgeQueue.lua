@@ -288,7 +288,17 @@ function BridgeQueue.tick()
         f = a.action
     end
     local valid = false
-    pcall(function() valid = a:isValid() == true end)
+    local okValid, errValid = pcall(function() valid = a:isValid() == true end)
+    if not okValid then
+        local it, src, dest = "?", "?", "?"
+        pcall(function() if a ~= nil and a.item ~= nil then it = tostring(a.item:getFullType()) end end)
+        pcall(function() if a ~= nil and a.srcContainer ~= nil then src = tostring(a.srcContainer:getType()) end end)
+        pcall(function() if a ~= nil and a.destContainer ~= nil then dest = tostring(a.destContainer:getType()) end end)
+        pcall(function()
+            Bridge.logError("queue.isValid", string.format("Type=%s item=%s src=%s dest=%s err=%s",
+                tostring(a ~= nil and a.Type or "?"), it, src, dest, tostring(errValid)))
+        end)
+    end
     if valid and not f.started then
         local okW, wait = pcall(function() return a:waitToStart() end)
         if not okW then

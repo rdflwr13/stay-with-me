@@ -824,12 +824,33 @@ local function onHomeClear()
     if BridgeHome ~= nil and type(BridgeHome.confirmClear) == "function" then BridgeHome.confirmClear(BridgeData.owner()) end
 end
 
+local function onHomeSetCorpsePile(playerNum)
+    local sq = clickedSquare(BridgeMenu.clickObjects, playerNum)
+    if sq == nil then
+        local p = BridgeData.owner()
+        sq = p ~= nil and p:getCurrentSquare() or nil
+    end
+    if sq == nil then return end
+    local res = Bridge.saveCorpseSpot({ x = sq:getX(), y = sq:getY(), z = sq:getZ() })
+    if res == "corpse spot set" then
+        pcall(function() Bridge.speak("CorpsePileSet") end)
+    end
+end
+
+local function onHomeClearCorpsePile()
+    Bridge.clearCorpseSpot()
+end
+
 local function buildHome(context, playerNum, env)
     if BridgeHome == nil then return end
     local homeOption = context:addOption(tr("Home"))
     local home = ISContextMenu:getNew(context)
     context:addSubMenu(homeOption, home)
     home:addOption(tr("HomeSetHome"), nil, onHomeSet)
+    home:addOption(tr("HomeSetCorpsePile"), playerNum, onHomeSetCorpsePile)
+    if BridgeData.corpseSpotOf(env.st) ~= nil then
+        home:addOption(tr("HomeClearCorpsePile"), nil, onHomeClearCorpsePile)
+    end
     if BridgeData.homeOf(env.st) ~= nil then
         home:addOption(tr("HomeClear"), nil, onHomeClear)
     end
@@ -846,6 +867,7 @@ BridgeMenu.ORDERABLE = {
     { id = "guns", label = "GunMenu", radialOnly = true },
     { id = "torch", label = "OptTorch", build = buildTorch },
     { id = "jobs", label = "Jobs", build = buildJobs },
+    { id = "home", label = "Home", build = buildHome },
     { id = "cancel", label = "CancelTask", build = buildCancel },
 }
 

@@ -27,6 +27,7 @@ CFG.SPAWN_SPEAK_GRACE = 5 * 60
 Bridge = Bridge or {}
 
 local BridgeKeep = Bridge
+Bridge.CFG = CFG
 
 local bridgeRestoredLogged = false
 
@@ -177,15 +178,17 @@ local function errIngameStamp()
     return errIngameText
 end
 
-local function pushError(source, msg)
+function Bridge.pushError(source, msg, sig)
     if msg == nil then return end
     source = tostring(source or "?")
     msg = tostring(msg)
+    if sig == nil then sig = msg end
+    sig = tostring(sig)
     local tick = tonumber(Bridge.tick) or 0
     local buf = Bridge.errBuf
     for i = 1, #buf do
         local rec = buf[i]
-        if rec.source == source and rec.msg == msg then
+        if rec.source == source and rec.sig == sig then
             rec.count = (rec.count or 1) + 1
             rec.last_tick = tick
             table.remove(buf, i)
@@ -193,17 +196,32 @@ local function pushError(source, msg)
             return
         end
     end
-    buf[#buf + 1] = { source = source, msg = msg, count = 1, first_tick = tick, last_tick = tick, ingame = errIngameStamp() }
+    local lineCount = 1
+    for _ in string.gmatch(msg, "\n") do lineCount = lineCount + 1 end
+    buf[#buf + 1] = {
+        source = source, msg = msg, sig = sig, text = msg,
+        count = 1, first_tick = tick, last_tick = tick, ingame = errIngameStamp(),
+        line_count = lineCount, bytes = #msg,
+    }
     while #buf > CFG.ERR_BUF_MAX do table.remove(buf, 1) end
+    local total = 0
+    for i = 1, #buf do total = total + (buf[i].bytes or #(buf[i].msg or "")) end
+    while #buf > 1 and total > (CFG.ERR_BUF_BYTES or 65536) do
+        local gone = table.remove(buf, 1)
+        total = total - (gone.bytes or #(gone.msg or ""))
+    end
 end
 
-function Bridge.logError(source, msg)
-    pcall(pushError, source, msg)
+function Bridge.logError(source, msg, sig)
+    pcall(Bridge.pushError, source, msg, sig)
 end
 
 CFG.ERR_FEED_MAX = 20
 CFG.ERR_FEED_LINES = 6
 CFG.ERR_FEED_CHARS = 400
+CFG.ERR_RAW = "auto"
+CFG.ERR_BUF_BYTES = 65536
+CFG.ERR_REPORT_BYTES = 24576
 
 function Bridge.isSwmError(msg)
     if type(msg) ~= "string" then return false end
@@ -217,8 +235,29 @@ local function isSpaceByte(b)
     return b == 32 or (b ~= nil and b >= 9 and b <= 13)
 end
 
-function Bridge.cleanLuaError(text)
+function Bridge.cleanLuaError(text, full)
     if type(text) ~= "string" then return nil end
+    if full == true then
+        local norm = string.gsub(text, "\r\n", "\n")
+        norm = string.gsub(norm, "\r", "\n")
+        local out = {}
+        for line in string.gmatch(norm .. "\n", "(.-)\n") do
+            local b1, b2, b3, b4 = string.byte(line, 1, 4)
+            local skip = false
+            if not string.find(line, "%S") then
+                skip = true
+            elseif b1 == 45 and b2 == 45 and b3 == 45 and b4 == 45 then
+                skip = true
+            end
+            if not skip then
+                if string.find(line, "\t", 1, true) then line = string.gsub(line, "\t", "  ") end
+                line = string.gsub(line, "%s+$", "")
+                if line ~= "" then out[#out + 1] = line end
+            end
+        end
+        if #out == 0 then return nil end
+        return table.concat(out, "\n")
+    end
     local out = {}
     local capLines = CFG.ERR_FEED_LINES or 6
     local pos, len = 1, #text
@@ -294,12 +333,91 @@ function Bridge.feedLuaErrors()
     local fresh = count - seen
     if fresh > maxNew then fresh = maxNew end
     if fresh > size then fresh = size end
-    for k = fresh, 1, -1 do
-        local ok, text = pcall(errAt, list, size - k)
-        if not ok then text = nil end
-        local msg = Bridge.cleanLuaError(text)
-        if msg ~= nil and Bridge.isSwmError(msg) then
-            Bridge.logError("lua", msg)
+    local firstIndex = size - fresh
+    local raw = CFG.ERR_RAW or "auto"
+    if raw == "summary" then
+        for k = fresh, 1, -1 do
+            local ok, text = pcall(errAt, list, size - k)
+            if not ok then text = nil end
+            local msg = Bridge.cleanLuaError(text)
+            if msg ~= nil and Bridge.isSwmError(msg) then
+                Bridge.logError("lua", msg)
+            end
+        end
+        Bridge.errSeen = count
+        return
+    end
+    local entries = {}
+    for idx = firstIndex, size - 1 do
+        local ok, text = pcall(errAt, list, idx)
+        entries[idx] = ok and text or nil
+    end
+    local function isFragment(text)
+        if type(text) ~= "string" then return false end
+        if string.find(text, "^Caused by:") then return true end
+        if string.find(text, "^Callframe at:") then return true end
+        if string.find(text, "java.lang.RuntimeException: attempted index:") then return true end
+        if string.find(text, "^at se%.krka") then return true end
+        return false
+    end
+    local function sigOf(full)
+        local sig = nil
+        for line in string.gmatch(full, "(.-)\n") do
+            if line ~= "" then sig = line break end
+        end
+        if sig == nil then sig = full end
+        local java = string.match(full, "java%.lang%.[^\n]+")
+        if java ~= nil then sig = sig .. "|" .. java end
+        return sig
+    end
+    local consumed = {}
+    local swmFound = false
+    for idx = firstIndex, size - 1 do
+        if not consumed[idx] then
+            local text = entries[idx]
+            if type(text) == "string" and Bridge.isSwmError(text) then
+                swmFound = true
+                local parts = { text }
+                consumed[idx] = true
+                local back = 0
+                local j = idx - 1
+                while j >= firstIndex and back < 2 do
+                    if entries[j] ~= nil and not consumed[j] and isFragment(entries[j]) then
+                        table.insert(parts, 1, entries[j])
+                        consumed[j] = true
+                        back = back + 1
+                        j = j - 1
+                    else
+                        break
+                    end
+                end
+                local fwd = 0
+                local k2 = idx + 1
+                while k2 < size and fwd < 3 do
+                    if entries[k2] ~= nil and not consumed[k2] and isFragment(entries[k2]) then
+                        parts[#parts + 1] = entries[k2]
+                        consumed[k2] = true
+                        fwd = fwd + 1
+                        k2 = k2 + 1
+                    else
+                        break
+                    end
+                end
+                local joined = table.concat(parts, "\n")
+                local full = Bridge.cleanLuaError(joined, true) or joined
+                Bridge.logError("lua", full, sigOf(full))
+            end
+        end
+    end
+    if raw == "all" or swmFound then
+        for idx = firstIndex, size - 1 do
+            if not consumed[idx] then
+                local text = entries[idx]
+                if type(text) == "string" and not Bridge.isSwmError(text) then
+                    local full = Bridge.cleanLuaError(text, true) or text
+                    Bridge.logError("lua:other", full, sigOf(full))
+                end
+            end
         end
     end
     Bridge.errSeen = count
@@ -817,6 +935,8 @@ local function humanize(body)
     pcall(function() Bridge.touched[body] = body:getPersistentOutfitID() end)
     pcall(function() body:getModData().notAloneBody = true end)
     pcall(function() if BridgeKnoxComp ~= nil then BridgeKnoxComp.markOurs(body) end end)
+    pcall(function() if BridgeCompanion ~= nil then BridgeCompanion.mark(body) end end)
+    pcall(function() if BridgeQuestSurvivors ~= nil then BridgeQuestSurvivors.markCompanion(body) end end)
     if BridgeGore ~= nil then pcall(BridgeGore.guard, body) end
 
     pcall(function() body:getModData().arcadiaRVAuthorizedDiscoveryZombie = true end)
@@ -885,6 +1005,8 @@ end
 
 function Bridge.unhumanize(z, pooled)
     if BridgeKnoxComp ~= nil then BridgeKnoxComp.clearOurs(z) end
+    pcall(function() if BridgeCompanion ~= nil then BridgeCompanion.unmark(z) end end)
+    pcall(function() if BridgeQuestSurvivors ~= nil then BridgeQuestSurvivors.clearCompanion(z) end end)
     Bridge.invalidateBodyCaches(z)
     Bridge.resetApplied()
 
@@ -955,6 +1077,7 @@ end
 
 function Bridge.releaseForeign(z)
     if BridgeKnoxComp ~= nil then BridgeKnoxComp.clearOurs(z) end
+    pcall(function() if BridgeQuestSurvivors ~= nil then BridgeQuestSurvivors.clearCompanion(z) end end)
     Bridge.invalidateBodyCaches(z)
     for _, name in ipairs({ "NotAloneWeapon", "NotAloneRifle", "NotAloneStride", "NotAloneAnimOld", "NotAloneSneak" }) do
         pcall(function() z:clearVariable(name) end)
@@ -2726,6 +2849,7 @@ function Bridge.clearHome()
     if Bridge.mp then
         pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { clearHome = true }) end)
     end
+    Bridge.clearCorpseSpot()
     if type(prev) == "table" then
         log(string.format("home cleared %s,%s z%s %sx%s", tostring(prev.x), tostring(prev.y),
             tostring(prev.z), tostring(prev.w), tostring(prev.h)))
@@ -2733,6 +2857,34 @@ function Bridge.clearHome()
         log("home cleared: none set")
     end
     return "home cleared"
+end
+
+
+function Bridge.saveCorpseSpot(spot)
+    local clean = BridgeData.cleanCorpseSpot(spot)
+    if clean == nil then
+        log("corpse spot save rejected: bad spot")
+        return "bad spot"
+    end
+    local st = Bridge.store
+    if st ~= nil then st.corpseSpot = clean end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { corpseSpot = clean }) end)
+    end
+    log(string.format("corpse spot saved %d,%d z%d mp=%s", clean.x, clean.y, clean.z,
+        tostring(Bridge.mp == true)))
+    return "corpse spot set"
+end
+
+
+function Bridge.clearCorpseSpot()
+    local st = Bridge.store
+    if st ~= nil then st.corpseSpot = nil end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { clearCorpseSpot = true }) end)
+    end
+    log("corpse spot cleared")
+    return "corpse spot cleared"
 end
 
 
@@ -6112,6 +6264,8 @@ local function applyLook(z, visuals, rec, who)
         if md.arcadiaRVAuthorizedDiscoveryZombie ~= true then md.arcadiaRVAuthorizedDiscoveryZombie = true end
         if md.RandomZedsExcluded ~= true then md.RandomZedsExcluded = true end
     end)
+    pcall(function() if BridgeCompanion ~= nil then BridgeCompanion.mark(z) end end)
+    pcall(function() if BridgeQuestSurvivors ~= nil then BridgeQuestSurvivors.markCompanion(z) end end)
     local okPid, pid = pcall(z.getPersistentOutfitID, z)
     if okPid then Bridge.touched[z] = pid end
     pcall(z.setNoTeeth, z, true)
@@ -6797,6 +6951,7 @@ function Bridge.onZombieUpdate(zombie)
     if Bridge.body == nil then
 
         pcall(function() if BridgeKnoxComp ~= nil then BridgeKnoxComp.markOurs(zombie) end end)
+        pcall(function() if BridgeQuestSurvivors ~= nil then BridgeQuestSurvivors.markCompanion(zombie) end end)
         Bridge.body = zombie
         Bridge.kind = "zombie"
         Bridge.clearSpeechOverlay()
@@ -6847,11 +7002,12 @@ CFG.SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follo
     friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, livingworldselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
     exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, sound = true, meet = true,
     perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true, farmdebug = true,
-    look = true, take = true, sizeselftest = true, chores = true, choresselftest = true }
+    look = true, take = true, sizeselftest = true, chores = true, choresselftest = true,
+    questsurvivorsselftest = true, questsurvivors = true, corpsespot = true }
 
 
 
-CFG.DEV_MP_COMMANDS = { mood = true, rel = true, gift = true, car = true, places = true }
+CFG.DEV_MP_COMMANDS = { mood = true, rel = true, gift = true, car = true, places = true, corpsespot = true }
 
 
 local function itemselftest()
@@ -7011,6 +7167,25 @@ function Bridge.run(line)
     if cmd == "places" then return BridgeCallout.placesCommand(parts[3], parts[4], parts[5]) end
     if cmd == "cities" then return BridgeCallout.citiesCommand(parts[3], parts[4]) end
     if cmd == "home" then return BridgeCallout.homeCommand(parts) end
+
+    if cmd == "corpsespot" then
+        local sub = parts[3]
+        if sub == "here" then
+            local p = BridgeData.owner()
+            local sq = p ~= nil and p:getCurrentSquare() or nil
+            if sq == nil then return "corpsespot: no square" end
+            return Bridge.saveCorpseSpot({ x = sq:getX(), y = sq:getY(), z = sq:getZ() })
+        elseif sub == "set" then
+            return Bridge.saveCorpseSpot({ x = tonumber(parts[4]), y = tonumber(parts[5]), z = tonumber(parts[6]) })
+        elseif sub == "clear" then
+            return Bridge.clearCorpseSpot()
+        elseif sub == "status" then
+            local spot = BridgeData.corpseSpotOf(Bridge.store)
+            if spot == nil then return "corpsespot: none" end
+            return string.format("corpsespot: %d,%d z%d", spot.x, spot.y, spot.z)
+        end
+        return "corpsespot: here|set x y z|clear|status"
+    end
 
 
 
@@ -7687,6 +7862,20 @@ function Bridge.run(line)
             return "BridgeKnoxSurvivors not loaded"
         end
         return BridgeKnoxSurvivors.selftest()
+    end
+
+    if cmd == "questsurvivorsselftest" then
+        if BridgeQuestSurvivors == nil or type(BridgeQuestSurvivors.selftest) ~= "function" then
+            return "BridgeQuestSurvivors not loaded"
+        end
+        return BridgeQuestSurvivors.selftest()
+    end
+
+    if cmd == "questsurvivors" then
+        if BridgeQuestSurvivors == nil or type(BridgeQuestSurvivors.status) ~= "function" then
+            return "BridgeQuestSurvivors not loaded"
+        end
+        return BridgeQuestSurvivors.status()
     end
 
     if cmd == "livingworldselftest" then

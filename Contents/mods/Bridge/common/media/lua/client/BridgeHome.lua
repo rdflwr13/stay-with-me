@@ -28,6 +28,16 @@ local HOME_R, HOME_G, HOME_B, HOME_A = 0.20, 0.50, 1.00, 0.30
 local SEL_R, SEL_G, SEL_B, SEL_A = 0.20, 0.50, 1.00, 0.35
 local BAD_R, BAD_G, BAD_B = 1.00, 0.10, 0.10
 
+local function floorColor(offset)
+    if offset == 0 then return HOME_R, HOME_G, HOME_B, HOME_A end
+    if offset > 0 then
+        local t = math.min(offset, 3)
+        return 1.00, 0.75 - 0.15 * (t - 1), 0.15, 0.30 - 0.02 * (t - 1)
+    end
+    local t = math.min(-offset, 3)
+    return 0.20, 0.85 - 0.10 * (t - 1), 0.45 + 0.15 * (t - 1), 0.30 - 0.02 * (t - 1)
+end
+
 local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeHome] " .. tostring(text)) end end
 
 local function tr(key, a)
@@ -93,8 +103,54 @@ local function destroyHandles()
     BridgeHome.handles = {}
     BridgeHome.handleKey = nil
     for _, handle in pairs(list) do
-        if handle ~= nil then pcall(function() DesignationZone.removeZone(handle, false) end) end
+        if handle ~= nil then pcall(function() DesignationZone.removeZone(handle, true) end) end
     end
+end
+
+
+local function zoneId(zone)
+    local id = nil
+    pcall(function() id = zone:getId() end)
+    if id == nil then return nil end
+    return tostring(id)
+end
+
+
+local function purgeStrayZones()
+    if BridgeHome.purging then return 0 end
+    if type(DesignationZone) ~= "table" then return 0 end
+    if type(DesignationZone.getAllZonesByType) ~= "function" then return 0 end
+    if type(DesignationZone.removeZone) ~= "function" then return 0 end
+    local keep = {}
+    for _, handle in pairs(BridgeHome.handles or {}) do
+        local id = zoneId(handle)
+        if id ~= nil then keep[id] = true end
+    end
+    local zones = nil
+    local ok = pcall(function() zones = DesignationZone.getAllZonesByType(BridgeHome.HANDLE_TYPE) end)
+    if not ok or zones == nil then return 0 end
+    local removed, kept = 0, 0
+    BridgeHome.purging = true
+    pcall(function()
+        local size = 0
+        pcall(function() size = zones:size() end)
+        for i = 0, size - 1 do
+            local zone = nil
+            pcall(function() zone = zones:get(i) end)
+            if zone ~= nil then
+                local id = zoneId(zone)
+                if id ~= nil and keep[id] then
+                    kept = kept + 1
+                else
+                    local gone = pcall(function() DesignationZone.removeZone(zone, true) end)
+                    if gone then removed = removed + 1 end
+                end
+            end
+        end
+    end)
+    BridgeHome.purging = false
+    log(string.format("purge removed=%d kept=%d", removed, kept))
+    return removed
 end
 
 
@@ -105,7 +161,16 @@ function BridgeHome.syncHandle()
     local all = BridgeHome.allFloorsOn()
     local key = nil
     if h ~= nil then key = BridgeHome.homeKey(h) .. (all and ":1" or ":0") end
-    if key == BridgeHome.handleKey then return end
+    if key == BridgeHome.handleKey then
+        if Bridge.mp == true then
+            local now = Bridge.time or 0
+            if now >= (BridgeHome.purgeAt or 0) then
+                BridgeHome.purgeAt = now + 2 * 60
+                purgeStrayZones()
+            end
+        end
+        return
+    end
     destroyHandles()
     if h == nil then
         log("zones cleared: no home")
@@ -132,6 +197,7 @@ function BridgeHome.syncHandle()
     local z1, z2 = BridgeData.homeRange(h, all)
     log(string.format("zones home z%s..z%s all=%s floors=%s", tostring(z1), tostring(z2),
         all and "on" or "off", table.concat(made, ",")))
+    purgeStrayZones()
 end
 
 
@@ -762,7 +828,7 @@ function BridgeHomeTab.heightFor(width)
     local _, hintH = BridgeWindow.hintLines(width, "HomeHint", Bridge.companionName())
     return PAD + hintH
         + headerH + fontS + PAD
-        + btnH + PAD + PAD
+        + btnH + PAD + btnH + PAD + PAD
         + headerH
         + fontS + 2
         + btnH + PAD
@@ -796,6 +862,17 @@ function BridgeHomeTab:createChildren()
     self.clearBtn:instantiate()
     self.clearBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self:addChild(self.clearBtn)
+    y = y + btnH + PAD
+    self.pileBtn = ISButton:new(PAD, y, half, btnH, tr("HomeSetCorpsePile"), self, BridgeHomeTab.onSetPile)
+    self.pileBtn:initialise()
+    self.pileBtn:instantiate()
+    self.pileBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+    self:addChild(self.pileBtn)
+    self.clearPileBtn = ISButton:new(PAD + half + PAD, y, half, btnH, tr("HomeClearCorpsePile"), self, BridgeHomeTab.onClearPile)
+    self.clearPileBtn:initialise()
+    self.clearPileBtn:instantiate()
+    self.clearPileBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
+    self:addChild(self.clearPileBtn)
     y = y + btnH + PAD + PAD
     self.storageHeaderY = y
     y = y + headerH
@@ -863,6 +940,17 @@ function BridgeHomeTab:onClear()
     BridgeHome.confirmClear(BridgeData.owner())
 end
 
+function BridgeHomeTab:onSetPile()
+    local p = BridgeData.owner()
+    local sq = p ~= nil and p:getCurrentSquare() or nil
+    if sq == nil then return end
+    Bridge.saveCorpseSpot({ x = sq:getX(), y = sq:getY(), z = sq:getZ() })
+end
+
+function BridgeHomeTab:onClearPile()
+    Bridge.clearCorpseSpot()
+end
+
 function BridgeHomeTab:onMarkAll()
     if BridgeDeposit ~= nil and type(BridgeDeposit.seedMarks) == "function" then BridgeDeposit.seedMarks() end
 end
@@ -877,6 +965,10 @@ function BridgeHomeTab:prerender()
     local h = BridgeHome.get()
     local has = h ~= nil
     if self.clearBtn ~= nil and self.clearBtn.enable ~= has then self.clearBtn:setEnable(has) end
+    if self.clearPileBtn ~= nil then
+        local canClearPile = BridgeData.corpseSpotOf(Bridge.store) ~= nil
+        if self.clearPileBtn.enable ~= canClearPile then self.clearPileBtn:setEnable(canClearPile) end
+    end
     local marked = 0
     if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then marked = BridgeDeposit.markedCount() end
     if self.markAllBtn ~= nil then
@@ -901,15 +993,25 @@ function BridgeHomeTab:prerender()
         if self.allTick:isSelected(1) ~= want then self.allTick:setSelected(1, want) end
     end
     if h ~= nil then
-        local pn = 0
+        local pn, see, pz = 0, false, nil
         pcall(function()
             local p = BridgeData.owner()
-            if p ~= nil then pn = p:getPlayerNum() end
+            if p ~= nil then
+                pn = p:getPlayerNum()
+                see = p:isSeeDesignationZone() == true
+                pz = math.floor(p:getZ())
+            end
         end)
-        local floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn())
-        for index = 1, #floors do
-            addAreaHighlightForPlayer(pn, h.x, h.y, h.x + h.w, h.y + h.h, floors[index],
-                HOME_R, HOME_G, HOME_B, HOME_A)
+        if not see then
+            local floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn())
+            for index = 1, #floors do
+                local z = floors[index]
+                local r, g, b, a = HOME_R, HOME_G, HOME_B, HOME_A
+                if pz ~= nil and z ~= pz then
+                    r, g, b, a = floorColor(z - pz)
+                end
+                addAreaHighlightForPlayer(pn, h.x, h.y, h.x + h.w, h.y + h.h, z, r, g, b, a)
+            end
         end
     end
 end
@@ -966,6 +1068,13 @@ if not BridgeHome._eventsHooked then
     Events.OnGameStart.Add(function()
         pcall(BridgeHome.syncHandle)
     end)
+
+    if Events.OnDesignationZoneUpdatedNetwork ~= nil then
+        Events.OnDesignationZoneUpdatedNetwork.Add(function()
+            if BridgeHome.purging then return end
+            pcall(BridgeHome.syncHandle)
+        end)
+    end
 end
 
 if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeHome] loaded") end

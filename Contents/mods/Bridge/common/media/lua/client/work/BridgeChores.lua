@@ -32,6 +32,7 @@ local ROWS = {
     deposit = { kind = "deposit", flag = "DEPOSIT_ENABLED", cooldownH = 1 },
     closeDoors = { kind = "closeDoors", group = "doors", flag = "DOORS_ENABLED", cooldownH = 1, weight = 1 },
     closeWindows = { kind = "closeWindows", group = "doors", flag = "WINDOWS_ENABLED", cooldownH = 1, weight = 1 },
+    corpses = { kind = "moveCorpses", group = "moveCorpses", flag = "MOVE_CORPSES_ENABLED", cooldownH = 1, weight = 2 },
     wash = { idle = true, cooldownH = 1 },
     shower = { idle = true },
     exercise = { idle = true },
@@ -39,7 +40,7 @@ local ROWS = {
     roam = { idle = true },
 }
 
-local SCAN_ROWS = { "animals", "troughs", "tend", "harvest", "clean", "yard", "chop", "closeDoors", "closeWindows" }
+local SCAN_ROWS = { "animals", "troughs", "tend", "harvest", "clean", "yard", "chop", "closeDoors", "closeWindows", "corpses" }
 
 local S = {
     scan = {},
@@ -503,13 +504,33 @@ local function filterList(id, list, h, z)
     local out = {}
     if type(list) ~= "table" then return out end
     local now = Bridge.time or 0
+    local spot = nil
+    local skipR = nil
+    if id == "corpses" then
+        spot = BridgeData ~= nil and BridgeData.corpseSpotOf(Bridge.store) or nil
+        if spot == nil then return out end
+        local spotSq = nil
+        pcall(function() spotSq = getCell():getGridSquare(spot.x, spot.y, spot.z) end)
+        if spotSq == nil then return out end
+        local search = 3
+        if BridgeTask ~= nil and tonumber(BridgeTask.CORPSE_DROP_SEARCH) ~= nil then
+            search = tonumber(BridgeTask.CORPSE_DROP_SEARCH)
+        end
+        skipR = search + 1
+    end
     for i = 1, #list do
         local t = list[i]
         local x, y, tz = targetPos(t)
         if x ~= nil then
             local key = x .. ":" .. y .. ":" .. tz
             local untilT = S.blacklist[key]
-            if (untilT == nil or untilT <= now)
+            local nearSpot = false
+            if spot ~= nil and tz == spot.z then
+                local dx = x - spot.x
+                local dy = y - spot.y
+                if dx * dx + dy * dy <= skipR * skipR then nearSpot = true end
+            end
+            if not nearSpot and (untilT == nil or untilT <= now)
                     and BridgeHome.contains(x, y, tz) and floorReachable(h, z, tz) then
                 out[#out + 1] = t
             end
@@ -589,6 +610,19 @@ local function candidates(body)
                     end)
                 end
                 if #list > 0 then
+                    local dest = nil
+                    if id == "corpses" then
+                        dest = BridgeData.corpseSpotOf(Bridge.store)
+                        local cap = 40
+                        if BridgeWorkSelect ~= nil and tonumber(BridgeWorkSelect.MAX_CORPSES) ~= nil then
+                            cap = tonumber(BridgeWorkSelect.MAX_CORPSES)
+                        end
+                        if #list > cap then
+                            local trimmed = {}
+                            for j = 1, cap do trimmed[j] = list[j] end
+                            list = trimmed
+                        end
+                    end
                     local same, best = false, nil
                     for j = 1, #list do
                         local _, _, tz = targetPos(list[j])
@@ -599,7 +633,7 @@ local function candidates(body)
                     out[#out + 1] = {
                         row = id, kind = kind, list = list, need = #list,
                         group = groups[row.group] or 99, weight = row.weight or 1,
-                        same = same, dist = best or 9999,
+                        same = same, dist = best or 9999, dest = dest,
                     }
                 end
             end
@@ -1266,7 +1300,7 @@ local function startRow(body, cand, h, quiet)
         targets = { { obj = seat.obj, x = seat.x, y = seat.y, z = seat.z, read = true } }
     end
     local opts = quiet == true and { quiet = true } or nil
-    res = BridgeTask.start(kind, targets, nil, opts)
+    res = BridgeTask.start(kind, targets, cand.dest, opts)
     if res == "started" then
         startOk(cand.row)
         S.running = {
@@ -1773,6 +1807,13 @@ local function computeStatus(id)
     if not on(id) then return tr("ChoreOff") end
     local row = ROWS[id]
     if row ~= nil and row.group ~= nil and not shown(row.group) then return tr("ChoreOff") end
+    if id == "corpses" then
+        local spot = BridgeData.corpseSpotOf(Bridge.store)
+        if spot == nil then return tr("ChoreNoPile") end
+        local sq = nil
+        pcall(function() sq = getCell():getGridSquare(spot.x, spot.y, spot.z) end)
+        if sq == nil then return tr("ChoreNoPile") end
+    end
     if S.running ~= nil and S.running.row == id then return tr("ChoreRunning") end
     local now = Bridge.time or 0
     if now < cooldownUntil(id) then

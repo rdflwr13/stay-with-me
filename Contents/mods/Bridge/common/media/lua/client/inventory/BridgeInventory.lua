@@ -493,8 +493,34 @@ function BridgeInventory.dropFallen(b)
         end
         if id ~= nil and BridgeInventory.shownIds[id] and vis ~= nil and (chance or 0) > 0
             and not visuals:contains(vis) then
+            local loc = nil
+            pcall(function() loc = item:getBodyLocation() end)
             b:removeWornItem(item)
-            inv:Remove(item)
+            local here = false
+            pcall(function() here = inv:contains(item) end)
+            if not here then
+                local added = nil
+                pcall(function() added = inv:AddItem(item) end)
+                if added == nil then
+                    local world = nil
+                    pcall(function()
+                        local sq = b:getCurrentSquare()
+                        if sq ~= nil then
+                            world = sq:AddWorldInventoryItem(item, ZombRandFloat(0.1, 0.9), ZombRandFloat(0.1, 0.9), 0)
+                        end
+                    end)
+                    if world == nil then
+                        if loc ~= nil then pcall(function() b:setWornItem(loc, item) end) end
+                        log("dropFallen: reattached " .. tostring(item:getType()))
+                    else
+                        log("dropFallen: floor " .. tostring(item:getType()))
+                    end
+                else
+                    log("dropFallen: inventory " .. tostring(item:getType()))
+                end
+            else
+                log("dropFallen: inventory " .. tostring(item:getType()))
+            end
             BridgeInventory.shownIds[id] = nil
             fell[#fell + 1] = tostring(item:getType())
         end
@@ -2289,6 +2315,25 @@ end
 
 
 
+function BridgeInventory.allowsItem(container, item)
+    if container == nil or item == nil then return false, "nil" end
+    local ok, allowed = pcall(function() return container:isItemAllowed(item) end)
+    if not ok then
+        local fullType, id, ctype = "?", "?", "?"
+        pcall(function() fullType = item:getFullType() end)
+        pcall(function() id = item:getID() end)
+        pcall(function() ctype = container:getType() end)
+        local text = string.format("throw item=%s id=%s container=%s err=%s",
+            tostring(fullType), tostring(id), tostring(ctype), tostring(allowed))
+        pcall(function() Bridge.logError("inv.isItemAllowed", text) end)
+        return false, "throw"
+    end
+    if allowed == true then return true, "ok" end
+    if allowed == nil then return false, "nil" end
+    return false, "deny"
+end
+
+
 function BridgeInventory.roomVerdict(container, a, b2, knownHers)
     local b = body()
     if b == nil or container == nil then return nil end
@@ -2328,7 +2373,7 @@ function BridgeInventory.roomVerdict(container, a, b2, knownHers)
             srcInternal = src ~= nil and (BridgeInventory.inBody(src) or BridgeInventory.isHers(src))
         end)
         if not srcInternal and BridgeInventory.capBlocked() then return false end
-        if not container:isItemAllowed(item) then return false end
+        if not BridgeInventory.allowsItem(container, item) then return false end
         local heavy = false
         pcall(function() heavy = chr ~= nil and chr:getVehicle() ~= nil and item:hasTag(ItemTag.HEAVY_ITEM) end)
         if heavy then return false end
@@ -2684,16 +2729,26 @@ function BridgeInventory.dropIfNoRoom(b, item)
     local sq = nil
     pcall(function() sq = b:getCurrentSquare() end)
     if sq == nil then return false end
+    local world = nil
     local ok, err = pcall(function()
         local x, y = ZombRandFloat(0.1, 0.9), ZombRandFloat(0.1, 0.9)
         local z = sq:getApparentZ(x, y) - sq:getZ()
         inv:Remove(item)
-        sq:AddWorldInventoryItem(item, x, y, z)
+        world = sq:AddWorldInventoryItem(item, x, y, z)
     end)
     if not ok then
         warn("drop failed: " .. tostring(err))
         pcall(function() if not inv:contains(item) then inv:AddItem(item) end end)
         return false
+    end
+    if world == nil then
+        local inWorld = nil
+        pcall(function() inWorld = item:getWorldItem() end)
+        if inWorld == nil then
+            pcall(function() if not inv:contains(item) then inv:AddItem(item) end end)
+            log("inv.drop: world refused " .. tostring(item:getType()) .. ", returned to inventory")
+            return false
+        end
     end
     pcall(function() note("dropped " .. item:getType() .. ": no room") end)
     pcall(function() log("no room for " .. item:getType() .. " after the change: dropped at her feet, as for the player") end)
@@ -3012,16 +3067,23 @@ function BridgeInventory.finishWear(id, variant)
     BridgeInventory.toWear[id] = nil
     local b = body()
     if b == nil then log("finishWear: no body") return end
+    local inv = b:getInventory()
     local item = nil
-    pcall(function()
-        local items = b:getInventory():getItems()
-        for i = 0, items:size() - 1 do
-            local it = items:get(i)
-            if it ~= nil and it:getID() == id then item = it break end
-        end
-    end)
+    pcall(function() item = inv:getItemWithIDRecursiv(id) end)
     if item == nil then
         log("wear on her: item " .. tostring(id) .. " did not arrive")
+        return
+    end
+    local container = nil
+    pcall(function() container = item:getContainer() end)
+    if container ~= inv then
+        local ctype, parent = "?", "?"
+        pcall(function() ctype = container ~= nil and container:getType() or "?" end)
+        pcall(function()
+            local ci = container ~= nil and container:getContainingItem() or nil
+            parent = ci ~= nil and ci:getFullType() or "?"
+        end)
+        log(string.format("wear on her: item %s landed in %s (%s)", tostring(id), tostring(ctype), tostring(parent)))
         return
     end
     log("wear on her: arrived " .. tostring(item:getType()))
@@ -5157,7 +5219,7 @@ BridgeInventory.wrapGiveRoom = function()
         local ok = inner(self, ...)
         if ok then return ok end
         local good = false
-        pcall(function()
+        local okProbe, errProbe = pcall(function()
             if self ~= nil and self.item ~= nil and self.srcContainer ~= nil and self.destContainer ~= nil
                 and self.srcContainer ~= self.destContainer
                 and BridgeInventory.isHers(self.destContainer)
@@ -5177,6 +5239,17 @@ BridgeInventory.wrapGiveRoom = function()
                 end
             end
         end)
+        if not okProbe then
+            local it, id, src, dest = "?", "?", "?", "?"
+            pcall(function() if self ~= nil and self.item ~= nil then it = tostring(self.item:getFullType()) end end)
+            pcall(function() if self ~= nil and self.item ~= nil then id = tostring(self.item:getID()) end end)
+            pcall(function() if self ~= nil and self.srcContainer ~= nil then src = tostring(self.srcContainer:getType()) end end)
+            pcall(function() if self ~= nil and self.destContainer ~= nil then dest = tostring(self.destContainer:getType()) end end)
+            pcall(function()
+                Bridge.logError("inv.isValid", string.format("item=%s id=%s src=%s dest=%s err=%s",
+                    it, id, src, dest, tostring(errProbe)))
+            end)
+        end
         if good then return true end
         return ok
     end

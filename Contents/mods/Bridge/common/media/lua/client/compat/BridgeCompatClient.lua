@@ -1717,3 +1717,110 @@ Events.OnTick.Add(function()
     pcall(BridgeCompatNPCVision.installObserve)
 end)
 end
+
+do
+BridgeCompatUrla = BridgeCompatUrla or {}
+
+local RETRY_EVERY = 60
+local retryTick = 0
+local installed = false
+local original = nil
+local wrapper = nil
+local logged = false
+local filtered = 0
+
+local function log(text)
+    if BridgeLog ~= nil and type(BridgeLog.on) == "function" and BridgeLog.on() then
+        print("[BridgeUrla] " .. tostring(text))
+    end
+end
+
+local function isCompanion(z)
+    local bc = rawget(_G, "BridgeCompanion")
+    if type(bc) ~= "table" or type(bc.isBody) ~= "function" then return false end
+    local ok, yes = pcall(bc.isBody, z)
+    return ok and yes == true
+end
+
+local function filter(list)
+    if type(list) ~= "table" then return list end
+    local out, n = {}, 0
+    for i = 1, #list do
+        local z = list[i]
+        if z ~= nil and not isCompanion(z) then
+            n = n + 1
+            out[n] = z
+        elseif z ~= nil then
+            filtered = filtered + 1
+        end
+    end
+    return out
+end
+
+function BridgeCompatUrla.live()
+    local cc = rawget(_G, "ChienCompagnon")
+    local zombies = type(cc) == "table" and cc.Zombies or nil
+    return wrapper ~= nil and type(zombies) == "table" and zombies.near == wrapper
+end
+
+function BridgeCompatUrla.install()
+    if installed and wrapper ~= nil and BridgeCompatUrla.live() then return true end
+    local cc = rawget(_G, "ChienCompagnon")
+    local zombies = type(cc) == "table" and cc.Zombies or nil
+    if type(zombies) ~= "table" or type(zombies.near) ~= "function" then return false end
+    if zombies.near == wrapper then installed = true return true end
+
+    original = zombies.near
+    wrapper = function(...)
+        return filter(original(...))
+    end
+    zombies.near = wrapper
+    installed = true
+
+    if not logged then
+        logged = true
+        log("installed on ChienCompagnon.Zombies.near (companion bodies ignored)")
+    end
+    return true
+end
+
+function BridgeCompatUrla.uninstall()
+    local cc = rawget(_G, "ChienCompagnon")
+    local zombies = type(cc) == "table" and cc.Zombies or nil
+    if type(zombies) == "table" and zombies.near == wrapper then
+        zombies.near = original
+    end
+    installed, original, wrapper, logged, filtered = false, nil, nil, false, 0
+    return true
+end
+
+function BridgeCompatUrla.status()
+    local cc = rawget(_G, "ChienCompagnon")
+    local zombies = type(cc) == "table" and cc.Zombies or nil
+    return string.format("installed=%s dog=%s near=%s filtered=%d",
+        tostring(installed == true), tostring(zombies ~= nil),
+        tostring(BridgeCompatUrla.live()), filtered)
+end
+
+function BridgeCompatUrla.selftest()
+    local companion = { name = "companion" }
+    local zombie = { name = "zombie" }
+    local saved = BridgeCompanion
+    BridgeCompanion = {
+        isBody = function(z) return z == companion end,
+    }
+    local out = filter({ companion, zombie })
+    BridgeCompanion = saved
+    if #out == 1 and out[1] == zombie then return "URLASHIM SELFTEST PASS" end
+    return string.format("URLASHIM SELFTEST FAIL n=%d", #out)
+end
+
+Events.OnGameStart.Add(function() pcall(BridgeCompatUrla.install) end)
+
+Events.OnTick.Add(function()
+    if BridgeCompatUrla.live() then return end
+    retryTick = retryTick + 1
+    if retryTick % RETRY_EVERY ~= 0 then return end
+    pcall(BridgeCompatUrla.install)
+end)
+end
