@@ -5319,15 +5319,33 @@ local function readPlayerMoving(r)
     return r:isPlayerMoving()
 end
 
+local SHOVE_CONTACT = 0.5
+local SHOVE_CONTACT_FAST = 0.8
+local SHOVE_APPROACH = 0.3
+
 local function bodyShoved(r, b)
     local rx, ry = r:getX() - b:getX(), r:getY() - b:getY()
     local d2 = rx * rx + ry * ry
-    local sh = d2 < 1.3 * 1.3 and (r:isRunning() or r:isSprinting())
-    if not sh and d2 < 0.9 * 0.9 then
-        local ok, goes = pcall(readPlayerMoving, r)
-        if ok and goes then sh = true end
+    local fast = false
+    pcall(function() fast = r:isRunning() == true or r:isSprinting() == true end)
+    local sh = d2 < 1.3 * 1.3 and fast
+    local moving = false
+    pcall(function() moving = r:isPlayerMoving() == true end)
+    if not sh and d2 < 0.9 * 0.9 and moving then sh = true end
+
+    local contact = false
+    local d = math.sqrt(d2)
+    if (moving or fast) and d <= (fast and SHOVE_CONTACT_FAST or SHOVE_CONTACT) then
+        contact = true
+        local fx, fy = BridgeMove ~= nil and (BridgeMove.redVx or 0) or 0,
+                       BridgeMove ~= nil and (BridgeMove.redVy or 0) or 0
+        local vl = math.sqrt(fx * fx + fy * fy)
+        if d > 0.01 and vl > 0.01 then
+            local dot = (fx * (b:getX() - r:getX()) + fy * (b:getY() - r:getY())) / (vl * d)
+            contact = dot > SHOVE_APPROACH
+        end
     end
-    return sh
+    return sh, contact
 end
 
 local function bodyHoldPos(b, hx, hy)
@@ -5880,9 +5898,10 @@ local function updateZombieBody(body)
 
 
         local shoved = bump == "left" or bump == "right"
+        local bumpContact = (bump == "left" or bump == "right")
         if not shoved and Bridge.pose == nil then
-            local okShoved, sh = pcall(bodyShoved, red, body)
-            if okShoved then shoved = sh end
+            local okShoved, sh, contact = pcall(bodyShoved, red, body)
+            if okShoved then shoved, bumpContact = sh, contact == true end
         end
         if Bridge.pose ~= nil and Bridge.pose.move then
 
@@ -5890,11 +5909,13 @@ local function updateZombieBody(body)
             Bridge.holdPos = { body:getX(), body:getY(), body:getZ() }
         elseif shoved and Bridge.pose == nil then
             Bridge.holdPos = { body:getX(), body:getY(), body:getZ() }
-            pcall(function()
-                if BridgeCallout ~= nil and type(BridgeCallout.bumpPush) == "function" then
-                    BridgeCallout.bumpPush()
-                end
-            end)
+            if bumpContact then
+                pcall(function()
+                    if BridgeCallout ~= nil and type(BridgeCallout.bumpPush) == "function" then
+                        BridgeCallout.bumpPush()
+                    end
+                end)
+            end
         elseif Bridge.pose ~= nil and Bridge.poseNudged(body) then
 
 
@@ -6410,9 +6431,10 @@ local function applyLook(z, visuals, rec, who)
 
     local sit = rec and rec.sit or nil
     local layBump = (sit == "bedasleep" and "LayAsleep") or (sit == "bedawake" and "LayAwake") or nil
-    if sit == "chair" and l.speed < 0.02 then
+    if (sit == "chair" or sit == "chairsleep") and l.speed < 0.02 then
+        local chairBump = sit == "chairsleep" and "SitChairSleep" or "SitChair"
         pcall(z.setCollidable, z, false)
-        pcall(function() if z:getBumpType() ~= "SitChair" then z:setBumpType("SitChair") end end)
+        pcall(function() if z:getBumpType() ~= chairBump then z:setBumpType(chairBump) end end)
         pcall(z.setVariable, z, "SitOnFurnitureStarted", true)
     elseif layBump ~= nil and l.speed < 0.02 then
         pcall(z.setCollidable, z, false)
@@ -6426,7 +6448,7 @@ local function applyLook(z, visuals, rec, who)
 
             pcall(function()
                 local b = tostring(z:getBumpType())
-                if b == "SitChair" or b == "Sit" then z:setBumpType("") end
+                if b == "SitChair" or b == "Sit" or b == "SitChairSleep" then z:setBumpType("") end
                 if b == "LayAwake" or b == "LayAsleep" then
                     z:setCollidable(true)
                     z:setBumpType("")

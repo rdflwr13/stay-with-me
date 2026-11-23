@@ -459,6 +459,8 @@ end
 
 local function buildHeal(context, playerNum, env)
     if not env.inRange then return end
+    if BridgeHeal ~= nil and type(BridgeHeal.treatable) == "function"
+            and not BridgeHeal.treatable(BridgeData.owner()) then return end
     local heal = context:addOption(tr("HealMe"), nil, BridgeMenu.onHeal)
     if not Bridge.drivable() or not Bridge.alive() then
         heal.notAvailable = true
@@ -922,13 +924,17 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
         if BridgeMenu.inCarWithRed() then
             pcall(function() BridgeSocial.fillMenu(context, tr) end)
             if BridgeCar.isInside() then
-                local heal = context:addOption(tr("HealMe"), nil, BridgeMenu.onHeal)
-                local dead = false
-                pcall(function()
-                    local red = BridgeData.owner()
-                    dead = red ~= nil and red:isDead() == true
-                end)
-                if BridgeHeal == nil or BridgeHeal.active or dead then heal.notAvailable = true end
+                local okay = BridgeHeal == nil or type(BridgeHeal.treatable) ~= "function"
+                    or BridgeHeal.treatable(BridgeData.owner())
+                if okay then
+                    local heal = context:addOption(tr("HealMe"), nil, BridgeMenu.onHeal)
+                    local dead = false
+                    pcall(function()
+                        local red = BridgeData.owner()
+                        dead = red ~= nil and red:isDead() == true
+                    end)
+                    if BridgeHeal == nil or BridgeHeal.active or dead then heal.notAvailable = true end
+                end
             end
         end
         return
@@ -1534,7 +1540,7 @@ local function bedUnder(worldobjects)
         if o ~= nil then
             local isBed = false
             pcall(function()
-                isBed = BridgeTask ~= nil and BridgeTask.sitIsRealBed ~= nil and BridgeTask.sitIsRealBed(o) == true
+                isBed = BridgeTask ~= nil and BridgeTask.layTarget ~= nil and BridgeTask.layTarget(o) == true
             end)
             if isBed then
                 if e ~= nil then e.bed = o end
@@ -2564,6 +2570,14 @@ function BridgeMenu.onSitStandUp()
     if BridgeTask ~= nil and BridgeTask.sitStandUp ~= nil then BridgeTask.sitStandUp() end
 end
 
+function BridgeMenu.onSitSleep()
+    if BridgeTask ~= nil and BridgeTask.sitSleepStart ~= nil then BridgeTask.sitSleepStart(Bridge.body) end
+end
+
+function BridgeMenu.onSitWake()
+    if BridgeTask ~= nil and BridgeTask.sitSleepStop ~= nil then BridgeTask.sitSleepStop(Bridge.body) end
+end
+
 function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -2574,6 +2588,15 @@ function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
 
     if BridgeTask.isSeated ~= nil and BridgeTask.isSeated() then
         addCompanion(context, seat, tr("StandUp"), nil, BridgeMenu.onSitStandUp)
+        local isCouch = false
+        pcall(function() isCouch = BridgeTask.layTarget ~= nil and BridgeTask.layTarget(seat) == true end)
+        if not isCouch then
+            if BridgeTask.sitSleep == true then
+                addCompanion(context, seat, tr("Wake"), nil, BridgeMenu.onSitWake)
+            else
+                addCompanion(context, seat, tr("Sleep"), nil, BridgeMenu.onSitSleep)
+            end
+        end
         if BridgeTask.READ_TEST == true and BridgeTask.sitRead then
             addCompanion(context, seat, "Stop reading (test)", nil, BridgeMenu.onSitReadStop)
         end
@@ -2655,7 +2678,14 @@ function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
         local sq = bed:getSquare()
         if sq ~= nil then targets[1].x, targets[1].y, targets[1].z = sq:getX(), sq:getY(), sq:getZ() end
     end)
-    local opt = addCompanion(context, bed, tr("Lay"), targets, BridgeMenu.onLayThis)
+    local layKey = "Lay"
+    pcall(function()
+        if BridgeTask.layTarget ~= nil and BridgeTask.layTarget(bed) == true
+                and BridgeTask.sitIsRealBed ~= nil and BridgeTask.sitIsRealBed(bed) ~= true then
+            layKey = "LayCouch"
+        end
+    end)
+    local opt = addCompanion(context, bed, tr(layKey), targets, BridgeMenu.onLayThis)
     if opt == nil then return end
     if not ok or BridgeTask.active then opt.notAvailable = true end
     local occupied = false
@@ -2721,6 +2751,17 @@ function BridgeMenu.onWashSinkThis(sink, scope)
         { { x = sq:getX(), y = sq:getY(), z = sq:getZ() } }, nil,
         { sink = sink, scope = scope })
     log("wash sink from menu: " .. tostring(res) .. " scope=" .. tostring(scope))
+end
+
+function BridgeMenu.onBrushTeethThis(sink)
+    if BridgeTask == nil or sink == nil then return end
+    local sq = nil
+    pcall(function() sq = sink:getSquare() end)
+    if sq == nil then return end
+    local res = BridgeTask.start("brushTeeth",
+        { { x = sq:getX(), y = sq:getY(), z = sq:getZ() } }, nil,
+        { sink = sink })
+    log("brush teeth from menu: " .. tostring(res))
 end
 
 local function washObjectName(sink)
@@ -2888,6 +2929,32 @@ end
 
 function BridgeMenu.addRinActions(menu, sink)
     local busy = BridgeTask ~= nil and BridgeTask.active
+    local brushOk = false
+    pcall(function() brushOk = BridgeTask ~= nil and BridgeTask.brushSinkOk ~= nil and BridgeTask.brushSinkOk(sink) == true end)
+    local brushOpt = menu:addOption("Brush teeth", sink, BridgeMenu.onBrushTeethThis)
+    if brushOpt ~= nil then
+        local hasBrush = false
+        pcall(function() hasBrush = BridgeTask.brushItem ~= nil and BridgeTask.brushItem(Bridge.body) ~= nil end)
+        local water = 0
+        pcall(function() water = BridgeWash ~= nil and BridgeWash.waterUnits ~= nil and BridgeWash.waterUnits(sink) or 0 end)
+        local ready = true
+        pcall(function() ready = BridgeTask.brushReady == nil or BridgeTask.brushReady() end)
+        if busy then
+            brushOpt.notAvailable = true
+        elseif not ready then
+            brushOpt.notAvailable = true
+            tip(brushOpt, tr("Say_BrushedRecently"))
+        elseif not brushOk then
+            brushOpt.notAvailable = true
+            tip(brushOpt, tr("Say_SinkCantUse"))
+        elseif not hasBrush then
+            brushOpt.notAvailable = true
+            tip(brushOpt, tr("Say_NoToothbrush"))
+        elseif water < 1 then
+            brushOpt.notAvailable = true
+            tip(brushOpt, tr("Say_NoWater"))
+        end
+    end
     local selfOpt = menu:addOption(tr("WashSelf"), sink, BridgeMenu.onWashSinkThis, "self")
     local invOpt = menu:addOption(tr("WashInventory"), sink, BridgeMenu.onWashSinkThis, "inventory")
     if busy or not washScopeReady("self") then

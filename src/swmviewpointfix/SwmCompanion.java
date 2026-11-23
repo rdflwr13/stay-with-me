@@ -19,6 +19,7 @@ public final class SwmCompanion {
     private static volatile Field dueField;
     private static volatile Map<?, ?> layeredMap;
     private static volatile boolean layeredProbeFailed;
+    private static volatile int restoreLogs;
 
     private SwmCompanion() {
     }
@@ -107,8 +108,11 @@ public final class SwmCompanion {
     public static void restore(Object o) {
         try {
             Map<?, ?> map = layeredMap();
-            if (map != null) {
-                map.remove(o);
+            boolean present = map != null && map.containsKey(o);
+            boolean removed = map != null && map.remove(o) != null;
+            if (restoreLogs < 10) {
+                restoreLogs++;
+                System.out.println(PREFIX + "restore present=" + present + " removed=" + removed);
             }
             if (o instanceof IsoGameCharacter) {
                 Field f = field();

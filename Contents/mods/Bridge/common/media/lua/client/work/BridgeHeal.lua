@@ -1026,6 +1026,16 @@ function BridgeHeal.needs(wounds)
 end
 
 
+function BridgeHeal.treatable(red)
+    if red == nil then return false end
+    local ok, wounds = pcall(BridgeHeal.scan, red)
+    if not ok or type(wounds) ~= "table" then return true end
+    local ok2, urgent, any = pcall(BridgeHeal.needs, wounds)
+    if not ok2 then return true end
+    return any == true
+end
+
+
 function BridgeHeal.weNotice(wounds)
     local names = {}
     if type(BridgeWoundExpCompat) ~= "table" or type(BridgeWoundExpCompat.detectOnly) ~= "function" then

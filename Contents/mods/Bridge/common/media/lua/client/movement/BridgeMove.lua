@@ -1518,7 +1518,7 @@ CHAIR.RING_MAX = 3
 CHAIR.ARRIVE = 0.2
 CHAIR.ANIM_MAX = 240
 local SIT_DIRS = { "N", "S", "W", "E" }
-BridgeMove.CHAIR_POSES = { SitChairDown = true, SitChair = true, SitChairUp = true }
+BridgeMove.CHAIR_POSES = { SitChairDown = true, SitChair = true, SitChairUp = true, SitChairSleep = true }
 BridgeMove.seatFlag = false
 BridgeMove.seatBound = nil
 
@@ -1841,7 +1841,7 @@ function BridgeMove.isOnChair(body)
     if pose ~= nil and BridgeMove.CHAIR_POSES[pose.anim] == true then return true end
     local bump = ""
     pcall(function() bump = tostring(body:getBumpType()) end)
-    if bump == "SitChair" or bump == "SitChairDown" or bump == "SitChairUp" then return true end
+    if bump == "SitChair" or bump == "SitChairDown" or bump == "SitChairUp" or bump == "SitChairSleep" then return true end
     return false
 end
 
@@ -1886,7 +1886,7 @@ function BridgeMove.sitFlagTick(body)
             local asn, bump = "", ""
             pcall(function() asn = tostring(body:getActionStateName()) end)
             pcall(function() bump = tostring(body:getBumpType()) end)
-            if asn ~= "bumped" or bump ~= "SitChair" then
+            if asn ~= "bumped" or (bump ~= "SitChair" and bump ~= "SitChairSleep" and bump ~= "SitChairRead") then
                 pcall(function() body:setVariable("BumpAnimFinished", false) end)
                 pcall(function() body:setBumpType("") end)
                 pcall(function() body:setBumpType("SitChair") end)

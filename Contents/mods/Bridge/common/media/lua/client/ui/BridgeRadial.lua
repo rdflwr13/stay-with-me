@@ -721,7 +721,9 @@ function BridgeRadial.topEntries(playerNum)
             local alive = Bridge.alive() == true
             local drivable = Bridge.drivable() == true
             local healing = BridgeHeal ~= nil and BridgeHeal.active == true
-            if alive and drivable and not healing then
+            local hurt = true
+            pcall(function() hurt = BridgeHeal.treatable(BridgeData.owner()) ~= false end)
+            if alive and drivable and not healing and hurt then
                 out[#out + 1] = make(tr("HealMe"), ICONS.heal, BridgeMenu.onHeal)
             end
         elseif shown and id == "fight" then

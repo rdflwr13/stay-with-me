@@ -729,7 +729,7 @@ local GESTURE_IDLE_BUMPS = { [""] = true, ["nil"] = true, Stand = true, ShiftWei
                              IdleExt01_2H = true, IdleExt02_2H = true, IdleExt03_2H = true,
                              IdleExt01_Handgun = true, IdleExt02_Handgun = true, IdleExt03_Handgun = true,
                              IdleExt01_Rifle = true, IdleExt02_Rifle = true, IdleExt03_Rifle = true }
-local GESTURE_SIT_BUMPS = { SitChair = true, SitChairDown = true, SitChairUp = true }
+local GESTURE_SIT_BUMPS = { SitChair = true, SitChairDown = true, SitChairUp = true, SitChairSleep = true }
 local GESTURE_WAIT_MAX = 5400
 local GESTURE_SETTLE = 20
 local GESTURE_WAIT_FAR = 15

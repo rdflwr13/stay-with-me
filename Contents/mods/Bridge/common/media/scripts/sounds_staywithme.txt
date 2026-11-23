@@ -69,4 +69,64 @@ module Base
             volume = 0.6,
         }
     }
+
+    sound NA_BrushTeeth1
+    {
+        category = SFX,
+        loop = false,
+        is3D = true,
+        clip
+        {
+            file = media/sound/Brush_Teeth1.ogg,
+            distanceMin = 2,
+            distanceMax = 20,
+            reverbFactor = 0,
+            volume = 0.2,
+        }
+    }
+
+    sound NA_BrushTeeth2
+    {
+        category = SFX,
+        loop = false,
+        is3D = true,
+        clip
+        {
+            file = media/sound/Brush_Teeth2.ogg,
+            distanceMin = 2,
+            distanceMax = 20,
+            reverbFactor = 0,
+            volume = 0.2,
+        }
+    }
+
+    sound NA_BrushTeeth3
+    {
+        category = SFX,
+        loop = false,
+        is3D = true,
+        clip
+        {
+            file = media/sound/Brush_Teeth3.ogg,
+            distanceMin = 2,
+            distanceMax = 20,
+            reverbFactor = 0,
+            volume = 0.2,
+        }
+    }
+
+    sound NA_BrushTeeth4
+    {
+        category = SFX,
+        loop = false,
+        is3D = true,
+        clip
+        {
+            file = media/sound/Brush_Teeth4.ogg,
+            distanceMin = 2,
+            distanceMax = 20,
+            reverbFactor = 0,
+            volume = 0.2,
+        }
+    }
 }

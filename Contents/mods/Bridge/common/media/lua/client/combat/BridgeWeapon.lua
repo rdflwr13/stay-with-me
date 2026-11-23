@@ -344,6 +344,7 @@ local function clearHands(body)
         if s ~= nil and (s == p or isHandWeapon(s)) then body:setSecondaryHandItem(nil) end
     end)
 end
+BridgeWeapon.clearHands = clearHands
 
 
 function BridgeWeapon.draw(body)

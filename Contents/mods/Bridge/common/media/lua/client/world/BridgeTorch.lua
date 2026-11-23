@@ -59,6 +59,8 @@ BridgeTorch.stats = { frames = 0, places = 0, releases = 0, adds = 0, removes = 
 
 BridgeTorch.SETTLE_MS = 2000
 
+BridgeTorch.PROBE_MS = 50
+
 BridgeTorch.INSERT_FRAMES = 90
 
 BridgeTorch.LOW_CHARGE = 0.5
@@ -202,7 +204,7 @@ local function probeTick()
     for key, p in pairs(BridgeTorch.probe) do
 
 
-        if (getTimestampMs() - (p.at or 0)) >= 50 then
+        if (getTimestampMs() - (p.at or 0)) >= (BridgeTorch.PROBE_MS or 50) then
             local v = nil
             if p.body ~= nil then
                 if BridgeLight ~= nil and type(BridgeLight.probe) == "function" then
@@ -348,15 +350,12 @@ function BridgeTorch.update(body)
         end
 
         local lvl = raw
+        local torchLight = nil
         if onNow then
             local nowMs = getTimestampMs()
             local amb = BridgeTorch.ambient[key]
             local ambAge = nowMs - (BridgeTorch.ambientAt[key] or 0)
-            if amb == nil or ambAge >= 2000 then
-                if BridgeTorch.kickProbe ~= nil then pcall(BridgeTorch.kickProbe, body, raw) end
-                amb = BridgeTorch.ambient[key]
-                ambAge = getTimestampMs() - (BridgeTorch.ambientAt[key] or 0)
-            end
+            amb = nil
 
 
             if amb ~= nil and ambAge <= 2200 and amb < raw - 0.15 then
@@ -386,9 +385,30 @@ function BridgeTorch.update(body)
 
 
 
-                local lat = BridgeTorch.lvlAt[key]
-                if lat ~= nil and (nowMs - lat) <= (BridgeTorch.SETTLE_MS - 500) then
-                    lvl = BridgeTorch.lvl[key]
+                torchLight = nil
+                local e = BridgeTorch.lamps[key]
+                if e ~= nil and e.sources ~= nil and #e.sources > 0 then
+                    local src = e.sources[1]
+                    local sx, sy, sz, rad, cr, cg, cb = 0, 0, 0, 0, 0, 0, 0
+                    pcall(function()
+                        sx, sy, sz = src:getX(), src:getY(), src:getZ()
+                        rad = src:getRadius()
+                        cr, cg, cb = src:getR(), src:getG(), src:getB()
+                    end)
+                    local sq = nil
+                    pcall(function() sq = body:getCurrentSquare() end)
+                    if sq ~= nil and rad > 0 then
+                        local dx, dy, dz = sq:getX() - sx, sq:getY() - sy, sq:getZ() - sz
+                        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                        if dist <= rad then
+                            torchLight = math.max(cr, cg, cb) * (1 - dist / rad)
+                        end
+                    end
+                end
+                if torchLight ~= nil then
+                    lvl = math.max(0, raw - torchLight)
+                    BridgeTorch.lvl[key] = lvl
+                    BridgeTorch.lvlAt[key] = nowMs
                 else
                     lvl = nil
                 end
@@ -397,6 +417,11 @@ function BridgeTorch.update(body)
             BridgeTorch.litStreak[key] = 0
         end
         local want = BridgeTorchShared.wantOn(body, red, lvl, external, why)
+        if want and BridgeTask ~= nil and type(BridgeTask.isLying) == "function" then
+            local lying = false
+            pcall(function() lying = BridgeTask.isLying(body) == true end)
+            if lying then want = false end
+        end
         local mode, hasItem, charge, hasBat = "?", false, nil, false
         pcall(function() mode = BridgeData.torchMode(Bridge.store) end)
         pcall(function()
@@ -426,7 +451,7 @@ function BridgeTorch.update(body)
             dark = BridgeTorchShared.isDark(lvl, external, why),
             at = getTimestampMs(),
         }
-        BridgeTorch.dbg[key] = { lvl = lvl, raw = raw, amb = BridgeTorch.ambient[key], want = want, on = BridgeTorch.sent[key], mode = mode, item = hasItem, charge = charge, bat = hasBat, ext = external, why = why, out = dOut, day = dDay, strk = (BridgeTorch.litStreak[key] or 0) }
+        BridgeTorch.dbg[key] = { lvl = lvl, raw = raw, torch = torchLight, want = want, on = BridgeTorch.sent[key], mode = mode, item = hasItem, charge = charge, bat = hasBat, ext = external, why = why, out = dOut, day = dDay, strk = (BridgeTorch.litStreak[key] or 0) }
 
 
 
@@ -1095,12 +1120,12 @@ function BridgeTorch.report()
     local function fmtN(v) if type(v) == "number" then return string.format("%.2f", v) end return "-" end
 
     local line = string.format(
-        "[TorchDbg] fps=%.0f place/s=%.1f add/s=%.1f rm/s=%.1f lampposts=%d lamps=%d marked=%d lit=%d | lvl=%s raw=%s amb=%s want=%s on=%s mode=%s item=%s charge=%s bat=%s ext=%s why=%s out=%s day=%s strk=%s",
+        "[TorchDbg] fps=%.0f place/s=%.1f add/s=%.1f rm/s=%.1f lampposts=%d lamps=%d marked=%d lit=%d | lvl=%s raw=%s torch=%s want=%s on=%s mode=%s item=%s charge=%s bat=%s ext=%s why=%s out=%s day=%s strk=%s",
         st.frames * 1000 / ms, st.places * 1000 / ms, st.adds * 1000 / ms, st.removes * 1000 / ms, size, lamps,
         st.marked or 0, st.lit or 0,
         d and fmtN(d.lvl) or "-",
         d and fmtN(d.raw) or "-",
-        d and fmtN(d.amb) or "-",
+        d and fmtN(d.torch) or "-",
         d and tostring(d.want) or "-", d and tostring(d.on) or "-",
         d and tostring(d.mode) or "-", d and tostring(d.item) or "-",
         d and (d.charge and string.format("%.3f", d.charge) or "-") or "-",

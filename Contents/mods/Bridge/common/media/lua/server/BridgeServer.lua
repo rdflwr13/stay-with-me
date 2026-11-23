@@ -1855,7 +1855,8 @@ BridgeServer.Commands.state = function(player, args)
 
     if args.sit ~= nil then
         local sit = (args.sit == "chair" or args.sit == "floor"
-            or args.sit == "bedawake" or args.sit == "bedasleep") and args.sit or nil
+            or args.sit == "bedawake" or args.sit == "bedasleep"
+            or args.sit == "chairsleep") and args.sit or nil
         if rec.sit ~= sit then
             rec.sit = sit
             changed = true
@@ -1950,6 +1951,13 @@ BridgeServer.Commands.state = function(player, args)
         local v = tonumber(args.showerUntil)
         if v ~= nil and v >= 0 and (rec.showerUntil == nil or math.abs(rec.showerUntil - v) > 0.001) then
             if v > 0 then rec.showerUntil = v else rec.showerUntil = nil end
+            changed = true
+        end
+    end
+    if args.brushUntil ~= nil then
+        local v = tonumber(args.brushUntil)
+        if v ~= nil and v >= 0 and (rec.brushUntil == nil or math.abs(rec.brushUntil - v) > 0.001) then
+            if v > 0 then rec.brushUntil = v else rec.brushUntil = nil end
             changed = true
         end
     end
