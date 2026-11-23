@@ -319,11 +319,20 @@ local function startOk(id)
 end
 
 local function chunkPlan(h)
-    local key = BridgeHome.homeKey(h) .. "|" .. tostring(BridgeHome.allFloorsOn()) .. "|" .. tostring(SCAN_CHUNK)
-    if S.planKey == key then return S.plans end
+    local all = BridgeHome.allFloorsOn()
+    if S.plans ~= nil and S.planX == h.x and S.planY == h.y and S.planW == h.w
+            and S.planH == h.h and S.planZ == h.z and S.planAll == all then
+        return S.plans
+    end
+    local key = BridgeHome.homeKey(h) .. "|" .. tostring(all) .. "|" .. tostring(SCAN_CHUNK)
+    if S.planKey == key then
+        S.planX, S.planY, S.planW, S.planH, S.planZ, S.planAll = h.x, h.y, h.w, h.h, h.z, all
+        return S.plans
+    end
     S.plans = {}
     S.planKey = key
-    local floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn())
+    S.planX, S.planY, S.planW, S.planH, S.planZ, S.planAll = h.x, h.y, h.w, h.h, h.z, all
+    local floors = BridgeHome.includedFloors(h, all)
     for i = 1, #floors do
         local z = floors[i]
         for x = h.x, h.x + h.w - 1, SCAN_CHUNK do
@@ -350,6 +359,7 @@ end
 local function ensureScan(id, h)
     local sh = scanFor(id)
     local plan = chunkPlan(h)
+    if sh.planKey == S.planKey then return sh end
     local added = false
     for key, ch in pairs(plan) do
         if sh.byKey[key] == nil then
@@ -361,6 +371,7 @@ local function ensureScan(id, h)
         end
     end
     if added then sh.ready = false end
+    sh.planKey = S.planKey
     return sh
 end
 
@@ -392,6 +403,7 @@ local function refreshHomeKey(h)
         S.scan = {}
         S.plans = {}
         S.planKey = nil
+        S.planX, S.planY, S.planW, S.planH, S.planZ, S.planAll = nil, nil, nil, nil, nil, nil
         S.links = nil
         S.linkKey = nil
         S.stair = {}
@@ -573,37 +585,44 @@ local function candidates(body)
                     and (Bridge.time or 0) >= retryUntil(id) then
                 local list = nil
                 if doorRow or corpseRow then
-                    list = {}
-                    if BridgeWorkSelect ~= nil then
-                        local floors = nil
-                        pcall(function() floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn()) end)
-                        if type(floors) ~= "table" then floors = {} end
-                        local seenFz = {}
-                        local ordered = {}
-                        if z ~= nil then seenFz[z] = true ordered[#ordered + 1] = z end
-                        if h.z ~= nil and not seenFz[h.z] then seenFz[h.z] = true ordered[#ordered + 1] = h.z end
-                        for _, fz in ipairs(floors) do
-                            if not seenFz[fz] then seenFz[fz] = true ordered[#ordered + 1] = fz end
-                        end
-                        log(string.format("doorsIn floors=[%s] bodyZ=%s homeZ=%s",
-                            table.concat(ordered, ","), tostring(z), tostring(h.z)))
-                        for _, fz in ipairs(ordered) do
-                            local rect = { x1 = h.x, y1 = h.y, x2 = h.x + h.w - 1, y2 = h.y + h.h - 1, z = fz }
-                            local got = nil
-                            if id == "closeDoors" and type(BridgeWorkSelect.doorsIn) == "function" then
-                                got = BridgeWorkSelect.doorsIn(rect, "close")
-                            elseif id == "closeWindows" and type(BridgeWorkSelect.windowsIn) == "function" then
-                                got = BridgeWorkSelect.windowsIn(rect, "close")
-                            elseif corpseRow and type(BridgeWorkSelect.corpsesIn) == "function" then
-                                got = BridgeWorkSelect.corpsesIn(rect)
-                                if got ~= nil and #got > 0 then got = filterList("corpses", got, h, z) end
+                    if sh ~= nil and sh.ready == true and type(sh.list) == "table" then
+                        list = sh.list
+                        if corpseRow then list = filterList("corpses", list, h, z) end
+                    else
+                        list = {}
+                        if BridgeWorkSelect ~= nil then
+                            local floors = nil
+                            pcall(function() floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn()) end)
+                            if type(floors) ~= "table" then floors = {} end
+                            local seenFz = {}
+                            local ordered = {}
+                            if z ~= nil then seenFz[z] = true ordered[#ordered + 1] = z end
+                            if h.z ~= nil and not seenFz[h.z] then seenFz[h.z] = true ordered[#ordered + 1] = h.z end
+                            for _, fz in ipairs(floors) do
+                                if not seenFz[fz] then seenFz[fz] = true ordered[#ordered + 1] = fz end
                             end
-                            if got ~= nil and #got > 0 then
-                                if doorRow then
-                                    for gi = 1, #got do list[#list + 1] = got[gi] end
-                                else
-                                    list = got
-                                    break
+                            if BridgeLog ~= nil and BridgeLog.on() then
+                                log(string.format("doorsIn floors=[%s] bodyZ=%s homeZ=%s",
+                                    table.concat(ordered, ","), tostring(z), tostring(h.z)))
+                            end
+                            for _, fz in ipairs(ordered) do
+                                local rect = { x1 = h.x, y1 = h.y, x2 = h.x + h.w - 1, y2 = h.y + h.h - 1, z = fz }
+                                local got = nil
+                                if id == "closeDoors" and type(BridgeWorkSelect.doorsIn) == "function" then
+                                    got = BridgeWorkSelect.doorsIn(rect, "close")
+                                elseif id == "closeWindows" and type(BridgeWorkSelect.windowsIn) == "function" then
+                                    got = BridgeWorkSelect.windowsIn(rect, "close")
+                                elseif corpseRow and type(BridgeWorkSelect.corpsesIn) == "function" then
+                                    got = BridgeWorkSelect.corpsesIn(rect)
+                                    if got ~= nil and #got > 0 then got = filterList("corpses", got, h, z) end
+                                end
+                                if got ~= nil and #got > 0 then
+                                    if doorRow then
+                                        for gi = 1, #got do list[#list + 1] = got[gi] end
+                                    else
+                                        list = got
+                                        break
+                                    end
                                 end
                             end
                         end
@@ -869,11 +888,14 @@ local function watch(body)
         BridgeTask.sitUp = true
     end
 
-    local sig = activitySignature(body)
-    if r.sig ~= sig then
-        r.sig = sig
-        r.changedAt = Bridge.time
-    elseif r.row ~= "roam" and (Bridge.time or 0) - (r.changedAt or Bridge.time) > STUCK then
+    if (Bridge.tick or 0) % 6 == 0 then
+        local sig = activitySignature(body)
+        if r.sig ~= sig then
+            r.sig = sig
+            r.changedAt = Bridge.time
+        end
+    end
+    if r.row ~= "roam" and (Bridge.time or 0) - (r.changedAt or Bridge.time) > STUCK then
         log("stuck " .. tostring(r.row) .. " " .. tostring(BridgeTask.info))
         pcall(function() BridgeTask.cancel("chores-stuck") end)
         if Bridge.mode ~= "home" and Bridge.setMode ~= nil then Bridge.setMode("home") end
@@ -889,7 +911,8 @@ local function scanIsComplete()
     for i = 1, #SCAN_ROWS do
         local id = SCAN_ROWS[i]
         local kind = choreKind(id)
-        if kind ~= nil and collector(kind) ~= nil then
+        if kind ~= nil and collector(kind) ~= nil and on(id)
+                and (Bridge.time or 0) >= cooldownUntil(id) then
             local sh = S.scan[id]
             if sh == nil or sh.ready ~= true then return false end
         end
@@ -914,7 +937,7 @@ local function scanStep(body)
         local doorsRow = (id == "closeDoors" or id == "closeWindows")
         local kind = choreKind(id)
         local collect = collector(kind)
-        if collect ~= nil then
+        if collect ~= nil and on(id) and (Bridge.time or 0) >= cooldownUntil(id) then
             local sh = ensureScan(id, h)
             local due = nil
             for i = 1, #sh.order do
@@ -1743,7 +1766,9 @@ function BridgeChores.tick(body)
         if not stopped then
             local r = S.running
             if r ~= nil and (r.row == "sit" or r.row == "roam")
-                    and S.forceRoam ~= true and S.scanReady then
+                    and S.forceRoam ~= true and S.scanReady
+                    and now >= (S.nextDecisionAt or 0) then
+                S.nextDecisionAt = now + DECISION_GAP
                 local cands = candidates(body)
                 if #cands > 0 then
                     cancelRunning("chore", now)
@@ -2246,6 +2271,7 @@ function BridgeChores.invalidate()
     S.scan = {}
     S.plans = {}
     S.planKey = nil
+    S.planX, S.planY, S.planW, S.planH, S.planZ, S.planAll = nil, nil, nil, nil, nil, nil
     S.homeKey = nil
     S.links = nil
     S.linkKey = nil

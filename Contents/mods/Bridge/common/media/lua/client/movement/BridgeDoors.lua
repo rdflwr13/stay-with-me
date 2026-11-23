@@ -844,7 +844,24 @@ function BridgeDoors.findOpening(building, z, fromX, fromY, toX, toY, leaving, d
             end
         end
     end
-    if #cands == 0 then return nil end
+    if #cands == 0 then
+        if BridgeLog ~= nil and BridgeLog.on() then
+            BridgeLog.event("route.opening.select", { candidates = 0, avoid_keys = 0, kind = "-",
+                dNear = -1, dFar = -1, extra = -1, why = "none", fn = "BridgeDoors.findOpening" })
+        end
+        return nil
+    end
+    local function openingEv(p, why)
+        if BridgeLog == nil or not BridgeLog.on() then return end
+        local avoidN = 0
+        if avoid ~= nil then for _ in pairs(avoid) do avoidN = avoidN + 1 end end
+        BridgeLog.event("route.opening.select", {
+            candidates = #cands, avoid_keys = avoidN,
+            chosen = (p ~= nil and p.near ~= nil) and { x = p.near:getX(), y = p.near:getY() } or nil,
+            kind = p ~= nil and p.kind or "-",
+            dNear = p ~= nil and p.dNear or -1, dFar = p ~= nil and p.dFar or -1,
+            extra = p ~= nil and p.extra or -1, why = why, fn = "BridgeDoors.findOpening" })
+    end
     local nearest = math.huge
     for i = 1, #cands do
         if cands[i].dNear < nearest then nearest = cands[i].dNear end
@@ -863,12 +880,13 @@ function BridgeDoors.findOpening(building, z, fromX, fromY, toX, toY, leaving, d
             end
         end
     end
-    if bestDoor ~= nil then return bestDoor end
-    if bestWin ~= nil then return bestWin end
+    if bestDoor ~= nil then openingEv(bestDoor, "door") return bestDoor end
+    if bestWin ~= nil then openingEv(bestWin, "window") return bestWin end
     local pick = cands[1]
     for i = 1, #cands do
         if cands[i].dNear < pick.dNear then pick = cands[i] end
     end
+    openingEv(pick, "nearest")
     return pick
 end
 

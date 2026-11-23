@@ -741,7 +741,7 @@ function U.doorNeighbors(sq, cardinalOnly)
 end
 
 
-function BridgeTask.doorStand(body, door, label, farSide, preferOutside)
+function BridgeTask.doorStand(body, door, label, farSide, preferOutside, sameSideOnly, preferInside)
     if body == nil or door == nil then return nil end
     label = label or "door"
     local dsq, osq = nil, nil
@@ -757,9 +757,11 @@ function BridgeTask.doorStand(body, door, label, farSide, preferOutside)
         local odx, ody = from:getX() - osq:getX(), from:getY() - osq:getY()
         nearDsq = (ddx * ddx + ddy * ddy) <= (odx * odx + ody * ody)
     end
+    local bodySideDsq = nearDsq
     if farSide then nearDsq = not nearDsq end
     local preferDsq = nearDsq
-    if preferOutside then
+    if sameSideOnly then preferDsq = bodySideDsq end
+    if preferOutside and not sameSideOnly then
         local dRoom, oRoom = nil, nil
         pcall(function() dRoom = dsq:getRoom() end)
         if osq ~= nil then pcall(function() oRoom = osq:getRoom() end) end
@@ -776,6 +778,15 @@ function BridgeTask.doorStand(body, door, label, farSide, preferOutside)
             end
         end
     end
+    local insideOnly = false
+    if preferInside and not sameSideOnly then
+        local dRoom, oRoom = nil, nil
+        pcall(function() dRoom = dsq:getRoom() end)
+        if osq ~= nil then pcall(function() oRoom = osq:getRoom() end) end
+        if dRoom ~= nil and oRoom == nil then preferDsq = true insideOnly = true
+        elseif oRoom ~= nil and dRoom == nil then preferDsq = false insideOnly = true
+        end
+    end
     local face = nil
     if label == "window" then
         face = nearDsq and dsq or osq
@@ -789,45 +800,58 @@ function BridgeTask.doorStand(body, door, label, farSide, preferOutside)
     local best, bestScore = face, nil
     local axisX = osq ~= nil and dsq:getX() == osq:getX()
     local axisY = osq ~= nil and dsq:getY() == osq:getY()
+    local relaxAxis = (label == "curtain")
+    local rejects = nil
+    local function reject(sq, why)
+        if BridgeLog == nil or not BridgeLog.on() then return end
+        rejects = rejects or {}
+        rejects[#rejects + 1] = sq:getX() .. "," .. sq:getY() .. ":" .. why
+    end
     local function consider(sq, sameSide)
         if sq == nil or sq == dsq or (osq ~= nil and sq == osq) then return end
-        if axisX and sq:getX() ~= dsq:getX() then return end
-        if axisY and sq:getY() ~= dsq:getY() then return end
+        if sameSideOnly and not sameSide then reject(sq, "sameSideOnly") return end
+        if insideOnly and not sameSide then reject(sq, "insideOnly") return end
+        if not relaxAxis then
+            if axisX and sq:getX() ~= dsq:getX() then reject(sq, "axisX") return end
+            if axisY and sq:getY() ~= dsq:getY() then reject(sq, "axisY") return end
+        end
         local key = sq:getX() .. ":" .. sq:getY() .. ":" .. sq:getZ()
         if seen[key] then return end
         seen[key] = true
         local ok = false
         pcall(function() ok = Bridge.standSquareOk(sq, from) == true end)
-        if not ok then return end
+        if not ok then reject(sq, "standSquareOk") return end
         local dx, dy = sq:getX() + 0.5 - fx, sq:getY() + 0.5 - fy
         local score = dx * dx + dy * dy + (sameSide and 0 or 1000)
         if best == nil or score < bestScore then best, bestScore = sq, score end
     end
     if best == nil then
-        local list = U.doorNeighbors(dsq, true)
+        local list = U.doorNeighbors(dsq, not relaxAxis)
         for i = 1, #list do consider(list[i], preferDsq) end
         if osq ~= nil then
-            list = U.doorNeighbors(osq, true)
+            list = U.doorNeighbors(osq, not relaxAxis)
             for i = 1, #list do consider(list[i], not preferDsq) end
         end
     end
     if best == nil then
-        local noneKey = "none:" .. dsq:getX() .. ":" .. dsq:getY()
+        local fromKey = from ~= nil and (from:getX() .. ":" .. from:getY()) or "-"
+        local noneKey = "none:" .. dsq:getX() .. ":" .. dsq:getY() .. ":" .. fromKey
         if BridgeTask.doorStandKey ~= noneKey then
             BridgeTask.doorStandKey = noneKey
-            U.log(string.format("%s stand none door=%d,%d from=%s nearDsq=%s",
-                label, dsq:getX(), dsq:getY(), U.doorDebugSq(body), tostring(nearDsq)))
+            U.log(string.format("%s stand none door=%d,%d from=%s nearDsq=%s sameSideOnly=%s preferInside=%s rejects=%s",
+                label, dsq:getX(), dsq:getY(), U.doorDebugSq(body), tostring(nearDsq), tostring(sameSideOnly), tostring(preferInside),
+                rejects ~= nil and table.concat(rejects, ";") or "-"))
         end
         return nil
     end
     local stand = { x = best:getX(), y = best:getY(), z = best:getZ() }
-    local standKey = dsq:getX() .. ":" .. dsq:getY() .. ":" .. best:getX() .. ":" .. best:getY() .. ":" .. tostring(nearDsq)
+    local standKey = dsq:getX() .. ":" .. dsq:getY() .. ":" .. best:getX() .. ":" .. best:getY() .. ":" .. tostring(nearDsq) .. ":" .. tostring(sameSideOnly)
     if BridgeTask.doorStandKey ~= standKey then
         BridgeTask.doorStandKey = standKey
-        U.log(string.format("%s stand door=%d,%d opp=%s from=%s chosen=%d,%d side=%s",
+        U.log(string.format("%s stand door=%d,%d opp=%s from=%s chosen=%d,%d side=%s sameSideOnly=%s preferInside=%s",
             label, dsq:getX(), dsq:getY(),
             osq ~= nil and (osq:getX() .. "," .. osq:getY()) or "-",
-            U.doorDebugSq(body), best:getX(), best:getY(), tostring(nearDsq)))
+            U.doorDebugSq(body), best:getX(), best:getY(), tostring(nearDsq), tostring(sameSideOnly), tostring(preferInside)))
     end
     return stand
 end
@@ -1010,6 +1034,18 @@ function U.openingUpdate(body, mode, spec)
             #BridgeTask.queue, spec.debug(body, obj)))
     end
     local open = spec.isOpen(obj)
+    if BridgeTask.phase == "act" and BridgeLog ~= nil and BridgeLog.on()
+            and ((Bridge.tick or 0) % 15) == 0 then
+        local dsq = nil
+        pcall(function() dsq = obj:getSquare() end)
+        BridgeLog.event("task.decide", {
+            job = BridgeTask.jobId, kind = BridgeTask.kind, phase = BridgeTask.phase,
+            current = { x = target.x, y = target.y, z = target.z }, queue_n = #BridgeTask.queue,
+            stand = BridgeTask.openingStand, reach = spec.reach or BridgeTask.DOOR_REACH,
+            dDoor = U.doorDebugDist(body, dsq),
+            body = { x = body:getX(), y = body:getY() }, mode = mode,
+            fn = "BridgeTask.U.openingUpdate" })
+    end
     if (mode == "open" and open) or (mode == "close" and not open) then
         BridgeTask.info = spec.label .. " already " .. tostring(mode)
         return U.openingSkip(spec.label)
@@ -1030,12 +1066,14 @@ function U.openingUpdate(body, mode, spec)
 
     if BridgeTask.phase ~= "act" then
         local stand = nil
+        local preferOutside = false
+        local sameSideOnly = (mode == "close" and spec.label == "door")
         if BridgeTask.openingStandTarget == target and BridgeTask.openingStand ~= nil then
             stand = BridgeTask.openingStand
         else
-            local preferOutside = (mode == "close" and spec.label == "door"
+            preferOutside = (mode == "close" and spec.label == "door"
                 and U.roomExitCount(body, obj) == 0)
-            stand = spec.stand(body, obj, false, preferOutside)
+            stand = spec.stand(body, obj, false, preferOutside, sameSideOnly)
             BridgeTask.openingStand = stand
             BridgeTask.openingStandTarget = target
         end
@@ -1044,7 +1082,9 @@ function U.openingUpdate(body, mode, spec)
             U.log(string.format("no stand square for %s %d,%d,%d", spec.label, target.x, target.y, target.z))
             return U.openingSkip(spec.label)
         end
-        local walk, why = BridgeTask.walkTo(body, stand, spec.reach or BridgeTask.DOOR_REACH, false, true)
+        local walkReach = spec.reach or BridgeTask.DOOR_REACH
+        if sameSideOnly then walkReach = 0.6 end
+        local walk, why = BridgeTask.walkTo(body, stand, walkReach, false, true)
         local dsq = nil
         pcall(function() dsq = obj:getSquare() end)
         local standSq = nil
@@ -1056,7 +1096,32 @@ function U.openingUpdate(body, mode, spec)
                 spec.label, tostring(walk), tostring(why), U.doorDebugDist(body, dsq), U.doorDebugDist(body, standSq),
                 U.doorDebugSq(body), stand.x, stand.y, spec.debug(body, obj)))
         end
+        if BridgeLog ~= nil and BridgeLog.on() then
+            local now = Bridge.tick or 0
+            local sig = tostring(target.x) .. "," .. tostring(target.y) .. "|" .. tostring(BridgeTask.phase)
+                .. "|" .. tostring(stand.x) .. "," .. tostring(stand.y) .. "|" .. tostring(walk)
+            if BridgeTask.decideSig ~= sig or (now % 15) == 0 then
+                BridgeTask.decideSig = sig
+                local red = BridgeData.owner()
+                BridgeLog.event("task.decide", {
+                    job = BridgeTask.jobId, kind = BridgeTask.kind, phase = BridgeTask.phase,
+                    current = { x = target.x, y = target.y, z = target.z }, queue_n = #BridgeTask.queue,
+                    stand = stand, side = preferOutside and "outside" or "inside",
+                    sameSideOnly = sameSideOnly,
+                    reach = walkReach,
+                    dDoor = U.doorDebugDist(body, dsq), dStand = U.doorDebugDist(body, standSq),
+                    body = { x = body:getX(), y = body:getY() },
+                    player = red ~= nil and { x = red:getX(), y = red:getY() } or nil,
+                    mode = mode, walk = walk, why = why, fn = "BridgeTask.U.openingUpdate" })
+            end
+        end
         if walk == "unreachable" then
+            if sameSideOnly then
+                BridgeTask.info = "door close skipped: no same-side stand"
+                U.log(string.format("door close skipped: no same-side stand door=%d,%d body=%s",
+                    target.x, target.y, U.doorDebugSq(body)))
+                return U.openingSkip(spec.label)
+            end
             local farStand = spec.stand(body, obj, true)
             if farStand ~= nil and (farStand.x ~= stand.x or farStand.y ~= stand.y) then
                 BridgeTask.openingStand = farStand
@@ -1065,6 +1130,11 @@ function U.openingUpdate(body, mode, spec)
                 if walk2 ~= "unreachable" then
                     U.log(string.format("%s stand fallback far=%d,%d walk=%s why=%s",
                         spec.label, farStand.x, farStand.y, tostring(walk2), tostring(why2)))
+                    if BridgeLog ~= nil and BridgeLog.on() then
+                        BridgeLog.event("task.fallback", { old_stand = stand, new_stand = farStand,
+                            walk = walk2, why = why2, route_status = BridgeRoute.state.status,
+                            reason = "farStand", fn = "BridgeTask.U.openingUpdate" })
+                    end
                     stand = farStand
                     walk = walk2
                     why = why2
@@ -1074,9 +1144,45 @@ function U.openingUpdate(body, mode, spec)
         end
         if walk == "unreachable" then
             U.log(spec.label .. " drop why=" .. tostring(why))
+            if BridgeLog ~= nil and BridgeLog.on() then
+                BridgeLog.event("task.fallback", { old_stand = stand, walk = walk, why = why,
+                    route_status = BridgeRoute.state.status, reason = "drop",
+                    fn = "BridgeTask.U.openingUpdate" })
+            end
             return BridgeTask.dropTarget(why)
         end
-        if walk == "walking" then return true end
+        local actReady = (walk ~= "walking")
+        if sameSideOnly then
+            local bodySq = nil
+            pcall(function() bodySq = body:getCurrentSquare() end)
+            if bodySq ~= nil and dsq ~= nil and bodySq == dsq then
+                BridgeTask.info = "door close skipped: in doorway"
+                U.log(string.format("door close skipped: in doorway door=%d,%d body=%s",
+                    target.x, target.y, U.doorDebugSq(body)))
+                return U.openingSkip(spec.label)
+            end
+            local osq = nil
+            pcall(function() osq = obj:getOppositeSquare() end)
+            local bodySide = U.sameDoorSide(bodySq, dsq, osq)
+            local standSide = U.sameDoorSide(standSq, dsq, osq)
+            local onStandSide = (bodySide ~= nil and standSide ~= nil and bodySide == standSide)
+            local dDoor = U.doorDebugDist(body, dsq)
+            local doorReach = (BridgeMove ~= nil and BridgeMove.DOOR ~= nil
+                and BridgeMove.DOOR.REACH) or 2.3
+            if bodySq ~= nil and dsq ~= nil and onStandSide and dDoor <= doorReach then
+                actReady = true
+            end
+            if actReady then
+                local unsafe = U.closeUnsafe(body, obj)
+                if unsafe ~= nil then
+                    BridgeTask.info = "door close skipped: " .. unsafe
+                    U.log(string.format("door close skipped: %s door=%d,%d body=%s",
+                        unsafe, target.x, target.y, U.doorDebugSq(body)))
+                    return U.openingSkip(spec.label)
+                end
+            end
+        end
+        if not actReady then return true end
         U.log(string.format("%s act start mode=%s door=%d,%d dDoor=%.2f dStand=%.2f body=%s stand=%d,%d %s",
             spec.label, tostring(mode), target.x, target.y, U.doorDebugDist(body, dsq), U.doorDebugDist(body, standSq),
             U.doorDebugSq(body), stand.x, stand.y, spec.debug(body, obj)))
@@ -1212,32 +1318,59 @@ function U.roomExitCount(body, skipDoor)
 end
 
 
+function U.sameDoorSide(sq, dsq, osq)
+    if sq == nil or dsq == nil or osq == nil then return nil end
+    local dd = (sq:getX() - dsq:getX()) ^ 2 + (sq:getY() - dsq:getY()) ^ 2
+    local od = (sq:getX() - osq:getX()) ^ 2 + (sq:getY() - osq:getY()) ^ 2
+    return dd <= od
+end
+
+
+function U.closeUnsafe(body, obj)
+    if body == nil or obj == nil then return nil end
+    local bodySq = nil
+    pcall(function() bodySq = body:getCurrentSquare() end)
+    if bodySq == nil then return nil end
+    local dsq, osq = nil, nil
+    pcall(function() dsq = obj:getSquare(); osq = obj:getOppositeSquare() end)
+    local onDoor = (dsq ~= nil and bodySq == dsq) or (osq ~= nil and bodySq == osq)
+    local nextT = BridgeTask.queue[1]
+    if nextT ~= nil and not onDoor and dsq ~= nil and osq ~= nil then
+        local nsq = nil
+        pcall(function() nsq = getCell():getGridSquare(nextT.x, nextT.y, nextT.z) end)
+        if nsq ~= nil then
+            local br, nr, dr, orr = nil, nil, nil, nil
+            pcall(function() br = bodySq:getRoom() end)
+            pcall(function() nr = nsq:getRoom() end)
+            pcall(function() dr = dsq:getRoom() end)
+            pcall(function() orr = osq:getRoom() end)
+            if br ~= nil and nr ~= nil and dr ~= nil and orr ~= nil then
+                local separates = (br == dr and nr == orr) or (br == orr and nr == dr)
+                if separates then return "next target beyond" end
+            end
+        end
+    end
+    local exits = U.roomExitCount(body, obj)
+    if exits == 0 then
+        local br, pr = nil, nil
+        local red = BridgeData ~= nil and BridgeData.owner() or nil
+        pcall(function() br = bodySq:getRoom() end)
+        if red ~= nil then pcall(function() pr = red:getCurrentSquare():getRoom() end) end
+        if br ~= pr then return "only exit, player away" end
+    end
+    return nil
+end
+
+
 U.doorSpec = {
     label = "door",
     reach = BridgeTask.DOOR_REACH,
     objectAt = function(target) return BridgeTask.doorObjectAt(target) end,
     isOpen = function(obj) return BridgeTask.doorOpen(obj) end,
     blocked = function(obj, mode) return BridgeTask.doorBlocked(obj, mode) end,
-    stand = function(body, obj, farSide, preferOutside) return BridgeTask.doorStand(body, obj, "door", farSide, preferOutside) end,
+    stand = function(body, obj, farSide, preferOutside, sameSideOnly) return BridgeTask.doorStand(body, obj, "door", farSide, preferOutside, sameSideOnly) end,
     beginAct = function(body, obj) pcall(function() body:setBumpType("Stand") end) end,
     finishAct = function(body, obj, mode)
-        if mode == "close" then
-            local exits = U.roomExitCount(body, obj)
-            if exits == 0 then
-                local br, pr = nil, nil
-                local red = BridgeData ~= nil and BridgeData.owner() or nil
-                pcall(function() br = body:getCurrentSquare():getRoom() end)
-                if red ~= nil then pcall(function() pr = red:getCurrentSquare():getRoom() end) end
-                if br ~= pr then
-                    BridgeTask.info = "kept open: only exit, player away"
-                    local dsq = nil
-                    pcall(function() dsq = obj:getSquare() end)
-                    U.log(string.format("door kept open: only exit, player away at %s",
-                        dsq ~= nil and (dsq:getX() .. "," .. dsq:getY()) or "?"))
-                    return false
-                end
-            end
-        end
         return BridgeMove.toggleDoor(body, obj)
     end,
     handTicks = function(mode)
@@ -1333,10 +1466,10 @@ end
 
 
 function U.curtainStand(body, obj)
-    local stand = BridgeTask.doorStand(body, obj, "curtain")
+    local stand = BridgeTask.doorStand(body, obj, "curtain", nil, nil, nil, true)
     if stand == nil and BridgeDoors ~= nil and type(BridgeDoors.curtainParent) == "function" then
         local parent = BridgeDoors.curtainParent(obj)
-        if parent ~= nil then stand = BridgeTask.doorStand(body, parent, "curtain") end
+        if parent ~= nil then stand = BridgeTask.doorStand(body, parent, "curtain", nil, nil, nil, true) end
     end
     return stand
 end
@@ -4158,7 +4291,7 @@ function BridgeTask.finish()
                     Bridge.speak(opening and "WindowsOpenDone" or "WindowsCloseDone")
                 end
             else
-                Bridge.speak("JobDone")
+                Bridge.speak("JobNoPath")
             end
         elseif finishKind == "sit" or finishKind == "lay" or finishKind == "exercise" or finishKind == "washSink"
                 or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor"

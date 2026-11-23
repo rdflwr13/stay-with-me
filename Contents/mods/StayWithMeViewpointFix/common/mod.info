@@ -1,0 +1,10 @@
+name=Stay With Me - Viewpoint Texture Fix
+id=BridgeViewpointFix
+author=Albrecht
+description=Optional fix for the companion's face texture when Viewpoint's layered looks are enabled. Requires ZombieBuddy, Viewpoint and Stay With Me.
+modversion=1.0.0
+versionMin=42.22
+require=\ZombieBuddy,\Viewpoint,\Bridge
+ZBVersionMin=2.3.0
+javaJarFile=media/java/client/StayWithMeViewpointFix.jar
+javaPkgName=swmviewpointfix

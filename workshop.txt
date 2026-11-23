@@ -104,8 +104,11 @@ description=[list]
 description=[*][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3820590495]PZ Relationship (Build 42)[/url]: hugs, kisses, dancing.
 description=[*][url=https://steamcommunity.com/workshop/filedetails/?id=3592172476]Take A Bath And Shower[/url]: lets her take a shower.
 description=[/list]
-description=
-description=[b][url=https://pastebin.com/WiNcSiyB]PZ Optimization Settings For Stay With Me[/url][/b]
+description=
+description=[b]Optional:[/b] if her face looks wrong with Viewpoint, enable [b]Stay With Me - Viewpoint Texture Fix[/b].
+
+description=
+description=[b][url=https://pastebin.com/WiNcSiyB]PZ Optimization Settings For Stay With Me[/url][/b]
 description=
 description=[quote][url=https://docs.google.com/spreadsheets/d/e/2PACX-1vS5x5vz82DYmNK4wsiMYXSYctAzISmRRCgq_FFEIWZ6JsRRjhcDRa-TBd7Hwmge7dQVp-dw4qk2P2dc/pubhtml]Full list of compatible mods[/url][/quote]
 description=

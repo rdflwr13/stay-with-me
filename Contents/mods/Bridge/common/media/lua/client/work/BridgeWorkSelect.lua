@@ -723,13 +723,11 @@ function BridgeWorkSelect.corpsesIn(b)
     local scanned, raw, dup, animal, burnSq = 0, 0, 0, 0, 0
     for x = b.x1, b.x2 do
         for y = b.y1, b.y2 do
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
+            local sq = getCell():getGridSquare(x, y, b.z)
             if sq ~= nil then
                 scanned = scanned + 1
                 pcall(function()
-                    local burn = false
-                    pcall(function() burn = sq:has(IsoFlagType.burning) == true end)
+                    local burn = sq:has(IsoFlagType.burning) == true
                     if burn then burnSq = burnSq + 1 return end
                     local mv = sq:getStaticMovingObjects()
                     local n = (mv and mv:size() or 0)
@@ -750,15 +748,17 @@ function BridgeWorkSelect.corpsesIn(b)
                             end
                         end
                     end
-                    if sqRaw > 0 then
+                    if sqRaw > 0 and BridgeLog ~= nil and BridgeLog.on() then
                         log(string.format("corpsesIn sq=%d,%d mv=%d dead=%d kept=%d", x, y, n, sqRaw, sqKept))
                     end
                 end)
             end
         end
     end
-    log(string.format("corpsesIn rect=%d,%d..%d,%d z%d squares=%d dead=%d kept=%d dup=%d animal=%d burnSq=%d",
-        b.x1, b.y1, b.x2, b.y2, b.z, scanned, raw, #list, dup, animal, burnSq))
+    if BridgeLog ~= nil and BridgeLog.on() then
+        log(string.format("corpsesIn rect=%d,%d..%d,%d z%d squares=%d dead=%d kept=%d dup=%d animal=%d burnSq=%d",
+            b.x1, b.y1, b.x2, b.y2, b.z, scanned, raw, #list, dup, animal, burnSq))
+    end
     return list
 end
 
@@ -835,7 +835,7 @@ function BridgeWorkSelect.doorsIn(b, mode)
         if open then openCount = openCount + 1 end
         local idx = -1
         pcall(function() idx = door:getObjectIndex() end)
-        if dsq ~= nil then
+        if dsq ~= nil and BridgeLog ~= nil and BridgeLog.on() then
             log(string.format("doorFound @%d,%d open=%s idx=%d mode=%s", dsq:getX(), dsq:getY(),
                 tostring(open), idx, tostring(mode)))
         end
@@ -852,32 +852,30 @@ function BridgeWorkSelect.doorsIn(b, mode)
     local cell = getCell()
     for x = b.x1 - 1, b.x2 + 1 do
         for y = b.y1 - 1, b.y2 + 1 do
-            local sq = nil
-            pcall(function() sq = cell:getGridSquare(x, y, b.z) end)
+            local sq = cell:getGridSquare(x, y, b.z)
             if sq ~= nil then
                 scanned = scanned + 1
                 pcall(function()
                     local objs = sq:getObjects()
                     if objs ~= nil then
-                        for i = 0, objs:size() - 1 do
+                        local n = objs:size()
+                        for i = 0, n - 1 do
                             local o = objs:get(i)
                             if o ~= nil and BridgeDoors ~= nil and BridgeDoors.isDoor(o) then add(o, sq) end
                         end
                     end
-                end)
-                pcall(function()
-                    local objs = sq:getSpecialObjects()
+                    objs = sq:getSpecialObjects()
                     if objs ~= nil then
-                        for i = 0, objs:size() - 1 do
+                        local n = objs:size()
+                        for i = 0, n - 1 do
                             local o = objs:get(i)
                             if o ~= nil and BridgeDoors ~= nil and BridgeDoors.isDoor(o) then add(o, sq) end
                         end
                     end
-                end)
-                pcall(function()
-                    local objs = sq:getWorldObjects()
+                    objs = sq:getWorldObjects()
                     if objs ~= nil then
-                        for i = 0, objs:size() - 1 do
+                        local n = objs:size()
+                        for i = 0, n - 1 do
                             local o = objs:get(i)
                             if o ~= nil and BridgeDoors ~= nil and BridgeDoors.isDoor(o) then add(o, sq) end
                         end
@@ -886,8 +884,10 @@ function BridgeWorkSelect.doorsIn(b, mode)
             end
         end
     end
-    log(string.format("doorsIn rect=%d,%d..%d,%d z%d squares=%d mode=%s found=%d open=%d kept=%d",
-        b.x1, b.y1, b.x2, b.y2, b.z, scanned, tostring(mode), found, openCount, #list))
+    if BridgeLog ~= nil and BridgeLog.on() then
+        log(string.format("doorsIn rect=%d,%d..%d,%d z%d squares=%d mode=%s found=%d open=%d kept=%d",
+            b.x1, b.y1, b.x2, b.y2, b.z, scanned, tostring(mode), found, openCount, #list))
+    end
     return list
 end
 

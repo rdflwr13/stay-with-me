@@ -7017,7 +7017,7 @@ CFG.SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follo
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, livingworldselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
     exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, sound = true, meet = true,
-    perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true, farmdebug = true,
+    perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true, logdump = true, farmdebug = true,
     look = true, take = true, sizeselftest = true, chores = true, choresselftest = true,
     questsurvivorsselftest = true, questsurvivors = true, corpsespot = true }
 
@@ -7686,6 +7686,10 @@ function Bridge.run(line)
         if mode == "on" then Bridge.eventsOn = true return "events on" end
         if mode == "off" then Bridge.eventsOn = false Bridge.eventBuf = {} return "events off" end
         return "events on|off"
+    end
+    if cmd == "logdump" then
+        if BridgeLog == nil or type(BridgeLog.dump) ~= "function" then return "logdump: no logger" end
+        return BridgeLog.dump()
     end
 
     if cmd == "mortal" then
