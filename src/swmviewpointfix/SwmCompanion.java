@@ -13,8 +13,11 @@ public final class SwmCompanion {
 
     private static volatile Object requested;
     private static volatile Object companion;
+    private static volatile Object requestedPuppet;
+    private static volatile Object puppet;
     private static volatile Object forced;
     private static volatile boolean announced;
+    private static volatile boolean announcedPuppet;
     private static volatile boolean disabled;
     private static volatile Field dueField;
     private static volatile Map<?, ?> layeredMap;
@@ -32,12 +35,17 @@ public final class SwmCompanion {
         return companion;
     }
 
+    public static boolean isCompanion(Object c) {
+        return c != null && (c == companion || c == puppet);
+    }
+
     public static void updateFromGame() {
         if (disabled) {
             return;
         }
         try {
-            requested = resolve();
+            requested = resolveBody();
+            requestedPuppet = resolvePuppet();
         } catch (Throwable t) {
             disable(t);
         }
@@ -49,17 +57,28 @@ public final class SwmCompanion {
         }
         try {
             Object current = requested;
-            if (current == companion) {
-                return;
+            if (current != companion) {
+                if (companion != null) {
+                    logLayered(companion);
+                    restore(companion);
+                }
+                companion = current;
+                if (current != null && !announced) {
+                    announced = true;
+                    System.out.println(PREFIX + "companion registered");
+                }
             }
-            if (companion != null) {
-                logLayered(companion);
-                restore(companion);
-            }
-            companion = current;
-            if (current != null && !announced) {
-                announced = true;
-                System.out.println(PREFIX + "companion registered");
+            Object currentPuppet = requestedPuppet;
+            if (currentPuppet != puppet) {
+                if (puppet != null) {
+                    logLayered(puppet);
+                    restore(puppet);
+                }
+                puppet = currentPuppet;
+                if (currentPuppet != null && !announcedPuppet) {
+                    announcedPuppet = true;
+                    System.out.println(PREFIX + "seat puppet registered");
+                }
             }
         } catch (Throwable t) {
             disable(t);
@@ -98,11 +117,18 @@ public final class SwmCompanion {
         }
     }
 
-    private static Object resolve() {
+    private static Object resolveBody() {
         KahluaTable env = LuaManager.env;
         Object bridge = env == null ? null : env.rawget("Bridge");
         Object body = bridge instanceof KahluaTable ? ((KahluaTable) bridge).rawget("body") : null;
         return body instanceof IsoZombie ? body : null;
+    }
+
+    private static Object resolvePuppet() {
+        KahluaTable env = LuaManager.env;
+        Object seat = env == null ? null : env.rawget("BridgeSeatPuppet");
+        Object p = seat instanceof KahluaTable ? ((KahluaTable) seat).rawget("p") : null;
+        return p instanceof IsoZombie ? p : null;
     }
 
     public static void restore(Object o) {
@@ -176,6 +202,8 @@ public final class SwmCompanion {
         disabled = true;
         companion = null;
         requested = null;
+        puppet = null;
+        requestedPuppet = null;
         System.out.println(PREFIX + "disabled: " + t);
     }
 }

@@ -18,7 +18,7 @@ public final class Patch_CharacterLooks {
             bound = true;
             System.out.println(PREFIX + "patch active on viewpoint.models.CharacterLooks.ready");
         }
-        if (SwmCompanion.isDisabled() || c == null || c != SwmCompanion.companion()) {
+        if (SwmCompanion.isDisabled() || c == null || !SwmCompanion.isCompanion(c)) {
             companionCall = null;
             return;
         }
