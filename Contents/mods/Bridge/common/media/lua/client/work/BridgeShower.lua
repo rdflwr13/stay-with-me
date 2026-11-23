@@ -9,6 +9,38 @@ BridgeShower.COOLDOWN_HOURS = 24
 BridgeShower.WATER_MIN = 5
 BridgeShower.WATER_MAX = 15
 
+function BridgeShower.cooldownHours()
+    local v = 24
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        v = BridgeData.sandboxNumber("ShowerCooldown", 24, 0, 24)
+    end
+    return v
+end
+
+function BridgeShower.waterUsage()
+    local v = 10
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        v = BridgeData.sandboxNumber("ShowerWaterUsage", 10, 0, 50)
+    end
+    return v
+end
+
+function BridgeShower.bathCooldownHours()
+    local v = 24
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        v = BridgeData.sandboxNumber("BathCooldown", 24, 0, 24)
+    end
+    return v
+end
+
+function BridgeShower.bathWaterUsage()
+    local v = 10
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        v = BridgeData.sandboxNumber("BathWaterUsage", 10, 0, 50)
+    end
+    return v
+end
+
 BridgeShower.BUMP_UNDRESS = "ShowerUndress"
 BridgeShower.BUMP_DRESS = "ShowerDress"
 BridgeShower.BUMP_START = "ShowerStart"
@@ -96,7 +128,7 @@ function BridgeShower.setCooldown(rec, hours)
     rec = rec or (Bridge ~= nil and Bridge.store) or nil
     local now = worldHours()
     if now == nil then return end
-    local h = tonumber(hours) or BridgeShower.COOLDOWN_HOURS
+    local h = tonumber(hours) or BridgeShower.cooldownHours()
     local untilH = now + h
     if rec ~= nil then rec.showerUntil = untilH end
     if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
@@ -142,6 +174,69 @@ function BridgeShower.setProgress(rec, v)
     end
 end
 
+
+
+function BridgeShower.bathCooldownLeft(rec)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    if rec == nil then return 0 end
+    local untilH = tonumber(rec.bathUntil)
+    local now = worldHours()
+    if untilH == nil or now == nil then return 0 end
+    local left = untilH - now
+    if left < 0 then left = 0 end
+    return left
+end
+
+
+function BridgeShower.setBathCooldown(rec, hours)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    local now = worldHours()
+    if now == nil then return end
+    local h = tonumber(hours) or BridgeShower.bathCooldownHours()
+    local untilH = now + h
+    if rec ~= nil then rec.bathUntil = untilH end
+    if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { bathUntil = untilH }) end)
+    end
+    log(string.format("set bath cooldown until %.2f (%.0fh)", untilH, h))
+end
+
+
+function BridgeShower.resetBathCooldown(rec)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    if rec ~= nil then rec.bathUntil = nil end
+    if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { bathUntil = 0 }) end)
+    end
+    log("bath cooldown cleared")
+end
+
+
+function BridgeShower.bathReady(rec)
+    if BridgeShower.bathCooldownLeft(rec) > 0 then return false, "cooldown" end
+    return true
+end
+
+
+function BridgeShower.bathProgress(rec)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    if rec == nil then return 0 end
+    local v = tonumber(rec.bathProgress) or 0
+    if v < 0 then v = 0 elseif v > 1 then v = 1 end
+    return v
+end
+
+
+function BridgeShower.setBathProgress(rec, v)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    if rec == nil then return end
+    v = tonumber(v) or 0
+    if v < 0 then v = 0 elseif v > 1 then v = 1 end
+    rec.bathProgress = v
+    if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { bathProgress = v }) end)
+    end
+end
 
 
 function BridgeShower.hasPreShower()

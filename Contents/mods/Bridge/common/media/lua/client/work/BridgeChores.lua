@@ -35,6 +35,7 @@ local ROWS = {
     corpses = { kind = "moveCorpses", group = "moveCorpses", flag = "MOVE_CORPSES_ENABLED", cooldownH = 1, weight = 2 },
     wash = { idle = true, cooldownH = 1 },
     shower = { idle = true },
+    bath = { idle = true },
     exercise = { idle = true },
     sit = { idle = true },
     roam = { idle = true },
@@ -91,6 +92,12 @@ local S = {
     showerAt = 0,
     showerObj = nil,
     showerSq = nil,
+    bathKey = nil,
+    bathAt = 0,
+    bathObj = nil,
+    bathTub = nil,
+    bathSq = nil,
+    bathFacing = nil,
 }
 
 local function log(text)
@@ -125,7 +132,7 @@ local KIND_ROW = {
     tendCrops = "tend", harvestCrops = "harvest",
     tendAnimals = "animals", animalCare = "animals", petAnimals = "animals",
     fillTroughs = "troughs", cleanUp = "clean", clearPlants = "yard",
-    chopTree = "chop", deposit = "deposit", shower = "shower", exercise = "exercise",
+    chopTree = "chop", deposit = "deposit", shower = "shower", bath = "bath", exercise = "exercise",
     wash = "wash", sit = "sit", roam = "roam",
     closeDoors = "closeDoors", closeWindows = "closeWindows",
 }
@@ -149,6 +156,8 @@ function BridgeChores.noteManualStop(kind)
     if id == "roam" then S.forceRoam = false end
     if id == "shower" and BridgeShower ~= nil and type(BridgeShower.setCooldown) == "function" then
         pcall(BridgeShower.setCooldown, Bridge.store, MANUAL_STOP_HOURS)
+    elseif id == "bath" and BridgeShower ~= nil and type(BridgeShower.setBathCooldown) == "function" then
+        pcall(BridgeShower.setBathCooldown, Bridge.store, MANUAL_STOP_HOURS)
     elseif id == "exercise" and BridgeExercise ~= nil and type(BridgeExercise.setCooldown) == "function" then
         pcall(BridgeExercise.setCooldown, Bridge.store, MANUAL_STOP_HOURS)
     end
@@ -1210,6 +1219,50 @@ local function showerTarget(body, h)
     return nil
 end
 
+local function bathTarget(body, h)
+    if BridgeBath == nil or type(BridgeBath.findNearest) ~= "function" then
+        log("bath search result=nil reason=BridgeBath missing")
+        return nil
+    end
+    local z = bodyZ(body)
+    local key = BridgeHome.homeKey(h) .. ":" .. tostring(z)
+    local now = nowMs()
+    if S.bathKey == key and (now - (S.bathAt or 0)) < 30000 then
+        log(string.format("bath cache z=%d found=%s", z, tostring(S.bathObj ~= nil)))
+        return S.bathObj, S.bathTub, S.bathSq, S.bathFacing
+    end
+    S.bathKey, S.bathAt, S.bathObj, S.bathTub, S.bathSq, S.bathFacing = key, now, nil, nil, nil, nil
+    local ok = false
+    pcall(function() ok = BridgeBath.active() == true end)
+    if not ok then
+        log(string.format("bath search z=%d result=nil reason=no tabas", z))
+        return nil
+    end
+    local all = BridgeHome.allFloorsOn()
+    local floors = BridgeHome.includedFloors(h, all)
+    log(string.format("bath search z=%d tabas=%s all=%s floors=%s range=%s..%s rect=%d,%d..%d,%d",
+        z, tostring(ok), tostring(all), table.concat(floors, ","),
+        tostring(h.z1), tostring(h.z2), h.x, h.y, h.x + h.w - 1, h.y + h.h - 1))
+    for pass = 1, 2 do
+        for i = 1, #floors do
+            local fz = floors[i]
+            if (pass == 1 and fz == z) or (pass == 2 and fz ~= z and floorReachable(h, z, fz)) then
+                local obj, tub, sq, facing = BridgeBath.findNearest(nil, nil, rectFor(h, fz))
+                local at = "-"
+                if sq ~= nil then at = tostring(sq:getX()) .. "," .. tostring(sq:getY()) end
+                log(string.format("bath scan pass=%d fz=%d found=%s at=%s",
+                    pass, fz, tostring(obj ~= nil), at))
+                if obj ~= nil then
+                    S.bathObj, S.bathTub, S.bathSq, S.bathFacing = obj, tub, sq, facing
+                    return obj, tub, sq, facing
+                end
+            end
+        end
+    end
+    log("bath search result=nil reason=no fixture on eligible floors")
+    return nil
+end
+
 local function pickRoam(body, h)
     local cell = nil
     pcall(function() cell = getCell() end)
@@ -1418,6 +1471,28 @@ local function startIdle(id, body, h, now, force)
         return false, res
     end
 
+    if id == "bath" then
+        if BridgeBath == nil then return false, "unavailable" end
+        if force ~= true then
+            local ready = false
+            pcall(function() ready = BridgeShower.bathReady(Bridge.store) == true end)
+            if not ready then return false, "cooldown" end
+        end
+        local obj, tub, sq, facing = bathTarget(body, h)
+        if obj == nil then return false, "no bath" end
+        local res = nil
+        pcall(function() res = BridgeBath.startBath(obj, tub, nil, sq, facing) end)
+        if res == "started" then
+            startOk("bath")
+            S.running = { row = "bath", kind = "bath", idle = true, startedAt = now,
+                done0 = BridgeTask.doneCount or 0, need = 0, changedAt = now, sig = nil,
+                jobId = BridgeTask.jobId }
+            return true, "started"
+        end
+        startFail("bath", res)
+        return false, res
+    end
+
     if id == "exercise" then
         if BridgeExercise == nil then return false, "unavailable" end
         if force ~= true then
@@ -1511,7 +1586,7 @@ local function idleTargets(body, h)
         S.forceRoam = false
     end
 
-    local order = { "wash", "shower", "exercise", "sit", "roam" }
+    local order = { "wash", "shower", "bath", "exercise", "sit", "roam" }
     for i = 1, #order do
         local id = order[i]
         local allowed = not (id == "sit" and S.seatReady ~= true)
@@ -1892,6 +1967,13 @@ local function computeStatus(id)
             local cd = 0
             pcall(function() cd = BridgeShower.cooldownLeft(rec) end)
             if cd > 0 then return tr("ChoreCooldown", string.format("%.1f", cd)) end
+        elseif id == "bath" then
+            local tabas = false
+            pcall(function() tabas = BridgeBath ~= nil and BridgeBath.active() == true end)
+            if not tabas then return tr("ChoreNoBath") end
+            local cd = 0
+            pcall(function() cd = BridgeShower.bathCooldownLeft(rec) end)
+            if cd > 0 then return tr("ChoreCooldown", string.format("%.1f", cd)) end
         elseif id == "exercise" then
             local cd = 0
             pcall(function() cd = BridgeExercise.cooldownLeft(rec) end)
@@ -2019,11 +2101,13 @@ function BridgeChores.debugReset(scope)
         S.nextDecisionAt = 0
         S.seatKey, S.seatList = nil, nil
         S.showerKey, S.showerObj, S.showerSq = nil, nil, nil
+        S.bathKey, S.bathObj, S.bathTub, S.bathSq, S.bathFacing = nil, nil, nil, nil, nil
     elseif scope == "idle" then
         S.nextIdleAt = 0
         S.seatKey, S.seatList = nil, nil
         S.showerKey, S.showerObj, S.showerSq = nil, nil, nil
-        for _, id in ipairs({ "wash", "shower", "exercise", "sit", "roam" }) do clearRow(id) end
+        S.bathKey, S.bathObj, S.bathTub, S.bathSq, S.bathFacing = nil, nil, nil, nil, nil
+        for _, id in ipairs({ "wash", "shower", "bath", "exercise", "sit", "roam" }) do clearRow(id) end
     elseif BridgeData.CHORE_SET[scope] then
         clearRow(scope)
     else
@@ -2047,6 +2131,7 @@ function BridgeChores.debugRescan(scope)
         S.statusCache[scope] = nil
         S.seatKey, S.seatList = nil, nil
         S.showerKey, S.showerObj, S.showerSq = nil, nil, nil
+        S.bathKey, S.bathObj, S.bathTub, S.bathSq, S.bathFacing = nil, nil, nil, nil, nil
         log("debug rescan " .. scope)
         return "rescan " .. scope
     end
@@ -2055,6 +2140,7 @@ function BridgeChores.debugRescan(scope)
     S.homeKey = keepHome
     S.seatKey, S.seatList = nil, nil
     S.showerKey, S.showerObj, S.showerSq = nil, nil, nil
+    S.bathKey, S.bathObj, S.bathTub, S.bathSq, S.bathFacing = nil, nil, nil, nil, nil
     log("debug rescan all")
     return "rescan all"
 end

@@ -1826,6 +1826,8 @@ function BridgeMenu.cancelEntry()
         key = "CancelExercise"
     elseif task and BridgeTask.kind == "shower" then
         key = "CancelShower"
+    elseif task and BridgeTask.kind == "bath" then
+        key = "CancelBath"
     end
     return { key = key, handler = BridgeMenu.onCancelTask }
 end
@@ -2914,6 +2916,45 @@ function BridgeMenu.addShowerAction(menu, showerObj)
                 opt.notAvailable = true
                 tip(opt, "The shower has no water.")
             end
+        end
+    end
+end
+
+
+local function bathLabel()
+    local text = getText("IGUI_NotAlone_BathTake")
+    if text == nil or text == "" or text == "IGUI_NotAlone_BathTake" then text = "Take a bath" end
+    return text
+end
+
+
+function BridgeMenu.onBathThis(faucetObj, tubObj, sink)
+    if BridgeTask == nil or BridgeBath == nil then return end
+    local res = nil
+    pcall(function() res = BridgeBath.startBath(faucetObj, tubObj, sink) end)
+    log("bath from menu: " .. tostring(res))
+end
+
+
+function BridgeMenu.addBathAction(menu, faucetObj, sink)
+    if menu == nil or faucetObj == nil then return end
+    local tub = nil
+    pcall(function() tub = BridgeBath.tubOf(faucetObj) end)
+    local opt = menu:addOption(bathLabel(), faucetObj, function(obj) BridgeMenu.onBathThis(obj, tub, sink) end)
+    if BridgeTask ~= nil and BridgeTask.active then
+        opt.notAvailable = true
+    else
+        local cd = 0
+        pcall(function() cd = BridgeShower.bathCooldownLeft(nil) end)
+        if cd ~= nil and cd > 0 then
+            opt.notAvailable = true
+            tip(opt, string.format("She only bathes once a day (%.0fh left).", cd))
+        elseif BridgeShower ~= nil and BridgeShower.occupied ~= nil and BridgeShower.occupied(tub or faucetObj) then
+            opt.notAvailable = true
+            tip(opt, "The bath is already in use.")
+        elseif not BridgeBath.bathUsable(faucetObj) then
+            opt.notAvailable = true
+            tip(opt, "The bath has no water.")
         end
     end
 end

@@ -4317,7 +4317,7 @@ end
 
 function Bridge.genderTaskBusy()
     if BridgeTask ~= nil and BridgeTask.active == true then
-        if BridgeTask.kind == "shower" then return true, "shower" end
+        if BridgeTask.kind == "shower" or BridgeTask.kind == "bath" then return true, "shower" end
         return true, "job"
     end
     if BridgeWash ~= nil and BridgeWash.state ~= nil and BridgeWash.state ~= "idle" then return true, "shower" end
@@ -5625,7 +5625,7 @@ local function updateZombieBody(body)
             Bridge.transferSnapPending = nil
             transferSnap = true
         end
-        local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
+        local showering = BridgeTask ~= nil and BridgeTask.active == true and (BridgeTask.kind == "shower" or BridgeTask.kind == "bath")
         local transferBusy = type(BridgeInventory.herTransferBusy) == "function" and BridgeInventory.herTransferBusy()
         local busy = showering or transferBusy
         local wantSnap = transferSnap or itemsDirtyDue or changed or fullDue
@@ -7038,7 +7038,7 @@ CFG.SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follo
     gunselftest = true, targetselftest = true, banditselftest = true, guntalk = true, zscan = true, zsselftest = true, ffselftest = true, bathselftest = true,
     homeselftest = true, sleepselftest = true, sleepfix = true, depositselftest = true,
     friendselftest = true, knoxselftest = true, knoxsurvivorsselftest = true, livingworldselftest = true, theodoreselftest = true, thecompat = true, light = true, sight = true,
-    exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, sound = true, meet = true,
+    exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, bath = true, sound = true, meet = true,
     perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true, logdump = true, farmdebug = true,
     look = true, take = true, sizeselftest = true, chores = true, choresselftest = true,
     questsurvivorsselftest = true, questsurvivors = true, corpsespot = true }
@@ -7547,6 +7547,33 @@ function Bridge.run(line)
         if BridgeTask ~= nil and BridgeTask.kind == "shower" then phase = tostring(BridgeTask.showerPhase) end
         return string.format("showering=%s phase=%s cooldown_h=%.1f tabas=%s", active, phase, cd or 0,
             tostring(BridgeShower.isTabas()))
+    end
+
+    if cmd == "bath" then
+        if BridgeBath == nil then return "no bath module" end
+        local sub = parts[3]
+        if sub == "reset" or sub == "clear" then
+            BridgeShower.resetBathCooldown()
+            return "bath cooldown cleared"
+        end
+        if sub == "stop" or sub == "off" or sub == "cancel" then
+            if BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "bath" then
+                return "bath " .. tostring(BridgeTask.cancel("command"))
+            end
+            return "not bathing"
+        end
+        if sub == "start" then
+            local faucet, tub, sq, facing = BridgeBath.findNearest()
+            if faucet == nil then return "no bath nearby" end
+            return "bath " .. tostring(BridgeBath.startBath(faucet, tub, nil, sq, facing))
+        end
+        local cd = 0
+        pcall(function() cd = BridgeShower.cooldownLeft(nil) end)
+        local active = BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "bath" and "yes" or "no"
+        local phase = "-"
+        if BridgeTask ~= nil and BridgeTask.kind == "bath" then phase = tostring(BridgeTask.bathPhase) end
+        return string.format("bathing=%s phase=%s cooldown_h=%.1f tabas=%s", active, phase, cd or 0,
+            tostring(BridgeBath.active()))
     end
 
     if cmd == "exercise" then

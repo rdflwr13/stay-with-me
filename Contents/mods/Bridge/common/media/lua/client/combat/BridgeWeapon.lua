@@ -1290,7 +1290,7 @@ end
 
 function BridgeWeapon.update(body)
 
-    if BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower" then return end
+    if BridgeTask ~= nil and BridgeTask.active == true and (BridgeTask.kind == "shower" or BridgeTask.kind == "bath") then return end
     if BridgeGunfight ~= nil and BridgeGunfight.hasGun ~= nil and BridgeGunfight.hasGun() then return end
     if BridgeGunfight ~= nil and BridgeGunfight.magCareStage ~= nil then return end
     local fightNow = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state == "swing")

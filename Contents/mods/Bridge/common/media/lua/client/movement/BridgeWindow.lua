@@ -1792,14 +1792,9 @@ function BridgeWindowMain:buildPages()
         self.skills = page("skills", function(x, y, w, h) return BridgeWindowSkills:new(x, y, w, h) end)
         self.panel:addView(tr("WindowSkills"), self.skills)
     end
-    if BridgeHome ~= nil and BridgeHomeTab ~= nil then
-        self.home = page("home", function(x, y, w, h) return BridgeHomeTab:new(x, y, w, h) end)
-        self.panel:addView(tr("WindowHome"), self.home)
-    end
-    self.chores = nil
-    if BridgeChoresTab ~= nil then
-        self.chores = page("chores", function(x, y, w, h) return BridgeChoresTab:new(x, y, w, h) end)
-        self.panel:addView(tr("WindowChores"), self.chores)
+    if BridgeHomeChoresTab ~= nil then
+        self.homechores = page("homechores", function(x, y, w, h) return BridgeHomeChoresTab:new(x, y, w, h) end)
+        self.panel:addView(tr("WindowHomeChores"), self.homechores)
     end
     self.loot = page("loot", function(x, y, w, h) return BridgeLootSettings:new(x, y, w, h) end)
     self.panel:addView(tr("WindowLootStorage"), self.loot)
@@ -1833,8 +1828,8 @@ function BridgeWindowMain:applyScaleRevision()
     end
     if self.panel ~= nil then self:removeChild(self.panel) end
     self.panel = nil
-    self.info, self.skills, self.home, self.chores, self.loot, self.order, self.settings, self.report =
-        nil, nil, nil, nil, nil, nil, nil, nil
+    self.info, self.skills, self.homechores, self.loot, self.order, self.settings, self.report =
+        nil, nil, nil, nil, nil, nil, nil
     self.contentBrand = nil
     self.baseWidth = BridgeWindow.neededSize()
     self:setWidth(self.baseWidth)
@@ -1861,8 +1856,7 @@ function BridgeWindowMain:kindOf(view)
     if view == self.info then return "info" end
     if view == self.settings then return "settings" end
     if view == self.skills then return "skills" end
-    if view == self.home then return "home" end
-    if view == self.chores then return "chores" end
+    if view == self.homechores then return "homechores" end
     if view == self.order then return "order" end
     if view == self.loot then return "loot" end
     if view == self.report then return "report" end
@@ -1886,6 +1880,8 @@ function BridgeWindowMain:fitHeight()
     local value = ""
     if kind == "loot" then
         value = tostring(BridgeWindow.lootMode or "loot")
+    elseif kind == "homechores" then
+        value = tostring(BridgeWindow.homeMode or "home")
     elseif kind == "order" then
         value = tostring(BridgeWindow.orderMode or "menu")
     elseif kind == "info" then
@@ -1989,8 +1985,7 @@ function BridgeWindow.contentHeight(kind, width)
     if kind == "info" then h = BridgeWindow.infoHeight()
     elseif kind == "settings" then h = BridgeWindow.settingsHeight(width)
     elseif kind == "skills" then h = BridgeWindow.skillsPageHeight(width)
-    elseif kind == "home" and BridgeHomeTab ~= nil then h = BridgeHomeTab.heightFor(width)
-    elseif kind == "chores" and BridgeChoresTab ~= nil then h = BridgeChoresTab.heightFor(width)
+    elseif kind == "homechores" and BridgeHomeChoresTab ~= nil then h = BridgeHomeChoresTab.heightFor(width)
     elseif kind == "order" and BridgeOrder ~= nil and BridgeOrder.heightFor ~= nil then h = BridgeOrder.heightFor(width)
     elseif kind == "loot" and BridgeLootSettings ~= nil then h = BridgeLootSettings.heightFor(width)
     elseif kind == "report" and BridgeReportTab ~= nil then h = BridgeReportTab.heightFor(width)
@@ -2054,17 +2049,20 @@ function BridgeWindow.neededSize()
         w = math.max(w, labelX + labelW + PAD)
     end
     if BridgeHomeTab ~= nil then
-        w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("WindowHome")))
+        w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("WindowHomeChores")))
+        w = math.max(w, PAD * 4 + textW(FONT_BODY, tr("WindowHome")) + textW(FONT_BODY, tr("WindowChores")))
         w = math.max(w, PAD * 2 + BTN_H + gap + textW(FONT_BODY, tr("OptHomeResources")) + PAD)
+        w = math.max(w, PAD * 2 + BTN_H + gap + textW(FONT_BODY, tr("OptHomeAmmo")) + PAD)
         w = math.max(w, PAD * 2 + BTN_H + gap + textW(FONT_BODY, tr("OptHomeAllFloors")) + PAD)
         w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("MarkAllHome")))
         w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("ClearMarks")))
+        w = math.max(w, PAD * 3 + textW(FONT_BODY, tr("MarkAllHome")) + textW(FONT_BODY, tr("ClearMarks")))
+        w = math.max(w, PAD * 3 + textW(FONT_BODY, tr("OptHomeResources")) + textW(FONT_BODY, tr("OptHomeAmmo")) + BTN_H * 2)
         local marks = 0
         if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then marks = BridgeDeposit.markedCount() end
         w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("MarkedCount", marks)))
     end
     if BridgeChoresTab ~= nil then
-        w = math.max(w, PAD * 2 + textW(FONT_BODY, tr("WindowChores")))
         local readyText = tr("ChoreReady", 99)
         local runW = BridgeChoresTab.RUN_W or 38
         for _, id in ipairs(BridgeData.CHORE_IDS or {}) do

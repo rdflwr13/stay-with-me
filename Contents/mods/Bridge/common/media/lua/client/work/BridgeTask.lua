@@ -3941,6 +3941,39 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         BridgeTask.showerDressAt = nil
         BridgeTask.showerDressed = nil
     end
+    if kind == "bath" then
+        BridgeTask.bathFaucet = opts ~= nil and opts.faucet or nil
+        BridgeTask.bathTubObj = opts ~= nil and opts.tub or nil
+        BridgeTask.bathTubSq = opts ~= nil and opts.sq or nil
+        BridgeTask.bathWaterSq = opts ~= nil and (opts.waterSq or opts.sq) or nil
+        BridgeTask.bathFacing = opts ~= nil and opts.facing or nil
+        BridgeTask.bathSink = opts ~= nil and opts.sink or nil
+        BridgeTask.bathPhase = nil
+        BridgeTask.bathSince = 0
+        BridgeTask.bathSeen = nil
+        BridgeTask.bathWaterTotal = nil
+        BridgeTask.bathWaterUsed = nil
+        BridgeTask.bathProgressStart = nil
+        BridgeTask.bathProgressTotal = nil
+        BridgeTask.bathStartH = nil
+        BridgeTask.bathStance = nil
+        BridgeTask.bathStanceAt = nil
+        BridgeTask.bathWashI = nil
+        BridgeTask.bathWashAt = nil
+        BridgeTask.bathWashDone = nil
+        BridgeTask.bathOffTo = nil
+        BridgeTask.bathReturn = nil
+        BridgeTask.bathStandX = nil
+        BridgeTask.bathStandY = nil
+        BridgeTask.bathStandZ = nil
+        BridgeTask.bathTubAlpha = nil
+        BridgeTask.bathFaceAt = nil
+        BridgeTask.bathOutAt = nil
+        BridgeTask.bathCollide = nil
+        BridgeTask.bathFillAt = nil
+        BridgeTask.bathFillDone = nil
+        BridgeTask.bathFillSound = nil
+    end
     BridgeTask.prevForcedWalk = BridgeMove ~= nil and BridgeMove.forcedWalk or nil
     BridgeTask.forcedWalkSaved = true
     if BridgeMove ~= nil then BridgeMove.noClimb = false end
@@ -4051,6 +4084,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     elseif kind == "fillWater" then
     elseif kind == "emptyFluid" then
     elseif kind == "shower" then
+    elseif kind == "bath" then
     elseif kind == "roam" then
     elseif kind == "pryDoor" then
         Bridge.speak("PryStart")
@@ -4358,7 +4392,7 @@ function BridgeTask.finish()
             end
         elseif finishKind == "sit" or finishKind == "lay" or finishKind == "exercise" or finishKind == "washSink"
                 or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor"
-                or finishKind == "shower" or finishKind == "anim" or finishKind == "harvestCrops"
+                or finishKind == "shower" or finishKind == "bath" or finishKind == "anim" or finishKind == "harvestCrops"
                 or finishKind == "digFurrows" or finishKind == "sowSeeds"
                 or finishKind == "fertilizePlants" or finishKind == "tendCrops" then
         elseif finishKind == "brushTeeth" then
@@ -4533,6 +4567,11 @@ function BridgeTask.progress()
             and BridgeTask.showerWashFrac ~= nil then
         local frac = nil
         pcall(function() frac = BridgeTask.showerWashFrac() end)
+        if frac ~= nil then return frac end
+    end
+    if BridgeTask.kind == "bath" and BridgeTask.bathPhase == "soak" then
+        local frac = nil
+        pcall(function() frac = BridgeTask.bathWashFrac() end)
         if frac ~= nil then return frac end
     end
     if BridgeTask.kind == "tendCrops" then
@@ -4710,7 +4749,7 @@ function BridgeTask.watchdog(body, def)
     if not BridgeTask.active or body == nil or def == nil then return end
     local kind = BridgeTask.kind
     if kind == "sit" or kind == "lay" or kind == "sleep" or kind == "exercise"
-        or kind == "anim" or kind == "hug" or kind == "shower" or kind == "wash" then
+        or kind == "anim" or kind == "hug" or kind == "shower" or kind == "bath" or kind == "wash" then
         return
     end
     local now = Bridge.time
@@ -11313,6 +11352,7 @@ Events.OnTickEvenPaused.Add(function()
         BridgeTask.exerciseRepMark = Bridge.time
         return
     end
+    if BridgeTask.kind == "bath" then return end
     if BridgeMove ~= nil then
         if BridgeMove.cross ~= nil or BridgeMove.pendingClimb ~= nil
                 or (BridgeMove.climbUntil or 0) > Bridge.time then
@@ -11782,6 +11822,24 @@ local function showerFreeSquare(t, body)
 end
 
 
+function BridgeTask.showerDurationHours()
+    local v = 30
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        v = BridgeData.sandboxNumber("ShowerDuration", 30, 15, 120)
+    end
+    return v / 60
+end
+
+
+function BridgeTask.bathDurationHours()
+    local v = 30
+    if BridgeData ~= nil and type(BridgeData.sandboxNumber) == "function" then
+        v = BridgeData.sandboxNumber("BathDuration", 30, 15, 120)
+    end
+    return v / 60
+end
+
+
 function BridgeTask.showerWashFrac()
     local start = BridgeTask.showerProgressStart or 0
     if start < 0 then start = 0 elseif start > 1 then start = 1 end
@@ -11792,11 +11850,35 @@ function BridgeTask.showerWashFrac()
     local nowH = nil
     pcall(function() nowH = getGameTime():getWorldAgeHours() end)
     if nowH ~= nil and BridgeTask.showerWashStartH ~= nil then
-        local span = (BridgeTask.SHOWER_WASH_HOURS or 0.5) * share
+        local span = BridgeTask.showerDurationHours() * share
         if span <= 0 then return 1 end
         session = (nowH - BridgeTask.showerWashStartH) / span
     elseif BridgeTask.showerWashSince ~= nil then
-        local span = (BridgeTask.SHOWER_WASH_TICKS or (75 * K.SECOND)) * share
+        local span = BridgeTask.showerDurationHours() * 150 * K.SECOND * share
+        if span <= 0 then return 1 end
+        session = (Bridge.time - BridgeTask.showerWashSince) * U.ffMult() / span
+    end
+    if session == nil then session = 0 end
+    if session < 0 then session = 0 elseif session > 1 then session = 1 end
+    return start + session * share
+end
+
+
+function BridgeTask.bathWashFrac()
+    local start = BridgeTask.bathProgressStart or 0
+    if start < 0 then start = 0 elseif start > 1 then start = 1 end
+    local share = 1 - start
+    if share <= 0 then return 1 end
+
+    local session = nil
+    local nowH = nil
+    pcall(function() nowH = getGameTime():getWorldAgeHours() end)
+    if nowH ~= nil and BridgeTask.bathStartH ~= nil then
+        local span = BridgeTask.bathDurationHours() * share
+        if span <= 0 then return 1 end
+        session = (nowH - BridgeTask.bathStartH) / span
+    elseif BridgeTask.showerWashSince ~= nil then
+        local span = BridgeTask.bathDurationHours() * 150 * K.SECOND * share
         if span <= 0 then return 1 end
         session = (Bridge.time - BridgeTask.showerWashSince) * U.ffMult() / span
     end
@@ -11839,10 +11921,8 @@ function BridgeTask.kinds.shower.update(body)
                 Bridge.speak("NoWater")
                 return BridgeTask.finish()
             end
-            local lo = BridgeShower.WATER_MIN or 5
-            local hi = BridgeShower.WATER_MAX or 15
-            local full = lo + ZombRand((hi - lo) + 1)
-            BridgeTask.showerWaterTotal = math.max(1, math.floor(full * waterShare + 0.5))
+            local full = BridgeShower.waterUsage()
+            BridgeTask.showerWaterTotal = math.max(0, math.floor(full * waterShare + 0.5))
         end
 
         pcall(function() if BridgeEquip ~= nil and BridgeEquip.close ~= nil then BridgeEquip.close() end end)
@@ -12257,6 +12337,529 @@ function BridgeTask.kinds.shower.leave(body)
     BridgeTask.showerTowelAt = nil
     BridgeTask.showerDressAt = nil
     BridgeTask.showerDressed = nil
+end
+
+
+BridgeTask.BATH_ENABLED = 1
+BridgeTask.BATH_ONESHOT_MAX = 6 * K.SECOND
+BridgeTask.BATH_FILL_SECONDS = 5
+BridgeTask.BATH_UNDRESS_WAIT = 1
+BridgeTask.BATH_SOAK_HOURS = 30 / 60
+BridgeTask.BATH_STANCE_HOURS = 5 / 60
+BridgeTask.BATH_IN_MAX = 6 * K.SECOND
+BridgeTask.BATH_OUT_MAX = 6 * K.SECOND
+BridgeTask.BATH_STANCES = { "BathSit", "BathRelax", "BathElbowL", "BathElbowR", "BathLookUp" }
+BridgeTask.BATH_WASH_PARTS = { "Face", "Arms", "Legs" }
+
+BridgeTask.kinds.bath = {}
+BridgeTask.kinds.bath.noTargets = true
+BridgeTask.kinds.bath.restoreMode = true
+
+function BridgeTask.kinds.bath.available(body)
+    if BridgeTask.BATH_ENABLED ~= 1 then return false end
+    if BridgeBath == nil or BridgeBath.active == nil then return false end
+    local ok = false
+    pcall(function() ok = BridgeBath.active() == true end)
+    return ok
+end
+
+function BridgeTask.kinds.bath.missing(body)
+    return nil
+end
+
+
+local function bathSetBump(body, bump)
+    pcall(function() body:setVariable("BumpAnimFinished", false) end)
+    pcall(function() body:setBumpType(bump) end)
+end
+
+
+local function bathClear(body)
+    if body == nil then return end
+    pcall(function() body:setVariable("BumpAnimFinished", true) end)
+    pcall(function() body:clearVariable("BathWashPart") end)
+    pcall(function()
+        local b = tostring(body:getBumpType())
+        if string.sub(b, 1, 4) == "Bath" then body:setBumpType("") end
+    end)
+end
+
+
+local function bathWait(body, bump, startAt)
+    local cur, fin = "", false
+    pcall(function() cur = tostring(body:getBumpType()) end)
+    pcall(function() fin = body:getVariableBoolean("BumpAnimFinished") == true end)
+    if cur == bump then BridgeTask.bathSeen = true end
+    if fin then
+        pcall(function() body:setVariable("BumpAnimFinished", false) end)
+        return true
+    end
+    if BridgeTask.bathSeen and cur ~= bump then return true end
+    if startAt ~= nil and (Bridge.time - startAt) * U.ffMult() > (BridgeTask.BATH_ONESHOT_MAX or (6 * K.SECOND)) then
+        return true
+    end
+    return false
+end
+
+
+local function bathSnap(body, x, y, z)
+    pcall(function()
+        body:setX(x) body:setY(y)
+        body:setLastX(x) body:setLastY(y)
+        body:setCurrentSquareFromPosition(x, y, z)
+        body:setMovingSquareNow()
+    end)
+end
+
+
+local function bathFace(body)
+    local dir = nil
+    pcall(function() dir = IsoDirections.fromString(BridgeTask.bathFacing) end)
+    if dir ~= nil then pcall(function() body:faceDirection(dir) end) end
+end
+
+
+local function bathFaceTick(body)
+    if BridgeTask.bathFaceAt ~= nil and Bridge.time - BridgeTask.bathFaceAt < 2 then return end
+    BridgeTask.bathFaceAt = Bridge.time
+    bathFace(body)
+end
+
+
+local function bathNextStance(body)
+    local list = BridgeTask.BATH_STANCES
+    if list == nil or #list == 0 then return end
+    local i = (BridgeTask.bathStance or 0) + 1
+    if i > #list then i = 1 end
+    BridgeTask.bathStance = i
+    BridgeTask.bathStanceAt = nil
+    pcall(function() BridgeTask.bathStanceAt = getGameTime():getWorldAgeHours() end)
+    bathSetBump(body, list[i])
+end
+
+
+local function bathSpendFreeView(sink)
+    local tainted = false
+    if sink ~= nil then pcall(function() tainted = sink:isTaintedWater() == true end) end
+    local view = {}
+    view.getFluidAmount = function() return 99999 end
+    view.isTaintedWater = function() return tainted end
+    view.useFluid = function() return 0 end
+    view.getSquare = function() return nil end
+    view.transmitModData = function() end
+    return view
+end
+
+
+function BridgeTask.kinds.bath.update(body)
+    if BridgeTask.BATH_ENABLED ~= 1 then return BridgeTask.finish() end
+    if BridgeBath == nil then return BridgeTask.finish() end
+    if not BridgeBath.active() then
+        Bridge.speak("NoWater")
+        return BridgeTask.finish()
+    end
+
+    local phase = BridgeTask.bathPhase
+
+    if phase == nil then
+        local t = BridgeTask.bathTubSq
+        if t == nil then return BridgeTask.finish() end
+        BridgeTask.bathTubSq = { x = t.x, y = t.y, z = t.z }
+        BridgeTask.bathWaterSq = BridgeTask.bathWaterSq or BridgeTask.bathTubSq
+        if BridgeTask.bathFaucet == nil then return BridgeTask.finish() end
+        if not BridgeBath.bathUsable(BridgeTask.bathFaucet) then
+            Bridge.speak("NoWater")
+            return BridgeTask.finish()
+        end
+        local startP = BridgeShower.bathProgress(Bridge.store)
+        if startP >= 1 then startP = 0 end
+        BridgeTask.bathProgressStart = startP
+        BridgeTask.bathProgressTotal = startP
+        local waterShare = 1 - startP
+        if waterShare < 0.05 then waterShare = 0.05 end
+        local full = BridgeShower.bathWaterUsage()
+        BridgeTask.bathWaterTotal = math.max(0, math.floor(full * waterShare + 0.5))
+        BridgeTask.bathWaterUsed = 0
+        pcall(function() if BridgeEquip ~= nil and BridgeEquip.close ~= nil then BridgeEquip.close() end end)
+        local snapOk = false
+        pcall(function() snapOk = BridgeShower.snapshotOutfit(body) end)
+        if not snapOk then
+            U.log("bath: outfit snapshot failed, not undressing")
+            return BridgeTask.finish()
+        end
+        BridgeTask.bathPhase = "approach"
+        BridgeTask.bathSince = Bridge.time
+        BridgeTask.bathSeen = false
+        BridgeTask.info = "bath: walking to tub"
+        U.log("bath: walking to tub before undressing")
+        return true
+    end
+
+    if phase == "approach" then
+        local t = BridgeTask.bathTubSq
+        if t == nil then return BridgeTask.finish() end
+        local res = BridgeTask.walkTo(body, t, BridgeTask.STOP_DIST, false, true)
+        local onTile, beside = false, false
+        pcall(function()
+            onTile = math.floor(body:getX()) == t.x and math.floor(body:getY()) == t.y
+            local dx, dy = body:getX() - (t.x + 0.5), body:getY() - (t.y + 0.5)
+            beside = (dx * dx + dy * dy) <= (1.3 * 1.3)
+        end)
+        local stalled = (Bridge.time - (BridgeTask.bathSince or Bridge.time)) > (45 * K.SECOND)
+        if res == "arrived" or onTile or beside then
+            pcall(function() BridgeMove.stopPath(body) end)
+            Bridge.target = nil
+            BridgeTask.bathPhase = "fill"
+            BridgeTask.bathSince = Bridge.time
+            BridgeTask.bathSeen = false
+            BridgeTask.bathFillAt = nil
+            BridgeTask.bathFillDone = nil
+            BridgeTask.info = "bath: filling tub"
+            U.log("bath: filling tub")
+            return true
+        end
+        if res == "unreachable" or stalled then
+            pcall(function()
+                BridgeShower.preShower = nil
+                if Bridge ~= nil and Bridge.store ~= nil then Bridge.store.showerOutfit = nil end
+            end)
+            Bridge.speak("CantReachWater")
+            return BridgeTask.finish()
+        end
+        BridgeTask.info = "bath: walking to tub"
+        return true
+    end
+
+    if phase == "fill" then
+        local t = BridgeTask.bathTubSq
+        if t == nil then return BridgeTask.finish() end
+        pcall(function() body:faceThisObject(BridgeTask.bathFaucet) end)
+        if BridgeTask.bathFillAt == nil then
+            BridgeTask.bathFillAt = Bridge.time
+            BridgeTask.bathSeen = false
+            pcall(function() BridgeWeapon.clearHands(body) end)
+            bathSetBump(body, "BathFill")
+            pcall(function() BridgeSound.sfxAt(body, "tabas_turntap", 0.8) end)
+            pcall(function() BridgeTask.bathFillSound = BridgeSound.event(body, "GetWaterFromTap") end)
+            BridgeTask.info = "bath: filling tub"
+            U.log("bath: fill start")
+            return true
+        end
+        pcall(function()
+            if tostring(body:getBumpType()) ~= "BathFill" then body:setBumpType("BathFill") end
+        end)
+        pcall(function()
+            if BridgeTask.bathFillSound == nil or body:getEmitter():isPlaying(BridgeTask.bathFillSound) ~= true then
+                BridgeTask.bathFillSound = BridgeSound.event(body, "GetWaterFromTap")
+            end
+        end)
+        local elapsed = (Bridge.time - BridgeTask.bathFillAt) * U.ffMult()
+        if elapsed < (BridgeTask.BATH_FILL_SECONDS or 5) * K.SECOND then
+            BridgeTask.info = "bath: filling tub"
+            return true
+        end
+        if BridgeTask.bathFillDone ~= true then
+            BridgeTask.bathFillDone = true
+            pcall(function()
+                if BridgeTask.bathFillSound ~= nil then
+                    body:getEmitter():stopSound(BridgeTask.bathFillSound)
+                    BridgeTask.bathFillSound = nil
+                end
+            end)
+            pcall(function() BridgeBath.spawnBathWater(BridgeTask.bathFaucet, BridgeTask.bathFacing) end)
+            local got = 0
+            pcall(function() got = BridgeShower.consumeWater(BridgeTask.bathSink, BridgeTask.bathWaterSq, BridgeTask.bathWaterTotal) end)
+            if type(got) ~= "number" then got = 0 end
+            if got <= 0 then
+                pcall(function() BridgeBath.removeBathWater() end)
+                pcall(function()
+                    BridgeShower.preShower = nil
+                    if Bridge ~= nil and Bridge.store ~= nil then Bridge.store.showerOutfit = nil end
+                end)
+                Bridge.speak("NoWater")
+                return BridgeTask.finish()
+            end
+            BridgeTask.bathWaterUsed = got
+            pcall(function() BridgeShower.strip(body) end)
+            BridgeTask.bathPhase = "wait"
+            BridgeTask.bathSince = Bridge.time
+            BridgeTask.bathSeen = false
+            BridgeTask.info = "bath: undressed"
+            U.log("bath: filled, undressed")
+        end
+        return true
+    end
+
+    if phase == "wait" then
+        local elapsed = (Bridge.time - (BridgeTask.bathSince or Bridge.time)) * U.ffMult()
+        if elapsed < (BridgeTask.BATH_UNDRESS_WAIT or 1) * K.SECOND then
+            BridgeTask.info = "bath: undressed"
+            return true
+        end
+        BridgeTask.bathPhase = "in"
+        BridgeTask.bathSince = Bridge.time
+        BridgeTask.bathSeen = false
+        bathSetBump(body, "BathIn")
+        Bridge.speak("BathStart")
+        pcall(function() BridgeSound.sfxAt(body, "tabas_bath_enter", 0.8) end)
+        BridgeTask.info = "bath: stepping in"
+        U.log("bath: stepping in")
+        return true
+    end
+
+    if phase == "in" then
+        local t = BridgeTask.bathTubSq
+        if t == nil then return BridgeTask.finish() end
+        if BridgeTask.bathReturn == nil then
+            BridgeTask.bathReturn = { x = math.floor(body:getX()), y = math.floor(body:getY()), z = math.floor(body:getZ()) }
+        end
+        pcall(function() BridgeMove.stopPath(body) end)
+        Bridge.target = nil
+        bathSnap(body, t.x + 0.5, t.y + 0.5, t.z)
+        Bridge.holdPos = { t.x + 0.5, t.y + 0.5, t.z }
+        U.log(string.format("bath in snap sq=%s,%s facing=%s body=%.2f,%.2f",
+            tostring(t.x), tostring(t.y), tostring(BridgeTask.bathFacing),
+            body:getX(), body:getY()))
+        pcall(function() body:setCollidable(false) end)
+        BridgeTask.bathCollide = false
+        bathFace(body)
+        if BridgeTask.bathSeen ~= true then
+            bathSetBump(body, "BathIn")
+        end
+        if bathWait(body, "BathIn", BridgeTask.bathSince) then
+            BridgeTask.bathStartH = nil
+            pcall(function() BridgeTask.bathStartH = getGameTime():getWorldAgeHours() end)
+            BridgeTask.showerWashSince = Bridge.time
+            BridgeTask.bathStance = 1
+            BridgeTask.bathStanceAt = nil
+            pcall(function() BridgeTask.bathStanceAt = getGameTime():getWorldAgeHours() end)
+            bathSetBump(body, BridgeTask.BATH_STANCES[1])
+            BridgeTask.bathPhase = "soak"
+            BridgeTask.bathSince = Bridge.time
+            BridgeTask.bathSeen = false
+            BridgeTask.info = "bath: soaking"
+            U.log("bath: soaking")
+        end
+        return true
+    end
+
+    if phase == "soak" then
+        bathFaceTick(body)
+        local bump = BridgeTask.BATH_STANCES[BridgeTask.bathStance or 1]
+        pcall(function()
+            if tostring(body:getBumpType()) ~= bump then body:setBumpType(bump) end
+        end)
+        local p = BridgeTask.bathWashFrac()
+        BridgeTask.bathProgressTotal = p
+        local nowH = nil
+        pcall(function() nowH = getGameTime():getWorldAgeHours() end)
+        if nowH ~= nil and BridgeTask.bathStanceAt ~= nil then
+            local span = BridgeTask.BATH_STANCE_HOURS or (5 / 60)
+            if nowH - BridgeTask.bathStanceAt >= span then
+                bathNextStance(body)
+            end
+        end
+        if not BridgeTask.bathWashDone and p >= 0.5 then
+            BridgeTask.bathWashDone = true
+            Bridge.speak("BathWash")
+            BridgeTask.bathPhase = "wash"
+            BridgeTask.bathSince = Bridge.time
+            BridgeTask.bathSeen = false
+            BridgeTask.bathWashI = nil
+            BridgeTask.bathWashAt = nil
+            BridgeTask.info = "bath: washing"
+            U.log("bath: washing")
+            return true
+        end
+        if p >= 1 then
+            BridgeTask.bathPhase = "out"
+            BridgeTask.bathSince = Bridge.time
+            BridgeTask.bathSeen = false
+            BridgeTask.bathOutAt = nil
+            BridgeTask.info = "bath: stepping out"
+            U.log("bath: stepping out")
+            return true
+        end
+        return true
+    end
+
+    if phase == "wash" then
+        bathFaceTick(body)
+        local parts = BridgeTask.BATH_WASH_PARTS
+        if BridgeTask.bathWashI == nil then
+            BridgeTask.bathWashI = 1
+            BridgeTask.bathWashAt = Bridge.time
+            pcall(function() body:setVariable("BathWashPart", parts[1]) end)
+            pcall(function() body:setBumpType("Stand") end)
+            pcall(function() body:setBumpType("BathWash") end)
+            pcall(function() BridgeWash.clean(body, bathSpendFreeView(BridgeTask.bathSink), "self") end)
+            pcall(function() BridgeSound.sfxAt(body, "tabas_bath_wave01", 0.6) end)
+            BridgeTask.info = "bath: washing " .. tostring(parts[1])
+            U.log("bath: wash part " .. tostring(parts[1]))
+            return true
+        end
+        pcall(function()
+            if tostring(body:getBumpType()) ~= "BathWash" then body:setBumpType("BathWash") end
+        end)
+        if (Bridge.time - (BridgeTask.bathWashAt or Bridge.time)) * U.ffMult() >= (2 * K.SECOND) then
+            local i = (BridgeTask.bathWashI or 1) + 1
+            if i > #parts then
+                BridgeTask.bathWashI = nil
+                BridgeTask.bathWashAt = nil
+                BridgeTask.bathPhase = "soak"
+                BridgeTask.bathSince = Bridge.time
+                BridgeTask.bathSeen = false
+                bathSetBump(body, BridgeTask.BATH_STANCES[BridgeTask.bathStance or 1])
+                BridgeTask.info = "bath: soaking"
+                return true
+            end
+            BridgeTask.bathWashI = i
+            BridgeTask.bathWashAt = Bridge.time
+            pcall(function() body:setVariable("BathWashPart", parts[i]) end)
+            pcall(function() body:setBumpType("Stand") end)
+            pcall(function() body:setBumpType("BathWash") end)
+            pcall(function() BridgeSound.sfxAt(body, "tabas_bath_wave01", 0.6) end)
+            BridgeTask.info = "bath: washing " .. tostring(parts[i])
+            U.log("bath: wash part " .. tostring(parts[i]))
+        end
+        return true
+    end
+
+    if phase == "out" then
+        bathFaceTick(body)
+        if BridgeTask.bathOutAt == nil then
+            BridgeTask.bathOutAt = Bridge.time
+            BridgeTask.bathSeen = false
+            bathSetBump(body, "BathOut")
+            pcall(function() BridgeSound.sfxAt(body, "tabas_bath_exit", 0.8) end)
+        end
+        if bathWait(body, "BathOut", BridgeTask.bathOutAt) then
+            local to = nil
+            if BridgeTask.bathStandX ~= nil then
+                to = { x = BridgeTask.bathStandX, y = BridgeTask.bathStandY, z = BridgeTask.bathStandZ }
+            elseif BridgeTask.bathReturn ~= nil then
+                to = BridgeTask.bathReturn
+            else
+                to = showerFreeSquare(BridgeTask.bathTubSq, body)
+            end
+            if to ~= nil then
+                bathSnap(body, to.x + 0.5, to.y + 0.5, to.z)
+                Bridge.holdPos = { to.x + 0.5, to.y + 0.5, to.z }
+            end
+            pcall(function() body:setCollidable(true) end)
+            BridgeTask.bathCollide = true
+            pcall(function() body:setBumpType("") end)
+            BridgeTask.bathPhase = "dress"
+            BridgeTask.bathSince = Bridge.time
+            BridgeTask.bathSeen = false
+            BridgeTask.info = "bath: dressing"
+        end
+        return true
+    end
+
+    if phase == "dress" then
+        pcall(function() BridgeShower.restorePreShower(body) end)
+        return BridgeTask.kinds.bath.stop(body)
+    end
+
+    return BridgeTask.finish()
+end
+
+
+function BridgeTask.kinds.bath.stop(body)
+    bathClear(body)
+    pcall(function()
+        if BridgeTask.bathFillSound ~= nil and body ~= nil then
+            body:getEmitter():stopSound(BridgeTask.bathFillSound)
+        end
+        BridgeTask.bathFillSound = nil
+    end)
+    pcall(function() BridgeBath.removeBathWater() end)
+    pcall(function() body:setCollidable(true) end)
+    BridgeTask.bathCollide = true
+    BridgeTask.bathProgressTotal = 1
+    pcall(function() if BridgeShower ~= nil and BridgeShower.setBathProgress ~= nil then BridgeShower.setBathProgress(Bridge.store, 1) end end)
+    pcall(function()
+        if BridgeShower ~= nil and BridgeShower.setBathCooldown ~= nil then BridgeShower.setBathCooldown(Bridge.store) end
+    end)
+    pcall(function()
+        if BridgeShower ~= nil and BridgeShower.hasPreShower ~= nil and BridgeShower.hasPreShower() then
+            BridgeShower.restorePreShower(body)
+        end
+    end)
+    pcall(function() BridgeSound.sfxAt(body, "tabas_bath_getup", 0.8) end)
+    Bridge.speak("BathDone")
+    U.log("bath: done")
+    return BridgeTask.finish()
+end
+
+
+function BridgeTask.kinds.bath.leave(body)
+    pcall(function()
+        if BridgeTask.bathFillSound ~= nil and body ~= nil then
+            body:getEmitter():stopSound(BridgeTask.bathFillSound)
+        end
+        BridgeTask.bathFillSound = nil
+    end)
+    pcall(function() BridgeBath.removeBathWater() end)
+    pcall(function() if body ~= nil then body:setCollidable(true) end end)
+    local to = nil
+    if BridgeTask.bathStandX ~= nil then
+        to = { x = BridgeTask.bathStandX, y = BridgeTask.bathStandY, z = BridgeTask.bathStandZ }
+    elseif BridgeTask.bathReturn ~= nil then
+        to = BridgeTask.bathReturn
+    end
+    if to == nil and body ~= nil then
+        to = showerFreeSquare(BridgeTask.bathTubSq, body)
+    end
+    if to ~= nil and body ~= nil then
+        pcall(function() bathSnap(body, to.x + 0.5, to.y + 0.5, to.z) end)
+        Bridge.holdPos = { to.x + 0.5, to.y + 0.5, to.z }
+    end
+    pcall(function()
+        if BridgeShower ~= nil and BridgeShower.hasPreShower ~= nil and BridgeShower.hasPreShower() then
+            BridgeShower.restorePreShower(body)
+        end
+    end)
+    pcall(function()
+        if BridgeShower ~= nil and BridgeShower.setBathProgress ~= nil then
+            local total = BridgeTask.bathProgressTotal or BridgeTask.bathProgressStart or 0
+            if total >= 1 then total = 1 end
+            BridgeShower.setBathProgress(Bridge.store, total)
+        end
+    end)
+    bathClear(body)
+    BridgeTask.bathPhase = nil
+    BridgeTask.bathSince = nil
+    BridgeTask.bathSeen = nil
+    BridgeTask.bathFaucet = nil
+    BridgeTask.bathTubObj = nil
+    BridgeTask.bathTubSq = nil
+    BridgeTask.bathWaterSq = nil
+    BridgeTask.bathFacing = nil
+    BridgeTask.bathSink = nil
+    BridgeTask.bathWaterTotal = nil
+    BridgeTask.bathWaterUsed = nil
+    BridgeTask.bathProgressStart = nil
+    BridgeTask.bathProgressTotal = nil
+    BridgeTask.bathStartH = nil
+    BridgeTask.bathStance = nil
+    BridgeTask.bathStanceAt = nil
+    BridgeTask.bathWashI = nil
+    BridgeTask.bathWashAt = nil
+    BridgeTask.bathWashDone = nil
+    BridgeTask.bathOffTo = nil
+    BridgeTask.bathReturn = nil
+    BridgeTask.bathStandX = nil
+    BridgeTask.bathStandY = nil
+    BridgeTask.bathStandZ = nil
+    BridgeTask.bathTubAlpha = nil
+    BridgeTask.bathFaceAt = nil
+    BridgeTask.bathOutAt = nil
+    BridgeTask.bathCollide = nil
+    BridgeTask.bathFillAt = nil
+    BridgeTask.bathFillDone = nil
+    BridgeTask.bathFillSound = nil
 end
 
 

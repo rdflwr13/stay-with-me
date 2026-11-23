@@ -895,17 +895,15 @@ function BridgeHomeTab.heightFor(width)
     local fontS = FONT_S
     local btnH = fontS + 6
     local headerH = fontS + 4
-    local _, hintH = BridgeWindow.hintLines(width, "HomeHint", Bridge.companionName())
-    return PAD + hintH
+    return PAD
         + headerH + fontS + PAD
-        + btnH + PAD + btnH + PAD + PAD
+        + (btnH + PAD)
+        + (btnH + PAD + PAD)
         + headerH
-        + fontS + 2
-        + btnH + PAD
-        + btnH + PAD + PAD
+        + (btnH + PAD + PAD)
         + headerH
-        + btnH * 3 + 4
-        + PAD
+        + (btnH + 2)
+        + btnH
 end
 
 function BridgeHomeTab:createChildren()
@@ -916,8 +914,7 @@ function BridgeHomeTab:createChildren()
     local headerH = fontS + 4
     self.btnH = btnH
     self.headerH = headerH
-    self.hintLines, self.hintH = BridgeWindow.hintLines(self.width, "HomeHint", Bridge.companionName())
-    local y = PAD + self.hintH
+    local y = PAD
     self.zoneHeaderY = y
     self.statusY = y + headerH
     y = self.statusY + fontS + PAD
@@ -946,16 +943,13 @@ function BridgeHomeTab:createChildren()
     y = y + btnH + PAD + PAD
     self.storageHeaderY = y
     y = y + headerH
-    self.markedY = y
-    y = y + fontS + 2
-    self.markAllBtn = ISButton:new(PAD, y, self.width - PAD * 2, btnH, tr("MarkAllHome"), self, BridgeHomeTab.onMarkAll)
+    self.markAllBtn = ISButton:new(PAD, y, half, btnH, tr("MarkAllHome"), self, BridgeHomeTab.onMarkAll)
     self.markAllBtn:initialise()
     self.markAllBtn:instantiate()
     self.markAllBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
     self.markAllBtn.tooltip = tr("MarkAllHomeTip")
     self:addChild(self.markAllBtn)
-    y = y + btnH + PAD
-    self.clearMarksBtn = ISButton:new(PAD, y, self.width - PAD * 2, btnH, tr("ClearMarks"), self, BridgeHomeTab.onClearMarks)
+    self.clearMarksBtn = ISButton:new(PAD + half + PAD, y, half, btnH, tr("ClearMarks"), self, BridgeHomeTab.onClearMarks)
     self.clearMarksBtn:initialise()
     self.clearMarksBtn:instantiate()
     self.clearMarksBtn.borderColor = { r = 1, g = 1, b = 1, a = 0.1 }
@@ -964,15 +958,14 @@ function BridgeHomeTab:createChildren()
     y = y + btnH + PAD + PAD
     self.behaviorHeaderY = y
     y = y + headerH
-    self.resTick = ISTickBox:new(PAD, y, self.width - PAD * 2, btnH, "", self, BridgeHomeTab.onResourceTick, "homeResources")
+    self.resTick = ISTickBox:new(PAD, y, half, btnH, "", self, BridgeHomeTab.onResourceTick, "homeResources")
     self.resTick:initialise()
     self.resTick:instantiate()
     self.resTick:addOption(tr("OptHomeResources"))
     self.resTick.tooltip = tr("OptHomeResourcesTip")
     self:addChild(self.resTick)
     self.resTickY = y
-    y = y + btnH + 2
-    self.ammoTick = ISTickBox:new(PAD, y, self.width - PAD * 2, btnH, "", self, BridgeHomeTab.onAmmoTick, "homeAmmo")
+    self.ammoTick = ISTickBox:new(PAD + half + PAD, y, half, btnH, "", self, BridgeHomeTab.onAmmoTick, "homeAmmo")
     self.ammoTick:initialise()
     self.ammoTick:instantiate()
     self.ammoTick:addOption(tr("OptHomeAmmo"))
@@ -1093,17 +1086,11 @@ end
 function BridgeHomeTab:render()
     if Bridge == nil or Bridge.store == nil then return end
     uiFonts()
-    local y = PAD
-    for _, line in ipairs(self.hintLines or {}) do
-        self:drawText(line, PAD, y, 0.75, 0.75, 0.75, 1, FONT_BODY)
-        y = y + FONT_S + 2
-    end
     self:drawText(tr("HomeZoneSection"), PAD, self.zoneHeaderY, 0.7, 0.7, 0.7, 1, FONT_BODY)
     self:drawText(BridgeHome.statusText(), PAD, self.statusY, 1, 1, 1, 1, FONT_BODY)
-    self:drawText(tr("HomeStorageSection"), PAD, self.storageHeaderY, 0.7, 0.7, 0.7, 1, FONT_BODY)
     local marked = 0
     if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then marked = BridgeDeposit.markedCount() end
-    self:drawText(tr("MarkedCount", marked), PAD, self.markedY, 0.8, 0.8, 0.8, 1, FONT_BODY)
+    self:drawText(tr("HomeStorageSection") .. " · " .. tr("MarkedCount", marked), PAD, self.storageHeaderY, 0.7, 0.7, 0.7, 1, FONT_BODY)
     self:drawText(tr("HomeBehaviorSection"), PAD, self.behaviorHeaderY, 0.7, 0.7, 0.7, 1, FONT_BODY)
 end
 

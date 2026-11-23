@@ -1971,6 +1971,23 @@ BridgeServer.Commands.state = function(player, args)
             end
         end
     end
+    if args.bathUntil ~= nil then
+        local v = tonumber(args.bathUntil)
+        if v ~= nil and v >= 0 and (rec.bathUntil == nil or math.abs(rec.bathUntil - v) > 0.001) then
+            if v > 0 then rec.bathUntil = v else rec.bathUntil = nil end
+            changed = true
+        end
+    end
+    if args.bathProgress ~= nil then
+        local v = tonumber(args.bathProgress)
+        if v ~= nil and v >= 0 then
+            if v > 1 then v = 1 end
+            if rec.bathProgress == nil or math.abs(rec.bathProgress - v) > 0.001 then
+                if v > 0 then rec.bathProgress = v else rec.bathProgress = nil end
+                changed = true
+            end
+        end
+    end
     if args.exerciseBank ~= nil then
         local v = tonumber(args.exerciseBank)
         if v ~= nil and v >= 0 then

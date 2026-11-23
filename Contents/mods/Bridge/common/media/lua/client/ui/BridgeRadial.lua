@@ -553,6 +553,16 @@ local function selfEntries(playerNum)
             out[#out + 1] = make(tr("ShowerTake"), ICONS.shower, function() BridgeShower.startAtNearest() end)
         end
     end
+    if BridgeBath ~= nil and type(BridgeBath.findNearest) == "function" then
+        local tabas, faucet, tub, sq, facing = false, nil, nil, nil, nil
+        pcall(function() tabas = BridgeBath.active() == true end)
+        if tabas and (BridgeTask == nil or BridgeTask.active ~= true) then
+            pcall(function() faucet, tub, sq, facing = BridgeBath.findNearest() end)
+        end
+        if faucet ~= nil then
+            out[#out + 1] = make(tr("BathTake"), ICONS.shower, function() BridgeBath.startBath(faucet, tub, nil, sq, facing) end)
+        end
+    end
     if BridgeShower ~= nil and type(BridgeShower.hasPreShower) == "function" then
         local ready = false
         pcall(function() ready = BridgeShower.hasPreShower() == true end)

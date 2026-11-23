@@ -94,6 +94,7 @@ local function drawBar(self)
     local left = math.floor(x - BAR_W / 2)
     local top = math.floor(y)
     local v = stamina()
+    if v >= 1 then return end
     local fill = fillColor()
 
     self:drawRect(left - BAR_PAD, top - BAR_PAD, BAR_W + BAR_PAD * 2, BAR_H + BAR_PAD * 2,

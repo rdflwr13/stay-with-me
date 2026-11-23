@@ -15,24 +15,19 @@ public final class SwmCompanion {
     private static volatile Object companion;
     private static volatile Object requestedPuppet;
     private static volatile Object puppet;
-    private static volatile Object forced;
+    private static volatile Object raised;
+    private static volatile Object raisedPuppet;
     private static volatile boolean announced;
     private static volatile boolean announcedPuppet;
     private static volatile boolean disabled;
     private static volatile Field dueField;
     private static volatile Map<?, ?> layeredMap;
-    private static volatile boolean layeredProbeFailed;
-    private static volatile int restoreLogs;
 
     private SwmCompanion() {
     }
 
     public static boolean isDisabled() {
         return disabled;
-    }
-
-    public static Object companion() {
-        return companion;
     }
 
     public static boolean isCompanion(Object c) {
@@ -46,6 +41,18 @@ public final class SwmCompanion {
         try {
             requested = resolveBody();
             requestedPuppet = resolvePuppet();
+            if (requested != companion && requested != raised) {
+                raised = requested;
+                if (requested instanceof IsoGameCharacter) {
+                    raise((IsoGameCharacter) requested);
+                }
+            }
+            if (requestedPuppet != puppet && requestedPuppet != raisedPuppet) {
+                raisedPuppet = requestedPuppet;
+                if (requestedPuppet instanceof IsoGameCharacter) {
+                    raise((IsoGameCharacter) requestedPuppet);
+                }
+            }
         } catch (Throwable t) {
             disable(t);
         }
@@ -59,8 +66,9 @@ public final class SwmCompanion {
             Object current = requested;
             if (current != companion) {
                 if (companion != null) {
-                    logLayered(companion);
                     restore(companion);
+                } else if (current != null && current != raised) {
+                    restore(current);
                 }
                 companion = current;
                 if (current != null && !announced) {
@@ -71,8 +79,9 @@ public final class SwmCompanion {
             Object currentPuppet = requestedPuppet;
             if (currentPuppet != puppet) {
                 if (puppet != null) {
-                    logLayered(puppet);
                     restore(puppet);
+                } else if (currentPuppet != null && currentPuppet != raisedPuppet) {
+                    restore(currentPuppet);
                 }
                 puppet = currentPuppet;
                 if (currentPuppet != null && !announcedPuppet) {
@@ -85,20 +94,16 @@ public final class SwmCompanion {
         }
     }
 
-    public static void force(IsoGameCharacter c) {
+    public static void raise(IsoGameCharacter c) {
         if (disabled || c == null) {
-            return;
-        }
-        if (c == forced) {
             return;
         }
         try {
             Field f = field();
-            if (f == null) {
-                return;
+            if (f != null) {
+                f.setBoolean(c, true);
+                c.checkUpdateModelTextures();
             }
-            f.setBoolean(c, true);
-            forced = c;
         } catch (Throwable t) {
             disable(t);
         }
@@ -131,38 +136,21 @@ public final class SwmCompanion {
         return p instanceof IsoZombie ? p : null;
     }
 
-    public static void restore(Object o) {
+    private static void restore(Object o) {
         try {
             Map<?, ?> map = layeredMap();
-            boolean present = map != null && map.containsKey(o);
-            boolean removed = map != null && map.remove(o) != null;
-            if (restoreLogs < 10) {
-                restoreLogs++;
-                System.out.println(PREFIX + "restore present=" + present + " removed=" + removed);
+            if (map != null) {
+                map.remove(o);
             }
             if (o instanceof IsoGameCharacter) {
                 Field f = field();
                 if (f != null) {
                     f.setBoolean(o, true);
+                    ((IsoGameCharacter) o).checkUpdateModelTextures();
                 }
             }
         } catch (Throwable t) {
             disable(t);
-        }
-    }
-
-    private static void logLayered(Object o) {
-        if (layeredProbeFailed) {
-            return;
-        }
-        try {
-            Map<?, ?> map = layeredMap();
-            if (map != null) {
-                System.out.println(PREFIX + "layered entry present=" + map.containsKey(o));
-            }
-        } catch (Throwable t) {
-            layeredProbeFailed = true;
-            System.out.println(PREFIX + "layered probe failed: " + t);
         }
     }
 
@@ -176,7 +164,6 @@ public final class SwmCompanion {
         f.setAccessible(true);
         Object value = f.get(null);
         if (!(value instanceof Map)) {
-            layeredProbeFailed = true;
             return null;
         }
         map = (Map<?, ?>) value;
@@ -204,6 +191,8 @@ public final class SwmCompanion {
         requested = null;
         puppet = null;
         requestedPuppet = null;
+        raised = null;
+        raisedPuppet = null;
         System.out.println(PREFIX + "disabled: " + t);
     }
 }

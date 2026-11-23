@@ -285,5 +285,17 @@
     "Sandbox_StayWithMe_CompanionUpdateRate_Values_option1": "Smooth (60 Hz)",
     "Sandbox_StayWithMe_CompanionUpdateRate_Values_option2": "Balanced (50 Hz)",
     "Sandbox_StayWithMe_CompanionUpdateRate_Values_option3": "Performance (40 Hz)",
-    "Sandbox_StayWithMe_CompanionUpdateRate_Values_option4": "Minimum (30 Hz)"
+    "Sandbox_StayWithMe_CompanionUpdateRate_Values_option4": "Minimum (30 Hz)",
+    "Sandbox_StayWithMe_ShowerCooldown": "Shower cooldown (hours)",
+    "Sandbox_StayWithMe_ShowerCooldown_tooltip": "Hours before the companion will shower again. 0 lets her shower whenever she wants. Default: 24.",
+    "Sandbox_StayWithMe_ShowerWaterUsage": "Shower water usage",
+    "Sandbox_StayWithMe_ShowerWaterUsage_tooltip": "Water units consumed per shower. 0 makes showers cosmetic (no water used). Default: 10.",
+    "Sandbox_StayWithMe_ShowerDuration": "Shower duration (in-game minutes)",
+    "Sandbox_StayWithMe_ShowerDuration_tooltip": "How long a shower takes in in-game minutes. Default: 30.",
+    "Sandbox_StayWithMe_BathCooldown": "Bath cooldown (hours)",
+    "Sandbox_StayWithMe_BathCooldown_tooltip": "Hours before the companion will bathe again. 0 lets her bathe whenever she wants. Default: 24.",
+    "Sandbox_StayWithMe_BathWaterUsage": "Bath water usage",
+    "Sandbox_StayWithMe_BathWaterUsage_tooltip": "Water units consumed per bath. 0 makes baths cosmetic (no water used). Default: 10.",
+    "Sandbox_StayWithMe_BathDuration": "Bath duration (in-game minutes)",
+    "Sandbox_StayWithMe_BathDuration_tooltip": "How long a bath soak takes in in-game minutes. Default: 30."
 }

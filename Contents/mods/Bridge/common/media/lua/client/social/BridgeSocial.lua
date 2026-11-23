@@ -2361,7 +2361,7 @@ function BridgeSocial.update(body)
     local quiet = false
     pcall(function() quiet = Bridge.quiet() end)
     local chatter = not (BridgeTask ~= nil and BridgeTask.idleChatBlocked ~= nil and BridgeTask.idleChatBlocked())
-    local showering = BridgeTask ~= nil and BridgeTask.active == true and BridgeTask.kind == "shower"
+    local showering = BridgeTask ~= nil and BridgeTask.active == true and (BridgeTask.kind == "shower" or BridgeTask.kind == "bath")
     if calm and not justSpoke and chatter and not showering and Bridge.time >= BridgeSocial.nextRemark then
         BridgeSocial.nextRemark = Bridge.time + 5400 + ZombRand(9000)
 

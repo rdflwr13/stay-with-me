@@ -202,7 +202,7 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
                 or BridgeTask.kind == "cleanUp" or BridgeTask.kind == "moveCorpses"
                 or BridgeTask.kind == "washSink" or BridgeTask.kind == "brushTeeth" or BridgeTask.kind == "fillWater"
                 or BridgeTask.kind == "emptyFluid" or BridgeTask.kind == "pryDoor"
-                or BridgeTask.kind == "shower" or BridgeTask.kind == "deposit"
+                or BridgeTask.kind == "shower" or BridgeTask.kind == "bath" or BridgeTask.kind == "deposit"
                 or BridgeTask.kind == "lootArea" or BridgeTask.kind == "harvestCrops"
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
                 or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops"
@@ -493,7 +493,7 @@ function BridgeFastForward.holdStand(b)
             b:setBumpType(alt)
         end)
     end
-    if BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "shower" then return false end
+    if BridgeTask ~= nil and BridgeTask.active and (BridgeTask.kind == "shower" or BridgeTask.kind == "bath") then return false end
     if BridgeTask ~= nil and BridgeTask.active
             and (BridgeTask.kind == "exercise" or BridgeTask.kind == "chopTree"
                 or BridgeTask.kind == "clearPlants" or BridgeTask.kind == "cleanUp"
@@ -755,7 +755,7 @@ function BridgeFastForward.tick()
                 or BridgeTask.kind == "moveCorpses"
                 or BridgeTask.kind == "washSink" or BridgeTask.kind == "brushTeeth" or BridgeTask.kind == "fillWater"
                 or BridgeTask.kind == "emptyFluid" or BridgeTask.kind == "pryDoor"
-                or BridgeTask.kind == "shower" or BridgeTask.kind == "deposit"
+                or BridgeTask.kind == "shower" or BridgeTask.kind == "bath" or BridgeTask.kind == "deposit"
                 or BridgeTask.kind == "lootArea" or BridgeTask.kind == "harvestCrops"
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
                 or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops"
