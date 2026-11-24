@@ -4920,6 +4920,7 @@ function BridgeTask.kinds.chopTree.missing(body)
 end
 
 function BridgeTask.kinds.chopTree.update(body)
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
     if BridgeTask.TREECUTTING_ENABLED ~= 1 then return BridgeTask.finish() end
 
 
@@ -5194,6 +5195,7 @@ function BridgeTask.kinds.pryDoor.missing(body)
 end
 
 function BridgeTask.kinds.pryDoor.update(body)
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
     if BridgeTask.PRY_ENABLED ~= 1 then return BridgeTask.finish() end
 
     local target = BridgeTask.current
@@ -5919,6 +5921,7 @@ function BridgeTask.kinds.washSink.missing(body)
 end
 
 function BridgeTask.kinds.washSink.update(body)
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
     local scope = BridgeTask.washScope or "self"
     local sink = BridgeTask.washSink
     if sink == nil then
@@ -6141,6 +6144,7 @@ function BridgeTask.kinds.brushTeeth.missing(body)
 end
 
 function BridgeTask.kinds.brushTeeth.update(body)
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
     if BridgeTask.BRUSH_TEETH_ENABLED ~= 1 then return BridgeTask.finish() end
     if not BridgeTask.brushReady() then
         Bridge.speak("BrushedRecently")
@@ -6282,7 +6286,10 @@ end
 BridgeTask.kinds.fillTroughs = {}
 function BridgeTask.kinds.fillTroughs.available(body) return BridgeTask.TROUGHS_ENABLED == 1 end
 function BridgeTask.kinds.fillTroughs.missing(body) return nil end
-function BridgeTask.kinds.fillTroughs.update(body) return BridgeTask.troughUpdate(body) end
+function BridgeTask.kinds.fillTroughs.update(body)
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
+    return BridgeTask.troughUpdate(body)
+end
 function BridgeTask.kinds.fillTroughs.leave(body) BridgeTask.troughLeave(body) end
 
 BridgeTask.kinds.fillWater = {}
@@ -6612,6 +6619,7 @@ function BridgeTask.kinds.fillWater.missing(body)
 end
 
 function BridgeTask.kinds.fillWater.update(body)
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
     return BridgeTask.fillRun(body, BridgeTask, nil)
 end
 
@@ -11697,6 +11705,10 @@ BridgeTask.SHOWER_WASH_HOURS = 30 / 60
 BridgeTask.SHOWER_WASH_TICKS = 75 * K.SECOND
 BridgeTask.SHOWER_MOUNT_REACH = 0.35
 
+-- Bath/shower approach leeway: the body often stops 1.4-1.7 tiles from the
+-- faucet square because the tub edge reroutes it; 1.8 catches it before the reroute.
+local APPROACH_LEEWAY = 1.8
+
 BridgeTask.kinds.shower = {}
 BridgeTask.kinds.shower.noTargets = true
 BridgeTask.kinds.shower.restoreMode = true
@@ -11889,6 +11901,7 @@ end
 
 
 function BridgeTask.kinds.shower.update(body)
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
     if BridgeTask.SHOWER_ENABLED ~= 1 then return BridgeTask.finish() end
     if BridgeShower == nil then return BridgeTask.finish() end
     if not BridgeShower.isTabas() then
@@ -11949,7 +11962,7 @@ function BridgeTask.kinds.shower.update(body)
         pcall(function()
             onTile = math.floor(body:getX()) == t.x and math.floor(body:getY()) == t.y
             local dx, dy = body:getX() - (t.x + 0.5), body:getY() - (t.y + 0.5)
-            beside = (dx * dx + dy * dy) <= (1.3 * 1.3)
+            beside = (dx * dx + dy * dy) <= (APPROACH_LEEWAY * APPROACH_LEEWAY)
         end)
         local stalled = (Bridge.time - (BridgeTask.showerSince or Bridge.time)) > (45 * K.SECOND)
         if res == "arrived" or onTile or beside then
@@ -12452,6 +12465,7 @@ end
 
 
 function BridgeTask.kinds.bath.update(body)
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
     if BridgeTask.BATH_ENABLED ~= 1 then return BridgeTask.finish() end
     if BridgeBath == nil then return BridgeTask.finish() end
     if not BridgeBath.active() then
@@ -12503,7 +12517,7 @@ function BridgeTask.kinds.bath.update(body)
         pcall(function()
             onTile = math.floor(body:getX()) == t.x and math.floor(body:getY()) == t.y
             local dx, dy = body:getX() - (t.x + 0.5), body:getY() - (t.y + 0.5)
-            beside = (dx * dx + dy * dy) <= (1.3 * 1.3)
+            beside = (dx * dx + dy * dy) <= (APPROACH_LEEWAY * APPROACH_LEEWAY)
         end)
         local stalled = (Bridge.time - (BridgeTask.bathSince or Bridge.time)) > (45 * K.SECOND)
         if res == "arrived" or onTile or beside then

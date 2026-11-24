@@ -952,8 +952,10 @@ function BridgeMenu.fill(context, playerNum, fromIcon)
             entry.build(context, playerNum, env)
         end
     end
+    local bathing = BridgeTask ~= nil and BridgeTask.active == true
+        and (BridgeTask.kind == "bath" or BridgeTask.kind == "shower")
     if BridgeShower ~= nil and BridgeShower.hasPreShower ~= nil and BridgeShower.hasPreShower()
-            and not (BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "shower") then
+            and not bathing then
         local label = getText("IGUI_NotAlone_GetDressed")
         if label == nil or label == "" or label == "IGUI_NotAlone_GetDressed" then label = "Get dressed" end
         context:addOption(label, nil, BridgeMenu.onGetDressed)

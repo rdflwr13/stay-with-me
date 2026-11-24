@@ -566,7 +566,9 @@ local function selfEntries(playerNum)
     if BridgeShower ~= nil and type(BridgeShower.hasPreShower) == "function" then
         local ready = false
         pcall(function() ready = BridgeShower.hasPreShower() == true end)
-        if ready then
+        local bathing = BridgeTask ~= nil and BridgeTask.active == true
+            and (BridgeTask.kind == "bath" or BridgeTask.kind == "shower")
+        if ready and not bathing then
             out[#out + 1] = make(tr("GetDressed"), ICONS.dress, BridgeMenu.onGetDressed)
         end
     end
