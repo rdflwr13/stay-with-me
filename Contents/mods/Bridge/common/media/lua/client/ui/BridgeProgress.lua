@@ -81,16 +81,28 @@ local function create()
         local scale = 1
         pcall(function() scale = getCore():getOptionActionProgressBarSize() end)
         local w, h = bg:getWidth() * scale, bg:getHeight() * scale
-        local ok, sx, sy = pcall(function()
-            local x = isoToScreenX(0, b:getX(), b:getY(), b:getZ())
-            local y = isoToScreenY(0, b:getX(), b:getY(), b:getZ())
-            local zoom = getCore():getZoom(0)
+        local ok, sx, sy
+        if Bridge ~= nil and type(Bridge.screenPoint) == "function" and Bridge.screenProject ~= nil
+            and type(Bridge.view3D) == "function" and Bridge.view3D(0) then
+            ok, sx, sy = pcall(function()
+                local x, y = Bridge.screenPoint(0, b:getX(), b:getY(), b:getZ(), 1.5)
+                if x == nil or y == nil then return nil end
+                return x - w / 2, y - h
+            end)
+            if not ok then return end
+            if sx == nil then return end
+        else
+            ok, sx, sy = pcall(function()
+                local x = isoToScreenX(0, b:getX(), b:getY(), b:getZ())
+                local y = isoToScreenY(0, b:getX(), b:getY(), b:getZ())
+                local zoom = getCore():getZoom(0)
 
-            local tile = Core.getTileScale()
-            y = y - (128 / math.floor(2 / tile)) / zoom
-            return x - w / 2, y - h
-        end)
-        if not ok then return end
+                local tile = Core.getTileScale()
+                y = y - (128 / math.floor(2 / tile)) / zoom
+                return x - w / 2, y - h
+            end)
+            if not ok then return end
+        end
         self.barScale = scale
         self:setX(sx)
         self:setY(sy)

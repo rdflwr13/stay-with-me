@@ -3345,9 +3345,7 @@ function Bridge.speechOverlayDraw()
     local ok, err = pcall(function()
         local bx = body:getX()
         local by = body:getY()
-        local bz = body:getZ() + CFG.SPEECH.ANCHOR_Z
-        local sx = isoToScreenX(0, bx, by, bz)
-        local anchorY = isoToScreenY(0, bx, by, bz)
+        local sx, anchorY = Bridge.screenPoint(0, bx, by, body:getZ(), CFG.SPEECH.ANCHOR_Z)
         if sx == nil or anchorY == nil then return end
         sx = math.floor(sx)
         anchorY = math.floor(anchorY)
@@ -10030,6 +10028,16 @@ function Bridge.view3D(pn)
         if ok and n == "first" then return false end
     end
     return false
+end
+
+function Bridge.screenPoint(pn, x, y, z, lift)
+    lift = lift or 0
+    if Bridge.screenProject ~= nil and Bridge.view3D(pn) then
+        local sx, sy = Bridge.screenProject(pn, x, y, z, lift)
+        if sx ~= nil and sy ~= nil then return sx, sy end
+        return nil
+    end
+    return isoToScreenX(pn, x, y, z + lift), isoToScreenY(pn, x, y, z + lift)
 end
 
 function Bridge.stuckDiagnostics()

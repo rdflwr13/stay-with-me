@@ -198,9 +198,6 @@ function BridgeWarn.checkSeatPuppet()
     local wants = false
     pcall(function() wants = BridgeData ~= nil and BridgeData.wants(Bridge.store) == true end)
     if not wants then return end
-    local nativeOn = false
-    pcall(function() nativeOn = BridgeData ~= nil and BridgeData.sandboxFlag("CarSeatPuppet", false) == true end)
-    if not nativeOn then return end
     if not modActive(SEAT_PUPPET_MOD.id) then return end
     BridgeWarn.shown.seat = true
     Bridge.store.seatWarned = BridgeWarn.SEAT_VERSION

@@ -1969,6 +1969,20 @@ BridgeServer.Commands.state = function(player, args)
             end
         end
     end
+    if args.booksRead ~= nil then
+        local br = BridgeData.cleanBooksRead(args.booksRead)
+        if br ~= nil then
+            rec.booksRead = br
+            changed = true
+        end
+    end
+    if args.favBook ~= nil then
+        local fb = BridgeData.cleanFavBook(args.favBook)
+        if fb ~= nil and rec.favBook ~= fb then
+            rec.favBook = fb
+            changed = true
+        end
+    end
     if args.exerciseUntil ~= nil then
         local v = tonumber(args.exerciseUntil)
         if v ~= nil and v >= 0 and (rec.exerciseUntil == nil or math.abs(rec.exerciseUntil - v) > 0.001) then

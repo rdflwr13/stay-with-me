@@ -425,7 +425,10 @@ function BridgeOrder:refresh()
         if work and BridgeData ~= nil and BridgeData.workShown ~= nil then
             item.on = BridgeData.workShown(Bridge.store, id)
         else
-            item.on = BridgeData ~= nil and BridgeData.menuShown(Bridge.store, id) or true
+            item.on = true
+            if BridgeData ~= nil and type(BridgeData.menuShown) == "function" then
+                item.on = BridgeData.menuShown(Bridge.store, id)
+            end
         end
     end
     if keep == nil or keep < 1 or keep > #list.items then keep = 1 end

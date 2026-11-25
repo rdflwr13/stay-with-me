@@ -3752,6 +3752,11 @@ function BridgeInventory.giftOption(context, b, player, list, dest)
             fullText = BridgeGiftTooltip.valueText(info)
         end
     end)
+    if info.fav then
+        local fav = getText("IGUI_NotAlone_ReadFavorite")
+        shortText = shortText .. " " .. fav
+        fullText = fullText .. " (" .. fav .. ")"
+    end
     local opt = context:addOption(label("InvGift") .. " (" .. shortText .. ")", nil, function()
         if not inRange() then return end
         local unit = item
@@ -3819,6 +3824,21 @@ end
 function BridgeInventory.readOnHer(item)
     if BridgeTask == nil or type(BridgeTask.start) ~= "function" then return end
     if item == nil then return end
+    local body = Bridge.body
+    local owned = false
+    pcall(function() owned = BridgeTask.readHasBook ~= nil and BridgeTask.readHasBook(body, item) end)
+    if not owned and BridgeWorkSelect ~= nil and type(BridgeWorkSelect.lootTargetForContainer) == "function" then
+        local cont = nil
+        pcall(function() cont = item:getContainer() end)
+        local target = nil
+        if cont ~= nil then pcall(function() target = BridgeWorkSelect.lootTargetForContainer(cont, { item }) end) end
+        if target ~= nil then
+            BridgeTask.nextJob = { kind = "read", targets = { { item = item } } }
+            local res = BridgeTask.start("lootArea", { target }, nil, { quiet = true })
+            if res == "started" then return end
+            BridgeTask.nextJob = nil
+        end
+    end
     BridgeTask.start("read", { { item = item } })
 end
 
@@ -3969,8 +3989,7 @@ function BridgeInventory.onFill(playerNum, context, items)
         local smokeable = false
         pcall(function()
             local t = item:getType()
-            smokeable = BridgeInventory.inBody(item:getContainer())
-                and (t == "CigaretteSingle" or t == "CigaretteRolled" or t == "CigarettePack")
+            smokeable = (t == "CigaretteSingle" or t == "CigaretteRolled" or t == "CigarettePack")
         end)
         if smokeable then
             rin:addOption(label("MenuSmoke"), item, BridgeInventory.smokeOnHer)
@@ -3978,10 +3997,15 @@ function BridgeInventory.onFill(playerNum, context, items)
         end
     end
 
-    if #list == 1 and BridgeTask ~= nil and BridgeSkills ~= nil and type(BridgeSkills.bookInfo) == "function" then
+    if #list == 1 and BridgeTask ~= nil and BridgeSkills ~= nil
+            and (type(BridgeSkills.readInfo) == "function" or type(BridgeSkills.bookInfo) == "function") then
         local item = list[1]
         local info = nil
-        pcall(function() info = BridgeSkills.bookInfo(item) end)
+        if type(BridgeSkills.readInfo) == "function" then
+            pcall(function() info = BridgeSkills.readInfo(item) end)
+        else
+            pcall(function() info = BridgeSkills.bookInfo(item) end)
+        end
         if info ~= nil and info.book then
             local reading = BridgeTask.active and BridgeTask.kind == "read" and BridgeTask.readBook == item
             if reading then
@@ -4393,6 +4417,21 @@ local LATE_TICKS = 3600
 
 function BridgeInventory.smokeOnHer(item)
     if BridgeTask == nil or BridgeTask.start == nil then return end
+    local body = Bridge.body
+    local owned = false
+    pcall(function() owned = BridgeTask.smokeOwned ~= nil and BridgeTask.smokeOwned(body, item) end)
+    if not owned and BridgeWorkSelect ~= nil and type(BridgeWorkSelect.lootTargetForContainer) == "function" then
+        local cont = nil
+        pcall(function() cont = item:getContainer() end)
+        local target = nil
+        if cont ~= nil then pcall(function() target = BridgeWorkSelect.lootTargetForContainer(cont, { item }) end) end
+        if target ~= nil then
+            BridgeTask.nextJob = { kind = "smoke", targets = { { item = item } } }
+            local res = BridgeTask.start("lootArea", { target }, nil, { quiet = true })
+            if res == "started" then return end
+            BridgeTask.nextJob = nil
+        end
+    end
     BridgeTask.start("smoke", { { item = item } })
 end
 

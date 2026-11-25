@@ -708,6 +708,8 @@ BridgeData.LOOT_POOL_GROUP = {
     ReceiveGunPart = "ReceiveGun", ReceiveAmmoParts = "ReceiveAmmo",
     DressDirty = "ReceiveCloth", DressBroken = "ReceiveCloth", ReceiveUndies = "ReceiveCloth",
     ReceiveMap = "ReceiveRead",
+    ReceiveComic = "ReceiveRead", ReceiveMagazine = "ReceiveRead", ReceiveNewspaper = "ReceiveRead",
+    ReceiveSkillBook = "ReceiveRead", ReceiveHottieZ = "ReceiveRead", ReceiveFavoriteBook = "ReceiveRead",
     ReceiveSmokes = "ReceiveCigs",
     ReceiveHousehold = "ReceiveItem",
 }
@@ -2232,6 +2234,66 @@ function BridgeData.bookXpOf(rec)
     if rec == nil then return nil end
     if type(rec.bookXp) ~= "table" then rec.bookXp = {} end
     return rec.bookXp
+end
+
+
+BridgeData.READ_CATEGORIES = { "fiction", "romance", "horror", "scifi", "crime",
+    "religious", "occult", "comic", "magazine", "newspaper", "hottiez", "skill",
+    "adventure", "classic", "fantasy", "thriller", "western", "sad",
+    "art", "history", "military", "science", "nature", "medical", "cooking", "craft",
+    "general", "biography", "business", "cinema", "computer", "diet", "fashion", "golf",
+    "legal", "music", "philosophy", "politics", "quackery", "relationship", "self_help",
+    "sports", "travel" }
+BridgeData.READ_CATEGORY_SET = {}
+for i = 1, #BridgeData.READ_CATEGORIES do
+    BridgeData.READ_CATEGORY_SET[BridgeData.READ_CATEGORIES[i]] = true
+end
+BridgeData.BOOKS_READ_MAX = 400
+
+
+function BridgeData.cleanBooksRead(t)
+    if type(t) ~= "table" then return nil end
+    local out, n = {}, 0
+    for k, v in pairs(t) do
+        if type(k) == "string" and #k > 0 and #k <= 96 and type(v) == "table" then
+            local p = tonumber(v.p)
+            local at = tonumber(v.at)
+            if p ~= nil and p == p and p >= 0 and p <= 100000 then
+                out[k] = { p = math.floor(p), at = (at ~= nil and at == at and at >= 0) and at or 0,
+                    done = v.done == true }
+                n = n + 1
+            end
+        end
+        if n >= BridgeData.BOOKS_READ_MAX then break end
+    end
+    return out
+end
+
+
+function BridgeData.booksReadOf(rec)
+    if rec == nil then return nil end
+    if type(rec.booksRead) ~= "table" then rec.booksRead = {} end
+    return rec.booksRead
+end
+
+
+function BridgeData.cleanFavBook(value)
+    if type(value) ~= "string" then return nil end
+    if BridgeData.READ_CATEGORY_SET[value] == true then return value end
+    return nil
+end
+
+
+function BridgeData.defaultFavBook(gender)
+    if gender == "male" then return "general" end
+    return "romance"
+end
+
+
+function BridgeData.favBookOf(rec)
+    local v = BridgeData.cleanFavBook(rec ~= nil and rec.favBook or nil)
+    if v ~= nil then return v end
+    return BridgeData.defaultFavBook(BridgeData.genderOf(rec))
 end
 
 

@@ -338,6 +338,7 @@ BridgeTask.current = nil
 BridgeTask.prevMode = "follow"
 BridgeTask.phase = nil
 BridgeTask.smoke = nil
+BridgeTask.nextJob = nil
 BridgeTask.nextSwing = 0
 BridgeTask.since = 0
 BridgeTask.swings = 0
@@ -4240,6 +4241,12 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         Bridge.speak("JobTroughStart")
     elseif kind == "animalCare" then
         Bridge.speak("JobAnimalCareStart")
+    elseif kind == "read" then
+        local info = nil
+        if targets ~= nil and targets[1] ~= nil and targets[1].item ~= nil then
+            info = BridgeTask.readInfoOf(targets[1].item)
+        end
+        Bridge.speak((info ~= nil and info.kind == "lit") and "ReadStart" or "ReadStartSkill")
     elseif startText ~= nil then
         Bridge.speakText(startText)
     else
@@ -4260,6 +4267,7 @@ end
 
 function BridgeTask.cancel(reason)
     if not BridgeTask.active then return "idle" end
+    BridgeTask.nextJob = nil
     local body = Bridge.body
     if BridgeTask.walkLadder ~= nil then
         if BridgeLadder ~= nil then pcall(BridgeLadder.cleanupSegment, body, false) end
@@ -4560,6 +4568,11 @@ function BridgeTask.finish()
         tostring(finishId or "-"), tostring(finishKind),
         tostring(BridgeTask.doneCount), tostring(BridgeTask.failCount)))
     BridgeTask.jobId = nil
+    local nextJob = BridgeTask.nextJob
+    BridgeTask.nextJob = nil
+    if nextJob ~= nil then
+        BridgeTask.start(nextJob.kind, nextJob.targets, nextJob.corpseDest, nextJob.opts)
+    end
     return "done"
 end
 
@@ -6310,16 +6323,21 @@ function BridgeTask.smokePick(body)
     return nil
 end
 
+function BridgeTask.smokeOwned(body, item)
+    if body == nil or item == nil then return false end
+    local owned = false
+    pcall(function()
+        local c = item:getContainer()
+        owned = c ~= nil and (c == body:getInventory() or c:getOutermostContainer() == body:getInventory())
+    end)
+    return owned
+end
+
 function BridgeTask.smokePickFrom(body, want)
     if body == nil or want == nil then return nil end
     local t = smokeTypeOf(want)
     if t == "CigaretteSingle" or t == "CigaretteRolled" then
-        local owned = false
-        pcall(function()
-            local c = want:getContainer()
-            owned = c ~= nil and (c == body:getInventory() or c:getOutermostContainer() == body:getInventory())
-        end)
-        if owned then return { item = want } end
+        if BridgeTask.smokeOwned(body, want) then return { item = want } end
     elseif t == "CigarettePack" then
         local uses = 0
         pcall(function() uses = want:getCurrentUses() end)
@@ -6594,8 +6612,7 @@ function BridgeTask.kinds.smoke.missing(body)
 end
 
 function BridgeTask.kinds.smoke.available(body)
-    if BridgeTask.SMOKE_ENABLED ~= 1 then return false end
-    return BridgeTask.kinds.smoke.missing(body) == nil
+    return BridgeTask.SMOKE_ENABLED == 1
 end
 
 function BridgeTask.kinds.smoke.update(body)
@@ -11648,9 +11665,57 @@ function BridgeTask.readApplyMult(book, frac)
     end
 end
 
+function BridgeTask.readInfoOf(book)
+    local info = nil
+    if BridgeSkills ~= nil then
+        if type(BridgeSkills.readInfo) == "function" then
+            pcall(function() info = BridgeSkills.readInfo(book) end)
+        elseif type(BridgeSkills.bookInfo) == "function" then
+            pcall(function() info = BridgeSkills.bookInfo(book) end)
+        end
+    end
+    return info
+end
+
+function BridgeTask.readWriteProgress(readPages, done)
+    if BridgeTask.readKey == nil then return end
+    local rec = Bridge.store
+    if rec == nil then return end
+    local books = BridgeData.booksReadOf(rec)
+    if books == nil then return end
+    local at = 0
+    pcall(function() at = getGameTime():getWorldAgeHours() end)
+    local prev = books[BridgeTask.readKey]
+    local p = math.floor(tonumber(readPages) or 0)
+    local d = done == true or (prev ~= nil and prev.done == true)
+    books[BridgeTask.readKey] = { p = p, at = tonumber(at) or 0, done = d }
+    if BridgeSkills ~= nil then BridgeSkills.dirty = true end
+    print(string.format("[BridgeTask] read write key=%s p=%d done=%s", tostring(BridgeTask.readKey), p, tostring(d)))
+end
+
+function BridgeTask.readSayLine()
+    local cat = BridgeTask.readCategory
+    if cat == nil then return end
+    local fav = nil
+    pcall(function() fav = BridgeData.favBookOf(Bridge.store) end)
+    local event = (fav ~= nil and cat == fav) and "ReadFavorite" or ("ReadProgress_" .. cat)
+    if BridgeMoments ~= nil and type(BridgeMoments.say) == "function" then
+        pcall(function() BridgeMoments.say(event, 0, true, "ReadProgress", "foot") end)
+    end
+end
+
 function BridgeTask.readStartReading(body, book, posture)
     BridgeTask.readPosture = posture
     BridgeTask.readPhase = "read"
+    local info = BridgeTask.readInfoOf(book)
+    BridgeTask.readKind = (info ~= nil and info.kind == "lit") and "lit" or "skill"
+    BridgeTask.readCategory = info ~= nil and info.category or nil
+    if BridgeTask.readKind == "skill" then BridgeTask.readCategory = "skill" end
+    BridgeTask.readKey = info ~= nil and info.key or nil
+    BridgeTask.readShort = (BridgeSkills ~= nil and type(BridgeSkills.isShort) == "function")
+        and BridgeSkills.isShort(info) or false
+    BridgeTask.readSayAt = nil
+    BridgeTask.readSayCount = 0
     BridgeTask.readStartH = nil
     pcall(function() BridgeTask.readStartH = getGameTime():getWorldAgeHours() end)
     BridgeTask.readSpanH = BridgeTask.readSpanHours(book, posture == "chair")
@@ -11658,13 +11723,21 @@ function BridgeTask.readStartReading(body, book, posture)
     BridgeTask.readTickSpan = BridgeTask.readSpanH * 3600
     BridgeTask.readPages = 0
     pcall(function() BridgeTask.readPages = book:getNumberOfPages() end)
-    if BridgeTask.readPages == nil or BridgeTask.readPages < 0 then BridgeTask.readPages = 0 end
+    if BridgeTask.readPages == nil or BridgeTask.readPages < 1 then
+        BridgeTask.readPages = 1
+        if book.setNumberOfPages ~= nil then
+            pcall(function() book:setNumberOfPages(1) end)
+        end
+    end
     BridgeTask.readMilestone = 0
     BridgeTask.readBegin(body, book, posture)
     if posture == "chair" and BridgeMove ~= nil then
         pcall(function() BridgeMove.sendSit("chair") end)
     end
     BridgeTask.info = "read: " .. posture
+    print(string.format("[BridgeTask] read start kind=%s key=%s cat=%s pages=%d short=%s",
+        tostring(BridgeTask.readKind), tostring(BridgeTask.readKey), tostring(BridgeTask.readCategory),
+        tonumber(BridgeTask.readPages) or 0, tostring(BridgeTask.readShort)))
 end
 
 BridgeTask.kinds.read = {}
@@ -11688,14 +11761,39 @@ function BridgeTask.kinds.read.update(body)
     local book = BridgeTask.readBook
     if book == nil then return BridgeTask.finish() end
     if not BridgeTask.readHasBook(body, book) then
+        Bridge.speak("ReadRejectGone")
         BridgeTask.info = "read: book gone"
         return BridgeTask.finish()
     end
     local phase = BridgeTask.readPhase or "pick"
     if phase == "pick" then
+        local info = BridgeTask.readInfoOf(book)
+        if info == nil then
+            BridgeTask.info = "read: not readable"
+            return BridgeTask.finish()
+        end
+        if info.status == "read" then
+            if not BridgeTask.readRejected then
+                BridgeTask.readRejected = true
+                Bridge.speak("ReadRejectAlready")
+            end
+            BridgeTask.info = "read: already read"
+            return BridgeTask.finish()
+        end
+        if info.status == "too_hard" then
+            Bridge.speak("ReadRejectTooHard")
+            BridgeTask.info = "read: too hard"
+            return BridgeTask.finish()
+        end
+        if info.status == "obsolete" then
+            Bridge.speak("ReadRejectObsolete")
+            BridgeTask.info = "read: obsolete"
+            return BridgeTask.finish()
+        end
         local veh = nil
         pcall(function() veh = body:getVehicle() end)
         if veh ~= nil then
+            Bridge.speak("ReadRejectVehicle")
             BridgeTask.info = "read: in vehicle"
             return BridgeTask.finish()
         end
@@ -11706,8 +11804,13 @@ function BridgeTask.kinds.read.update(body)
             if e ~= nil and e.dark == true then dark = true end
         end
         if dark then
+            Bridge.speak("ReadRejectDark")
             BridgeTask.info = "read: too dark"
             return BridgeTask.finish()
+        end
+        if BridgeSkills ~= nil and type(BridgeSkills.isShort) == "function" and BridgeSkills.isShort(info) then
+            BridgeTask.readStartReading(body, book, "stand")
+            return true
         end
         if BridgeTask.isSeated(body) then
             BridgeTask.readPosture = "chair"
@@ -11844,12 +11947,35 @@ function BridgeTask.kinds.read.update(body)
             local readPages = math.floor(pages * frac)
             pcall(function() book:setAlreadyReadPages(readPages) end)
             pcall(function() Bridge.itemsChanged() end)
-            BridgeTask.readApplyMult(book, frac)
+            if BridgeTask.readKind == "skill" then
+                BridgeTask.readApplyMult(book, frac)
+            else
+                BridgeTask.readWriteProgress(readPages)
+            end
+        end
+        if not BridgeTask.readShort and (BridgeTask.readSayCount or 0) < 4 and frac < 0.85 then
+            if BridgeTask.readSayAt == nil then
+                BridgeTask.readSayAt = Bridge.time + (3 * 60 + ZombRand(2 * 60)) / math.max(1, U.ffMult())
+            elseif Bridge.time >= BridgeTask.readSayAt then
+                BridgeTask.readSayCount = (BridgeTask.readSayCount or 0) + 1
+                BridgeTask.readSayAt = Bridge.time + (3 * 60 + ZombRand(2 * 60)) / math.max(1, U.ffMult())
+                BridgeTask.readSayLine()
+            end
         end
         if frac >= 1 then
             pcall(function() book:setAlreadyReadPages(pages) end)
             pcall(function() Bridge.itemsChanged() end)
-            BridgeTask.readApplyMult(book, 1)
+            if BridgeTask.readKind == "skill" then
+                BridgeTask.readApplyMult(book, 1)
+            else
+                BridgeTask.readWriteProgress(pages, true)
+            end
+            print(string.format("[BridgeTask] read done key=%s kind=%s pages=%d",
+                tostring(BridgeTask.readKey), tostring(BridgeTask.readKind), tonumber(pages) or 0))
+            if not BridgeTask.readSaidDone then
+                BridgeTask.readSaidDone = true
+                Bridge.speak(BridgeTask.readKind == "skill" and "ReadDoneSkill" or "ReadDone")
+            end
             BridgeTask.doneCount = (BridgeTask.doneCount or 0) + 1
             return BridgeTask.finish()
         end
@@ -11892,6 +12018,16 @@ function BridgeTask.kinds.read.leave(body)
     BridgeTask.readMilestone = nil
     BridgeTask.readSoundAt = nil
     BridgeTask.readAnimSeen = nil
+    BridgeTask.readKind = nil
+    BridgeTask.readCategory = nil
+    BridgeTask.readKey = nil
+    BridgeTask.readShort = nil
+    BridgeTask.readSayAt = nil
+    BridgeTask.readSayCount = nil
+    BridgeTask.readSaidStart = nil
+    BridgeTask.readSaidBegin = nil
+    BridgeTask.readSaidDone = nil
+    BridgeTask.readRejected = nil
     BridgeTask.seatTrace = nil
 end
 

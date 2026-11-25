@@ -898,6 +898,7 @@ local RECEIVE_GESTURE = {
     ReceiveGun = "Yes", ReceiveAmmo = "Yes", ReceiveGunPart = "Yes", ReceiveMeleePart = "Yes",
     ReceiveCorpse = "NoThankYou",
     ReceiveCigs = "NoThankYou",
+    ReceiveComic = "Yes", ReceiveHottieZ = "NoThankYou",
 }
 
 local VALUED = { ReceiveMeds = true, ReceiveMemento = true, ReceiveTeddy = true,
@@ -972,6 +973,7 @@ BridgeSocial.GIFT = {
     ReceiveMakeup   = { f = 1, r = 0 },
     ReceivePerfume  = { f = 1, r = 0 },
     ReceiveCologne  = { f = 1, r = 0 },
+    ReceiveRead     = { f = 1, r = 0 },
 }
 local GIFT_POOLS = {}
 for giftPool in pairs(BridgeSocial.GIFT) do GIFT_POOLS[giftPool] = true end
@@ -1079,7 +1081,11 @@ function BridgeSocial.giftPool(item, pool)
     if typeHas(t, MEMENTO_TYPES) or catHas(cat, MEMENTO_CATS) or hasTagLike(item, "memento") then
         return "ReceiveMemento"
     end
-    if pool ~= nil and GIFT_POOLS[pool] then return pool end
+    if pool ~= nil then
+        if GIFT_POOLS[pool] then return pool end
+        local mapped = BridgeData.LOOT_POOL_GROUP[pool]
+        if mapped ~= nil and GIFT_POOLS[mapped] then return mapped end
+    end
     if typeHas(t, TOY_TYPES, TOY_EXACT) or catHas(cat, TOY_CATS) then return "ReceiveFun" end
     return nil
 end
@@ -1137,8 +1143,16 @@ function BridgeSocial.giftPreview(item)
     end
     local romanceOn = false
     pcall(function() romanceOn = BridgeSocial.romanceOn() == true end)
+    local fav = false
+    if BridgeSkills ~= nil and type(BridgeSkills.categoryOf) == "function" then
+        local cat = nil
+        pcall(function() cat = BridgeSkills.categoryOf(item) end)
+        local favBook = nil
+        pcall(function() favBook = BridgeData.favBookOf(Bridge.store) end)
+        fav = (cat ~= nil and favBook ~= nil and cat == favBook)
+    end
     return { pool = pool, f = gf, r = gr, effF = effF, effR = effR,
-        given = given, capped = (not given) and effF <= 0 and effR <= 0, romanceOn = romanceOn }
+        given = given, capped = (not given) and effF <= 0 and effR <= 0, romanceOn = romanceOn, fav = fav }
 end
 
 local function eachInvItem(inv, fn)
@@ -1342,6 +1356,20 @@ end
 
 function BridgeSocial.receivePool(item)
     if item == nil then return "ReceiveItem" end
+    local fullType = nil
+    pcall(function() fullType = item:getFullType() end)
+    if type(fullType) == "string" then
+        local base = string.match(fullType, "^[^%.]+%.(.+)$") or fullType
+        local skill = nil
+        if item.getSkillTrained ~= nil then
+            pcall(function() skill = item:getSkillTrained() end)
+        end
+        if type(skill) == "string" and skill ~= "" then return "ReceiveSkillBook" end
+        if string.find(base, "HottieZ", 1, true) then return "ReceiveHottieZ" end
+        if string.find(base, "ComicBook", 1, true) then return "ReceiveComic" end
+        if string.find(base, "Newspaper", 1, true) then return "ReceiveNewspaper" end
+        if string.find(base, "Magazine", 1, true) then return "ReceiveMagazine" end
+    end
     if isMale() then
         local g = BridgeSocial.maleReceive(item)
         if g ~= nil then return g.pool end
@@ -1460,6 +1488,13 @@ function BridgeSocial.received(item)
 
 
     local pool = BridgeSocial.receivePool(item)
+    local favCat = nil
+    pcall(function() favCat = BridgeData.favBookOf(Bridge.store) end)
+    if favCat ~= nil and BridgeSkills ~= nil and type(BridgeSkills.categoryOf) == "function" then
+        local cat = nil
+        pcall(function() cat = BridgeSkills.categoryOf(item) end)
+        if cat ~= nil and cat == favCat then pool = "ReceiveFavoriteBook" end
+    end
 
 
 

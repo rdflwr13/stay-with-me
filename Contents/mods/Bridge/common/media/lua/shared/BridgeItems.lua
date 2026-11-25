@@ -518,13 +518,57 @@ function BridgeItems.apply(item, rec)
             if fc ~= nil and not fc:isEmpty() then fc:Empty() end
         end)
     end
-    if efzTree == nil and rec.wp ~= nil then
-        try(function()
-            for name in string.gmatch(rec.wp, "[^+]+") do
-                local part = instanceItem(name)
-                if part ~= nil then item:attachWeaponPart(part) end
+    if efzTree == nil then
+        local fullType = nil
+        pcall(function() fullType = item:getFullType() end)
+        local isMarz = false
+        if type(fullType) == "string" then
+            if BridgeGunRules ~= nil and type(BridgeGunRules.moduleOf) == "function" then
+                isMarz = BridgeGunRules.moduleOf(fullType) == "MarzGuns"
+            else
+                isMarz = string.sub(fullType, 1, 9) == "MarzGuns."
             end
-        end)
+        end
+        local before = nil
+        if isMarz then
+            try(function()
+                local parts = nil
+                if item.getAllWeaponParts ~= nil then
+                    parts = item:getAllWeaponParts()
+                end
+                if parts ~= nil then before = parts:size() end
+                if item.clearAllWeaponParts ~= nil then
+                    item:clearAllWeaponParts()
+                elseif parts ~= nil and item.detachWeaponPart ~= nil then
+                    local list = {}
+                    for i = 0, parts:size() - 1 do list[#list + 1] = parts:get(i) end
+                    for i = 1, #list do
+                        if list[i] ~= nil then item:detachWeaponPart(list[i]) end
+                    end
+                end
+            end)
+        end
+        if rec.wp ~= nil then
+            try(function()
+                if item.attachWeaponPart ~= nil then
+                    for name in string.gmatch(rec.wp, "[^+]+") do
+                        local part = instanceItem(name)
+                        if part ~= nil then item:attachWeaponPart(part) end
+                    end
+                end
+            end)
+        end
+        if isMarz and before ~= nil and BridgeLog ~= nil
+                and type(BridgeLog.on) == "function" and BridgeLog.on() then
+            local after = nil
+            pcall(function()
+                if item.getAllWeaponParts ~= nil then
+                    after = item:getAllWeaponParts():size()
+                end
+            end)
+            print(string.format("[BridgeItems] parts %s cleared=%d after=%d",
+                tostring(fullType), before, after or -1))
+        end
     end
 
 

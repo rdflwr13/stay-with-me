@@ -79,6 +79,10 @@ BridgeCallout.info = "none"
 BridgeCallout.lastCombatAt = -99999
 BridgeCallout.attackPrev = false
 
+BridgeCallout.playerTallPrev = false
+BridgeCallout.tallGrabPrev = false
+BridgeCallout.tallCrossPrev = false
+
 BridgeCallout.drawnPrev = false
 BridgeCallout.scanAt = -99999
 BridgeCallout.dueAt = -99999
@@ -154,6 +158,9 @@ BridgeCallout.SAY = {
     EvGunKill    = 1,
     EvClimbUp    = 1,
     EvClimbDown  = 1,
+    EvClimbWatch = 1,
+    EvClimbTallStart = 1,
+    EvClimbTallDone = 1,
     EvGunEngage  = 1,
     EvSwitchToMelee = 1,
     EvSwitchToGun = 1,
@@ -217,6 +224,9 @@ BridgeCallout.EVENTS = {
     EvGunKill    = { slot = "GunKill",    cooldown = 20 },
     EvClimbUp    = { slot = "Climb",      cooldown = 60 },
     EvClimbDown  = { slot = "Climb",      cooldown = 60 },
+    EvClimbWatch = { slot = "ClimbWatch", cooldown = 60 },
+    EvClimbTallStart = { slot = "ClimbTallStart", cooldown = 30 },
+    EvClimbTallDone = { slot = "ClimbTallDone", cooldown = 30 },
     EvGunEngage  = { slot = "GunEngage",  cooldown = 30 },
     EvSwitchToMelee = { slot = "Switch",  cooldown = 20 },
     EvSwitchToGun = { slot = "Switch",    cooldown = 20 },
@@ -776,6 +786,79 @@ end
 function BridgeCallout.climb(direction)
     if direction == "down" then return say("EvClimbDown") end
     return say("EvClimbUp")
+end
+
+function BridgeCallout.climbWatch() return say("EvClimbWatch") end
+
+function BridgeCallout.climbTallStart() return say("EvClimbTallStart") end
+
+function BridgeCallout.climbTallDone() return say("EvClimbTallDone") end
+
+local function playerTallClimb(red)
+    if red == nil then return false end
+    local asn = nil
+    pcall(function() asn = tostring(red:getActionStateName()) end)
+    if asn == nil then return false end
+    asn = string.lower(asn)
+    if string.find(asn, "climbwall", 1, true) ~= nil then return true end
+    if string.find(asn, "climb", 1, true) == nil then return false end
+    local climbing = false
+    pcall(function() climbing = red:isClimbing() == true end)
+    if not climbing then return false end
+    local tall = false
+    pcall(function()
+        local sq = red:getCurrentSquare()
+        if sq == nil then return end
+        local cell = getCell()
+        if cell == nil then return end
+        local x, y, z = sq:getX(), sq:getY(), sq:getZ()
+        local pts = { { x, y }, { x + 1, y }, { x - 1, y }, { x, y + 1 }, { x, y - 1 } }
+        for i = 1, #pts do
+            local s = cell:getGridSquare(pts[i][1], pts[i][2], z)
+            if s ~= nil then
+                local objs = s:getObjects()
+                for j = 0, objs:size() - 1 do
+                    local o = objs:get(j)
+                    local th = false
+                    pcall(function()
+                        th = type(o.isTallHoppable) == "function" and o:isTallHoppable() == true
+                    end)
+                    if th then tall = true return end
+                end
+            end
+        end
+    end)
+    return tall
+end
+
+function BridgeCallout.climbTick(body, red)
+    if BridgeCallout.ENABLED == 0 then return end
+    local playerTall = false
+    pcall(function() playerTall = playerTallClimb(red) end)
+    if playerTall and not (BridgeCallout.playerTallPrev == true) then
+        local near = false
+        pcall(function()
+            if body ~= nil and red ~= nil then
+                local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
+                near = math.abs(red:getZ() - body:getZ()) < 1 and (dx * dx + dy * dy) <= 100
+            end
+        end)
+        if near then BridgeCallout.climbWatch() end
+    end
+    BridgeCallout.playerTallPrev = playerTall
+
+    local cross = BridgeMove ~= nil and BridgeMove.cross or nil
+    local tallGrab = cross ~= nil and cross.kind == "tall" and cross.phase == "grab"
+    if tallGrab and not (BridgeCallout.tallGrabPrev == true) then
+        BridgeCallout.climbTallStart()
+    end
+    BridgeCallout.tallGrabPrev = tallGrab
+
+    if BridgeCallout.tallCrossPrev == true and cross == nil
+        and BridgeMove ~= nil and BridgeMove.crossInfo == "done" then
+        BridgeCallout.climbTallDone()
+    end
+    BridgeCallout.tallCrossPrev = (cross ~= nil and cross.kind == "tall")
 end
 
 function BridgeCallout.outOfAmmo()
@@ -2063,6 +2146,7 @@ function BridgeCallout.update(body)
         pcall(function() BridgeCallout.homeTrack(body, BridgeData.owner()) end)
     end
     if BridgeCallout.ENABLED == 0 then return end
+    pcall(BridgeCallout.climbTick, body, redOwner)
     if Bridge.time < (BridgeCallout.dueAt or 0) then return end
     if carQuiet() then
         BridgeCallout.dueAt = Bridge.time + BridgeCallout.SCAN_QUIET

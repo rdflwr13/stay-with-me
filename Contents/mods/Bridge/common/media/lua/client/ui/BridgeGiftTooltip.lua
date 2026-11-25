@@ -55,6 +55,7 @@ local function appendGift(item, tooltip)
     pcall(function() pad = tooltip.padLeft or pad end)
     if type(pad) ~= "number" or pad <= 0 then pad = 8 end
     local text = tr("TooltipGift") .. ": " .. B.valueText(info)
+    if info.fav then text = text .. " (" .. tr("ReadFavorite") .. ")" end
     local y, w = 0, 0
     pcall(function() y = tooltip:getHeight(); w = tooltip:getWidth() end)
     pcall(function() tooltip:DrawText(font, text, pad, y + 2, 0.6, 1, 0.6, 1) end)
@@ -65,9 +66,13 @@ local function appendGift(item, tooltip)
 end
 
 local function appendRead(item, tooltip)
-    if BridgeSkills == nil or type(BridgeSkills.bookInfo) ~= "function" then return end
+    if BridgeSkills == nil then return end
     local info = nil
-    pcall(function() info = BridgeSkills.bookInfo(item) end)
+    if type(BridgeSkills.readInfo) == "function" then
+        pcall(function() info = BridgeSkills.readInfo(item) end)
+    elseif type(BridgeSkills.bookInfo) == "function" then
+        pcall(function() info = BridgeSkills.bookInfo(item) end)
+    end
     if info == nil or info.book ~= true then return end
     local pages = tonumber(info.pages) or 0
     if pages <= 0 then return end

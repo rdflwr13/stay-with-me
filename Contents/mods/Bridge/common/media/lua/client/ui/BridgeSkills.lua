@@ -292,6 +292,112 @@ function BridgeSkills.bookInfo(item)
         pages = pages, read = read, mult = tonumber(mult) or 1, status = status }
 end
 
+BridgeSkills.READ_CATEGORIES = BridgeData.READ_CATEGORIES
+
+function BridgeSkills.readKey(item)
+    if item == nil then return nil end
+    local full = nil
+    pcall(function() full = item:getFullType() end)
+    if type(full) ~= "string" or full == "" then return nil end
+    local base = string.match(full, "^[^%.]+%.(.+)$") or full
+    if base == "Book" or base == "Paperback" or base == "Magazine" then
+        local name = nil
+        pcall(function() name = item:getName() end)
+        if type(name) == "string" and name ~= "" then
+            return full .. "|" .. name
+        end
+    end
+    return full
+end
+
+function BridgeSkills.categoryOf(item)
+    if item == nil then return nil end
+    local skillInfo = nil
+    pcall(function() skillInfo = BridgeSkills.bookInfo(item) end)
+    if skillInfo ~= nil then return "skill" end
+    local full = nil
+    pcall(function() full = item:getFullType() end)
+    if type(full) ~= "string" then return nil end
+    local base = string.match(full, "^[^%.]+%.(.+)$") or full
+    local low = string.lower(base)
+    local skip = { "child", "picture", "photo", "card", "receipt", "note", "brochure", "flier",
+        "catalog", "phonebook", "rpg", "instruction", "recipe" }
+    for i = 1, #skip do
+        if string.find(low, skip[i], 1, true) then return nil end
+    end
+    if string.find(low, "hottiez", 1, true) then return "hottiez" end
+    if string.find(low, "comic", 1, true) then return "comic" end
+    if string.find(low, "newspaper", 1, true) then return "newspaper" end
+    if string.find(low, "magazine", 1, true) or string.find(low, "tvguide", 1, true) then return "magazine" end
+    local sub = string.lower(string.match(base, "_([%w]+)$") or "")
+    local map = {
+        art = "art", history = "history", military = "military", science = "science",
+        nature = "nature", medical = "medical", cooking = "cooking", craft = "craft",
+        religion = "religious", religious = "religious", bible = "religious",
+        occult = "occult", newage = "occult",
+        horror = "horror", scary = "horror",
+        scifi = "scifi", sciencefiction = "scifi",
+        crime = "crime", crimefiction = "crime", mystery = "crime", detective = "crime", truecrime = "crime",
+        romance = "romance", sexy = "romance",
+        fiction = "fiction", novel = "fiction", literaryfiction = "fiction", play = "fiction",
+        generalnonfiction = "general", generalreference = "general",
+        biography = "biography", business = "business", cinema = "cinema", computer = "computer",
+        diet = "diet", farming = "nature", fashion = "fashion", golf = "golf", legal = "legal",
+        music = "music", philosophy = "philosophy", policing = "politics", politics = "politics",
+        quackery = "quackery", relationship = "relationship", schooltextbook = "science",
+        selfhelp = "self_help", sports = "sports", travel = "travel", baseball = "sports",
+        militaryhistory = "history",
+        classic = "classic", classicfiction = "classic", classicnonfiction = "classic",
+        fantasy = "fantasy",
+        thriller = "thriller", conspiracy = "thriller",
+        western = "western",
+        adventurenfiction = "adventure",
+        sadnonfiction = "sad",
+        teens = "fiction",
+        poor = "fiction", rich = "fiction", hass = "fiction", quigley = "fiction",
+    }
+    if map[sub] ~= nil then return map[sub] end
+    if string.find(low, "book", 1, true) or string.find(low, "paperback", 1, true) then return "fiction" end
+    return nil
+end
+
+function BridgeSkills.litInfo(item)
+    if item == nil then return nil end
+    local cat = BridgeSkills.categoryOf(item)
+    if cat == nil or cat == "skill" then return nil end
+    local key = BridgeSkills.readKey(item)
+    if key == nil then return nil end
+    local pages = 0
+    pcall(function() pages = tonumber(item:getNumberOfPages()) or 0 end)
+    local read = 0
+    pcall(function() read = tonumber(item:getAlreadyReadPages()) or 0 end)
+    local status = "ok"
+    local rec = Bridge.store
+    if rec ~= nil then
+        local books = BridgeData.booksReadOf(rec)
+        local e = books ~= nil and books[key] or nil
+        if e ~= nil and (e.done == true or (pages > 0 and (tonumber(e.p) or 0) >= pages)) then
+            status = "read"
+        end
+    end
+    return { book = true, kind = "lit", key = key, category = cat, pages = pages, read = read, status = status }
+end
+
+function BridgeSkills.readInfo(item)
+    local info = nil
+    pcall(function() info = BridgeSkills.bookInfo(item) end)
+    if info ~= nil then return info end
+    return BridgeSkills.litInfo(item)
+end
+
+function BridgeSkills.isShort(info)
+    if info == nil then return false end
+    local cat = info.category
+    if cat == "magazine" or cat == "newspaper" or cat == "comic" then return true end
+    local pages = tonumber(info.pages) or 0
+    return pages > 0 and pages <= 10
+end
+
 function BridgeSkills.eligibleBooks(body)
     body = body or Bridge.body
     if body == nil then return {} end
@@ -314,7 +420,7 @@ function BridgeSkills.eligibleBooks(body)
             for i = 0, items:size() - 1 do
                 local it = items:get(i)
                 local info = nil
-                pcall(function() info = BridgeSkills.bookInfo(it) end)
+                pcall(function() info = BridgeSkills.readInfo(it) end)
                 if info ~= nil then out[#out + 1] = { item = it, info = info } end
             end
         end
@@ -361,7 +467,8 @@ function BridgeSkills.readCommand(parts)
             local name = "-"
             pcall(function() name = e.item:getName() end)
             out[#out + 1] = string.format("%d %s %s L%d/%d pages=%d read=%d x%.1f %s", i, tostring(name),
-                tostring(info.key or info.skill), info.level, info.maxLevel, info.pages, info.read, info.mult, info.status)
+                tostring(info.key or info.skill), tonumber(info.level) or 0, tonumber(info.maxLevel) or 0,
+                tonumber(info.pages) or 0, tonumber(info.read) or 0, tonumber(info.mult) or 1, tostring(info.status))
         end
         return "read books: " .. table.concat(out, " | ")
     end
@@ -409,7 +516,15 @@ function BridgeSkills.readCommand(parts)
         BridgeSkills.dirty = true
         return "read clear: " .. tostring(perk)
     end
-    return "read: usage read status|books|start|stop|grant|clear"
+    if sub == "clearread" then
+        local key = parts[4]
+        local rec = Bridge.store
+        if rec == nil or type(rec.booksRead) ~= "table" then return "read clearread: nothing" end
+        rec.booksRead[key] = nil
+        BridgeSkills.dirty = true
+        return "read clearread: " .. tostring(key)
+    end
+    return "read: usage read status|books|start|stop|grant|clear|clearread"
 end
 
 function BridgeSkills.readselftest()
@@ -716,14 +831,20 @@ function BridgeSkills.flush()
     Bridge.localSkills = s
     local rec = Bridge.store
     local bookXp = nil
+    local booksRead = nil
+    local favBook = nil
     if rec ~= nil then
         bookXp = BridgeData.cleanBookXp(rec.bookXp)
         Bridge.localBookXp = rec.bookXp
+        booksRead = BridgeData.cleanBooksRead(rec.booksRead)
+        Bridge.localBooksRead = rec.booksRead
+        favBook = BridgeData.cleanFavBook(rec.favBook)
+        Bridge.localFavBook = rec.favBook
     end
     BridgeSkills.sentAt = Bridge.time or 0
     pcall(function()
         sendClientCommand(BridgeData.owner(), "Bridge", "state",
-            { skills = BridgeData.cleanSkills(s), bookXp = bookXp })
+            { skills = BridgeData.cleanSkills(s), bookXp = bookXp, booksRead = booksRead, favBook = favBook })
     end)
 end
 
@@ -825,6 +946,18 @@ local function installWrappers()
                     Bridge.store.bookXp = Bridge.localBookXp
                 elseif Bridge.localBookXp == nil and type(inBook) == "table" then
                     Bridge.localBookXp = inBook
+                end
+                local inBooks = Bridge.store.booksRead
+                if Bridge.localBooksRead ~= nil and inBooks ~= Bridge.localBooksRead then
+                    Bridge.store.booksRead = Bridge.localBooksRead
+                elseif Bridge.localBooksRead == nil and type(inBooks) == "table" then
+                    Bridge.localBooksRead = inBooks
+                end
+                local inFav = Bridge.store.favBook
+                if Bridge.localFavBook ~= nil and inFav ~= Bridge.localFavBook then
+                    Bridge.store.favBook = Bridge.localFavBook
+                elseif Bridge.localFavBook == nil and type(inFav) == "string" then
+                    Bridge.localFavBook = inFav
                 end
             end
         end
