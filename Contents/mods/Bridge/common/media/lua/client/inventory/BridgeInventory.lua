@@ -3816,6 +3816,18 @@ function BridgeInventory.giftCarMenu(playerNum, context, items)
 end
 
 
+function BridgeInventory.readOnHer(item)
+    if BridgeTask == nil or type(BridgeTask.start) ~= "function" then return end
+    if item == nil then return end
+    BridgeTask.start("read", { { item = item } })
+end
+
+function BridgeInventory.stopReading()
+    if BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "read" then
+        BridgeTask.cancel("read stop")
+    end
+end
+
 function BridgeInventory.onFill(playerNum, context, items)
 
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -3963,6 +3975,41 @@ function BridgeInventory.onFill(playerNum, context, items)
         if smokeable then
             rin:addOption(label("MenuSmoke"), item, BridgeInventory.smokeOnHer)
             smokeAdded = true
+        end
+    end
+
+    if #list == 1 and BridgeTask ~= nil and BridgeSkills ~= nil and type(BridgeSkills.bookInfo) == "function" then
+        local item = list[1]
+        local info = nil
+        pcall(function() info = BridgeSkills.bookInfo(item) end)
+        if info ~= nil and info.book then
+            local reading = BridgeTask.active and BridgeTask.kind == "read" and BridgeTask.readBook == item
+            if reading then
+                rin:addOption(label("MenuStopReading"), b, BridgeInventory.stopReading)
+            else
+                local opt = rin:addOption(label("MenuRead"), item, BridgeInventory.readOnHer)
+                local dark = false
+                if BridgeLight ~= nil and type(BridgeLight.at) == "function" then
+                    local e = nil
+                    pcall(function() e = BridgeLight.at(Bridge.body) end)
+                    if e ~= nil and e.dark == true then dark = true end
+                end
+                if dark then
+                    opt.notAvailable = true
+                    local tip = ISInventoryPaneContextMenu.addToolTip()
+                    tip.description = getText("IGUI_NotAlone_ReadTooDark")
+                    opt.toolTip = tip
+                elseif info.status ~= "ok" then
+                    opt.notAvailable = true
+                    local tip = ISInventoryPaneContextMenu.addToolTip()
+                    local key = "ReadNotTracked"
+                    if info.status == "too_hard" then key = "ReadTooHard"
+                    elseif info.status == "obsolete" then key = "ReadObsolete"
+                    elseif info.status == "read" then key = "ReadAlreadyRead" end
+                    tip.description = getText("IGUI_NotAlone_" .. key)
+                    opt.toolTip = tip
+                end
+            end
         end
     end
 

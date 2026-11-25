@@ -3,8 +3,9 @@ require "ISUI/ISModalDialog"
 BridgeWarn = BridgeWarn or {}
 
 BridgeWarn.VERSION = 1
+BridgeWarn.SEAT_VERSION = 1
 BridgeWarn.WARN_RATIO = 0.83
-BridgeWarn.shown = { zombie = false, inventory = false, compat = false }
+BridgeWarn.shown = { zombie = false, inventory = false, compat = false, seat = false }
 BridgeWarn.queue = {}
 BridgeWarn.active = nil
 BridgeWarn.wrapped = false
@@ -14,6 +15,8 @@ local COMPATS = {
     { id = "ALifeStayWithMeCompat", name = "A-Life x Stay With Me Compat" },
     { id = "RinALifeGuard", name = "Stay With Me - A-Life Compatibility Patch" },
 }
+
+local SEAT_PUPPET_MOD = { id = "StayWithMeSeatedCompanion", name = "Stay With Me in my Car" }
 
 local function tr(key, ...)
     local args = { ... }
@@ -184,6 +187,26 @@ function BridgeWarn.checkCompat()
     end
 end
 
+function BridgeWarn.checkSeatPuppet()
+    if BridgeWarn.shown.seat then return end
+    if Bridge == nil then return end
+    if Bridge.mp then return end
+    if Bridge.store == nil and type(Bridge.initStore) == "function" then pcall(Bridge.initStore) end
+    if type(Bridge.store) ~= "table" then return end
+    local warned = tonumber(Bridge.store.seatWarned) or 0
+    if warned >= BridgeWarn.SEAT_VERSION then return end
+    local wants = false
+    pcall(function() wants = BridgeData ~= nil and BridgeData.wants(Bridge.store) == true end)
+    if not wants then return end
+    local nativeOn = false
+    pcall(function() nativeOn = BridgeData ~= nil and BridgeData.sandboxFlag("CarSeatPuppet", false) == true end)
+    if not nativeOn then return end
+    if not modActive(SEAT_PUPPET_MOD.id) then return end
+    BridgeWarn.shown.seat = true
+    Bridge.store.seatWarned = BridgeWarn.SEAT_VERSION
+    BridgeWarn.show(tr("CompatWarnSeat", SEAT_PUPPET_MOD.name))
+end
+
 function BridgeWarn.install()
     if Bridge == nil or type(Bridge.spawnZombie) ~= "function" then return end
     if BridgeWarn.wrapped then return end
@@ -201,8 +224,10 @@ if Events ~= nil and Events.OnGameStart ~= nil then
     Events.OnGameStart.Add(function()
         BridgeWarn.shown.inventory = false
         BridgeWarn.shown.compat = false
+        BridgeWarn.shown.seat = false
         BridgeWarn.queue = {}
         pcall(BridgeWarn.install)
         pcall(BridgeWarn.checkCompat)
+        pcall(BridgeWarn.checkSeatPuppet)
     end)
 end

@@ -1949,6 +1949,26 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.bookXp ~= nil then
+        local bx = BridgeData.cleanBookXp(args.bookXp)
+        if bx ~= nil then
+            local old = BridgeData.bookXpOf(rec)
+            local same = true
+            for i = 1, #BridgeData.SKILL_KEYS do
+                local k = BridgeData.SKILL_KEYS[i]
+                local a, b = old[k], bx[k]
+                local am = a ~= nil and tonumber(a.m) or nil
+                local bm = b ~= nil and tonumber(b.m) or nil
+                local ax = a ~= nil and tonumber(a.max) or nil
+                local bxx = b ~= nil and tonumber(b.max) or nil
+                if am ~= bm or ax ~= bxx then same = false break end
+            end
+            if not same then
+                rec.bookXp = bx
+                changed = true
+            end
+        end
+    end
     if args.exerciseUntil ~= nil then
         local v = tonumber(args.exerciseUntil)
         if v ~= nil and v >= 0 and (rec.exerciseUntil == nil or math.abs(rec.exerciseUntil - v) > 0.001) then

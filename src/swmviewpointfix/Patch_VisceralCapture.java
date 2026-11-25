@@ -5,7 +5,7 @@ import zombie.characters.IsoGameCharacter;
 
 @Patch(className = "zombiechunking.ChunkFrame", methodName = "captured", isAdvice = true)
 public final class Patch_VisceralCapture {
-    private static volatile boolean bound;
+    public static volatile boolean bound;
 
     private Patch_VisceralCapture() {
     }

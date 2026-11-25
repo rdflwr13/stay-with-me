@@ -175,7 +175,7 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
     local seated = string.sub(bump, 1, 8) == "SitChair"
         or (Bridge ~= nil and Bridge.pose ~= nil and Bridge.pose.seat == true)
         or (BridgeTask ~= nil and BridgeTask.active == true
-            and (BridgeTask.kind == "sit" or BridgeTask.kind == "exercise"))
+            and (BridgeTask.kind == "sit" or BridgeTask.kind == "exercise" or BridgeTask.kind == "read"))
     if not SAFE[asn] and not seated then return "state " .. asn end
     if yes(b, "isDead") then return "dead" end
     if yes(b, "isOnFloor") then return "on the floor" end
@@ -207,7 +207,7 @@ function BridgeFastForward.unsafe(b, near, anyFloor)
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
                 or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops"
                 or BridgeTask.kind == "petAnimals" or BridgeTask.kind == "tendAnimals" or BridgeTask.kind == "fillTroughs"
-                or BridgeTask.kind == "animalCare")
+                or BridgeTask.kind == "animalCare" or BridgeTask.kind == "read")
         end
     end)
     if job and not seated and not ffJob then return "job" end
@@ -504,7 +504,7 @@ function BridgeFastForward.holdStand(b)
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
                 or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops"
                 or BridgeTask.kind == "petAnimals" or BridgeTask.kind == "tendAnimals" or BridgeTask.kind == "fillTroughs"
-                or BridgeTask.kind == "animalCare") then
+                or BridgeTask.kind == "animalCare" or BridgeTask.kind == "read") then
         local isExerciseAnim = bump == BridgeTask.EXERCISE_ANIM
         if BridgeExercise ~= nil and BridgeExercise.isAnim ~= nil then
             pcall(function() isExerciseAnim = isExerciseAnim or BridgeExercise.isAnim(bump) end)
@@ -760,7 +760,7 @@ function BridgeFastForward.tick()
                 or BridgeTask.kind == "digFurrows" or BridgeTask.kind == "sowSeeds"
                 or BridgeTask.kind == "waterPlants" or BridgeTask.kind == "tendCrops"
                 or BridgeTask.kind == "petAnimals" or BridgeTask.kind == "tendAnimals" or BridgeTask.kind == "fillTroughs"
-                or BridgeTask.kind == "animalCare") then
+                or BridgeTask.kind == "animalCare" or BridgeTask.kind == "read") then
         if BridgeTask.lastUpdateTick ~= Bridge.tick then pcall(BridgeTask.update, Bridge.body) end
         if Bridge.every(120) then
             log("ff drive: " .. tostring(BridgeTask.kind) .. " time=" .. string.format("%.1f", Bridge.time or 0))

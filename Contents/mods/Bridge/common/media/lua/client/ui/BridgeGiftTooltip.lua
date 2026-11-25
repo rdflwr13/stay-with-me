@@ -64,6 +64,29 @@ local function appendGift(item, tooltip)
     pcall(function() tooltip:setHeight(y + spacing) end)
 end
 
+local function appendRead(item, tooltip)
+    if BridgeSkills == nil or type(BridgeSkills.bookInfo) ~= "function" then return end
+    local info = nil
+    pcall(function() info = BridgeSkills.bookInfo(item) end)
+    if info == nil or info.book ~= true then return end
+    local pages = tonumber(info.pages) or 0
+    if pages <= 0 then return end
+    local read = tonumber(info.read) or 0
+    local font, spacing, pad = nil, 14, 8
+    pcall(function() font = tooltip:getFont() end)
+    pcall(function() spacing = tooltip:getLineSpacing() or 14 end)
+    pcall(function() pad = tooltip.padLeft or pad end)
+    if type(pad) ~= "number" or pad <= 0 then pad = 8 end
+    local text = tr("TooltipReadPages") .. ": " .. tostring(read) .. " / " .. tostring(pages)
+    local y, w = 0, 0
+    pcall(function() y = tooltip:getHeight(); w = tooltip:getWidth() end)
+    pcall(function() tooltip:DrawText(font, text, pad, y + 2, 0.6, 0.8, 1, 1) end)
+    local need = 0
+    pcall(function() need = getTextManager():MeasureStringX(font, text) + pad * 2 end)
+    if need > w then pcall(function() tooltip:setWidth(need) end) end
+    pcall(function() tooltip:setHeight(y + spacing) end)
+end
+
 local function hookItemClass(item)
     if item == nil or type(getmetatable) ~= "function" then return false end
     local mt = getmetatable(item)
@@ -73,7 +96,10 @@ local function hookItemClass(item)
     local orig = im.DoTooltip
     im.DoTooltip = function(self, tooltip)
         orig(self, tooltip)
-        if B.enabled then pcall(appendGift, self, tooltip) end
+        if B.enabled then
+            pcall(appendGift, self, tooltip)
+            pcall(appendRead, self, tooltip)
+        end
     end
     im.bridgeGiftHooked = true
     log("gift tooltip hooked")

@@ -1447,6 +1447,10 @@ function BridgeWindow.skillsHeight(width)
 end
 
 function BridgeWindow.skillsPageHeight(width)
+    if BridgeHomeChoresTab ~= nil and type(BridgeHomeChoresTab.heightFor) == "function" then
+        local h = BridgeHomeChoresTab.heightFor(width)
+        if type(h) == "number" and h == h and h > 0 then return h end
+    end
     if BridgeHomeTab ~= nil and type(BridgeHomeTab.heightFor) == "function" then
         return BridgeHomeTab.heightFor(width)
     end
@@ -1536,6 +1540,10 @@ function BridgeSkillList:doDrawItem(y, item, alt)
         local ty = y + (item.height - FONT_S) / 2
         self:drawText(item.label, PAD, ty, 1, 1, 1, 1, FONT_BODY)
         self:drawBar(self.barX, y + (item.height - self.unit) / 2, item.level or 0, item.prog or 0)
+        if item.bookMult ~= nil and item.bookMult > 1 then
+            local bx = self.barX + self.barW + PAD
+            self:drawText("x" .. string.format("%.1f", item.bookMult), bx, ty, 1, 0.89, 0.38, 1, FONT_BODY)
+        end
         return y + item.height
     end
     return y + item.height
@@ -1599,6 +1607,12 @@ function BridgeWindowSkills:rebuildList()
             item.height = rowH
             item.level = skillLevel(row.perk)
             item.prog = skillProgress(row.perk)
+            local bm = nil
+            if BridgeSkills ~= nil and type(BridgeSkills.bookMult) == "function" then
+                pcall(function() bm = BridgeSkills.bookMult(row.perk) end)
+            end
+            item.bookMult = bm ~= nil and tonumber(bm.m) or nil
+            item.bookMax = bm ~= nil and tonumber(bm.max) or nil
             item.index = #list.items
             self.rowItems[row.perk] = item
         end
@@ -1619,6 +1633,12 @@ function BridgeWindowSkills:refreshValues()
     for perk, item in pairs(self.rowItems or {}) do
         item.level = skillLevel(perk)
         item.prog = skillProgress(perk)
+        local bm = nil
+        if BridgeSkills ~= nil and type(BridgeSkills.bookMult) == "function" then
+            pcall(function() bm = BridgeSkills.bookMult(perk) end)
+        end
+        item.bookMult = bm ~= nil and tonumber(bm.m) or nil
+        item.bookMax = bm ~= nil and tonumber(bm.max) or nil
     end
     self.skillSrc = store
     self.skillAt = now + SKILL_TICKS
@@ -1709,6 +1729,14 @@ function BridgeWindowSkills:showTooltip(perk, lvl)
         end
     else
         msg = msg .. " <LINE> " .. gameText("IGUI_XP_Locked", "Locked")
+    end
+    local bm = nil
+    if BridgeSkills ~= nil and type(BridgeSkills.bookMult) == "function" then
+        pcall(function() bm = BridgeSkills.bookMult(perk) end)
+    end
+    if bm ~= nil and tonumber(bm.m) ~= nil and tonumber(bm.m) > 1 then
+        msg = msg .. " <LINE> " .. getText("IGUI_NotAlone_SkillsBookBoost",
+            string.format("%.1f", tonumber(bm.m)), tostring(bm.max or 10))
     end
     local desc = gameText("IGUI_perks_" .. label .. "_Description", "")
     if desc ~= "" then msg = msg .. " <LINE><LINE> " .. desc end

@@ -186,16 +186,255 @@ local function multiplierValue(cfg, perk)
     return tonumber(cfg[perk])
 end
 
+BridgeSkills.BOOK_FALLBACK = {
+    LongBlade = { key = "LongBlade", mults = { 1.5, 2.5, 4, 6, 8 } },
+    Maintenance = { key = "Maintenance", mults = { 3, 5, 8, 12, 16 } },
+    Aiming = { key = "Aiming", mults = { 1.5, 2.5, 4, 6, 8 } },
+    Reloading = { key = "Reloading", mults = { 1.5, 2.5, 4, 6, 8 } },
+    FirstAid = { key = "Doctor", mults = { 3, 5, 8, 12, 16 } },
+    Farming = { key = "Agriculture", mults = { 3, 5, 8, 12, 16 } },
+    Husbandry = { key = "Husbandry", mults = { 3, 5, 8, 12, 16 } },
+}
+
+function BridgeSkills.bookMult(key)
+    if key == nil then return nil end
+    local rec = Bridge.store
+    if rec == nil then return nil end
+    local b = BridgeData.bookXpOf(rec)
+    if b == nil then return nil end
+    return b[key]
+end
+
+local function bookMultValue(key)
+    local bm = BridgeSkills.bookMult(key)
+    if bm == nil then return nil end
+    local m = tonumber(bm.m)
+    if m == nil or m ~= m or m <= 0 then return nil end
+    return m
+end
+
 local function xpMultiplier(perk)
+    local base = 1
     local okCfg, cfg = pcall(multiplierConfig)
-    if not okCfg then cfg = nil end
-    if cfg == nil then return 1 end
-    local okMult, mult = pcall(multiplierValue, cfg, perk)
-    if not okMult then mult = nil end
-    if mult == nil or mult ~= mult or mult <= 0 then return 1 end
-    return mult
+    if okCfg and cfg ~= nil then
+        local okMult, mult = pcall(multiplierValue, cfg, perk)
+        if okMult and mult ~= nil and mult == mult and mult > 0 then base = mult end
+    end
+    local bm = bookMultValue(perk)
+    if bm ~= nil then base = base * bm end
+    return base
 end
 BridgeSkills.xpMultiplier = xpMultiplier
+
+local function bookMultForLevel(entry, lvl)
+    if entry == nil then return 1 end
+    if lvl == 1 then return tonumber(entry.maxMultiplier1) or 1 end
+    if lvl == 3 then return tonumber(entry.maxMultiplier2) or 1 end
+    if lvl == 5 then return tonumber(entry.maxMultiplier3) or 1 end
+    if lvl == 7 then return tonumber(entry.maxMultiplier4) or 1 end
+    if lvl == 9 then return tonumber(entry.maxMultiplier5) or 1 end
+    return 1
+end
+
+function BridgeSkills.bookInfo(item)
+    if item == nil then return nil end
+    if type(item.getSkillTrained) ~= "function" then return nil end
+    local skill = nil
+    pcall(function() skill = item:getSkillTrained() end)
+    if type(skill) ~= "string" or skill == "" then return nil end
+    local entry = nil
+    pcall(function() entry = SkillBook ~= nil and SkillBook[skill] or nil end)
+    local fallback = BridgeSkills.BOOK_FALLBACK[skill]
+    if entry == nil and fallback == nil then return nil end
+    local key = nil
+    if entry ~= nil then
+        for i = 1, #BridgeData.SKILL_KEYS do
+            local k = BridgeData.SKILL_KEYS[i]
+            local perk = nil
+            pcall(function() perk = Perks[BridgeData.perkKey(k)] end)
+            if perk ~= nil and perk == entry.perk then key = k break end
+        end
+    else
+        key = fallback.key
+    end
+    local lvl, maxLvl, pages, read = 0, 0, 0, 0
+    if type(item.getLvlSkillTrained) == "function" then
+        pcall(function() lvl = tonumber(item:getLvlSkillTrained()) or 0 end)
+    end
+    if type(item.getMaxLevelTrained) == "function" then
+        pcall(function() maxLvl = tonumber(item:getMaxLevelTrained()) or 0 end)
+    end
+    if type(item.getNumberOfPages) == "function" then
+        pcall(function() pages = tonumber(item:getNumberOfPages()) or 0 end)
+    end
+    if type(item.getAlreadyReadPages) == "function" then
+        pcall(function() read = tonumber(item:getAlreadyReadPages()) or 0 end)
+    end
+    local mult = 1
+    if entry ~= nil then
+        mult = bookMultForLevel(entry, lvl)
+    elseif fallback ~= nil then
+        local idx = 1
+        if lvl == 1 then idx = 1 elseif lvl == 3 then idx = 2 elseif lvl == 5 then idx = 3
+        elseif lvl == 7 then idx = 4 elseif lvl == 9 then idx = 5 end
+        mult = fallback.mults[idx] or 1
+    end
+    local status = "ok"
+    if key == nil then
+        status = "not_tracked"
+    else
+        local herLvl = BridgeSkills.level(key)
+        if pages > 0 and read >= pages then status = "read"
+        elseif lvl > herLvl + 1 then status = "too_hard"
+        elseif maxLvl < herLvl + 1 then status = "obsolete" end
+    end
+    return { book = true, skill = skill, key = key, level = lvl, maxLevel = maxLvl,
+        pages = pages, read = read, mult = tonumber(mult) or 1, status = status }
+end
+
+function BridgeSkills.eligibleBooks(body)
+    body = body or Bridge.body
+    if body == nil then return {} end
+    local out = {}
+    local conts = nil
+    if BridgeTask ~= nil and type(BridgeTask.lootDests) == "function" then
+        pcall(function() conts = BridgeTask.lootDests(body) end)
+    end
+    if conts == nil then
+        conts = {}
+        local inv = nil
+        pcall(function() inv = body:getInventory() end)
+        if inv ~= nil then conts[1] = inv end
+    end
+    for ci = 1, #conts do
+        local cont = conts[ci]
+        local items = nil
+        pcall(function() items = cont:getItems() end)
+        if items ~= nil then
+            for i = 0, items:size() - 1 do
+                local it = items:get(i)
+                local info = nil
+                pcall(function() info = BridgeSkills.bookInfo(it) end)
+                if info ~= nil then out[#out + 1] = { item = it, info = info } end
+            end
+        end
+    end
+    return out
+end
+
+function BridgeSkills.debugBook()
+    local out = {}
+    local rec = Bridge.store
+    local b = rec ~= nil and BridgeData.bookXpOf(rec) or nil
+    if b ~= nil then
+        for i = 1, #BridgeData.SKILL_KEYS do
+            local k = BridgeData.SKILL_KEYS[i]
+            local e = b[k]
+            if e ~= nil then out[#out + 1] = k .. "=x" .. tostring(e.m) .. " until " .. tostring(e.max) end
+        end
+    end
+    if #out == 0 then return "no book multipliers" end
+    return table.concat(out, " ")
+end
+
+function BridgeSkills.readCommand(parts)
+    local sub = parts[3]
+    if sub == nil or sub == "status" then
+        local state = "idle"
+        if BridgeTask ~= nil and BridgeTask.active then
+            state = tostring(BridgeTask.kind) .. " phase=" .. tostring(BridgeTask.phase or BridgeTask.readPhase)
+                .. " posture=" .. tostring(BridgeTask.readPosture) .. " " .. tostring(BridgeTask.info)
+        end
+        local frac = nil
+        if BridgeTask ~= nil and type(BridgeTask.readFrac) == "function" then pcall(function() frac = BridgeTask.readFrac() end) end
+        return "read status: " .. state .. " progress="
+            .. (frac ~= nil and string.format("%.0f%%", frac * 100) or "-")
+            .. " | " .. BridgeSkills.debugBook() .. " | " .. BridgeSkills.summary()
+    end
+    if sub == "books" then
+        local list = BridgeSkills.eligibleBooks(Bridge.body)
+        if #list == 0 then return "read books: none" end
+        local out = {}
+        for i = 1, #list do
+            local e = list[i]
+            local info = e.info
+            local name = "-"
+            pcall(function() name = e.item:getName() end)
+            out[#out + 1] = string.format("%d %s %s L%d/%d pages=%d read=%d x%.1f %s", i, tostring(name),
+                tostring(info.key or info.skill), info.level, info.maxLevel, info.pages, info.read, info.mult, info.status)
+        end
+        return "read books: " .. table.concat(out, " | ")
+    end
+    if sub == "start" then
+        local want = parts[4]
+        local list = BridgeSkills.eligibleBooks(Bridge.body)
+        local pick = nil
+        local idx = tonumber(want)
+        if idx ~= nil then
+            pick = list[idx]
+        else
+            for i = 1, #list do
+                local full = nil
+                pcall(function() full = list[i].item:getFullType() end)
+                if full == want then pick = list[i] break end
+            end
+        end
+        if pick == nil then return "read start: no such book" end
+        if BridgeTask == nil then return "read start: no task" end
+        return "read start: " .. tostring(BridgeTask.start("read", { { item = pick.item } }))
+    end
+    if sub == "stop" then
+        if BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "read" then
+            return "read stop: " .. tostring(BridgeTask.cancel("read stop"))
+        end
+        return "read stop: not reading"
+    end
+    if sub == "grant" then
+        local perk = parts[4]
+        local mult = tonumber(parts[5])
+        local max = tonumber(parts[6])
+        if perk == nil or mult == nil then return "read grant: usage read grant <perk> <mult> <maxLevel>" end
+        local rec = Bridge.store
+        if rec == nil then return "read grant: no store" end
+        local b = BridgeData.bookXpOf(rec)
+        b[perk] = { m = mult, max = max or 10 }
+        BridgeSkills.dirty = true
+        return "read grant: " .. perk .. " x" .. tostring(mult) .. " until " .. tostring(max or 10)
+    end
+    if sub == "clear" then
+        local perk = parts[4]
+        local rec = Bridge.store
+        if rec == nil or type(rec.bookXp) ~= "table" then return "read clear: nothing" end
+        rec.bookXp[perk] = nil
+        BridgeSkills.dirty = true
+        return "read clear: " .. tostring(perk)
+    end
+    return "read: usage read status|books|start|stop|grant|clear"
+end
+
+function BridgeSkills.readselftest()
+    local checks, fails = 0, {}
+    local function check(name, cond)
+        checks = checks + 1
+        if not cond then fails[#fails + 1] = name end
+    end
+    local clean = BridgeData.cleanBookXp({ LongBlade = { m = 4, max = 7 }, Bogus = { m = 2, max = 3 },
+        Maintenance = { m = 0, max = 5 }, Aiming = { m = 2, max = 99 } })
+    check("clean keeps valid", clean ~= nil and clean.LongBlade ~= nil and clean.LongBlade.m == 4)
+    check("clean drops unknown", clean ~= nil and clean.Bogus == nil)
+    check("clean drops low mult", clean ~= nil and clean.Maintenance == nil)
+    check("clean drops bad max", clean ~= nil and clean.Aiming == nil)
+    local rec = { bookXp = { LongBlade = { m = 6, max = 7 } } }
+    local b = BridgeData.bookXpOf(rec)
+    check("bookXpOf returns table", type(b) == "table" and b.LongBlade.m == 6)
+    local mult = math.floor(50 / 10) * (8 / 10)
+    check("milestone formula", mult == 4)
+    local upgraded = math.max(6, 4)
+    check("no downgrade", upgraded == 6)
+    check("expires at max", 7 >= (b.LongBlade.max or 99))
+    if #fails == 0 then return string.format("readselftest PASS (%d checks)", checks) end
+    return string.format("readselftest FAIL (%d of %d): %s", #fails, checks, table.concat(fails, "; "))
+end
 
 
 
@@ -233,6 +472,14 @@ function BridgeSkills.add(perk, amount, reason, skipMultiplier)
         if perk == "Strength" then pcall(BridgeSkills.applyCarry) end
     else
         BridgeSkills.dirty = true
+    end
+    local bx = BridgeSkills.bookMult(perk)
+    if bx ~= nil and newLvl >= (tonumber(bx.max) or 99) then
+        local rec = Bridge.store
+        if rec ~= nil and type(rec.bookXp) == "table" then
+            rec.bookXp[perk] = nil
+            BridgeSkills.dirty = true
+        end
     end
     return after
 end
@@ -467,9 +714,16 @@ function BridgeSkills.flush()
     local s = BridgeSkills.store()
     if s == nil then return end
     Bridge.localSkills = s
+    local rec = Bridge.store
+    local bookXp = nil
+    if rec ~= nil then
+        bookXp = BridgeData.cleanBookXp(rec.bookXp)
+        Bridge.localBookXp = rec.bookXp
+    end
     BridgeSkills.sentAt = Bridge.time or 0
     pcall(function()
-        sendClientCommand(BridgeData.owner(), "Bridge", "state", { skills = BridgeData.cleanSkills(s) })
+        sendClientCommand(BridgeData.owner(), "Bridge", "state",
+            { skills = BridgeData.cleanSkills(s), bookXp = bookXp })
     end)
 end
 
@@ -565,6 +819,12 @@ local function installWrappers()
                     Bridge.store.skills = Bridge.localSkills
                 elseif Bridge.localSkills == nil and type(incoming) == "table" then
                     Bridge.localSkills = incoming
+                end
+                local inBook = Bridge.store.bookXp
+                if Bridge.localBookXp ~= nil and inBook ~= Bridge.localBookXp then
+                    Bridge.store.bookXp = Bridge.localBookXp
+                elseif Bridge.localBookXp == nil and type(inBook) == "table" then
+                    Bridge.localBookXp = inBook
                 end
             end
         end

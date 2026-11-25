@@ -1905,6 +1905,8 @@ function BridgeMenu.cancelEntry()
         key = "CancelShower"
     elseif task and BridgeTask.kind == "bath" then
         key = "CancelBath"
+    elseif task and BridgeTask.kind == "read" then
+        key = "CancelReading"
     end
     return { key = key, handler = BridgeMenu.onCancelTask }
 end

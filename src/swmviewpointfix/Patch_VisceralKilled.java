@@ -5,7 +5,7 @@ import zombie.characters.IsoZombie;
 
 @Patch(className = "zombiechunking.ShotWounds", methodName = "killed", isAdvice = true)
 public final class Patch_VisceralKilled {
-    private static volatile boolean bound;
+    public static volatile boolean bound;
 
     private Patch_VisceralKilled() {
     }

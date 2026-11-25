@@ -2209,6 +2209,32 @@ function BridgeData.cleanSkills(t)
 end
 
 
+function BridgeData.cleanBookXp(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    for i = 1, #BridgeData.SKILL_KEYS do
+        local k = BridgeData.SKILL_KEYS[i]
+        local rec = t[k]
+        if type(rec) == "table" then
+            local m = tonumber(rec.m)
+            local max = tonumber(rec.max)
+            if m ~= nil and m == m and m >= 1 and m <= 100
+                    and max ~= nil and max == max and max >= 0 and max <= 10 then
+                out[k] = { m = m, max = max }
+            end
+        end
+    end
+    return out
+end
+
+
+function BridgeData.bookXpOf(rec)
+    if rec == nil then return nil end
+    if type(rec.bookXp) ~= "table" then rec.bookXp = {} end
+    return rec.bookXp
+end
+
+
 function BridgeData.skillsOf(rec)
     if rec == nil then return nil end
     if type(rec.skills) ~= "table" then rec.skills = {} end

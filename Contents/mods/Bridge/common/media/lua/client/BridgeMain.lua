@@ -5752,6 +5752,8 @@ local function updateZombieBody(body)
                     local ph = BridgeTask.phase
                     if ph == "down" or ph == "up" or ph == "sit" or ph == "lie" then posed = true end
                 end
+                if BridgeTask.active == true and BridgeTask.kind == "read"
+                        and BridgeTask.readPosture == "chair" then posed = true end
             end
             if posed then
                 local where = "while seated"
@@ -7064,7 +7066,7 @@ CFG.SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follo
     exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, bath = true, sound = true, meet = true,
     perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true, logdump = true, farmdebug = true,
     look = true, take = true, sizeselftest = true, chores = true, choresselftest = true,
-    questsurvivorsselftest = true, questsurvivors = true, corpsespot = true }
+    questsurvivorsselftest = true, questsurvivors = true, corpsespot = true, read = true, readselftest = true }
 
 
 
@@ -7877,6 +7879,16 @@ function Bridge.run(line)
 
 
     if cmd == "itemselftest" then return Bridge.itemselftest() end
+
+    if cmd == "read" then
+        if BridgeSkills == nil or type(BridgeSkills.readCommand) ~= "function" then return "read: not loaded" end
+        return BridgeSkills.readCommand(parts)
+    end
+
+    if cmd == "readselftest" then
+        if BridgeSkills == nil or type(BridgeSkills.readselftest) ~= "function" then return "readselftest: not loaded" end
+        return BridgeSkills.readselftest()
+    end
 
     if cmd == "sizeselftest" then
         if BridgeSizeMatterCompat == nil or type(BridgeSizeMatterCompat.selftest) ~= "function" then
@@ -9725,8 +9737,8 @@ function Bridge.floorPullTick(red)
     if Bridge.floorPull == nil then
         local body = Bridge.body
         local mismatch = false
+        local bodyZ = nil
         if body ~= nil and Bridge.mode == "follow" and Bridge.drivable() then
-            local bodyZ = nil
             pcall(function() bodyZ = body:getZ() end)
             mismatch = bodyZ ~= nil and math.abs(z - bodyZ) >= 0.9
         end
@@ -9738,7 +9750,13 @@ function Bridge.floorPullTick(red)
             end)
         end
         if mismatch and not stairs and (Bridge.walk60 or 0) < CFG.MISMATCH.STILL then
-            if Bridge.floorMismatchSince == nil then Bridge.floorMismatchSince = now end
+            if Bridge.floorMismatchSince == nil then
+                Bridge.floorMismatchSince = now
+                if Bridge.verbose then
+                    log(string.format("vertical: mismatch start z=%.2f bodyZ=%.2f stairs=%s walk60=%.2f",
+                        z, bodyZ or -1, tostring(stairs), Bridge.walk60 or 0))
+                end
+            end
             if now - Bridge.floorMismatchSince >= CFG.MISMATCH.TICKS then
                 Bridge.floorPull = {
                     fromZ = body:getZ(),
@@ -9751,7 +9769,8 @@ function Bridge.floorPullTick(red)
                     failedLogged = nil,
                 }
                 Bridge.floorMismatchSince = nil
-                log(string.format("vertical: floor mismatch for %d ticks, pulling her", CFG.MISMATCH.TICKS))
+                log(string.format("vertical: floor mismatch for %d ticks, pulling her (z=%.2f bodyZ=%.2f stairs=%s walk60=%.2f)",
+                    CFG.MISMATCH.TICKS, z, bodyZ or -1, tostring(stairs), Bridge.walk60 or 0))
             end
         else
             Bridge.floorMismatchSince = nil

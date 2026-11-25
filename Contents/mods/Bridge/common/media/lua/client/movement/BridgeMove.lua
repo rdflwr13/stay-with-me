@@ -588,6 +588,19 @@ local function nearRed(red, body)
     local cell = getCell()
     local z = math.floor(rz)
     local rsq = cell and cell:getGridSquare(rx, ry, z)
+    local onStairs = false
+    pcall(function()
+        local rs = red:getCurrentSquare()
+        if rs ~= nil and rs.HasStairs ~= nil and rs:HasStairs() then onStairs = true end
+    end)
+    if onStairs and rsq ~= nil then
+        local sx, sy = rx + 0.5, ry + 0.5
+        MEM.nearCache = { key = key, tick = Bridge.time, x = sx, y = sy }
+        if Bridge.verbose then
+            log(sformat("nearRed stairs base: %d,%d z=%.2f", rx, ry, rz))
+        end
+        return sx, sy, rz
+    end
     for _, s in ipairs(sides) do
         local open = true
         if rsq ~= nil then
@@ -650,10 +663,10 @@ end
 
 function BridgeMove.applyAnimVars(body)
     local ws = BridgeMove.blendOverride
+    local redWs, redRuns = nil, false
     if ws == nil and BridgeMove.steering and BridgeMove.followWs ~= nil then ws = BridgeMove.followWs end
     if ws == nil and not (BridgeMove.steering and BridgeMove.followWs ~= nil) then
         local red = BridgeData.owner()
-        local redWs, redRuns = nil, false
         if red ~= nil then
             pcall(function() redWs = red:getVariableFloat("WalkSpeed", 1.0) end)
             pcall(function() redRuns = red:isRunning() or red:isSprinting() end)
@@ -670,6 +683,9 @@ function BridgeMove.applyAnimVars(body)
             if not redRuns and redWs ~= nil and redWs >= 0.3 then BridgeMove.walkBlend = redWs end
         end
         if ws == nil or ws < 0.3 then ws = 1.0 end
+    end
+    if Bridge.verbose and BridgeMove.walkSpeedVar ~= ws then
+        log(sformat("walk speed %.2f -> %.2f playerWs=%.2f runs=%s wt=%s", BridgeMove.walkSpeedVar or -1, ws, redWs or -1, tostring(redRuns), tostring(BridgeMove.walkType)))
     end
     BridgeMove.walkSpeedVar = ws
     pcall(function()
@@ -2584,6 +2600,7 @@ end
 function BridgeMove.pushCheck(body, red)
     local F = BridgeMove.follow
     if F == nil or red == nil then return end
+    if math.abs(body:getZ() - red:getZ()) >= 0.5 then return end
     if F.back ~= nil then
         F.pushSinceIdle = nil
         return
@@ -4148,7 +4165,10 @@ function BridgeMove.closeWindows(body)
                         BridgeMove.beginWindow(body, obj, false)
                         local taskKind = BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind or nil
                         local cur = BridgeTask ~= nil and BridgeTask.current or nil
-                        local curText = cur ~= nil and string.format("%d,%d,%d", cur.x, cur.y, cur.z) or "-"
+                        local curText = "-"
+                        if cur ~= nil and cur.x ~= nil and cur.y ~= nil and cur.z ~= nil then
+                            curText = string.format("%d,%d,%d", cur.x, cur.y, cur.z)
+                        end
                         local pathObj = BridgeMove.openingWay ~= nil and BridgeMove.openingWay.obj or nil
                         log(string.format("window closing behind at %d,%d task=%s target=%s path=%s behind=%s",
                             rec.x, rec.y, tostring(taskKind), curText, tostring(pathObj ~= nil and pathObj == obj),
@@ -4495,7 +4515,17 @@ function BridgeMove.edgeBetween(body, a, b)
             end
         end
     end)
-    if tall ~= nil then return "tall", tall end
+    if tall ~= nil then
+        local roofed = false
+        pcall(function() roofed = owner:haveRoofFull() == true or b:haveRoofFull() == true end)
+        if roofed then
+            if Bridge.verbose and Bridge.every(60) then
+                log(sformat("edge tall skipped: roof above %d,%d", b:getX(), b:getY()))
+            end
+            return nil
+        end
+        return "tall", tall
+    end
     return nil
 end
 
@@ -4952,21 +4982,43 @@ function BridgeMove.crossStep(body)
 
         local go, why, pa, pb = BridgeRoute.shouldCross(body, kind, from, to)
         if not go then
-            if pa ~= nil and BridgeMove.gapWay == nil and Bridge.time >= BridgeMove.noGapUntil then
+            local red = BridgeData.owner()
+            local sameFloor = pa == nil or red == nil or math.abs(red:getZ() - pa:getZ()) < 0.5
+            if pa ~= nil and sameFloor and BridgeMove.gapWay == nil and Bridge.time >= BridgeMove.noGapUntil then
                 BridgeRoute.setGapWay(pa, pb)
             end
 
             local key = (string.match(why, "^[%a ]+") or why) .. kind .. from:getX() .. "," .. from:getY() .. ">" .. to:getX() .. "," .. to:getY()
             if BridgeMove.edgeLogged ~= key then
                 BridgeMove.edgeLogged = key
-                log("edge " .. kind .. " ahead, not climbing: " .. why)
+                log("edge " .. kind .. " ahead, not climbing: " .. why
+                    .. (pa ~= nil and not sameFloor and " (pass skipped: player floor differs)" or ""))
             end
             return false
         end
         local red0 = BridgeData.owner()
-        log(sformat("cross %s start: from %d,%d to %d,%d (%s, %s) player=%.1f,%.1f goal=%.1f,%.1f seen=%d", kind,
+        local objName, objFlags = "-", "-"
+        if object ~= nil then
+            pcall(function()
+                if type(object.getSprite) == "function" then
+                    local sp = object:getSprite()
+                    if sp ~= nil and type(sp.getName) == "function" then objName = tostring(sp:getName()) end
+                end
+            end)
+            if objName == "-" and type(object.getName) == "function" then
+                pcall(function() objName = tostring(object:getName()) end)
+            end
+            pcall(function()
+                local th = type(object.isTallHoppable) == "function" and object:isTallHoppable() == true
+                local props = type(object.getProperties) == "function" and object:getProperties() or nil
+                local n = props ~= nil and props:has(IsoFlagType.TallHoppableN) == true
+                local w = props ~= nil and props:has(IsoFlagType.TallHoppableW) == true
+                objFlags = sformat("tallHoppable=%s N=%s W=%s", tostring(th), tostring(n), tostring(w))
+            end)
+        end
+        log(sformat("cross %s start: from %d,%d to %d,%d (%s, %s) player=%.1f,%.1f goal=%.1f,%.1f seen=%d obj=%s [%s]", kind,
             from:getX(), from:getY(), to:getX(), to:getY(), BridgeMove.steering and "trail" or "path", tostring(why),
-            red0 and red0:getX() or 0, red0 and red0:getY() or 0, goal.x, goal.y, Bridge.time - seen.first))
+            red0 and red0:getX() or 0, red0 and red0:getY() or 0, goal.x, goal.y, Bridge.time - seen.first, objName, objFlags))
         c = { kind = kind, object = object, from = from, to = to, tick = Bridge.time, started = false }
         pcall(function() c.dir = stepDir(from, to) end)
         if BridgeLog ~= nil and BridgeLog.on() then
@@ -4977,7 +5029,7 @@ function BridgeMove.crossStep(body)
             pcall(function() asn0 = tostring(body:getActionStateName()) end)
             ev("move.cross", { from = { x = from:getX(), y = from:getY() },
                 to = { x = to:getX(), y = to:getY() }, edge = kind, dir = c.dir,
-                edgeDist = edgeDist(body, from, to), kind = kind, asn = asn0,
+                edgeDist = edgeDist(body, from, to), kind = kind, asn = asn0, object = objName,
                 result = "start", loops = 0, next_allowed = BridgeMove.noCrossUntil }, "BridgeMove.crossStep")
         end
 
