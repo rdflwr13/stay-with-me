@@ -278,5 +278,12 @@
     "Sandbox_StayWithMe_CompanionUpdateRate_Values_option1": "Плавно (60 Гц)",
     "Sandbox_StayWithMe_CompanionUpdateRate_Values_option2": "Сбалансированно (50 Гц)",
     "Sandbox_StayWithMe_CompanionUpdateRate_Values_option3": "Производительность (40 Гц)",
-    "Sandbox_StayWithMe_CompanionUpdateRate_Values_option4": "Минимум (30 Гц)"
+    "Sandbox_StayWithMe_CompanionUpdateRate_Values_option4": "Минимум (30 Гц)",
+    "Sandbox_StayWithMe_SkillXpShare": "Опыт спутника от игрока",
+    "Sandbox_StayWithMe_SkillXpShare_tooltip": "Какую долю опыта игрока получает спутник. Действует на все общие навыки и на опыт, который он получает следом за игроком. 50% как было раньше. «Выкл» отключает весь опыт от игрока, за свои действия спутник опыт всё равно получает. Пока спутник отстаёт от игрока, догоняющий опыт остаётся 75%. По умолчанию 50%.",
+    "Sandbox_StayWithMe_SkillXpShare_Values_option1": "Выкл",
+    "Sandbox_StayWithMe_SkillXpShare_Values_option2": "25%",
+    "Sandbox_StayWithMe_SkillXpShare_Values_option3": "50% (по умолчанию)",
+    "Sandbox_StayWithMe_SkillXpShare_Values_option4": "75%",
+    "Sandbox_StayWithMe_SkillXpShare_Values_option5": "100%"
 }
