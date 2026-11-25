@@ -9516,6 +9516,7 @@ CFG.MISMATCH.TICKS = 300
 CFG.MISMATCH.STILL = 0.3
 CFG.LADDER = {}
 CFG.LADDER.RADIUS = 1
+CFG.LADDER.RETRY = 10
 CFG.PULL_RETRY = 30
 
 Bridge.floorPull = nil
@@ -9663,24 +9664,29 @@ function Bridge.floorPullTick(red)
 
     if sig ~= nil then
         if pull == nil then
-            local hasLadder = false
-            pcall(function()
-                hasLadder = BridgeLadder.near(prevX or x, prevY or y, prevZ or z, z)
-            end)
-            if sig == "rope" or hasLadder then
-                pull = {
-                    fromZ = prevZ or z,
-                    fromX = prevX or x,
-                    fromY = prevY or y,
-                    kind = hasLadder and "ladder" or "sheet rope",
-                    seenAt = now,
-                    endedAt = nil,
-                    lastTryAt = nil,
-                    failedLogged = nil,
-                }
-                Bridge.floorPull = pull
-                log(string.format("vertical: %s climb, z%.2f -> z%.2f (ladder evidence %s)",
-                    pull.kind, pull.fromZ, z, tostring(hasLadder)))
+            local due = Bridge.ladderNearAt == nil or now >= Bridge.ladderNearAt
+            if due then
+                Bridge.ladderNearAt = now + CFG.LADDER.RETRY
+                local hasLadder = false
+                pcall(function()
+                    hasLadder = BridgeLadder.near(prevX or x, prevY or y, prevZ or z, z)
+                end)
+                if sig == "rope" or hasLadder then
+                    pull = {
+                        fromZ = prevZ or z,
+                        fromX = prevX or x,
+                        fromY = prevY or y,
+                        kind = hasLadder and "ladder" or "sheet rope",
+                        seenAt = now,
+                        endedAt = nil,
+                        lastTryAt = nil,
+                        failedLogged = nil,
+                    }
+                    Bridge.floorPull = pull
+                    Bridge.ladderNearAt = nil
+                    log(string.format("vertical: %s climb, z%.2f -> z%.2f (ladder evidence %s)",
+                        pull.kind, pull.fromZ, z, tostring(hasLadder)))
+                end
             end
         else
             pull.seenAt = now
@@ -9693,6 +9699,7 @@ function Bridge.floorPullTick(red)
         return
     end
 
+    Bridge.ladderNearAt = nil
     pull = Bridge.floorPull
     if pull == nil and prevZ ~= nil and math.abs(z - prevZ) >= 0.9 then
         local hasLadder = false
