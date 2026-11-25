@@ -287,11 +287,23 @@ function C.wanted(force)
     return C.active
 end
 
+local function isPuppet(z)
+    if z == nil then return false end
+    if BridgeSeatPuppet ~= nil and type(BridgeSeatPuppet.is) == "function" then
+        local ok, yes = pcall(BridgeSeatPuppet.is, z)
+        if ok and yes == true then return true end
+    end
+    local v = false
+    pcall(function() v = z:getVariableBoolean("SWMSeatPuppet") == true end)
+    return v
+end
+
 function C.ours(z)
     if z == nil then return false end
     local zombie = false
     pcall(function() zombie = instanceof(z, "IsoZombie") == true end)
     if not zombie then return false end
+    if isPuppet(z) then return true end
     if Bridge ~= nil and Bridge.body == z then return true end
     local yes = false
     pcall(function() yes = z:getVariableBoolean("NotAloneBody") == true end)
@@ -332,7 +344,10 @@ function C.outfitKey(z)
             key = tostring(id) .. (female and "F" or "M")
         end
     end)
-    if key == nil then return C.key(z) end
+    if key == nil then
+        if isPuppet(z) then return "SWMSeatPuppet" end
+        return C.key(z)
+    end
     return key
 end
 
@@ -386,7 +401,7 @@ function C.clean(z)
     pcall(function()
         reapply = z:getItemVisuals():size() < z:getWornItems():size()
     end)
-    if reapply and BridgeInventory ~= nil and type(BridgeInventory.applyWorn) == "function" then
+    if reapply and not isPuppet(z) and BridgeInventory ~= nil and type(BridgeInventory.applyWorn) == "function" then
         pcall(BridgeInventory.applyWorn, z)
     end
     C.cleaned = C.cleaned + 1
@@ -463,6 +478,10 @@ function C.guard(z)
     if not C.said then
         C.said = true
         log("companion gore suppressed")
+    end
+    if isPuppet(z) and not C.saidPuppet then
+        C.saidPuppet = true
+        log("seat puppet gore suppressed")
     end
 end
 

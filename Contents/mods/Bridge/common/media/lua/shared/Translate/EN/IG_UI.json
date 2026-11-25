@@ -4975,5 +4975,16 @@
     "IGUI_NotAlone_TransmogUnavailable": "Transmog is not available right now",
     "IGUI_NotAlone_TransmogTooFar": "Too far from her to change her look",
     "IGUI_NotAlone_TransmogBatch": "Batch transmog is not available for her",
-    "IGUI_NotAlone_TransmogFailed": "Transmog request failed"
+    "IGUI_NotAlone_TransmogFailed": "Transmog request failed",
+    "IGUI_NotAlone_Soc_EvCarAlarm_Near_1": "That car alarm's going to bring them all down on us.",
+    "IGUI_NotAlone_Soc_EvCarAlarm_Near_2": "Someone's car alarm. We shouldn't be here when they come.",
+    "IGUI_NotAlone_Soc_EvCarAlarm_Near_3": "Hear that? A car alarm. Nothing good follows that noise.",
+    "IGUI_NotAlone_Soc_EvBuildingAlarm_Near_1": "A house alarm. That'll pull every one of them in.",
+    "IGUI_NotAlone_Soc_EvBuildingAlarm_Near_2": "Someone's alarm is going off. We need to move.",
+    "IGUI_NotAlone_Soc_EvBuildingAlarm_Near_3": "That alarm's a dinner bell. Let's not stick around.",
+    "IGUI_NotAlone_MenuSmoke": "Have a smoke",
+    "IGUI_NotAlone_Say_SmokeStart": "Let me have a smoke.",
+    "IGUI_NotAlone_Say_SmokeDone": "That hit the spot.",
+    "IGUI_NotAlone_Say_SmokeNoCigarette": "I don't have a cigarette.",
+    "IGUI_NotAlone_Say_SmokeNoLighter": "I need a light."
 }

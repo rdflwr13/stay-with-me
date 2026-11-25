@@ -31,7 +31,7 @@ public final class SwmCompanion {
     }
 
     public static boolean isCompanion(Object c) {
-        return c != null && (c == companion || c == puppet);
+        return c != null && (c == companion || c == puppet || c == requested || c == requestedPuppet);
     }
 
     public static void updateFromGame() {

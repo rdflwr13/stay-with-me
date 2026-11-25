@@ -3951,6 +3951,21 @@ function BridgeInventory.onFill(playerNum, context, items)
         end
     end
 
+    local smokeAdded = false
+    if #list == 1 and BridgeTask ~= nil and BridgeTask.SMOKE_ENABLED == 1 then
+        local item = list[1]
+        local smokeable = false
+        pcall(function()
+            local t = item:getType()
+            smokeable = BridgeInventory.inBody(item:getContainer())
+                and (t == "CigaretteSingle" or t == "CigaretteRolled" or t == "CigarettePack")
+        end)
+        if smokeable then
+            rin:addOption(label("MenuSmoke"), item, BridgeInventory.smokeOnHer)
+            smokeAdded = true
+        end
+    end
+
     if BridgeGear ~= nil then pcall(BridgeGear.menu, rin, b, player, list) end
 
     if BridgeMenu ~= nil and BridgeMenu.addItemLootOptions ~= nil then
@@ -3961,7 +3976,7 @@ function BridgeInventory.onFill(playerNum, context, items)
         pcall(BridgeInventory.giftOption, rin, b, player, list)
     end
 
-    if rin.numOptions <= 1 then return end
+    if rin.numOptions <= 1 and not smokeAdded then return end
     local opt = context:addOptionOnTop(parentName)
     context:addSubMenu(opt, rin)
 end
@@ -4327,6 +4342,12 @@ BridgeInventory.answers = BridgeInventory.answers or {}
 BridgeInventory.token = BridgeInventory.token or 0
 local WAIT_TICKS = 300
 local LATE_TICKS = 3600
+
+
+function BridgeInventory.smokeOnHer(item)
+    if BridgeTask == nil or BridgeTask.start == nil then return end
+    BridgeTask.start("smoke", { { item = item } })
+end
 
 
 function BridgeInventory.inBody(container)

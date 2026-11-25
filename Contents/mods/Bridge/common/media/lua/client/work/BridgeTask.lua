@@ -259,6 +259,16 @@ BridgeTask.BRUSH_ITEMS = {
     ["Base.HomemadeToothbrush"] = true,
 }
 
+BridgeTask.SMOKE_ENABLED = 1
+BridgeTask.SMOKE_TICKS = 460
+BridgeTask.SMOKE_PUFFS = 3
+BridgeTask.SMOKE_ANIM = "Smoke"
+BridgeTask.SMOKE_SOUND = "Smoke"
+BridgeTask.SMOKE_ITEMS = {
+    ["CigaretteSingle"] = true,
+    ["CigaretteRolled"] = true,
+}
+
 
 BridgeTask.FILL_REACH = BridgeTask.WASH_REACH
 BridgeTask.FILL_MAX_DIST = 1.6
@@ -322,6 +332,7 @@ BridgeTask.queue = {}
 BridgeTask.current = nil
 BridgeTask.prevMode = "follow"
 BridgeTask.phase = nil
+BridgeTask.smoke = nil
 BridgeTask.nextSwing = 0
 BridgeTask.since = 0
 BridgeTask.swings = 0
@@ -3251,6 +3262,8 @@ function BridgeTask.speakMissing(kind, missingOverride)
     elseif missing == "shearTool" then key = "JobNoShears"
     elseif missing == "milkContainer" then key = "JobNoMilkContainer"
     elseif missing == "cleanImplement" then key = "JobHutchNoTool"
+    elseif missing == "smokeItem" then key = "SmokeNoCigarette"
+    elseif missing == "lighter" then key = "SmokeNoLighter"
     elseif missing == "crowbar" then key = "JobNeedCrowbar" end
     Bridge.speak(key)
 end
@@ -3932,6 +3945,21 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         BridgeTask.brushSoundAt = nil
         BridgeTask.brushSoundId = nil
     end
+    if kind == "smoke" then
+        BridgeTask.smoke = {
+            item = nil,
+            pack = nil,
+            phase = nil,
+            since = 0,
+            ticks = 0,
+            puffsDone = 0,
+            consumed = false,
+            soundTool = nil,
+            want = nil,
+        }
+        local t = targets[1]
+        if type(t) == "table" and t.item ~= nil then BridgeTask.smoke.want = t.item end
+    end
     if kind == "fillWater" then
         BridgeTask.fillSink = opts ~= nil and opts.sink or nil
         BridgeTask.fillItems = opts ~= nil and opts.items or nil
@@ -4156,6 +4184,8 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     elseif kind == "washSink" then
     elseif kind == "brushTeeth" then
         Bridge.speakText("Let me brush my teeth.")
+    elseif kind == "smoke" then
+        Bridge.speak("SmokeStart")
     elseif kind == "fillWater" then
     elseif kind == "emptyFluid" then
     elseif kind == "shower" then
@@ -4481,6 +4511,8 @@ function BridgeTask.finish()
                 or finishKind == "fertilizePlants" or finishKind == "tendCrops" or finishKind == "climbLadder" then
         elseif finishKind == "brushTeeth" then
             if (BridgeTask.doneCount or 0) > 0 then Bridge.speakText("Minty fresh.") end
+        elseif finishKind == "smoke" then
+            if (BridgeTask.doneCount or 0) > 0 then Bridge.speak("SmokeDone") end
         elseif finishKind == "petAnimals" then
             if (BridgeTask.doneCount or 0) > 0 then Bridge.speak("JobPetDone") end
         elseif finishKind == "tendAnimals" then
@@ -4834,7 +4866,7 @@ function BridgeTask.watchdog(body, def)
     local kind = BridgeTask.kind
     if kind == "sit" or kind == "lay" or kind == "sleep" or kind == "exercise"
         or kind == "anim" or kind == "hug" or kind == "shower" or kind == "bath" or kind == "wash"
-        or kind == "climbLadder" then
+        or kind == "climbLadder" or kind == "smoke" then
         return
     end
     local now = Bridge.time
@@ -6218,6 +6250,156 @@ function BridgeTask.brushReady(rec)
     return BridgeTask.brushCooldownLeft(rec) <= 0
 end
 
+local function smokeTypeOf(item)
+    local t = nil
+    pcall(function() t = item:getType() end)
+    return t
+end
+
+function BridgeTask.smokePick(body)
+    if body == nil then return nil end
+    local items = nil
+    if BridgeGunRules ~= nil and type(BridgeGunRules.itemsOf) == "function" then
+        pcall(function() items = BridgeGunRules.itemsOf(body) end)
+    end
+    if type(items) ~= "table" then return nil end
+    local pack = nil
+    for i = 1, #items do
+        local it = items[i]
+        if it ~= nil then
+            local t = smokeTypeOf(it)
+            if t == "CigaretteSingle" or t == "CigaretteRolled" then
+                return { item = it }
+            elseif t == "CigarettePack" and pack == nil then
+                local uses = 0
+                pcall(function() uses = it:getCurrentUses() end)
+                if (tonumber(uses) or 0) > 0 then pack = it end
+            end
+        end
+    end
+    if pack ~= nil then return { pack = pack } end
+    return nil
+end
+
+function BridgeTask.smokePickFrom(body, want)
+    if body == nil or want == nil then return nil end
+    local t = smokeTypeOf(want)
+    if t == "CigaretteSingle" or t == "CigaretteRolled" then
+        local owned = false
+        pcall(function()
+            local c = want:getContainer()
+            owned = c ~= nil and (c == body:getInventory() or c:getOutermostContainer() == body:getInventory())
+        end)
+        if owned then return { item = want } end
+    elseif t == "CigarettePack" then
+        local uses = 0
+        pcall(function() uses = want:getCurrentUses() end)
+        if (tonumber(uses) or 0) > 0 then return { pack = want } end
+    end
+    return nil
+end
+
+function BridgeTask.smokeFireSource(body, item)
+    if body == nil then return nil, nil end
+    local probe = item
+    if probe == nil then
+        pcall(function() probe = instanceItem("Base.CigaretteSingle") end)
+    end
+    if probe == nil then return nil, nil end
+    local types = nil
+    pcall(function() types = probe:getRequireInHandOrInventory() end)
+    if types == nil then return nil, nil end
+    local inv = nil
+    pcall(function() inv = body:getInventory() end)
+    if inv == nil then return nil, nil end
+    local found = nil
+    for i = 1, types:size() do
+        local fullType = nil
+        pcall(function() fullType = moduleDotType(probe:getModule(), types:get(i - 1)) end)
+        if fullType ~= nil then
+            pcall(function()
+                found = inv:getFirstTypeEvalRecurse(fullType, function(it) return it:getCurrentUsesFloat() > 0 end)
+            end)
+            if found ~= nil then break end
+        end
+    end
+    if found == nil then return nil, nil end
+    local sound = nil
+    local fullType = nil
+    pcall(function() fullType = found:getFullType() end)
+    if fullType == "Base.Lighter" or fullType == "Base.LighterDisposable"
+            or fullType == "Base.LighterBBQ" or fullType == "Base.Lighter_Battery" then
+        sound = "UseLighter"
+    elseif fullType == "Base.Matches" or fullType == "Base.Matchbox" then
+        sound = "UseMatch"
+    else
+        pcall(function() sound = found:getSoundByID("Activate") end)
+        if type(sound) ~= "string" or sound == "" then
+            sound = nil
+            local tag = false
+            pcall(function() tag = found:hasTag(ItemTag.LIGHTER) == true end)
+            if tag then sound = "UseLighter" end
+            if sound == nil then
+                pcall(function() tag = found:hasTag(ItemTag.START_FIRE) == true end)
+                if tag then sound = "UseMatch" end
+            end
+        end
+    end
+    return found, sound
+end
+
+function BridgeTask.smokeExtract(body, pack)
+    if body == nil or pack == nil then return nil end
+    local uses = 0
+    pcall(function() uses = pack:getCurrentUses() end)
+    uses = tonumber(uses) or 0
+    if uses <= 0 then return nil end
+    local single = nil
+    pcall(function() single = instanceItem("Base.CigaretteSingle") end)
+    if single == nil then return nil end
+    local added = false
+    if BridgeGunRules ~= nil and type(BridgeGunRules.addToBody) == "function" then
+        pcall(function() added = BridgeGunRules.addToBody(body, single) == true end)
+    end
+    if not added then return nil end
+    pcall(function() pack:setCurrentUses(uses - 1) end)
+    if Bridge ~= nil and Bridge.mp then
+        pcall(function() sendItemStats(pack) end)
+    end
+    if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then pcall(Bridge.itemsChanged) end
+    return single
+end
+
+function BridgeTask.smokeHoldProp(body, single)
+    if body == nil then return end
+    local glow = BridgeSmokeCompat ~= nil and type(BridgeSmokeCompat.ready) == "function" and BridgeSmokeCompat.ready()
+    local rolled = false
+    pcall(function() rolled = single:getType() == "CigaretteRolled" end)
+    local typeName = "Bridge.CigaretteProp"
+    if glow then
+        typeName = rolled and "Bridge.CigaretteRolledPropGlow" or "Bridge.CigarettePropGlow"
+    else
+        typeName = rolled and "Bridge.CigaretteRolledProp" or "Bridge.CigaretteProp"
+    end
+    local prop = nil
+    pcall(function() prop = instanceItem(typeName) end)
+    if prop == nil then
+        pcall(function() prop = instanceItem("Bridge.CigaretteProp") end)
+    end
+    if prop == nil then return end
+    pcall(function()
+        if BridgeWeapon ~= nil and type(BridgeWeapon.putAway) == "function" then BridgeWeapon.putAway(body) end
+    end)
+    pcall(function()
+        body:setPrimaryHandItem(nil)
+        body:setSecondaryHandItem(prop)
+        body:resetModelNextFrame()
+    end)
+    pcall(function()
+        if BridgeInventory ~= nil and type(BridgeInventory.redress) == "function" then BridgeInventory.redress(body) end
+    end)
+end
+
 BridgeTask.kinds.brushTeeth = {}
 BridgeTask.kinds.brushTeeth.unavailableSpeech = "JobNoSupplies"
 
@@ -6368,6 +6550,123 @@ function BridgeTask.kinds.brushTeeth.leave(body)
         end)
     end
     BridgeTask.brushSoundId = nil
+end
+
+
+BridgeTask.kinds.smoke = {}
+BridgeTask.kinds.smoke.unavailableSpeech = "SmokeNoCigarette"
+
+function BridgeTask.kinds.smoke.missing(body)
+    local pick = BridgeTask.smokePick(body)
+    if pick == nil then return "smokeItem" end
+    local item = pick.item
+    if BridgeTask.smokeFireSource(body, item) == nil then return "lighter" end
+    return nil
+end
+
+function BridgeTask.kinds.smoke.available(body)
+    if BridgeTask.SMOKE_ENABLED ~= 1 then return false end
+    return BridgeTask.kinds.smoke.missing(body) == nil
+end
+
+function BridgeTask.kinds.smoke.update(body)
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
+    if BridgeTask.SMOKE_ENABLED ~= 1 then return BridgeTask.finish() end
+    local smoke = BridgeTask.smoke
+    if smoke == nil then return BridgeTask.finish() end
+    if smoke.phase == nil then
+        local pick = nil
+        if smoke.want ~= nil then pick = BridgeTask.smokePickFrom(body, smoke.want) end
+        if pick == nil then pick = BridgeTask.smokePick(body) end
+        if pick == nil then
+            Bridge.speak("SmokeNoCigarette")
+            return BridgeTask.finish()
+        end
+        local single = pick.item
+        if single == nil and pick.pack ~= nil then
+            single = BridgeTask.smokeExtract(body, pick.pack)
+        end
+        if single == nil then
+            Bridge.speak("SmokeNoCigarette")
+            return BridgeTask.finish()
+        end
+        smoke.item = single
+        smoke.pack = pick.pack
+        local tool, sound = BridgeTask.smokeFireSource(body, single)
+        if tool == nil then
+            Bridge.speak("SmokeNoLighter")
+            return BridgeTask.finish()
+        end
+        smoke.soundTool = sound
+        BridgeTask.smokeHoldProp(body, single)
+        smoke.phase = "light"
+        smoke.since = Bridge.time
+        BridgeTask.info = "smoke light"
+        return true
+    end
+    if smoke.phase == "light" then
+        if smoke.soundTool ~= nil and BridgeSound ~= nil and type(BridgeSound.sfx) == "function" then
+            pcall(function() BridgeSound.sfx(body, smoke.soundTool) end)
+        end
+        smoke.phase = "smoke"
+        smoke.since = Bridge.time
+        smoke.ticks = BridgeTask.SMOKE_TICKS
+        smoke.puffsDone = 0
+        pcall(function() body:setVariable("BumpAnimFinished", false) end)
+        pcall(function() body:setBumpType(BridgeTask.SMOKE_ANIM) end)
+        BridgeTask.info = "smoking"
+        return true
+    end
+    pcall(function()
+        if tostring(body:getBumpType()) ~= BridgeTask.SMOKE_ANIM then body:setBumpType(BridgeTask.SMOKE_ANIM) end
+    end)
+    local elapsed = (Bridge.time - (smoke.since or Bridge.time)) * U.ffMult()
+    local ticks = smoke.ticks or BridgeTask.SMOKE_TICKS
+    local puffs = BridgeTask.SMOKE_PUFFS
+    for i = 1, puffs do
+        local boundary = i * ticks / (puffs + 1)
+        if elapsed >= boundary and (smoke.puffsDone or 0) < i then
+            smoke.puffsDone = i
+            if BridgeSmokeCompat ~= nil and type(BridgeSmokeCompat.puff) == "function" then
+                pcall(BridgeSmokeCompat.puff, body)
+            end
+            if BridgeSound ~= nil and type(BridgeSound.sfx) == "function" then
+                pcall(function() BridgeSound.sfx(body, BridgeTask.SMOKE_SOUND) end)
+            end
+        end
+    end
+    if elapsed >= ticks then
+        pcall(function() body:setBumpType("") end)
+        local item = smoke.item
+        if item ~= nil and BridgeGunRules ~= nil and type(BridgeGunRules.removeItem) == "function" then
+            pcall(BridgeGunRules.removeItem, item)
+        end
+        smoke.consumed = true
+        if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then pcall(Bridge.itemsChanged) end
+        BridgeTask.doneCount = (BridgeTask.doneCount or 0) + 1
+        BridgeTask.info = "smoke done"
+        return BridgeTask.finish()
+    end
+    BridgeTask.info = "smoking"
+    return true
+end
+
+function BridgeTask.kinds.smoke.leave(body)
+    if body ~= nil then
+        pcall(function()
+            if tostring(body:getBumpType()) == BridgeTask.SMOKE_ANIM then body:setBumpType("") end
+        end)
+    end
+    local smoke = BridgeTask.smoke
+    if smoke ~= nil and smoke.item ~= nil and not smoke.consumed then
+        local inContainer = false
+        pcall(function() inContainer = smoke.item:getContainer() ~= nil end)
+        if not inContainer and BridgeGunRules ~= nil and type(BridgeGunRules.addToBody) == "function" then
+            pcall(BridgeGunRules.addToBody, body, smoke.item)
+            if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then pcall(Bridge.itemsChanged) end
+        end
+    end
+    BridgeTask.smoke = nil
 end
 
 

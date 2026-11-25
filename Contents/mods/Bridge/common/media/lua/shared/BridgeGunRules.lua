@@ -885,6 +885,139 @@ BridgeGunRules.ggsSyncCount = ggsSyncCount
 BridgeGunRules.ggsCopyQueue = ggsCopyQueue
 BridgeGunRules.ggsQueueSupported = ggsQueueSupported
 
+BridgeGunRules.SILENCER_SOUND = "CapGunRifleShoot"
+BridgeGunRules.SILENCER_RADIUS_FACTOR = 0.30
+BridgeGunRules.SILENCER_VOLUME_FACTOR = 0.45
+
+local SILENCER_SLOTS = {
+    canon = true,
+    muzzle = true,
+    silencer = true,
+    suppressor = true,
+    wb_suppressor = true,
+    barrel = true,
+}
+
+local NON_SILENCER_WORDS = {
+    "choke", "muzzlebrake", "muzzle_brake", "compensator", "flashhider", "flash_hider",
+}
+
+local function lowerText(v)
+    if type(v) ~= "string" then return "" end
+    return string.lower(v)
+end
+
+local function hasAnyWord(text, words)
+    for i = 1, #words do
+        if string.find(text, words[i], 1, true) ~= nil then return true end
+    end
+    return false
+end
+
+local function isSuppressorPart(part)
+    if part == nil then return false end
+    local slot = ""
+    pcall(function() slot = lowerText(part:getPartType()) end)
+    if slot ~= "" and not SILENCER_SLOTS[slot] then return false end
+    local fullType, typeName, displayName = "", "", ""
+    pcall(function() fullType = lowerText(part:getFullType()) end)
+    pcall(function() typeName = lowerText(part:getType()) end)
+    pcall(function() displayName = lowerText(part:getDisplayName()) end)
+    local blob = fullType .. " " .. typeName .. " " .. displayName
+    if hasAnyWord(blob, NON_SILENCER_WORDS) then return false end
+    local accepted = false
+    pcall(function()
+        local md = part:getModData()
+        if type(md) == "table" and md.isSilencerCon == true then accepted = true end
+    end)
+    if not accepted then
+        local xanny = rawget(_G, "XannyArmsWeaponParts")
+        if xanny ~= nil and type(xanny.isSuppressor) == "function" then
+            pcall(function() accepted = xanny.isSuppressor(part:getFullType()) == true end)
+        end
+    end
+    if not accepted then
+        local awcwf = rawget(_G, "AWCWF_SilencerSet")
+        if type(awcwf) == "table" then
+            local pt = nil
+            pcall(function() pt = part:getPartType() end)
+            if pt ~= nil and awcwf[pt] ~= nil then accepted = true end
+        end
+    end
+    if not accepted then
+        if fullType == "base.sup2" or typeName == "sup2" then accepted = true end
+    end
+    if not accepted then
+        if string.find(blob, "silencer", 1, true) ~= nil
+                or string.find(blob, "suppressor", 1, true) ~= nil
+                or string.find(blob, "suppress", 1, true) ~= nil
+                or string.find(blob, "oilfilter", 1, true) ~= nil
+                or string.find(blob, "oil_filter", 1, true) ~= nil
+                or string.find(blob, "ductaped", 1, true) ~= nil
+                or string.find(blob, "waterbottle", 1, true) ~= nil then
+            accepted = true
+        end
+    end
+    return accepted
+end
+
+BridgeGunRules.isSuppressorPart = isSuppressorPart
+
+local silencerMemo = {}
+
+function BridgeGunRules.applySilencer(desc, item)
+    if type(desc) ~= "table" or item == nil then return desc end
+    local parts = nil
+    pcall(function() parts = item:getAllWeaponParts() end)
+    if parts == nil then return desc end
+    local count = 0
+    pcall(function() count = parts:size() end)
+    count = tonumber(count) or 0
+    local suppressor = nil
+    for i = 0, count - 1 do
+        local part = nil
+        pcall(function() part = parts:get(i) end)
+        if part ~= nil and isSuppressorPart(part) then
+            suppressor = part
+            break
+        end
+    end
+    if suppressor == nil then return desc end
+    local copy = {}
+    for k, v in pairs(desc) do copy[k] = v end
+    local baseRadius = tonumber(desc.soundRadius) or 20
+    local baseVolume = tonumber(desc.soundVolume) or 10
+    pcall(function()
+        local si = item:getScriptItem()
+        if si ~= nil then
+            local r = si:getSoundRadius()
+            if type(r) == "number" and r > 0 then baseRadius = r end
+            local v = si:getSoundVolume()
+            if type(v) == "number" and v > 0 then baseVolume = v end
+        end
+    end)
+    copy.sound = BridgeGunRules.SILENCER_SOUND
+    copy.soundRadius = baseRadius * BridgeGunRules.SILENCER_RADIUS_FACTOR
+    copy.soundVolume = baseVolume * BridgeGunRules.SILENCER_VOLUME_FACTOR
+    local gunType = tostring(desc.fullType or "?")
+    local partType = "?"
+    pcall(function() partType = tostring(suppressor:getFullType()) end)
+    local key = gunType .. "|" .. partType
+    local sig = string.format("%.2f|%.2f", copy.soundRadius, copy.soundVolume)
+    if silencerMemo[key] ~= sig then
+        silencerMemo[key] = sig
+        if BridgeLog ~= nil and type(BridgeLog.on) == "function" and BridgeLog.on() then
+            print(string.format("[BridgeGunRules] silencer %s part=%s sound=%s radius=%.2f volume=%.2f",
+                gunType, partType, BridgeGunRules.SILENCER_SOUND, copy.soundRadius, copy.soundVolume))
+        end
+    end
+    return copy
+end
+
+function BridgeGunRules.shotDesc(desc, item)
+    return BridgeGunRules.applySilencer(ggsShotDesc(desc, item), item)
+end
+
 
 local function specFeeds(spec, ammoTypeKey)
     if type(spec) ~= "table" or type(spec.out) ~= "table" or ammoTypeKey == nil then return false end

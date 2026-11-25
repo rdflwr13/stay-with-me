@@ -2742,7 +2742,7 @@ BridgeServer.Commands.gunShot = function(player, args)
     if not alive then return reject("target dead") end
     if math.abs(target:getZ() - body:getZ()) >= 0.8 then return reject("target on another floor") end
 
-    local desc = BridgeGunRules.ggsShotDesc(gunDescFor(who, rec.gunType, gun) or BridgeGunRules.describe(gun), held or gun)
+    local desc = BridgeGunRules.shotDesc(gunDescFor(who, rec.gunType, gun) or BridgeGunRules.describe(gun), held or gun)
     local mode = BridgeData.COMBAT[BridgeData.combatOf(rec)] or BridgeData.COMBAT.bodyguard
     local pct = tonumber(mode.gunRangePct) or 0
     if pct <= 0 then return reject("guns off for this mode") end

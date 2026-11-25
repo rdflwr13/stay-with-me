@@ -2345,7 +2345,7 @@ end
 
 local function fire(body)
     local item = BridgeGunfight.gunItem
-    local gun = BridgeGunRules.ggsShotDesc(BridgeGunfight.gun, item)
+    local gun = BridgeGunRules.shotDesc(BridgeGunfight.gun, item)
     local t = BridgeGunfight.target
     if item == nil or gun == nil or t == nil then return end
     if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then Bridge.itemsChanged() end

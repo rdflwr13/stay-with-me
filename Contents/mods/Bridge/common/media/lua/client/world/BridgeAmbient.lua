@@ -11,6 +11,7 @@ BridgeAmbient.ON = {
     WEATHER = 1,
     DARK    = 1,
     HELI    = 1,
+    ALARM   = 1,
 }
 
 
@@ -34,6 +35,8 @@ BridgeAmbient.CFG = {
     CLOUD          = 0.6,
     HELI_WINDOW_MS = 120000,
     HELI_EVERY     = 600,
+    ALARM_NEAR     = 40,
+    ALARM_COOLDOWN = 10 * 60 * BridgeAmbient.SEC,
 }
 
 
@@ -62,6 +65,8 @@ BridgeAmbient.EVENTS = {
     EvLightOn        = { slot = "AmbLightOn",      cooldown = 10 * 60, cat = "DARK" },
     EvNoPowerIn      = { slot = "AmbNoPowerIn",    cooldown = 30 * 60, cat = "DARK" },
     EvHeli           = { slot = "Heli", cooldown = 600, cat = "HELI", urgent = true },
+    EvCarAlarm       = { slot = "CarAlarm", cooldown = 0, cat = "ALARM", urgent = true },
+    EvBuildingAlarm  = { slot = "BuildingAlarm", cooldown = 0, cat = "ALARM", urgent = true },
 }
 
 BridgeAmbient.prev = nil
@@ -261,9 +266,19 @@ local function heliOverhead(red)
     return seen == true
 end
 
-local function heliCanSpeak(red, body, near)
+local function nearPlayer(red, body)
+    local near = false
+    pcall(function()
+        local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
+        near = dx * dx + dy * dy <= BridgeAmbient.CFG.NEAR * BridgeAmbient.CFG.NEAR
+            and math.abs(red:getZ() - body:getZ()) < 1
+    end)
+    return near
+end
+
+local function canSpeak(cat, red, body, near)
     if BridgeAmbient.ENABLED ~= 1 then return false end
-    if BridgeAmbient.ON.HELI ~= 1 then return false end
+    if BridgeAmbient.ON[cat] ~= 1 then return false end
     if red == nil or body == nil then return false end
     if not near then return false end
     if Bridge.mode == "rest" then return false end
@@ -276,6 +291,10 @@ local function heliCanSpeak(red, body, near)
     local asleep = false
     pcall(function() asleep = red:isAsleep() == true end)
     return not asleep
+end
+
+local function heliCanSpeak(red, body, near)
+    return canSpeak("HELI", red, body, near)
 end
 
 local function heliTick(red, body, near)
@@ -322,12 +341,7 @@ function BridgeAmbient.update(body)
         return
     end
 
-    local near = false
-    pcall(function()
-        local dx, dy = red:getX() - body:getX(), red:getY() - body:getY()
-        near = dx * dx + dy * dy <= BridgeAmbient.CFG.NEAR * BridgeAmbient.CFG.NEAR
-            and math.abs(red:getZ() - body:getZ()) < 1
-    end)
+    local near = nearPlayer(red, body)
 
     heliTick(red, body, near)
 
@@ -400,6 +414,58 @@ end
 if not BridgeAmbient._heliHooked then
     BridgeAmbient._heliHooked = true
     Events.OnGameStart.Add(function() pcall(BridgeAmbient.heliReset) end)
+end
+
+local function isA(obj, cls)
+    if type(instanceof) ~= "function" then return false end
+    local ok, yes = pcall(instanceof, obj, cls)
+    return ok and yes == true
+end
+
+local function alarmKind(radius, volume, source)
+    if radius == 150 and volume == 150 then return "car" end
+    if radius == 600 and volume == 600 and source ~= nil
+            and not isA(source, "IsoMovingObject")
+            and not isA(source, "IsoGameCharacter") then
+        return "building"
+    end
+    return nil
+end
+
+BridgeAmbient.alarmSeen = BridgeAmbient.alarmSeen or {}
+
+local function alarmKey(kind, x, y)
+    return kind .. ":" .. math.floor(x / 8) .. "," .. math.floor(y / 8)
+end
+
+local function onWorldSoundAlarm(x, y, z, radius, volume, source)
+    if Bridge == nil or not Bridge.alive() then return end
+    if not BridgeAmbient.on() or BridgeAmbient.ON.ALARM ~= 1 then return end
+    local kind = alarmKind(radius, volume, source)
+    if kind == nil then return end
+    local red = BridgeData.owner()
+    local body = Bridge.body
+    if red == nil or body == nil then return end
+    local dx, dy = x - body:getX(), y - body:getY()
+    if dx * dx + dy * dy > BridgeAmbient.CFG.ALARM_NEAR * BridgeAmbient.CFG.ALARM_NEAR then return end
+    if math.abs(z - body:getZ()) >= 1 then return end
+    if not canSpeak("ALARM", red, body, nearPlayer(red, body)) then return end
+    local now = Bridge.time
+    for key, at in pairs(BridgeAmbient.alarmSeen) do
+        if at <= now then BridgeAmbient.alarmSeen[key] = nil end
+    end
+    local key = alarmKey(kind, x, y)
+    if BridgeAmbient.alarmSeen[key] ~= nil then return end
+    local event = kind == "car" and "EvCarAlarm" or "EvBuildingAlarm"
+    if say(event) then
+        BridgeAmbient.alarmSeen[key] = now + BridgeAmbient.CFG.ALARM_COOLDOWN
+        log("alarm " .. kind .. " at " .. tostring(x) .. "," .. tostring(y))
+    end
+end
+
+if not BridgeAmbient._alarmHooked then
+    BridgeAmbient._alarmHooked = true
+    Events.OnWorldSound.Add(onWorldSoundAlarm)
 end
 
 log("loaded")

@@ -472,6 +472,7 @@ local function hookCapture()
     local original = Bridge.despawn
     Bridge.despawn = function(...)
         if Bridge.body ~= nil then
+            if BridgeGore ~= nil and type(BridgeGore.guard) == "function" then pcall(BridgeGore.guard, Bridge.body) end
             local ok, look = pcall(captureLook, Bridge.body)
             if ok and look ~= nil then S.look = look end
         end
@@ -614,6 +615,7 @@ function S.hide(why)
     if p == nil then return end
     S.isCache[p] = nil
     S.sweepCache[p] = nil
+    if BridgeGore ~= nil and type(BridgeGore.release) == "function" then pcall(BridgeGore.release, p) end
     if id ~= nil then
         local st = store(false)
         if st ~= nil and type(st.ids) == "table" then st.ids[id] = nil end
@@ -722,6 +724,8 @@ function S.tick()
     place(car, seat)
     keepInert(S.p)
     applyTreatAnim()
+    if BridgeGore ~= nil and type(BridgeGore.guard) == "function" then pcall(BridgeGore.guard, S.p) end
+    if Bridge ~= nil and type(Bridge.clearHitMarks) == "function" then pcall(Bridge.clearHitMarks, S.p) end
 end
 
 function S.diagLine()

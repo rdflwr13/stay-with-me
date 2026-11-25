@@ -58,6 +58,15 @@ try {
     if ($entries -notcontains "swmviewpointfix/SwmCompanion.class") {
         throw "Jar is missing swmviewpointfix/SwmCompanion.class"
     }
+    if ($entries -notcontains "swmviewpointfix/Patch_VisceralStruck.class") {
+        throw "Jar is missing swmviewpointfix/Patch_VisceralStruck.class"
+    }
+    if ($entries -notcontains "swmviewpointfix/Patch_VisceralKilled.class") {
+        throw "Jar is missing swmviewpointfix/Patch_VisceralKilled.class"
+    }
+    if ($entries -notcontains "swmviewpointfix/Patch_VisceralCapture.class") {
+        throw "Jar is missing swmviewpointfix/Patch_VisceralCapture.class"
+    }
 
     Write-Output "Built $out"
     $entries | ForEach-Object { Write-Output $_ }
