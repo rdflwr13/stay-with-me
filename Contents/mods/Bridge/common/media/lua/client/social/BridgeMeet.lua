@@ -1826,7 +1826,7 @@ local function installMenu()
         if bx == nil or red == nil then return end
         if dist2d(bx, by, red:getX(), red:getY()) > TALK_RANGE then return end
         local option = context:addOptionOnTop(survivor)
-        local sub = ISContextMenu:getNew(context)
+        local sub = BridgeMenu.submenu(context)
         context:addSubMenu(option, sub)
         local ask = nil
         local leave = nil

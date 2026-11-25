@@ -68,6 +68,7 @@ end
 
 BridgeTask.CHOP_RANGE = 1.45
 BridgeTask.STOP_DIST = 0.9
+BridgeTask.TOGETHER_WAIT = 20 * K.SECOND
 BridgeTask.SPOT_NUDGE = 0.42
 BridgeTask.STALL_TICKS = 1.5 * K.SECOND
 BridgeTask.DANGER_RADIUS = 6
@@ -10194,14 +10195,23 @@ local function sitWalkSquareFor(seatSq, sx, sy)
     return getCell():getGridSquare(x0, y0 + (ly >= 0 and 1 or -1), z)
 end
 
-function BridgeTask.seatTaken(plan, body)
+function BridgeTask.seatTaken(plan, body, together)
     if plan == nil or plan.obj == nil then return false end
     local taken = false
     pcall(function() taken = plan.obj:isFurnitureOccupied(body) == true end)
     if taken then return true end
     local red = BridgeData.owner()
     if red ~= nil then
-        pcall(function() if red:isSitOnFurnitureObject(plan.obj) then taken = true end end)
+        if together then
+            pcall(function()
+                if red:isSittingOnFurniture() and plan.seatX ~= nil and plan.seatY ~= nil then
+                    local dx, dy = red:getX() - plan.seatX, red:getY() - plan.seatY
+                    if dx * dx + dy * dy <= 0.36 then taken = true end
+                end
+            end)
+        else
+            pcall(function() if red:isSitOnFurnitureObject(plan.obj) then taken = true end end)
+        end
     end
     if taken then return true end
     pcall(function()
@@ -10523,30 +10533,36 @@ local function bedParts(obj)
     end
     add(obj)
     pcall(function()
+        local objects = ArrayList.new()
+        obj:getSpriteGridObjectsIncludingSelf(objects)
+        for i = 0, objects:size() - 1 do add(objects:get(i)) end
+    end)
+    pcall(function()
         local sq = obj:getSquare()
         if sq == nil then return end
         local objs = sq:getObjects()
         for i = 0, objs:size() - 1 do add(objs:get(i)) end
-        for _, d in ipairs({ IsoDirections.N, IsoDirections.S, IsoDirections.E, IsoDirections.W }) do
-            local adj = nil
-            pcall(function() adj = sq:getAdjacentSquare(d) end)
-            if adj ~= nil then
-                local a = adj:getObjects()
-                for i = 0, a:size() - 1 do add(a:get(i)) end
-            end
-        end
     end)
     return parts
 end
 
 
-function BridgeTask.layPlayerOnBed(plan)
+function BridgeTask.layPlayerOnBed(plan, together)
     if plan == nil or plan.obj == nil then return false end
     local red = BridgeData ~= nil and BridgeData.owner() or nil
     if red == nil then return false end
     local on = false
     pcall(function() on = red:isOnBed() == true end)
     if not on then return false end
+    if together then
+        local same = false
+        pcall(function()
+            local psq = red:getCurrentSquare()
+            if psq ~= nil and plan.x ~= nil and plan.y ~= nil
+                    and psq:getX() == plan.x and psq:getY() == plan.y then same = true end
+        end)
+        return same
+    end
     local same = false
     pcall(function()
         local b = red:getBed()
@@ -10609,12 +10625,16 @@ local function bedStandOk(sq, bedSq)
 end
 
 
-function BridgeTask.bedPlan(body, obj)
+function BridgeTask.bedPlan(body, obj, together)
     if body == nil or obj == nil or not BridgeTask.layTarget(obj) then return nil end
     local red = BridgeData ~= nil and BridgeData.owner() or nil
     local px, py = body:getX(), body:getY()
     if red ~= nil then px, py = red:getX(), red:getY() end
     local rx, ry = body:getX(), body:getY()
+    local redSq = nil
+    if together and red ~= nil then pcall(function() redSq = red:getCurrentSquare() end) end
+    U.log(string.format("bedPlan obj=%s body=%.2f,%.2f player=%.2f,%.2f together=%s",
+        tostring(obj), rx, ry, px, py, tostring(together == true)))
 
     local best, seen = nil, {}
     local parts = bedParts(obj)
@@ -10622,7 +10642,9 @@ function BridgeTask.bedPlan(body, obj)
         local info = bedInfo(part)
         if info ~= nil and not seen[info.key] then
             seen[info.key] = true
+            local skip = redSq ~= nil and info.x == redSq:getX() and info.y == redSq:getY()
             local spot = nil
+            if not skip then
             pcall(function() spot = U.freeAdjacent(body, { x = info.x, y = info.y, z = info.z }, bedStandOk) end)
             if spot == nil then
                 pcall(function()
@@ -10659,11 +10681,14 @@ function BridgeTask.bedPlan(body, obj)
                     take = cand.rdist < best.rdist
                 end
                 if take then best = cand end
+                U.log(string.format("bedPlan cand key=%s lie=%.2f,%.2f pdist=%.2f rdist=%.2f stand=%.2f,%.2f take=%s",
+                    tostring(info.key), info.lieX, info.lieY, pdist, rdist, cand.standX, cand.standY, tostring(take)))
+            end
             end
         end
     end
 
-    if best == nil then
+    if best == nil and not together then
         local bed = parts[1] or obj
         local info = bedInfo(bed)
         local sq = nil
@@ -10750,8 +10775,136 @@ function BridgeTask.bedPlan(body, obj)
             best.spotIdx = 1
         end
     end
+    if best ~= nil then
+        U.log(string.format("bedPlan result key=%s lie=%.2f,%.2f stand=%.2f,%.2f dir=%s",
+            tostring(best.key), best.lieX or best.seatX or 0, best.lieY or best.seatY or 0,
+            best.standX or 0, best.standY or 0, tostring(best.dir)))
+    else
+        U.log("bedPlan result=nil")
+    end
     return best
 end
+
+
+function BridgeTask.playerOnBedPart(red, bed)
+    if red == nil or bed == nil then return false end
+    local psq = nil
+    pcall(function() psq = red:getCurrentSquare() end)
+    if psq == nil then return false end
+    local parts = bedParts(bed)
+    for _, part in ipairs(parts) do
+        local sq = nil
+        pcall(function() sq = part:getSquare() end)
+        if sq ~= nil and sq == psq then return true end
+    end
+    return false
+end
+
+
+function BridgeTask.seatTogetherInfo(body, obj)
+    if body == nil or obj == nil then return nil end
+    local red = BridgeData ~= nil and BridgeData.owner() or nil
+    local px, py = body:getX(), body:getY()
+    if red ~= nil then px, py = red:getX(), red:getY() end
+    local seats = {}
+    pcall(function()
+        local objects = ArrayList.new()
+        obj:getSpriteGridObjectsIncludingSelf(objects)
+        for i = 0, objects:size() - 1 do seats[#seats + 1] = objects:get(i) end
+    end)
+    if #seats == 0 then seats[1] = obj end
+    local count, best, bestD = 0, nil, nil
+    local seenSeat = {}
+    for _, o in ipairs(seats) do
+        if BridgeTask.seatIsSeat(o) then
+            local plan = BridgeTask.seatPlan(body, o)
+            if plan ~= nil and not BridgeTask.seatTaken(plan, body, true) then
+                local key = tostring(plan.seatX) .. "," .. tostring(plan.seatY)
+                if not seenSeat[key] then
+                    seenSeat[key] = true
+                    count = count + 1
+                    local d = sitDist(px, py, plan.seatX, plan.seatY)
+                    if bestD == nil or d < bestD then best, bestD = plan, d end
+                end
+            end
+        end
+    end
+    return { count = count, plan = best }
+end
+
+
+function BridgeTask.bedTogetherInfo(body, obj)
+    if body == nil or obj == nil then return nil end
+    local red = BridgeData ~= nil and BridgeData.owner() or nil
+    local px, py = body:getX(), body:getY()
+    if red ~= nil then px, py = red:getX(), red:getY() end
+    local parts = bedParts(obj)
+    local seen = {}
+    local count, best, bestD = 0, nil, nil
+    for _, part in ipairs(parts) do
+        local info = bedInfo(part)
+        if info ~= nil and not seen[info.key] then
+            seen[info.key] = true
+            local plan = { obj = info.obj, x = info.x, y = info.y, z = info.z,
+                seatX = info.lieX, seatY = info.lieY, lieX = info.lieX, lieY = info.lieY }
+            if not BridgeTask.layPlayerOnBed(plan, true) and not BridgeTask.seatTaken(plan, body, true) then
+                count = count + 1
+                local d = sitDist(px, py, info.lieX, info.lieY)
+                if bestD == nil or d < bestD then best, bestD = plan, d end
+            end
+        end
+    end
+    return { count = count, plan = best }
+end
+
+
+function BridgeTask.seatFreeObject(body, plan)
+    if plan == nil or plan.obj == nil then return nil end
+    local seats = {}
+    pcall(function()
+        local objects = ArrayList.new()
+        plan.obj:getSpriteGridObjectsIncludingSelf(objects)
+        for i = 0, objects:size() - 1 do seats[#seats + 1] = objects:get(i) end
+    end)
+    if #seats == 0 then return nil end
+    local red = BridgeData ~= nil and BridgeData.owner() or nil
+    local px, py = body:getX(), body:getY()
+    if red ~= nil then px, py = red:getX(), red:getY() end
+    local best, bestD = nil, nil
+    for _, o in ipairs(seats) do
+        if o ~= plan.obj and BridgeTask.seatIsSeat(o) then
+            local p = BridgeTask.seatPlan(body, o)
+            if p ~= nil and not BridgeTask.seatTaken(p, body, true) then
+                local d = sitDist(px, py, p.seatX, p.seatY)
+                if bestD == nil or d < bestD then best, bestD = o, d end
+            end
+        end
+    end
+    return best
+end
+
+
+function BridgeTask.bedFreeObject(body, plan)
+    if plan == nil or plan.obj == nil then return nil end
+    local parts = bedParts(plan.obj)
+    local red = BridgeData ~= nil and BridgeData.owner() or nil
+    local px, py = body:getX(), body:getY()
+    if red ~= nil then px, py = red:getX(), red:getY() end
+    local best, bestD = nil, nil
+    for _, part in ipairs(parts) do
+        local info = bedInfo(part)
+        if info ~= nil and not (info.x == plan.x and info.y == plan.y) then
+            local p = { obj = info.obj, x = info.x, y = info.y, z = info.z,
+                seatX = info.lieX, seatY = info.lieY, lieX = info.lieX, lieY = info.lieY }
+            if not BridgeTask.layPlayerOnBed(p, true) and not BridgeTask.seatTaken(p, body, true) then
+                local d = sitDist(px, py, info.lieX, info.lieY)
+                if bestD == nil or d < bestD then best, bestD = part, d end
+            end
+        end
+    end
+    return best
+end
+
 
 local function poseFell(body)
     if body == nil then return false end
@@ -10968,6 +11121,91 @@ function BridgeTask.sitSleepStop(body)
     return changed
 end
 
+local function beginSitTarget(body, target)
+    local obj = target.obj
+    if obj == nil then
+        pcall(function() obj = getCell():getGridSquare(target.x, target.y, target.z) end)
+    end
+    BridgeTask.seatTrace = true
+    local plan = nil
+    if target.together then
+        local info = BridgeTask.seatTogetherInfo(body, obj)
+        plan = info ~= nil and info.plan or nil
+    else
+        plan = BridgeTask.seatPlan(body, obj)
+    end
+    BridgeTask.seatTrace = nil
+    if plan == nil then
+        BridgeTask.info = "sit: no seat plan"
+        U.log("sit: no plan queue=" .. tostring(#BridgeTask.queue))
+        BridgeTask.sitPlan = nil
+        BridgeTask.phase = nil
+        BridgeTask.sitUp = nil
+        BridgeTask.sitSeatNoted = nil
+        return BridgeTask.dropTarget(nil, #BridgeTask.queue > 0)
+    end
+    if BridgeTask.seatTaken(plan, body, target.together) then
+        BridgeTask.info = "sit: seat occupied"
+        U.log("sit: occupied queue=" .. tostring(#BridgeTask.queue))
+        BridgeTask.sitPlan = nil
+        BridgeTask.phase = nil
+        BridgeTask.sitUp = nil
+        BridgeTask.sitSeatNoted = nil
+        if #BridgeTask.queue > 0 then return BridgeTask.dropTarget(nil, true) end
+        Bridge.speak(target.together and "TogetherNoRoom" or "SitOccupied")
+        return BridgeTask.finish()
+    end
+    BridgeTask.current = target
+    BridgeTask.sitPlan = plan
+    BridgeTask.sitUp = nil
+    BridgeTask.sitAnimSeen = false
+    BridgeTask.sitReadWanted = target.read == true
+    BridgeTask.sitPathFails = 0
+    BridgeTask.sitFailTick = nil
+    BridgeTask.sitBestD = nil
+    BridgeTask.sitCloseAt = nil
+    BridgeTask.sitSeatNoted = false
+    BridgeTask.sitFromX, BridgeTask.sitFromY, BridgeTask.sitSlideAt = nil, nil, nil
+    if BridgeMove ~= nil then
+        BridgeMove.gapWay = nil
+        BridgeMove.passFirst = 0
+        BridgeMove.passCount = 0
+        BridgeMove.noGapUntil = 0
+        BridgeMove.edgeSeen = nil
+        BridgeMove.edgeLogged = nil
+    end
+    BridgeTask.layPlan = nil
+    BridgeTask.layUp = nil
+    BridgeTask.laySleep = false
+    BridgeTask.layAnim = nil
+    BridgeTask.layAnimSeen = false
+    BridgeTask.layHintSaid = false
+    BridgeTask.layCloseAt = nil
+    BridgeTask.layFromX, BridgeTask.layFromY, BridgeTask.laySlideAt = nil, nil, nil
+    BridgeTask.phase = "walk"
+    BridgeTask.since = Bridge.time
+    BridgeTask.progressAt = Bridge.time
+    BridgeTask.bestD = nil
+    BridgeTask.pathFails = 0
+    BridgeTask.pathFailTick = nil
+    BridgeRoute.state.spot = nil
+    BridgeTask.still = 0
+    BridgeTask.checkX, BridgeTask.checkY = nil, nil
+    BridgeTask.detour = nil
+    if BridgeMove ~= nil then
+        BridgeMove.forcedWalk = "Walk"
+        BridgeMove.blendOverride = BridgeMove.walkBlend or 1.0
+    end
+    pcall(function()
+        local sq = plan.obj:getSquare()
+        U.log(string.format("sit: seat %s at %s, stand %.2f,%.2f facing %s (engine %s)",
+            tostring(sq and (sq:getX() .. "," .. sq:getY()) or "?"), tostring(plan.obj),
+            plan.standX, plan.standY, tostring(plan.dir), tostring(plan.engDir)))
+    end)
+    return true
+end
+
+
 BridgeTask.kinds.sit = {}
 
 function BridgeTask.kinds.sit.available(body)
@@ -10997,80 +11235,34 @@ function BridgeTask.kinds.sit.update(body)
     if target == nil then
         if #BridgeTask.queue == 0 then return BridgeTask.finish() end
         target = table.remove(BridgeTask.queue, 1)
-        local obj = target.obj
-        if obj == nil then
-            pcall(function() obj = getCell():getGridSquare(target.x, target.y, target.z) end)
+        if target.together and target.waitPlayer then
+            BridgeTask.current = target
+            BridgeTask.phase = "waitPlayer"
+            BridgeTask.since = Bridge.time
+            BridgeTask.info = "sit: waiting for player"
+            return true
         end
-        BridgeTask.seatTrace = true
-        local plan = BridgeTask.seatPlan(body, obj)
-        BridgeTask.seatTrace = nil
-        if plan == nil then
-            BridgeTask.info = "sit: no seat plan"
-            U.log("sit: no plan queue=" .. tostring(#BridgeTask.queue))
-            BridgeTask.sitPlan = nil
-            BridgeTask.phase = nil
-            BridgeTask.sitUp = nil
-            BridgeTask.sitSeatNoted = nil
-            return BridgeTask.dropTarget(nil, #BridgeTask.queue > 0)
+        return beginSitTarget(body, target)
+    end
+
+    if BridgeTask.phase == "waitPlayer" then
+        local red = BridgeData.owner()
+        local ok = false
+        if red ~= nil then
+            pcall(function()
+                ok = red:isSittingOnFurniture() == true
+                    and red:isSitOnFurnitureObject(target.obj) == true
+            end)
         end
-        if BridgeTask.seatTaken(plan, body) then
-            BridgeTask.info = "sit: seat occupied"
-            U.log("sit: occupied queue=" .. tostring(#BridgeTask.queue))
-            BridgeTask.sitPlan = nil
-            BridgeTask.phase = nil
-            BridgeTask.sitUp = nil
-            BridgeTask.sitSeatNoted = nil
-            if #BridgeTask.queue > 0 then return BridgeTask.dropTarget(nil, true) end
-            Bridge.speak("SitOccupied")
+        if ok then
+            return beginSitTarget(body, target)
+        end
+        if red == nil or Bridge.time - (BridgeTask.since or Bridge.time) > BridgeTask.TOGETHER_WAIT then
+            Bridge.speak("TogetherFail")
             return BridgeTask.finish()
         end
-        BridgeTask.current = target
-        BridgeTask.sitPlan = plan
-        BridgeTask.sitUp = nil
-        BridgeTask.sitAnimSeen = false
-        BridgeTask.sitReadWanted = target.read == true
-        BridgeTask.sitPathFails = 0
-        BridgeTask.sitFailTick = nil
-        BridgeTask.sitBestD = nil
-        BridgeTask.sitCloseAt = nil
-        BridgeTask.sitSeatNoted = false
-        BridgeTask.sitFromX, BridgeTask.sitFromY, BridgeTask.sitSlideAt = nil, nil, nil
-        if BridgeMove ~= nil then
-            BridgeMove.gapWay = nil
-            BridgeMove.passFirst = 0
-            BridgeMove.passCount = 0
-            BridgeMove.noGapUntil = 0
-            BridgeMove.edgeSeen = nil
-            BridgeMove.edgeLogged = nil
-        end
-    BridgeTask.layPlan = nil
-    BridgeTask.layUp = nil
-    BridgeTask.laySleep = false
-    BridgeTask.layAnim = nil
-    BridgeTask.layAnimSeen = false
-    BridgeTask.layHintSaid = false
-    BridgeTask.layCloseAt = nil
-    BridgeTask.layFromX, BridgeTask.layFromY, BridgeTask.laySlideAt = nil, nil, nil
-        BridgeTask.phase = "walk"
-        BridgeTask.since = Bridge.time
-        BridgeTask.progressAt = Bridge.time
-        BridgeTask.bestD = nil
-        BridgeTask.pathFails = 0
-        BridgeTask.pathFailTick = nil
-        BridgeRoute.state.spot = nil
-        BridgeTask.still = 0
-        BridgeTask.checkX, BridgeTask.checkY = nil, nil
-        BridgeTask.detour = nil
-        if BridgeMove ~= nil then
-            BridgeMove.forcedWalk = "Walk"
-            BridgeMove.blendOverride = BridgeMove.walkBlend or 1.0
-        end
-        pcall(function()
-            local sq = plan.obj:getSquare()
-            U.log(string.format("sit: seat %s at %s, stand %.2f,%.2f facing %s (engine %s)",
-                tostring(sq and (sq:getX() .. "," .. sq:getY()) or "?"), tostring(plan.obj),
-                plan.standX, plan.standY, tostring(plan.dir), tostring(plan.engDir)))
-        end)
+        BridgeTask.info = "sit: waiting for player"
+        return true
     end
 
     local plan = BridgeTask.sitPlan
@@ -11140,6 +11332,22 @@ function BridgeTask.kinds.sit.update(body)
                 return BridgeTask.dropTarget("sit-stand-blocked", #BridgeTask.queue > 0)
             end
             Bridge.speak("Sit")
+            if BridgeTask.current ~= nil and BridgeTask.current.together and BridgeTask.current.playerAfter then
+                BridgeTask.current.playerAfter = false
+                local freeObj = BridgeTask.seatFreeObject(body, plan)
+                pcall(function()
+                    local playerObj = BridgeData.owner()
+                    if playerObj ~= nil and freeObj ~= nil and ISPathFindAction ~= nil
+                            and type(ISWorldObjectContextMenu.onRestPathFound) == "function" then
+                        local action = ISPathFindAction:pathToSitOnFurniture(playerObj, freeObj, false)
+                        action:setOnComplete(ISWorldObjectContextMenu.onRestPathFound, playerObj, action)
+                        action:setOnFail(ISWorldObjectContextMenu.onRestPathFailed, playerObj, freeObj, action)
+                        ISTimedActionQueue.add(action)
+                    elseif type(ISWorldObjectContextMenu.onRest) == "function" then
+                        ISWorldObjectContextMenu.onRest(BridgeTask.current.obj, 0)
+                    end
+                end)
+            end
             return true
         end
         BridgeTask.info = "sit: walking to seat"
@@ -11503,6 +11711,59 @@ BridgeTask.kinds.roam.leave = function(body)
     Bridge.target = nil
 end
 
+local function beginLayTarget(body, target)
+    local obj = target.obj
+    if obj == nil then
+        pcall(function() obj = getCell():getGridSquare(target.x, target.y, target.z) end)
+    end
+    local plan = BridgeTask.bedPlan(body, obj, target.together)
+    if plan == nil then
+        BridgeTask.info = "lay: no bed plan"
+        BridgeTask.markUnreachable(nil)
+        return BridgeTask.finish()
+    end
+    if BridgeTask.layPlayerOnBed(plan, target.together) then
+        Bridge.speak(target.together and "TogetherNoRoom" or "LayPlayerOn")
+        BridgeTask.info = "lay: player is on the bed"
+        return BridgeTask.finish()
+    end
+    if BridgeTask.seatTaken(plan, body, target.together) then
+        Bridge.speak(target.together and "TogetherNoRoom" or "LayOccupied")
+        BridgeTask.info = "lay: bed occupied"
+        return BridgeTask.finish()
+    end
+    BridgeTask.current = target
+    BridgeTask.layPlan = plan
+    BridgeTask.layUp = nil
+    BridgeTask.laySleep = false
+    BridgeTask.layAnim = layAnimFor(plan, false)
+    BridgeTask.layAnimSeen = false
+    BridgeTask.layHintSaid = false
+    BridgeTask.layCloseAt = nil
+    BridgeTask.layFromX, BridgeTask.layFromY, BridgeTask.laySlideAt = nil, nil, nil
+    BridgeTask.phase = "walk"
+    BridgeTask.since = Bridge.time
+    BridgeTask.progressAt = Bridge.time
+    BridgeTask.bestD = nil
+    BridgeTask.pathFails = 0
+    BridgeTask.pathFailTick = nil
+    BridgeRoute.state.spot = nil
+    BridgeTask.still = 0
+    BridgeTask.checkX, BridgeTask.checkY = nil, nil
+    BridgeTask.detour = nil
+    if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
+    BridgeTask.windowTries, BridgeTask.windowSeen, BridgeTask.windowLoopKey = nil, nil, nil
+    BridgeTask.lastUnreachable = nil
+    pcall(function()
+        local sq = plan.obj:getSquare()
+        U.log(string.format("lay: bed %s, lie %.2f,%.2f stand %.2f,%.2f side %s dir %s",
+            tostring(sq and (sq:getX() .. "," .. sq:getY()) or "?"),
+            plan.seatX, plan.seatY, plan.standX, plan.standY, tostring(plan.side), tostring(plan.dir)))
+    end)
+    return true
+end
+
+
 BridgeTask.kinds.lay = {}
 
 function BridgeTask.kinds.lay.available(body)
@@ -11531,54 +11792,34 @@ function BridgeTask.kinds.lay.update(body)
     if target == nil then
         if #BridgeTask.queue == 0 then return BridgeTask.finish() end
         target = table.remove(BridgeTask.queue, 1)
-        local obj = target.obj
-        if obj == nil then
-            pcall(function() obj = getCell():getGridSquare(target.x, target.y, target.z) end)
+        if target.together and target.waitPlayer then
+            BridgeTask.current = target
+            BridgeTask.phase = "waitPlayer"
+            BridgeTask.since = Bridge.time
+            BridgeTask.info = "lay: waiting for player"
+            return true
         end
-        local plan = BridgeTask.bedPlan(body, obj)
-        if plan == nil then
-            BridgeTask.info = "lay: no bed plan"
-            BridgeTask.markUnreachable(nil)
+        return beginLayTarget(body, target)
+    end
+
+    if BridgeTask.phase == "waitPlayer" then
+        local red = BridgeData.owner()
+        local ok = false
+        if red ~= nil then
+            pcall(function()
+                ok = red:isOnBed() == true
+                    and BridgeTask.playerOnBedPart(red, target.obj) == true
+            end)
+        end
+        if ok then
+            return beginLayTarget(body, target)
+        end
+        if red == nil or Bridge.time - (BridgeTask.since or Bridge.time) > BridgeTask.TOGETHER_WAIT then
+            Bridge.speak("TogetherFail")
             return BridgeTask.finish()
         end
-        if BridgeTask.layPlayerOnBed(plan) then
-            Bridge.speak("LayPlayerOn")
-            BridgeTask.info = "lay: player is on the bed"
-            return BridgeTask.finish()
-        end
-        if BridgeTask.seatTaken(plan, body) then
-            Bridge.speak("LayOccupied")
-            BridgeTask.info = "lay: bed occupied"
-            return BridgeTask.finish()
-        end
-        BridgeTask.current = target
-        BridgeTask.layPlan = plan
-        BridgeTask.layUp = nil
-        BridgeTask.laySleep = false
-        BridgeTask.layAnim = layAnimFor(plan, false)
-        BridgeTask.layAnimSeen = false
-        BridgeTask.layHintSaid = false
-        BridgeTask.layCloseAt = nil
-    BridgeTask.layFromX, BridgeTask.layFromY, BridgeTask.laySlideAt = nil, nil, nil
-        BridgeTask.phase = "walk"
-        BridgeTask.since = Bridge.time
-        BridgeTask.progressAt = Bridge.time
-        BridgeTask.bestD = nil
-        BridgeTask.pathFails = 0
-        BridgeTask.pathFailTick = nil
-        BridgeRoute.state.spot = nil
-        BridgeTask.still = 0
-        BridgeTask.checkX, BridgeTask.checkY = nil, nil
-        BridgeTask.detour = nil
-        if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
-        BridgeTask.windowTries, BridgeTask.windowSeen, BridgeTask.windowLoopKey = nil, nil, nil
-        BridgeTask.lastUnreachable = nil
-        pcall(function()
-            local sq = plan.obj:getSquare()
-            U.log(string.format("lay: bed %s, lie %.2f,%.2f stand %.2f,%.2f side %s dir %s",
-                tostring(sq and (sq:getX() .. "," .. sq:getY()) or "?"),
-                plan.seatX, plan.seatY, plan.standX, plan.standY, tostring(plan.side), tostring(plan.dir)))
-        end)
+        BridgeTask.info = "lay: waiting for player"
+        return true
     end
 
     local plan = BridgeTask.layPlan
@@ -11629,6 +11870,17 @@ function BridgeTask.kinds.lay.update(body)
             BridgeTask.layAnimSeen = false
             bedApplyDown(body, plan)
             Bridge.speak("Lay")
+            if BridgeTask.current ~= nil and BridgeTask.current.together and BridgeTask.current.playerAfter then
+                BridgeTask.current.playerAfter = false
+                local freeObj = BridgeTask.bedFreeObject(body, plan)
+                pcall(function()
+                    if freeObj ~= nil and TchAL ~= nil and type(ISWorldObjectContextMenu.onLean) == "function" then
+                        ISWorldObjectContextMenu.onLean(freeObj, 0, false)
+                    elseif type(ISWorldObjectContextMenu.onGetOnBed) == "function" then
+                        ISWorldObjectContextMenu.onGetOnBed(BridgeData.owner(), freeObj or BridgeTask.current.obj)
+                    end
+                end)
+            end
             return true
         end
         BridgeTask.info = "lay: walking to bed"

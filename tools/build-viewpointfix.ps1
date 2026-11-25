@@ -67,6 +67,9 @@ try {
     if ($entries -notcontains "swmviewpointfix/Patch_VisceralCapture.class") {
         throw "Jar is missing swmviewpointfix/Patch_VisceralCapture.class"
     }
+    if ($entries -notcontains "swmviewpointfix/Patch_ViewpointTargets.class") {
+        throw "Jar is missing swmviewpointfix/Patch_ViewpointTargets.class"
+    }
 
     Write-Output "Built $out"
     $entries | ForEach-Object { Write-Output $_ }

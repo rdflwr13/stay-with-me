@@ -22,6 +22,14 @@ local AIM_BEHIND_CANDS = {
     { 1.6, 1.4 }, { 1.6, 0.0 },
 }
 
+-- Bounded relocation: the aim-clearance layer must yield back to the follow
+-- policy when it cannot make progress, otherwise BridgeRoute.followPolicy is
+-- starved for as long as the player keeps aiming.
+local AIM_RELOCATE_MAX = 240
+local AIM_RELOCATE_STALL = 90
+local AIM_RELOCATE_GAIN = 0.15
+local AIM_RELOCATE_COOLDOWN = 180
+
 local function sensitivity()
     if BridgeData ~= nil and type(BridgeData.aimSense) == "function" then
         return BridgeData.aimSense(Bridge ~= nil and Bridge.store or nil)
@@ -126,7 +134,8 @@ function BridgeAim.needsBehind(x, y, z)
     local side = -Z.vy * ox + Z.vx * oy
     if ahead <= -AIM_PAST then return false end
     if ahead >= Z.range then return false end
-    if not BridgeAim.relocating and math.abs(side) >= Z.half then return false end
+    local relocating = type(BridgeAim.relocating) == "table" and BridgeAim.relocating.untilT == nil
+    if not relocating and math.abs(side) >= Z.half then return false end
     return true
 end
 
@@ -227,6 +236,15 @@ function BridgeAim.step(body, red)
         return moved
     end
 
+    local R0 = BridgeAim.relocating
+    if type(R0) == "table" and R0.untilT ~= nil then
+        if Bridge.time < R0.untilT then
+            BridgeMove.moving = false
+            return false
+        end
+        BridgeAim.relocating = false
+    end
+
     local bx, by, bz = body:getX(), body:getY(), body:getZ()
     if not BridgeAim.needsBehind(bx, by, bz) then
         BridgeAim.relocating = false
@@ -244,7 +262,9 @@ function BridgeAim.step(body, red)
         end
         return false
     end
-    BridgeAim.relocating = true
+    if type(BridgeAim.relocating) ~= "table" then
+        BridgeAim.relocating = { since = Bridge.time, bestD = nil, progressAt = Bridge.time }
+    end
 
     if not BridgeAim.wasIn then
         BridgeAim.wasIn = true
@@ -268,6 +288,49 @@ function BridgeAim.step(body, red)
     if tx == nil then
         BridgeAim.info = "nowhere behind"
         return false
+    end
+
+    local toSpot = dist2d(bx, by, tx, ty)
+    local R = BridgeAim.relocating
+    if type(R) == "table" then
+        if R.bestD == nil or toSpot < R.bestD - AIM_RELOCATE_GAIN then
+            R.bestD, R.progressAt = toSpot, Bridge.time
+        end
+        if Bridge.time - (R.since or Bridge.time) >= AIM_RELOCATE_MAX
+                or Bridge.time - (R.progressAt or Bridge.time) >= AIM_RELOCATE_STALL then
+            BridgeAim.relocating = { untilT = Bridge.time + AIM_RELOCATE_COOLDOWN }
+            BridgeAim.info = "relocate timeout"
+            if BridgeMove ~= nil and BridgeMove.onPath ~= nil and BridgeMove.onPath() then
+                pcall(function() BridgeMove.stopPath(body) end)
+            end
+            BridgeMove.moving = false
+            return false
+        end
+    end
+
+    local ox2, oy2 = bx - Z.px, by - Z.py
+    local aheadNow = Z.vx * ox2 + Z.vy * oy2
+    local sideNow = -Z.vy * ox2 + Z.vx * oy2
+    if BridgeLog ~= nil and BridgeLog.on() then
+        local key = tostring(math.floor(tx)) .. "," .. tostring(math.floor(ty)) .. ","
+            .. tostring(math.floor(toSpot * 4))
+        if BridgeAim.evKey ~= key then
+            BridgeAim.evKey = key
+            local needPath = nil
+            if BridgeRoute ~= nil and type(BridgeRoute.enginePathNeed) == "function" then
+                local okN, np = pcall(BridgeRoute.enginePathNeed, body, tx, ty)
+                if okN then needPath = np end
+            end
+            BridgeLog.event("aim.relocate", {
+                on = Z.on, vx = Z.vx, vy = Z.vy,
+                ahead = aheadNow, side = sideNow, half = Z.half,
+                relocating = true, needs = true,
+                tx = tx, ty = ty, toSpot = toSpot,
+                pathing = BridgeMove ~= nil and BridgeMove.pathing or nil,
+                needPath = needPath,
+                pathResult = BridgeMove ~= nil and BridgeMove.pathResult or nil,
+                fn = "BridgeAim.step" })
+        end
     end
 
     local moved = false

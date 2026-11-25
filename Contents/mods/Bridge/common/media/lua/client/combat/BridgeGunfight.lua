@@ -2167,6 +2167,15 @@ local function markStandHold(body)
 end
 
 
+local function smokeFx(body, tx, ty)
+    if body == nil then return end
+    local compat = rawget(_G, "BridgeMuzzleSmokeCompat")
+    if compat ~= nil and type(compat.burst) == "function" then
+        pcall(compat.burst, body, tx, ty)
+    end
+end
+
+
 local function shotFx(body, gun, kind, target)
     plant(body, "NA_Fire" .. kind)
     pcall(function() body:setVariable(FIRE.VAR, false) end)
@@ -2178,6 +2187,9 @@ local function shotFx(body, gun, kind, target)
     if fx ~= nil and type(fx.shot) == "function" then
         pcall(fx.shot, body, target, gun, kind)
     end
+    local tx, ty = nil, nil
+    if target ~= nil then pcall(function() tx, ty = target:getX(), target:getY() end) end
+    smokeFx(body, tx, ty)
 end
 
 
@@ -6600,6 +6612,7 @@ function BridgeGunfight.onFx(args)
     end
     local body = U.bodyById(args.id)
     if body == nil then return end
+    smokeFx(body, args.ax, args.ay)
     local kind = args.kind
     if (kind ~= "Rifle" and kind ~= "Handgun") then
         kind = BridgeGunfight.gun and BridgeGunfight.gun.kind or "Handgun"

@@ -2816,11 +2816,19 @@ function BridgeRoute.step(body)
         return "walking"
     end
 
-    if BridgeAim ~= nil and BridgeAim.step(body, BridgeData.owner()) then
-        BridgeMove.followDebug("update-exit", body, "aim")
-        trackStep(body)
-        BridgeRoute.lastStatus = "walking"
-        return "walking"
+    if BridgeAim ~= nil then
+        local aimRed = BridgeData.owner()
+        if aimRed ~= nil then pcall(function() BridgeAim.refresh(aimRed) end) end
+        local aimOk = true
+        if Bridge.follow then
+            aimOk = BridgeAim.inCone(body:getX(), body:getY(), body:getZ())
+        end
+        if aimOk and BridgeAim.step(body, aimRed) then
+            BridgeMove.followDebug("update-exit", body, "aim")
+            trackStep(body)
+            BridgeRoute.lastStatus = "walking"
+            return "walking"
+        end
     end
 
     if BridgeMove.steering or BridgeMove.pathing then

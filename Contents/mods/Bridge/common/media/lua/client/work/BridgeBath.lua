@@ -372,7 +372,7 @@ function BridgeBath.onWashSinkMenu(playerNum, context, worldobjects, test)
     pcall(function() rinOpt = sub:getOptionFromName(who) end)
     if rinOpt == nil then
         rinOpt = sub:addOption(who)
-        rinMenu = ISContextMenu:getNew(sub)
+        rinMenu = BridgeMenu.submenu(sub)
         sub:addSubMenu(rinOpt, rinMenu)
     else
         pcall(function() rinMenu = sub:getSubMenu(rinOpt.subOption) end)

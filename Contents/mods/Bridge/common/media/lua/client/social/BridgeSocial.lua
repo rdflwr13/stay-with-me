@@ -2518,7 +2518,7 @@ function BridgeSocial.fillMenu(context, tr)
     if r == nil then return end
     rollDay(r)
     local option = context:addOption(tr("Talk"))
-    local sub = ISContextMenu:getNew(context)
+    local sub = BridgeMenu.submenu(context)
     context:addSubMenu(option, sub)
     local busy = zombiesNear(BUSY_DIST)
     local calm = BridgeSocial.relaxed(r)
@@ -2550,14 +2550,14 @@ function BridgeSocial.fillMenu(context, tr)
     local affection = BridgeSocial.affectionOptions(r, calm, busy, animWhy)
     if #affection > 0 then
         local affOption = sub:addOption(tr("Affection"))
-        local affSub = ISContextMenu:getNew(sub)
+        local affSub = BridgeMenu.submenu(sub)
         sub:addSubMenu(affOption, affSub)
         for _, entry in ipairs(affection) do addEntry(affSub, entry) end
     end
     local greetings = BridgeSocial.greetingOptions(r, calm, busy, animWhy)
     if #greetings > 0 then
         local greetOption = sub:addOption(tr("Talk_Greetings"))
-        local greetSub = ISContextMenu:getNew(sub)
+        local greetSub = BridgeMenu.submenu(sub)
         sub:addSubMenu(greetOption, greetSub)
         for _, entry in ipairs(greetings) do addEntry(greetSub, entry) end
     end

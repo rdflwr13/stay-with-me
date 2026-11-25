@@ -87,6 +87,8 @@ local ICONS = {
     reserveEmergency = "media/textures/RadialMenu/GunUseEmergency.png",
 }
 
+BridgeRadial.ICONS = ICONS
+
 local TALK_ICONS = {
     Chat = "chat",
     Joke = "joke",

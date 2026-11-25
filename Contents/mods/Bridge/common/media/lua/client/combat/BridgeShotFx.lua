@@ -181,6 +181,8 @@ local function muzzleOf(body, targetX, targetY)
     return x + fX * forward, y + fY * forward, z + M.height
 end
 
+M.muzzleOf = muzzleOf
+
 function M.config(ammoId)
     if type(ammoId) ~= "string" or ammoId == "" then return BASE end
     local config = AMMO[ammoId]

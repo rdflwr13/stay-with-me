@@ -122,7 +122,7 @@ public final class SwmCompanion {
         }
     }
 
-    private static Object resolveBody() {
+    public static Object resolveBody() {
         KahluaTable env = LuaManager.env;
         Object bridge = env == null ? null : env.rawget("Bridge");
         Object body = bridge instanceof KahluaTable ? ((KahluaTable) bridge).rawget("body") : null;
