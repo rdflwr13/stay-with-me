@@ -9,6 +9,7 @@ BridgeTask.CLEARING_ENABLED = 1
 BridgeTask.LOOTING_ENABLED = 1
 BridgeTask.SIT_ENABLED = 1
 BridgeTask.LAY_ENABLED = 1
+BridgeTask.LADDER_ENABLED = 1
 BridgeTask.MOVE_CORPSES_ENABLED = 1
 BridgeTask.DEPOSIT_ENABLED = 1
 BridgeTask.HARVESTING_ENABLED = 1
@@ -311,6 +312,11 @@ function BridgeTask.idleChatBlocked()
     return true
 end
 BridgeTask.kinds = {}
+BridgeTask.U = U
+BridgeTask.K = K
+if BridgeLadder ~= nil and BridgeLadder.kind ~= nil then
+    BridgeTask.kinds.climbLadder = BridgeLadder.kind
+end
 BridgeTask.body = nil
 BridgeTask.queue = {}
 BridgeTask.current = nil
@@ -2375,13 +2381,14 @@ local function beginCleanHands(body, kind, tool, cleaner)
         local empty = false
         pcall(function() empty = body:getPrimaryHandItem() == nil and body:getSecondaryHandItem() == nil end)
         if not empty then
-            pcall(function()
-                body:setPrimaryHandItem(nil)
-                body:setSecondaryHandItem(nil)
-                body:resetModelNextFrame()
-            end)
-            pcall(function() BridgeInventory.redress(body) end)
-        end
+    pcall(function()
+        if p == nil or U.ownedByBody(body, p) then body:setPrimaryHandItem(p) end
+        if s == nil or U.ownedByBody(body, s) then body:setSecondaryHandItem(s) end
+        body:resetModelNextFrame()
+    end)
+    pcall(function() BridgeInventory.redress(body) end)
+end
+BridgeTask.restoreHands = restoreHands
         return
     end
     if tool == nil then return end
@@ -3080,6 +3087,68 @@ end
 function BridgeTask.walkTo(body, target, reach, reachClear, onTarget, clearFn, opts)
     opts = opts or {}
     if body == nil or type(target) ~= "table" then return "unreachable", "badTarget" end
+
+    local seg = BridgeTask.walkLadder
+    if seg ~= nil and (seg.target == nil or seg.target.x ~= target.x
+            or seg.target.y ~= target.y or seg.target.z ~= target.z) then
+        if BridgeLadder ~= nil then pcall(BridgeLadder.cleanupSegment, body, false) end
+        BridgeTask.walkLadder = nil
+        seg = nil
+    end
+    if seg ~= nil then
+        if seg.phase == "climb" then
+            local st = BridgeLadder.climbSegment(body)
+            if st == "climbing" then return "walking", nil end
+            BridgeTask.walkLadder = nil
+            if st == "failed" then return "unreachable", "ladderFail" end
+        else
+            local entry = seg.down and seg.route.top or seg.route.bottom
+            local spec = {
+                owner = BridgeTask.kind or "job",
+                body = body,
+                target = entry,
+                reach = BridgeTask.STOP_DIST,
+                onTarget = not seg.down,
+                opts = opts,
+            }
+            local st, why = BridgeRoute.request(spec)
+            if st ~= "walking" then
+                if BridgeLadder ~= nil then pcall(BridgeLadder.cleanupSegment, body, false) end
+                BridgeTask.walkLadder = nil
+                return st, why
+            end
+            BridgeRoute.state.spec = spec
+            local stepStatus, stepWhy = BridgeRoute.step(body)
+            if stepStatus == "arrived" then
+                BridgeTask.ladderPlan = seg.route
+                BridgeTask.ladderDown = seg.down
+                BridgeTask.ladderEntry = entry
+                BridgeTask.ladderExit = seg.down and seg.route.bottom or seg.route.top
+                BridgeTask.phase = "walk"
+                BridgeLadder.beginSegment(body)
+                seg.phase = "climb"
+                return "walking", nil
+            end
+            return stepStatus, stepWhy
+        end
+    end
+
+    local bodyZ = math.floor(body:getZ())
+    local tz = tonumber(target.z)
+    if tz ~= nil and math.abs(tz - bodyZ) >= 0.9 then
+        local now = Bridge.time
+        local miss = BridgeTask.walkLadderMiss
+        local sameMiss = miss ~= nil and miss.x == target.x and miss.y == target.y and miss.z == target.z
+        if not sameMiss or now - (miss.at or 0) >= 60 then
+            local route, down = BridgeLadder.findRoute(body, tz)
+            if route ~= nil then
+                BridgeTask.walkLadder = { route = route, down = down, target = target, phase = "walk" }
+                return BridgeTask.walkTo(body, target, reach, reachClear, onTarget, clearFn, opts)
+            end
+            BridgeTask.walkLadderMiss = { x = target.x, y = target.y, z = target.z, at = now }
+        end
+    end
+
     local spec = {
         owner = BridgeTask.kind or "job",
         body = body,
@@ -3262,6 +3331,10 @@ function BridgeTask.dangerNear(body, radius)
 end
 
 function BridgeTask.reset()
+    if BridgeTask.walkLadder ~= nil then
+        if BridgeLadder ~= nil then pcall(BridgeLadder.cleanupSegment, Bridge.body, false) end
+        BridgeTask.walkLadder = nil
+    end
     if BridgeRoute ~= nil then BridgeRoute.reset() end
     local ckind = BridgeTask.kind
     local def = ckind ~= nil and BridgeTask.kinds[ckind] or nil
@@ -3605,6 +3678,8 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     end
 
     BridgeTask.kind = kind
+    BridgeTask.walkLadder = nil
+    BridgeTask.walkLadderMiss = nil
     BridgeTask.lootDestsBody = nil
     BridgeTask.lootDestsCache = nil
     BridgeTask.lootSrcCache = nil
@@ -4085,6 +4160,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     elseif kind == "emptyFluid" then
     elseif kind == "shower" then
     elseif kind == "bath" then
+    elseif kind == "climbLadder" then
     elseif kind == "roam" then
     elseif kind == "pryDoor" then
         Bridge.speak("PryStart")
@@ -4131,6 +4207,10 @@ end
 function BridgeTask.cancel(reason)
     if not BridgeTask.active then return "idle" end
     local body = Bridge.body
+    if BridgeTask.walkLadder ~= nil then
+        if BridgeLadder ~= nil then pcall(BridgeLadder.cleanupSegment, body, false) end
+        BridgeTask.walkLadder = nil
+    end
     if BridgeRoute ~= nil then BridgeRoute.reset() end
     local ckind = BridgeTask.kind
     local cid = BridgeTask.jobId
@@ -4233,6 +4313,10 @@ end
 
 function BridgeTask.finish()
     if not BridgeTask.active then return "idle" end
+    if BridgeTask.walkLadder ~= nil then
+        if BridgeLadder ~= nil then pcall(BridgeLadder.cleanupSegment, Bridge.body, false) end
+        BridgeTask.walkLadder = nil
+    end
     if BridgeTask.tendContinue ~= nil then
         local nextPart = BridgeTask.tendContinue
         if nextPart() == true then return "continue" end
@@ -4394,7 +4478,7 @@ function BridgeTask.finish()
                 or finishKind == "fillWater" or finishKind == "emptyFluid" or finishKind == "pryDoor"
                 or finishKind == "shower" or finishKind == "bath" or finishKind == "anim" or finishKind == "harvestCrops"
                 or finishKind == "digFurrows" or finishKind == "sowSeeds"
-                or finishKind == "fertilizePlants" or finishKind == "tendCrops" then
+                or finishKind == "fertilizePlants" or finishKind == "tendCrops" or finishKind == "climbLadder" then
         elseif finishKind == "brushTeeth" then
             if (BridgeTask.doneCount or 0) > 0 then Bridge.speakText("Minty fresh.") end
         elseif finishKind == "petAnimals" then
@@ -4749,7 +4833,8 @@ function BridgeTask.watchdog(body, def)
     if not BridgeTask.active or body == nil or def == nil then return end
     local kind = BridgeTask.kind
     if kind == "sit" or kind == "lay" or kind == "sleep" or kind == "exercise"
-        or kind == "anim" or kind == "hug" or kind == "shower" or kind == "bath" or kind == "wash" then
+        or kind == "anim" or kind == "hug" or kind == "shower" or kind == "bath" or kind == "wash"
+        or kind == "climbLadder" then
         return
     end
     local now = Bridge.time
@@ -4810,19 +4895,22 @@ function BridgeTask.update(body)
         BridgeTask.cancel("error")
         return false
     end
-    local fighting = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle")
-    if fighting then
-        BridgeTask.cancel("danger")
-        return false
-    end
-    if BridgeTask.danger == nil
-            or (Bridge.tick - (BridgeTask.dangerAt or -99999)) >= 6 then
-        BridgeTask.dangerAt = Bridge.tick
-        BridgeTask.danger = BridgeTask.dangerNear(body, def.dangerRadius) == true
-    end
-    if BridgeTask.danger then
-        BridgeTask.cancel("danger")
-        return false
+    local holdThreat = def.holdThreat == true and BridgeTask.phase ~= nil and BridgeTask.phase ~= "walk"
+    if not holdThreat then
+        local fighting = BridgeFight ~= nil and (BridgeFight.target ~= nil or BridgeFight.state ~= "idle")
+        if fighting then
+            BridgeTask.cancel("danger")
+            return false
+        end
+        if BridgeTask.danger == nil
+                or (Bridge.tick - (BridgeTask.dangerAt or -99999)) >= 6 then
+            BridgeTask.dangerAt = Bridge.tick
+            BridgeTask.danger = BridgeTask.dangerNear(body, def.dangerRadius) == true
+        end
+        if BridgeTask.danger then
+            BridgeTask.cancel("danger")
+            return false
+        end
     end
 
     if BridgeMove ~= nil and BridgeMove.closeBehind ~= nil then pcall(BridgeMove.closeBehind, body) end
@@ -11326,7 +11414,6 @@ function BridgeTask.kinds.lay.leave(body)
     BridgeTask.layUp = nil
     BridgeTask.laySleep = false
 end
-
 
 function BridgeTask.staleEnd(body)
     if body == nil or body ~= Bridge.body then return false end

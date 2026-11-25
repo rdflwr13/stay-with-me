@@ -1862,6 +1862,15 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.ladder ~= nil then
+        local ladder = (args.ladder == "mountBottom" or args.ladder == "mountTop"
+            or args.ladder == "up" or args.ladder == "down"
+            or args.ladder == "leaveTop" or args.ladder == "leaveBottom") and args.ladder or nil
+        if rec.ladder ~= ladder then
+            rec.ladder = ladder
+            changed = true
+        end
+    end
     if args.outfitGiven and not rec.outfitGiven then
         rec.outfitGiven = true
         changed = true

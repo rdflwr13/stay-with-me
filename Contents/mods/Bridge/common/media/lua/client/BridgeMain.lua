@@ -2704,7 +2704,9 @@ function Bridge.setMode(mode)
 
     Bridge.newLifePending = nil
     Bridge.mode = mode
-    Bridge.floorPull = nil
+    if mode ~= "follow" and mode ~= "wait" then
+        Bridge.floorPull = nil
+    end
     Bridge.floorMismatchSince = nil
     Bridge.zPrev = nil
     Bridge.xyPrev = nil
@@ -2739,6 +2741,9 @@ function Bridge.setMode(mode)
         Bridge.pose = (mode == "rest") and { anim = "Sit" } or nil
     end
     local st = Bridge.store
+    if st ~= nil and st.ladder ~= nil and BridgeMove ~= nil and type(BridgeMove.sendLadder) == "function" then
+        pcall(BridgeMove.sendLadder, nil)
+    end
 
 
     local wasLeft = st ~= nil and st.left == true
@@ -5881,7 +5886,8 @@ local function updateZombieBody(body)
     local climbing = (bump == "ClimbFenceEnd" or bump == "ClimbFenceTall" or bump == "ClimbWindow"
         or bump == "Scramble") or Bridge.time < (BridgeMove.climbUntil or 0)
     local engineDriven = climbing or engineState(asn)
-    if not BridgeMove.pathing and not BridgeMove.moving and not engineDriven then
+    local ladderTask = BridgeTask ~= nil and BridgeTask.active and BridgeTask.kind == "climbLadder"
+    if not BridgeMove.pathing and not BridgeMove.moving and not engineDriven and not ladderTask then
         if Bridge.holdPos == nil then
             Bridge.holdPos = { body:getX(), body:getY(), body:getZ() }
         end
@@ -6454,6 +6460,23 @@ local function applyLook(z, visuals, rec, who)
                     z:setBumpType("")
                 end
             end)
+        end
+    end
+
+    local remote = false
+    pcall(function() remote = z:isRemoteZombie() == true end)
+    if remote then
+        local ladderPhase = rec and rec.ladder or nil
+        if ladderPhase ~= nil then
+            pcall(z.setVariable, z, "SWMLadderPhase", ladderPhase)
+            pcall(z.setCollidable, z, false)
+        else
+            local hadLadder = false
+            pcall(function() hadLadder = z:getVariableString("SWMLadderPhase") ~= nil end)
+            if hadLadder then
+                pcall(z.clearVariable, z, "SWMLadderPhase")
+                pcall(z.setCollidable, z, true)
+            end
         end
     end
 
@@ -9566,42 +9589,6 @@ CFG.LADDER.SPRITES = {
     "pur_ladderw", "pur_hatchw",
 }
 
-local function spriteIsLadder(name)
-    if name == nil then return false end
-    local lower = string.lower(tostring(name))
-    if string.find(lower, "ladder", 1, true) ~= nil then return true end
-    for i = 1, #CFG.LADDER.SPRITES do
-        if string.find(lower, CFG.LADDER.SPRITES[i], 1, true) ~= nil then return true end
-    end
-    return false
-end
-
-local function squareHasLadderFlag(square)
-    if square == nil then return false end
-    for i = 1, #CFG.LADDER.FLAGS do
-        local found = false
-        pcall(function() found = square:has(CFG.LADDER.FLAGS[i]) == true end)
-        if found then return true end
-    end
-    return false
-end
-
-local function objectHasLadderFlag(obj)
-    if obj == nil then return false end
-    local found = false
-    pcall(function()
-        local props = obj:getProperties()
-        if props == nil then return end
-        for i = 1, #CFG.LADDER.FLAGS do
-            if props:has(CFG.LADDER.FLAGS[i]) then
-                found = true
-                return
-            end
-        end
-    end)
-    return found
-end
-
 CFG.CLIMB.FLAGS = { "ClimbRope", "ClimbLadder", "AparosaLadder" }
 
 local function playerIsClimbingRope(red)
@@ -9651,59 +9638,6 @@ function Bridge.climbSignal(red)
     return value
 end
 
-function Bridge.ladderNear(x, y, zFrom, zTo)
-    if x == nil or y == nil then return false end
-    local z1 = zFrom or zTo
-    local z2 = zTo or zFrom
-    if z1 == nil or z2 == nil then return false end
-    local zmin = math.floor(math.min(z1, z2)) - 1
-    local zmax = math.floor(math.max(z1, z2)) + 1
-    local centres = { { x, y } }
-    local red = BridgeData.owner()
-    if red ~= nil then
-        local rx, ry = red:getX(), red:getY()
-        if rx ~= nil and ry ~= nil and (math.abs(rx - x) > 0.01 or math.abs(ry - y) > 0.01) then
-            centres[#centres + 1] = { rx, ry }
-        end
-    end
-    local cell = getCell()
-    if cell == nil then return false end
-    for c = 1, #centres do
-        local bx = math.floor(centres[c][1])
-        local by = math.floor(centres[c][2])
-        for dx = -CFG.LADDER.RADIUS, CFG.LADDER.RADIUS do
-            for dy = -CFG.LADDER.RADIUS, CFG.LADDER.RADIUS do
-                for z = zmin, zmax do
-                    local square = cell:getGridSquare(bx + dx, by + dy, z)
-                    if square ~= nil then
-                        if squareHasLadderFlag(square) then return true end
-                        local objects = nil
-                        pcall(function() objects = square:getObjects() end)
-                        if objects ~= nil then
-                            local count = 0
-                            pcall(function() count = objects:size() end)
-                            for i = 0, count - 1 do
-                                local obj = nil
-                                pcall(function() obj = objects:get(i) end)
-                                if obj ~= nil then
-                                    if objectHasLadderFlag(obj) then return true end
-                                    local name = nil
-                                    pcall(function()
-                                        local sprite = obj:getSprite()
-                                        if sprite ~= nil then name = sprite:getName() end
-                                    end)
-                                    if spriteIsLadder(name) then return true end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return false
-end
-
 function Bridge.onStairs(square)
     if square == nil then return false end
     local on = false
@@ -9731,7 +9665,7 @@ function Bridge.floorPullTick(red)
         if pull == nil then
             local hasLadder = false
             pcall(function()
-                hasLadder = Bridge.ladderNear(prevX or x, prevY or y, prevZ or z, z)
+                hasLadder = BridgeLadder.near(prevX or x, prevY or y, prevZ or z, z)
             end)
             if sig == "rope" or hasLadder then
                 pull = {
@@ -9763,7 +9697,7 @@ function Bridge.floorPullTick(red)
     if pull == nil and prevZ ~= nil and math.abs(z - prevZ) >= 0.9 then
         local hasLadder = false
         pcall(function()
-            hasLadder = Bridge.ladderNear(prevX or x, prevY or y, prevZ, z)
+            hasLadder = BridgeLadder.near(prevX or x, prevY or y, prevZ, z)
         end)
         if hasLadder then
             pull = {
@@ -9828,8 +9762,9 @@ function Bridge.floorPullTick(red)
             elseif now - pull.seenAt > CFG.MAX_PENDING then
                 Bridge.floorPull = nil
                 log("vertical: pull timed out")
-            elseif Bridge.mode ~= "follow" then
+            elseif Bridge.mode ~= "follow" and Bridge.mode ~= "wait" then
                 Bridge.floorPull = nil
+            elseif Bridge.mode == "wait" then
             elseif BridgeTask ~= nil and BridgeTask.active == true then
                 Bridge.floorPull = nil
             elseif BridgeCar ~= nil and BridgeCar.busy() then
@@ -9841,7 +9776,8 @@ function Bridge.floorPullTick(red)
                     local inCar = red:getVehicle() ~= nil
                     local onStairs = Bridge.onStairs(red:getCurrentSquare())
                     playerReady = prevZ ~= nil and math.abs(z - prevZ) < 0.05
-                        and not moving and not inCar and not onStairs
+                        and not inCar and not onStairs
+                        and (pull.kind == "ladder" or not moving)
                 end)
                 if not playerReady and not pull.settleLogged then
                     pull.settleLogged = true
@@ -9853,20 +9789,26 @@ function Bridge.floorPullTick(red)
                     and BridgeMove.cross == nil and BridgeMove.pendingClimb == nil then
                     if pull.lastTryAt == nil or now - pull.lastTryAt >= CFG.PULL_RETRY then
                         pull.lastTryAt = now
-                        local result = Bridge.teleportToRed()
-                        if result == "teleported" then
-                            if pull.kind ~= "floor"
-                                and BridgeCallout ~= nil and type(BridgeCallout.climb) == "function" then
-                                pcall(function()
-                                    BridgeCallout.climb(z >= pull.fromZ and "up" or "down")
-                                end)
+                        local handled = false
+                        if pull.kind == "ladder" then
+                            pcall(function() handled = BridgeLadder.tryFollowClimb(red, z, pull) == true end)
+                        end
+                        if not handled then
+                            local result = Bridge.teleportToRed()
+                            if result == "teleported" then
+                                if pull.kind ~= "floor"
+                                    and BridgeCallout ~= nil and type(BridgeCallout.climb) == "function" then
+                                    pcall(function()
+                                        BridgeCallout.climb(z >= pull.fromZ and "up" or "down")
+                                    end)
+                                end
+                                Bridge.floorPull = nil
+                                Bridge.floorMismatchSince = nil
+                                if BridgeRoute ~= nil then BridgeRoute.reset() end
+                            elseif not pull.failedLogged then
+                                pull.failedLogged = true
+                                log("vertical: pull failed: " .. tostring(result))
                             end
-                            Bridge.floorPull = nil
-                            Bridge.floorMismatchSince = nil
-                            if BridgeRoute ~= nil then BridgeRoute.reset() end
-                        elseif not pull.failedLogged then
-                            pull.failedLogged = true
-                            log("vertical: pull failed: " .. tostring(result))
                         end
                     end
                 end

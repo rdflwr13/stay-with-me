@@ -2,9 +2,8 @@ package swmviewpointfix;
 
 import me.zed_0xff.zombie_buddy.Patch;
 import zombie.characters.IsoGameCharacter;
-import zombie.core.skinnedmodel.model.ModelInstance;
 
-@Patch(className = "viewpoint.models.CharacterLooks", methodName = "ready", isAdvice = false)
+@Patch(className = "viewpoint.models.CharacterLooks", methodName = "ready", isAdvice = true)
 public final class Patch_CharacterLooks {
     public static final String PREFIX = "[SWM Viewpoint Fix] ";
     public static volatile boolean bound;
@@ -12,26 +11,25 @@ public final class Patch_CharacterLooks {
     private Patch_CharacterLooks() {
     }
 
-    @Patch.RuntimeType
-    public static boolean ready(
-            @Patch.Argument(0) IsoGameCharacter c,
-            @Patch.Argument(1) ModelInstance m,
-            @Patch.Argument(2) float d,
-            @Patch.SuperMethod java.lang.reflect.Method original) throws Throwable {
+    @Patch.OnEnter(skipOn = true)
+    public static boolean enter(@Patch.Argument(0) IsoGameCharacter c) {
         if (!bound) {
             bound = true;
             System.out.println(PREFIX + "patch active on viewpoint.models.CharacterLooks.ready");
         }
-        if (original == null) {
-            return true;
-        }
-        original.setAccessible(true);
         if (SwmCompanion.isDisabled() || c == null || !SwmCompanion.isCompanion(c)) {
-            return (Boolean) original.invoke(null, c, m, d);
+            return false;
         }
         if (SwmCompanion.due(c)) {
             c.checkUpdateModelTextures();
         }
         return true;
+    }
+
+    @Patch.OnExit
+    public static void exit(@Patch.Argument(0) IsoGameCharacter c, @Patch.Return(readOnly = false) boolean ret) {
+        if (c != null && SwmCompanion.isCompanion(c)) {
+            ret = true;
+        }
     }
 }

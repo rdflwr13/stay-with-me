@@ -2637,6 +2637,48 @@ function BridgeMenu.onSitMenu(playerNum, context, worldobjects, test)
     end
 end
 
+function BridgeMenu.onClimbLadder(targets)
+    if BridgeTask == nil or targets == nil or #targets == 0 then return end
+    local res = BridgeTask.start("climbLadder", targets)
+    log("climb ladder from menu: " .. tostring(res))
+end
+
+function BridgeMenu.onLadderMenu(playerNum, context, worldobjects, test)
+    if test or Bridge == nil or Bridge.store == nil then return end
+    if playerNum ~= nil and playerNum ~= 0 then return end
+    if BridgeTask == nil or BridgeTask.ENABLED ~= 1 or BridgeTask.LADDER_ENABLED ~= 1 then return end
+    if not present() then return end
+    local sq, upLadder, downLadder = BridgeLadder.square(worldobjects)
+    if sq == nil then return end
+    local sub = BridgeMenu.rinTopMenu(context)
+    if sub == nil then return end
+    if BridgeTask.active and BridgeTask.kind == "climbLadder" then
+        BridgeMenu.addCancelTask(sub)
+        return
+    end
+    if sub:getOptionFromName(tr("ClimbLadder")) ~= nil then return end
+    local cell = getCell()
+    local route, ladder, down = nil, nil, false
+    pcall(function() route = BridgeLadder.route(cell, upLadder, false) end)
+    if route ~= nil then
+        ladder = upLadder
+    else
+        pcall(function() route = BridgeLadder.route(cell, downLadder, true) end)
+        if route ~= nil then
+            ladder = downLadder
+            down = true
+        end
+    end
+    local targets = { { x = sq:getX(), y = sq:getY(), z = sq:getZ(),
+        ladder = ladder or upLadder or downLadder, down = down } }
+    local opt = sub:addOption(tr("ClimbLadder"), targets, BridgeMenu.onClimbLadder)
+    local owner = BridgeData.owner()
+    local playerClimbing = owner ~= nil and Bridge.climbSignal(owner) ~= nil
+    if BridgeTask.active or not Bridge.drivable() or route == nil or playerClimbing then
+        opt.notAvailable = true
+    end
+end
+
 function BridgeMenu.onLayThis(targets)
     if BridgeTask == nil or targets == nil or #targets == 0 then return end
     local res = BridgeTask.start("lay", targets)
@@ -3270,6 +3312,7 @@ Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onCropMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLootMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onDepositMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onSitMenu)
+Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLadderMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onLayMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onPryMenu)
 Events.OnFillWorldObjectContextMenu.Add(BridgeMenu.onWashSinkMenu)

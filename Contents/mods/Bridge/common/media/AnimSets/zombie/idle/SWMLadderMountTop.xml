@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animNode>
+	<m_Name>SWMLadderMountTop</m_Name>
+	<m_AnimName>Bob_Ladder_GetOnTop</m_AnimName>
+	<m_DeferredBoneName>Bip01</m_DeferredBoneName>
+	<m_deferredBoneAxis>Z</m_deferredBoneAxis>
+	<m_ConditionPriority>30</m_ConditionPriority>
+	<m_Looped>false</m_Looped>
+	<m_BlendTime>0.16</m_BlendTime>
+	<m_Conditions>
+		<m_Name>NotAloneBody</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_BoolValue>true</m_BoolValue>
+	</m_Conditions>
+	<m_Conditions>
+		<m_Name>SWMLadderPhase</m_Name>
+		<m_Type>STRING</m_Type>
+		<m_StringValue>mountTop</m_StringValue>
+	</m_Conditions>
+	<m_Events>
+		<m_EventName>SetVariable</m_EventName>
+		<m_Time>End</m_Time>
+		<m_ParameterValue>SWMLadderDone=mountTop</m_ParameterValue>
+	</m_Events>
+</animNode>

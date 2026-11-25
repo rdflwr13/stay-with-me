@@ -1609,6 +1609,15 @@ function BridgeMove.sendSit(value)
     end
 end
 
+function BridgeMove.sendLadder(value)
+    local st = Bridge.store
+    if st == nil or st.ladder == value then return end
+    st.ladder = value
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { ladder = value or false }) end)
+    end
+end
+
 
 local function chairFlags(body, plan)
     pcall(function() body:setCollidable(false) end)
