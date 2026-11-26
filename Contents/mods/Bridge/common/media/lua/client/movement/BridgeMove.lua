@@ -3764,8 +3764,10 @@ function BridgeMove.closeBehind(body)
         local why = nil
         local open = false
         pcall(function() open = rec.door:getObjectIndex() ~= -1 and rec.door:IsOpen() end)
-        if routeDoor ~= nil and rec.door == routeDoor then
-            -- the current opening route is using this door; do not close it behind her
+        local side, off = DOOR.doorSide(rec, bx, by)
+        local passed = side ~= rec.side and off >= DOOR.PASSED
+        if routeDoor ~= nil and rec.door == routeDoor and not passed then
+            log(sformat("door close skip routeDoor %s at %d,%d passed=false", tostring(rec.kind), rec.cells[1].x, rec.cells[1].y))
             why = nil
         elseif jobDoor ~= nil and rec.door == jobDoor then
             -- the active door job owns this door; do not close it behind her
@@ -3781,8 +3783,6 @@ function BridgeMove.closeBehind(body)
         elseif DOOR.doorReach(rec, bx, by) > DOOR.REACH then
             why = "left open: walked away"
         else
-            local side, off = DOOR.doorSide(rec, bx, by)
-            local passed = side ~= rec.side and off >= DOOR.PASSED
             local back = side == rec.side and off >= DOOR.BACK_OFF and (Bridge.time - rec.tick) >= DOOR.BACK
             if (passed or back) and BridgeMove.doorAct == nil and Bridge.time >= (rec.retryAt or 0)
                 and not BridgeMove.holdDoors then
@@ -3796,6 +3796,7 @@ function BridgeMove.closeBehind(body)
                     end
                 end
                 if alone then
+                    log(sformat("door close skip alone inside %s at %d,%d", tostring(rec.kind), rec.cells[1].x, rec.cells[1].y))
                     why = "left open: alone inside"
                 else
                     local wait = DOOR.closeWait(rec, body, passed)
@@ -3818,6 +3819,8 @@ function BridgeMove.closeBehind(body)
                         BridgeMove.startDoorAct(body, "close", rec.door, rec, rec.cx, rec.cy, passed)
                     end
                 end
+            elseif Bridge.every(60) then
+                log(sformat("door close defer %s at %d,%d passed=%s back=%s", tostring(rec.kind), rec.cells[1].x, rec.cells[1].y, tostring(passed), tostring(back)))
             end
         end
         if why ~= nil then
@@ -5916,6 +5919,16 @@ function BridgeMove.goToward(body, x, y, z, way)
             end
         end
         x, y, z = BridgeRoute.enginePathGoal(body, x, y, z, true)
+    end
+    local curSq = nil
+    pcall(function() curSq = body:getCurrentSquare() end)
+    if curSq ~= nil and (curSq:isFree(false) ~= true or body:isCollidedThisFrame() == true) then
+        pcall(function()
+            if x > body:getX() then body:setX(body:getX() + 0.05) else body:setX(body:getX() - 0.05) end
+            if y > body:getY() then body:setY(body:getY() + 0.05) else body:setY(body:getY() - 0.05) end
+        end)
+        log(sformat("unstick nudge body=%.2f,%.2f goal=%.1f,%.1f free=%s",
+            body:getX(), body:getY(), x, y, tostring(curSq:isFree(false))))
     end
     if BridgeRoute.enginePathNeed(body, x, y) then
         local wasPathing = BridgeMove.pathing

@@ -404,6 +404,22 @@ function BridgeMenu.onRest()
 end
 
 function BridgeMenu.onHome()
+    local h = nil
+    pcall(function() h = BridgeHome ~= nil and BridgeHome.get() or nil end)
+    if h == nil then
+        Bridge.speakText(tr("HomeNone"))
+        return
+    end
+    local inside = false
+    if Bridge ~= nil and Bridge.body ~= nil then
+        pcall(function()
+            inside = BridgeHome.contains(Bridge.body:getX(), Bridge.body:getY(), Bridge.body:getZ(), 0) == true
+        end)
+    end
+    if not inside then
+        Bridge.speakText(tr("HomeModeOutside"))
+        return
+    end
     local res = Bridge.setMode("home")
     if res == "no home" then
         Bridge.speakText(tr("HomeNone"))
@@ -556,17 +572,35 @@ local function buildEquip(context, playerNum, env)
     end
 end
 
-local function buildWait(context, playerNum, env)
-    if env.mode == "follow" then
-        context:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)
-    else
-        context:addOption(tr("ComeWithMe"), nil, BridgeMenu.onFollow)
-    end
+local function buildWaitOnly(context, playerNum, env)
+    context:addOption(tr("WaitHere"), nil, BridgeMenu.onWait)
+end
+
+local function buildMindHouse(context, playerNum, env)
+    if env.mode == "home" then return end
     local hasHome = false
     pcall(function() hasHome = BridgeHome ~= nil and BridgeHome.get() ~= nil end)
-    if hasHome and env.mode ~= "home" then
-        context:addOption(tr("HomeMode"), nil, BridgeMenu.onHome)
+    local inside = false
+    if hasHome and Bridge ~= nil and Bridge.body ~= nil then
+        pcall(function()
+            inside = BridgeHome.contains(Bridge.body:getX(), Bridge.body:getY(), Bridge.body:getZ(), 0) == true
+        end)
     end
+    local homeOpt = context:addOption(tr("HomeMode"), nil, BridgeMenu.onHome)
+    if not hasHome then
+        homeOpt.notAvailable = true
+        tip(homeOpt, tr("HomeModeNoHome"))
+    elseif not inside then
+        homeOpt.notAvailable = true
+        tip(homeOpt, tr("HomeModeOutside"))
+    end
+end
+
+local function buildMindCome(context, playerNum, env)
+    if env.mode ~= "follow" then
+        context:addOption(tr("ComeWithMe"), nil, BridgeMenu.onFollow)
+    end
+    buildMindHouse(context, playerNum, env)
 end
 
 local function buildActions(context, playerNum, env)
@@ -968,7 +1002,8 @@ BridgeMenu.ORDERABLE = {
     { id = "talk", label = "Talk", build = buildTalk },
     { id = "heal", label = "HealMe", build = buildHeal },
     { id = "equip", label = "WindowEquip", build = buildEquip },
-    { id = "wait", label = "MenuFollow", build = buildWait },
+    { id = "wait", label = "MenuWait", build = buildWaitOnly },
+    { id = "mind", label = "MenuComeMind", build = buildMindCome },
     { id = "actions", label = "Actions", build = buildActions },
     { id = "fight", label = "Combat", build = buildFight },
     { id = "guns", label = "GunMenu", radialOnly = true },
@@ -1907,6 +1942,9 @@ function BridgeMenu.cancelEntry()
         key = "CancelBath"
     elseif task and BridgeTask.kind == "read" then
         key = "CancelReading"
+    end
+    if key == "CancelTask" and Bridge ~= nil and Bridge.mode == "home" then
+        key = "CancelCurrentJob"
     end
     return { key = key, handler = BridgeMenu.onCancelTask }
 end

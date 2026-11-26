@@ -1302,7 +1302,11 @@ function BridgeDeposit.start(destTargets, opts)
     end
     log(string.format("start items=%d dests=%d waiting=%s", #items, #dests, tostring(waiting)))
     BridgeDeposit.pending = pending
-    local res = BridgeTask.start("deposit", {}, nil, nil)
+    local res = BridgeTask.start("deposit", {}, nil, {
+        quiet = quiet,
+        chore = cfg.chore == true,
+        choreRow = "deposit",
+    })
     if res ~= "started" then
         BridgeDeposit.pending = nil
         log("deposit start failed: " .. tostring(res))
@@ -1314,7 +1318,7 @@ function BridgeDeposit.startHome(opts)
     local targets = BridgeDeposit.depositTargets()
     local cfg = opts or {}
     log(string.format("startHome stored=%d resolved=%d", BridgeDeposit.markedCount(), #targets))
-    return BridgeDeposit.start(targets, { remote = true, home = true, quiet = cfg.quiet == true })
+    return BridgeDeposit.start(targets, { remote = true, home = true, quiet = cfg.quiet == true, chore = cfg.chore == true })
 end
 
 function BridgeDeposit.homeHere()

@@ -688,7 +688,7 @@ function BridgeShower.guardTabas()
 end
 
 
-function BridgeShower.start(showerObj, sq, force)
+function BridgeShower.start(showerObj, sq, force, chore)
     if BridgeTask == nil or BridgeTask.start == nil then return "no task" end
     if BridgeTask.active then
         if BridgeTask.kind == "shower" then return "already" end
@@ -751,6 +751,8 @@ function BridgeShower.start(showerObj, sq, force)
         sq = { x = target.x, y = target.y, z = target.z },
         waterSq = waterSq,
         facing = BridgeShower.facingOf(showerObj),
+        chore = chore == true,
+        choreRow = "shower",
     })
     log("start " .. tostring(res))
     return res

@@ -3186,7 +3186,11 @@ function BridgeGardening.tendUpdate(body)
         T.phase = nil
         T.info = "tend target"
         if T.tendSaid ~= true then
-            if BridgeGardening.tendSay("EvTending", "Tend") then T.tendSaid = true end
+            if T.chore == true and T.choreReady == false then
+                T.tendSaid = true
+            elseif BridgeGardening.tendSay("EvTending", "Tend") then
+                T.tendSaid = true
+            end
         end
     end
 

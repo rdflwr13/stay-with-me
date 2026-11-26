@@ -236,6 +236,40 @@ BridgeFetch.NEEDS = {
     { id = "milkContainer",  matches = function(it)
         return BridgeAnimalCare ~= nil and BridgeAnimalCare.milkContainerItem(it) == true
     end },
+    { id = "toothbrush",     matches = function(it)
+        local full = nil
+        pcall(function() full = it:getFullType() end)
+        return full ~= nil and BridgeTask ~= nil and BridgeTask.BRUSH_ITEMS ~= nil
+            and BridgeTask.BRUSH_ITEMS[full] == true
+    end },
+    { id = "cigarette",      matches = function(it)
+        local t = nil
+        pcall(function() t = it:getType() end)
+        if t == "CigaretteSingle" or t == "CigaretteRolled" then return true end
+        if t == "CigarettePack" then
+            local uses = 0
+            pcall(function() uses = it:getCurrentUses() end)
+            return (tonumber(uses) or 0) > 0
+        end
+        return false
+    end },
+    { id = "lighter",        matches = function(it)
+        local full = nil
+        pcall(function() full = it:getFullType() end)
+        local uses = 0
+        pcall(function() uses = it:getCurrentUsesFloat() end)
+        if (tonumber(uses) or 0) <= 0 then return false end
+        if full == "Base.Lighter" or full == "Base.LighterDisposable"
+                or full == "Base.LighterBBQ" or full == "Base.Lighter_Battery"
+                or full == "Base.Matches" or full == "Base.Matchbox" then
+            return true
+        end
+        local tag = false
+        pcall(function() tag = it:hasTag(ItemTag.LIGHTER) == true end)
+        if tag then return true end
+        pcall(function() tag = it:hasTag(ItemTag.START_FIRE) == true end)
+        return tag == true
+    end },
 }
 BridgeFetch.BY_ID = {}
 for _, n in ipairs(BridgeFetch.NEEDS) do BridgeFetch.BY_ID[n.id] = n end
@@ -284,6 +318,12 @@ function BridgeFetch.has(id)
             ok = BridgeAnimalCare ~= nil and BridgeAnimalCare.findShears(b) ~= nil
         elseif id == "milkContainer" then
             ok = BridgeAnimalCare ~= nil and BridgeAnimalCare.findMilkContainerAny(b) ~= nil
+        elseif id == "toothbrush" then
+            ok = BridgeTask ~= nil and BridgeTask.brushItem(b) ~= nil
+        elseif id == "cigarette" then
+            ok = BridgeTask ~= nil and BridgeTask.smokePick(b) ~= nil
+        elseif id == "lighter" then
+            ok = BridgeTask ~= nil and select(1, BridgeTask.smokeFireSource(b)) ~= nil
         end
     end)
     return ok == true
@@ -1283,6 +1323,11 @@ function BridgeFetch.jobMissing(kind, targets)
             end
             if needShear and BridgeAnimalCare.findShears(b) == nil then out[#out + 1] = "shearTool" end
             if needMilk and BridgeAnimalCare.findMilkContainerAny(b) == nil then out[#out + 1] = "milkContainer" end
+        elseif kind == "brushTeeth" then
+            if BridgeTask.brushItem(b) == nil then out[#out + 1] = "toothbrush" end
+        elseif kind == "smoke" then
+            if BridgeTask.smokePick(b) == nil then out[#out + 1] = "cigarette" end
+            if select(1, BridgeTask.smokeFireSource(b)) == nil then out[#out + 1] = "lighter" end
         end
     end)
     if #out > 0 then BridgeFetch.invalidateAmmoCache() end
@@ -1359,7 +1404,7 @@ function BridgeFetch.tick()
     if #still == 0 then
         BridgeTask.pendingStart = nil
         log("home supplies arrived, starting " .. tostring(ps.kind))
-        pcall(function() BridgeTask.start(ps.kind, ps.targets, ps.corpseDest) end)
+        pcall(function() BridgeTask.start(ps.kind, ps.targets, ps.corpseDest, ps.opts) end)
     end
 end
 

@@ -14,7 +14,7 @@ local TTL_DOOR_EMPTY_MS = 5 * 1000
 local DECISION_GAP = 1 * FLOOR
 local IDLE_GAP = 30 * FLOOR
 local ROAM_DWELL = 2 * FLOOR
-local SIT_DWELL = 90 * FLOOR
+local SIT_DWELL = 120 * FLOOR
 local STUCK = 120 * FLOOR
 local START_FAIL = 3 * 60 * FLOOR
 local START_FAIL_CAP = 2 * 60 * 60 * FLOOR
@@ -30,18 +30,21 @@ local ROWS = {
     yard = { kind = "clearPlants", group = "clearPlants", flag = "CLEARING_ENABLED", cooldownH = 2, weight = 2 },
     chop = { kind = "chopTree", group = "chopTree", flag = "TREECUTTING_ENABLED", cooldownH = 4, weight = 2 },
     deposit = { kind = "deposit", flag = "DEPOSIT_ENABLED", cooldownH = 1 },
-    closeDoors = { kind = "closeDoors", group = "doors", flag = "DOORS_ENABLED", cooldownH = 1, weight = 1 },
     closeWindows = { kind = "closeWindows", group = "doors", flag = "WINDOWS_ENABLED", cooldownH = 1, weight = 1 },
+    closeCurtains = { kind = "closeCurtains", group = "doors", flag = "CURTAINS_ENABLED", cooldownH = 1, weight = 1 },
     corpses = { kind = "moveCorpses", group = "moveCorpses", flag = "MOVE_CORPSES_ENABLED", cooldownH = 1, weight = 2 },
     wash = { idle = true, cooldownH = 1 },
-    shower = { idle = true },
-    bath = { idle = true },
-    exercise = { idle = true },
-    sit = { idle = true },
-    roam = { idle = true },
+    shower = { idle = true, cooldownH = 24 },
+    bath = { idle = true, cooldownH = 24 },
+    exercise = { idle = true, cooldownH = 2 },
+    sit = { idle = true, cooldownH = 0.33 },
+    read = { idle = true, cooldownH = 0.75 },
+    brush = { idle = true, cooldownH = 12 },
+    smoke = { idle = true, cooldownH = 3 },
+    roam = { idle = true, cooldownH = 0.25 },
 }
 
-local SCAN_ROWS = { "animals", "troughs", "tend", "harvest", "clean", "yard", "chop", "closeDoors", "closeWindows", "corpses" }
+local SCAN_ROWS = { "animals", "troughs", "tend", "harvest", "clean", "yard", "chop", "closeWindows", "closeCurtains", "corpses" }
 
 local S = {
     scan = {},
@@ -61,6 +64,7 @@ local S = {
     blacklist = {},
     lastRow = nil,
     lastNeed = 0,
+    lastIdle = nil,
     lastSeat = nil,
     nextDecisionAt = 0,
     nextIdleAt = 0,
@@ -117,6 +121,7 @@ function BridgeChores.arm()
     S.seatDirty = {}
     S.seatNextRefresh = 0
     S.stopPending = nil
+    S.lastIdle = nil
     S.idleAllowedAt = (Bridge.time or 0) + 2 * FLOOR
     S.nextDecisionAt = 0
     S.nextIdleAt = 0
@@ -133,8 +138,8 @@ local KIND_ROW = {
     tendAnimals = "animals", animalCare = "animals", petAnimals = "animals",
     fillTroughs = "troughs", cleanUp = "clean", clearPlants = "yard",
     chopTree = "chop", deposit = "deposit", shower = "shower", bath = "bath", exercise = "exercise",
-    wash = "wash", sit = "sit", roam = "roam",
-    closeDoors = "closeDoors", closeWindows = "closeWindows",
+    wash = "wash", sit = "sit", roam = "roam", read = "read", brushTeeth = "brush", smoke = "smoke",
+    closeWindows = "closeWindows", closeCurtains = "closeCurtains",
 }
 
 function BridgeChores.noteManualStop(kind)
@@ -419,6 +424,7 @@ local function refreshHomeKey(h)
         S.blacklist = {}
         S.statusCache = {}
         S.lastRow, S.lastNeed = nil, 0
+        S.lastIdle = nil
         S.forceRoam = false
         S.idleAllowedAt = (Bridge.time or 0) + 2 * FLOOR
         S.scanReady = false
@@ -585,7 +591,7 @@ local function candidates(body)
         local id = BridgeData.CHORE_IDS[i]
         local row = ROWS[id]
         if row ~= nil and row.idle ~= true and on(id) and shown(row.group) then
-            local doorRow = (id == "closeDoors" or id == "closeWindows")
+            local doorRow = (id == "closeWindows")
             local corpseRow = (id == "corpses")
             local kind = choreKind(id)
             local sh = S.scan[id]
@@ -617,9 +623,7 @@ local function candidates(body)
                             for _, fz in ipairs(ordered) do
                                 local rect = { x1 = h.x, y1 = h.y, x2 = h.x + h.w - 1, y2 = h.y + h.h - 1, z = fz }
                                 local got = nil
-                                if id == "closeDoors" and type(BridgeWorkSelect.doorsIn) == "function" then
-                                    got = BridgeWorkSelect.doorsIn(rect, "close")
-                                elseif id == "closeWindows" and type(BridgeWorkSelect.windowsIn) == "function" then
+                                if id == "closeWindows" and type(BridgeWorkSelect.windowsIn) == "function" then
                                     got = BridgeWorkSelect.windowsIn(rect, "close")
                                 elseif corpseRow and type(BridgeWorkSelect.corpsesIn) == "function" then
                                     got = BridgeWorkSelect.corpsesIn(rect)
@@ -768,6 +772,7 @@ end
 
 local function finishIdleRow(id, ok)
     S.running = nil
+    S.lastIdle = id
     if ok == true then
         startOk(id)
         local row = ROWS[id]
@@ -803,6 +808,7 @@ local function finishJobRow()
         if fail == 0 then S.retry[r.row] = (Bridge.time or 0) + START_FAIL end
     end
     if r.idle == true then
+        S.lastIdle = r.row
         if r.row == "roam" then
             S.nextIdleAt = (Bridge.time or 0) + ROAM_DWELL
         else
@@ -943,7 +949,7 @@ local function scanStep(body)
     for step = 1, n do
         local idx = ((S.scanRow + step - 1) % n) + 1
         local id = SCAN_ROWS[idx]
-        local doorsRow = (id == "closeDoors" or id == "closeWindows")
+        local doorsRow = (id == "closeWindows")
         local kind = choreKind(id)
         local collect = collector(kind)
         if collect ~= nil and on(id) and (Bridge.time or 0) >= cooldownUntil(id) then
@@ -1368,7 +1374,8 @@ local function startDeposit(body, h, now, force)
     local n = 0
     pcall(function() n = #BridgeDeposit.storableItems(body) end)
     if n <= 0 then return false, "nothing" end
-    local res = BridgeDeposit.startHome({ quiet = true })
+    local isChore = force ~= true
+    local res = BridgeDeposit.startHome({ quiet = isChore, chore = isChore })
     if res == "started" then
         startOk("deposit")
         S.running = {
@@ -1382,7 +1389,7 @@ local function startDeposit(body, h, now, force)
     return false, res
 end
 
-local function startRow(body, cand, h, quiet)
+local function startRow(body, cand, h, quiet, chore)
     local kind = cand.kind
     local res = nil
     local targets = cand.list
@@ -1390,7 +1397,9 @@ local function startRow(body, cand, h, quiet)
         local seat = cand.list[1]
         targets = { { obj = seat.obj, x = seat.x, y = seat.y, z = seat.z, read = true } }
     end
-    local opts = quiet == true and { quiet = true } or nil
+    local isChore = chore
+    if isChore == nil then isChore = quiet ~= true end
+    local opts = { quiet = quiet == true, chore = isChore == true, choreRow = cand.row }
     res = BridgeTask.start(kind, targets, cand.dest, opts)
     if res == "started" then
         startOk(cand.row)
@@ -1414,6 +1423,120 @@ local function startRow(body, cand, h, quiet)
     startFail(cand.row, res)
     invalidateRow(cand.row)
     return false, res
+end
+
+local function sharedBathCooldownLeft()
+    local showerLeft, bathLeft = 0, 0
+    if BridgeShower ~= nil then
+        if type(BridgeShower.cooldownLeft) == "function" then
+            pcall(function() showerLeft = tonumber(BridgeShower.cooldownLeft(Bridge.store)) or 0 end)
+        end
+        if type(BridgeShower.bathCooldownLeft) == "function" then
+            pcall(function() bathLeft = tonumber(BridgeShower.bathCooldownLeft(Bridge.store)) or 0 end)
+        end
+    end
+    return math.max(showerLeft, bathLeft)
+end
+
+local function idleBook(body)
+    if BridgeSkills == nil or type(BridgeSkills.eligibleBooks) ~= "function" then return nil end
+    local list = nil
+    pcall(function() list = BridgeSkills.eligibleBooks(body) end)
+    if type(list) ~= "table" then return nil end
+    for i = 1, #list do
+        local e = list[i]
+        local info = e ~= nil and e.info or nil
+        local status = info ~= nil and info.status or nil
+        if e ~= nil and e.item ~= nil and type(e.item.getNumberOfPages) == "function"
+                and status ~= "read" and status ~= "too_hard" and status ~= "obsolete" then
+            return e.item
+        end
+    end
+    return nil
+end
+
+local function brushSinkTarget(body, h)
+    if BridgeWash == nil or BridgeWash.findBrushWater == nil then return nil end
+    local z0 = bodyZ(body)
+    local floors = BridgeHome.includedFloors(h, BridgeHome.allFloorsOn())
+    if type(floors) ~= "table" or #floors == 0 then floors = { z0 } end
+    local ordered = {}
+    for i = 1, #floors do
+        if floors[i] == z0 then ordered[#ordered + 1] = floors[i] end
+    end
+    for i = 1, #floors do
+        if floors[i] ~= z0 then ordered[#ordered + 1] = floors[i] end
+    end
+    for f = 1, #ordered do
+        local rect = rectFor(h, ordered[f])
+        local sink, spot = nil, nil
+        pcall(function() sink, spot = BridgeWash.findBrushWater(body, rect) end)
+        if sink ~= nil and spot ~= nil then
+            return { x = spot.x, y = spot.y, z = spot.z, sink = sink, spot = spot }
+        end
+    end
+    return nil
+end
+
+local function idleAvailable(id, body, h)
+    if id == "roam" then return true end
+    if id == "sit" then return S.seatReady == true end
+    if id == "read" then return idleBook(body) ~= nil end
+    if id == "exercise" then
+        if BridgeExercise == nil then return false end
+        local ready = false
+        pcall(function() ready = BridgeExercise.ready(Bridge.store) == true end)
+        if not ready then return false end
+        local tired = false
+        pcall(function() tired = BridgeExercise.fatigue() > BridgeExercise.START_MAX_FATIGUE end)
+        return not tired
+    end
+    if id == "wash" then
+        if BridgeWash == nil or type(BridgeWash.dirtyParts) ~= "function" then return false end
+        local dirty = 0
+        pcall(function() dirty = BridgeWash.dirtyParts(body, "self") end)
+        return dirty >= WASH_MIN_DIRTY
+    end
+    if id == "shower" then
+        if BridgeShower == nil or sharedBathCooldownLeft() > 0 then return false end
+        local ready = false
+        pcall(function() ready = BridgeShower.ready(Bridge.store) == true end)
+        if not ready then return false end
+        return showerTarget(body, h) ~= nil
+    end
+    if id == "bath" then
+        if BridgeShower == nil or sharedBathCooldownLeft() > 0 then return false end
+        local ready = false
+        pcall(function() ready = BridgeShower.bathReady(Bridge.store) == true end)
+        if not ready then return false end
+        return bathTarget(body, h) ~= nil
+    end
+    if id == "brush" then
+        if BridgeTask == nil or BridgeTask.BRUSH_TEETH_ENABLED ~= 1 then return false end
+        if BridgeTask.brushReady() ~= true then return false end
+        if BridgeTask.brushItem(body) == nil then
+            local fetchable = BridgeFetch ~= nil and BridgeFetch.findItem ~= nil
+                and BridgeFetch.findItem("toothbrush") ~= nil
+            if not fetchable then return false end
+        end
+        return brushSinkTarget(body, h) ~= nil
+    end
+    if id == "smoke" then
+        if BridgeTask == nil or BridgeTask.SMOKE_ENABLED ~= 1 then return false end
+        if BridgeTask.smokeReady() ~= true then return false end
+        if BridgeTask.smokePick(body) == nil then
+            local fetchable = BridgeFetch ~= nil and BridgeFetch.findItem ~= nil
+                and BridgeFetch.findItem("cigarette") ~= nil
+            if not fetchable then return false end
+        end
+        if select(1, BridgeTask.smokeFireSource(body)) == nil then
+            local fetchable = BridgeFetch ~= nil and BridgeFetch.findItem ~= nil
+                and BridgeFetch.findItem("lighter") ~= nil
+            if not fetchable then return false end
+        end
+        return true
+    end
+    return false
 end
 
 local function startIdle(id, body, h, now, force)
@@ -1440,7 +1563,7 @@ local function startIdle(id, body, h, now, force)
             pcall(function() list = BridgeWash.waterList(body, nil, nil, r) end)
             if #list > 0 then chosen = r break end
         end
-        pcall(function() res = BridgeWash.start("chores", nil, nil, chosen or rectFor(h, z0), force == true) end)
+        pcall(function() res = BridgeWash.start("chores", nil, nil, chosen or rectFor(h, z0), force == true, force ~= true) end)
         if res == "going to wash" then
             S.running = { row = "wash", idle = true, startedAt = now, changedAt = now }
             return true, "started"
@@ -1452,6 +1575,7 @@ local function startIdle(id, body, h, now, force)
     if id == "shower" then
         if BridgeShower == nil then return false, "unavailable" end
         if force ~= true then
+            if sharedBathCooldownLeft() > 0 then return false, "cooldown" end
             local ready = false
             pcall(function() ready = BridgeShower.ready(Bridge.store) == true end)
             if not ready then return false, "cooldown" end
@@ -1459,7 +1583,7 @@ local function startIdle(id, body, h, now, force)
         local obj, sq = showerTarget(body, h)
         if obj == nil then return false, "no shower" end
         local res = nil
-        pcall(function() res = BridgeShower.start(obj, sq, force == true) end)
+        pcall(function() res = BridgeShower.start(obj, sq, force == true, force ~= true) end)
         if res == "started" then
             startOk("shower")
             S.running = { row = "shower", kind = "shower", idle = true, startedAt = now,
@@ -1474,6 +1598,7 @@ local function startIdle(id, body, h, now, force)
     if id == "bath" then
         if BridgeBath == nil then return false, "unavailable" end
         if force ~= true then
+            if sharedBathCooldownLeft() > 0 then return false, "cooldown" end
             local ready = false
             pcall(function() ready = BridgeShower.bathReady(Bridge.store) == true end)
             if not ready then return false, "cooldown" end
@@ -1481,7 +1606,7 @@ local function startIdle(id, body, h, now, force)
         local obj, tub, sq, facing = bathTarget(body, h)
         if obj == nil then return false, "no bath" end
         local res = nil
-        pcall(function() res = BridgeBath.startBath(obj, tub, nil, sq, facing) end)
+        pcall(function() res = BridgeBath.startBath(obj, tub, nil, sq, facing, force ~= true) end)
         if res == "started" then
             startOk("bath")
             S.running = { row = "bath", kind = "bath", idle = true, startedAt = now,
@@ -1501,7 +1626,7 @@ local function startIdle(id, body, h, now, force)
             if not ready then return false, "cooldown" end
         end
         local res = nil
-        pcall(function() res = BridgeExercise.start(false, force == true) end)
+        pcall(function() res = BridgeExercise.start(false, force == true, force ~= true) end)
         if res == "started" then
             startOk("exercise")
             S.running = { row = "exercise", kind = "exercise", idle = true, startedAt = now,
@@ -1539,7 +1664,7 @@ local function startIdle(id, body, h, now, force)
             order[1].x, order[1].y, #order))
         local res = nil
         pcall(function()
-            res = BridgeTask.start("sit", targets)
+            res = BridgeTask.start("sit", targets, nil, { chore = force ~= true, choreRow = "sit" })
         end)
         if res == "started" then
             startOk("sit")
@@ -1557,7 +1682,8 @@ local function startIdle(id, body, h, now, force)
         if spot == nil then return false, "no spot" end
         local res = nil
         pcall(function()
-            res = BridgeTask.start("roam", { { x = spot.x, y = spot.y, z = spot.z } })
+            res = BridgeTask.start("roam", { { x = spot.x, y = spot.y, z = spot.z } }, nil,
+                { chore = force ~= true, choreRow = "roam" })
         end)
         if res == "started" then
             S.running = { row = "roam", kind = "roam", idle = true, startedAt = now,
@@ -1566,6 +1692,89 @@ local function startIdle(id, body, h, now, force)
             return true, "started"
         end
         startFail("roam", res)
+        return false, res
+    end
+
+    if id == "read" then
+        local book = idleBook(body)
+        if book == nil then return false, "no book" end
+        local res = nil
+        pcall(function()
+            res = BridgeTask.start("read", { { item = book } }, nil,
+                { chore = force ~= true, choreRow = "read" })
+        end)
+        if res == "started" then
+            startOk("read")
+            S.running = { row = "read", kind = "read", idle = true, startedAt = now,
+                done0 = BridgeTask.doneCount or 0, need = 1, changedAt = now, sig = nil,
+                jobId = BridgeTask.jobId }
+            return true, "started"
+        end
+        startFail("read", res)
+        return false, res
+    end
+
+    if id == "brush" then
+        if BridgeTask == nil then return false, "unavailable" end
+        if force ~= true and BridgeTask.brushReady() ~= true then return false, "cooldown" end
+        if BridgeTask.brushItem(body) == nil then
+            local fetchable = BridgeFetch ~= nil and BridgeFetch.findItem ~= nil
+                and BridgeFetch.findItem("toothbrush") ~= nil
+            if not fetchable then return false, "no brush" end
+        end
+        local target = brushSinkTarget(body, h)
+        if target == nil then return false, "no sink" end
+        local res = nil
+        pcall(function()
+            res = BridgeTask.start("brushTeeth", { target }, nil,
+                { chore = force ~= true, choreRow = "brush" })
+        end)
+        if res == "started" then
+            startOk("brush")
+            S.running = { row = "brush", kind = "brushTeeth", idle = true, startedAt = now,
+                done0 = BridgeTask.doneCount or 0, need = 1, changedAt = now, sig = nil,
+                jobId = BridgeTask.jobId }
+            return true, "started"
+        end
+        if res == "fetching" then
+            S.waiting = { row = "brush", kind = "brushTeeth", idle = true, since = now, need = 1 }
+            return true, "fetching"
+        end
+        startFail("brush", res)
+        return false, res
+    end
+
+    if id == "smoke" then
+        if BridgeTask == nil then return false, "unavailable" end
+        if force ~= true and BridgeTask.smokeReady() ~= true then return false, "cooldown" end
+        local pick = BridgeTask.smokePick(body)
+        if pick == nil then
+            local fetchable = BridgeFetch ~= nil and BridgeFetch.findItem ~= nil
+                and BridgeFetch.findItem("cigarette") ~= nil
+            if not fetchable then return false, "no smoke" end
+        end
+        if select(1, BridgeTask.smokeFireSource(body)) == nil then
+            local fetchable = BridgeFetch ~= nil and BridgeFetch.findItem ~= nil
+                and BridgeFetch.findItem("lighter") ~= nil
+            if not fetchable then return false, "no lighter" end
+        end
+        local res = nil
+        pcall(function()
+            res = BridgeTask.start("smoke", { pick or {} }, nil,
+                { chore = force ~= true, choreRow = "smoke" })
+        end)
+        if res == "started" then
+            startOk("smoke")
+            S.running = { row = "smoke", kind = "smoke", idle = true, startedAt = now,
+                done0 = BridgeTask.doneCount or 0, need = 1, changedAt = now, sig = nil,
+                jobId = BridgeTask.jobId }
+            return true, "started"
+        end
+        if res == "fetching" then
+            S.waiting = { row = "smoke", kind = "smoke", idle = true, since = now, need = 1 }
+            return true, "fetching"
+        end
+        startFail("smoke", res)
         return false, res
     end
 
@@ -1586,14 +1795,45 @@ local function idleTargets(body, h)
         S.forceRoam = false
     end
 
-    local order = { "wash", "shower", "bath", "exercise", "sit", "roam" }
-    for i = 1, #order do
-        local id = order[i]
-        local allowed = not (id == "sit" and S.seatReady ~= true)
-        if allowed and on(id) and now >= cooldownUntil(id) and now >= retryUntil(id) then
-            local started = startIdle(id, body, h, now)
-            if started then return end
+    local IDLE_ORDER = { "roam", "sit", "read", "exercise", "wash", "shower", "bath", "brush", "smoke" }
+    local IDLE_WEIGHT = { roam = 3, sit = 2, read = 2, exercise = 1, wash = 1, shower = 1, bath = 1, brush = 1, smoke = 1 }
+    local cands = {}
+    for i = 1, #IDLE_ORDER do
+        local id = IDLE_ORDER[i]
+        if on(id) and now >= cooldownUntil(id) and now >= retryUntil(id) and idleAvailable(id, body, h) then
+            cands[#cands + 1] = id
         end
+    end
+    local showerIdx, bathIdx = nil, nil
+    for i = 1, #cands do
+        if cands[i] == "shower" then showerIdx = i elseif cands[i] == "bath" then bathIdx = i end
+    end
+    if showerIdx ~= nil and bathIdx ~= nil then
+        table.remove(cands, ZombRand(2) == 0 and showerIdx or bathIdx)
+    end
+    if #cands > 1 and S.lastIdle ~= nil then
+        for i = #cands, 1, -1 do
+            if cands[i] == S.lastIdle then table.remove(cands, i) break end
+        end
+    end
+    local guard = 0
+    while #cands > 0 and guard < 8 do
+        guard = guard + 1
+        local total = 0
+        for i = 1, #cands do total = total + (IDLE_WEIGHT[cands[i]] or 1) end
+        local pick, pickIdx = nil, nil
+        if total > 0 then
+            local roll = ZombRand(total)
+            local acc = 0
+            for i = 1, #cands do
+                acc = acc + (IDLE_WEIGHT[cands[i]] or 1)
+                if roll < acc then pick, pickIdx = cands[i], i break end
+            end
+        end
+        if pick == nil then break end
+        local started = startIdle(pick, body, h, now)
+        if started then return end
+        table.remove(cands, pickIdx)
     end
     S.nextIdleAt = now + IDLE_GAP
 end
@@ -1913,6 +2153,17 @@ function BridgeChores.statusText()
         .. " scan=" .. tostring(S.scanCount) .. " " .. table.concat(parts, " ")
 end
 
+local function supplyStatus(missing)
+    if type(missing) ~= "table" or #missing == 0 then return nil end
+    local id = missing[1]
+    if id == "cleanerFluid" then return tr("ChoreNeedBleach") end
+    if id == "cleanImplement" then return tr("ChoreNeedTool") end
+    if id == "petrol" then return tr("ChoreNeedPetrol") end
+    if id == "ashTool" then return tr("ChoreNeedAsh") end
+    if id == "cutTool" then return tr("ChoreNeedCut") end
+    return tr("ChoreNoSupply")
+end
+
 local function computeStatus(id)
     if id == nil or not BridgeData.CHORE_SET[id] then return tr("ChoreOff") end
     pruneBlacklist()
@@ -1934,9 +2185,6 @@ local function computeStatus(id)
     if now < cooldownUntil(id) then
         return tr("ChoreCooldown", string.format("%.1f", (cooldownUntil(id) - now) / (3600 * FLOOR)))
     end
-    if now < retryUntil(id) then
-        return tr("ChoreCooldown", string.format("%.1f", (retryUntil(id) - now) / (3600 * FLOOR)))
-    end
     if id == "deposit" then
         local marks = 0
         if BridgeDeposit ~= nil and type(BridgeDeposit.markedCount) == "function" then
@@ -1949,13 +2197,16 @@ local function computeStatus(id)
             if body ~= nil then pcall(function() n = #BridgeDeposit.storableItems(body) end) end
         end
         if n <= 0 then return tr("ChoreNone") end
+        if now < retryUntil(id) then
+            return tr("ChoreCooldown", string.format("%.1f", (retryUntil(id) - now) / (3600 * FLOOR)))
+        end
         return tr("ChoreReady", n)
     end
     if row ~= nil and row.idle == true then
         local rec = Bridge.store
+        local body = Bridge.body or BridgeData.owner()
         if id == "wash" then
             local dirty = 0
-            local body = Bridge.body or BridgeData.owner()
             if body ~= nil and BridgeWash ~= nil and BridgeWash.dirtyParts ~= nil then
                 pcall(function() dirty = BridgeWash.dirtyParts(body, "self") end)
             end
@@ -1964,15 +2215,13 @@ local function computeStatus(id)
             local tabas = false
             pcall(function() tabas = BridgeShower ~= nil and BridgeShower.isTabas() == true end)
             if not tabas then return tr("ChoreNoShower") end
-            local cd = 0
-            pcall(function() cd = BridgeShower.cooldownLeft(rec) end)
+            local cd = sharedBathCooldownLeft()
             if cd > 0 then return tr("ChoreCooldown", string.format("%.1f", cd)) end
         elseif id == "bath" then
             local tabas = false
             pcall(function() tabas = BridgeBath ~= nil and BridgeBath.active() == true end)
             if not tabas then return tr("ChoreNoBath") end
-            local cd = 0
-            pcall(function() cd = BridgeShower.bathCooldownLeft(rec) end)
+            local cd = sharedBathCooldownLeft()
             if cd > 0 then return tr("ChoreCooldown", string.format("%.1f", cd)) end
         elseif id == "exercise" then
             local cd = 0
@@ -1981,6 +2230,34 @@ local function computeStatus(id)
             local tired = false
             pcall(function() tired = BridgeExercise.fatigue() > BridgeExercise.START_MAX_FATIGUE end)
             if tired then return tr("ChoreTired") end
+        elseif id == "read" then
+            if body == nil or idleBook(body) == nil then return tr("ChoreNoBook") end
+        elseif id == "brush" then
+            local cd = 0
+            pcall(function() cd = BridgeTask.brushCooldownLeft(rec) end)
+            if cd > 0 then return tr("ChoreCooldown", string.format("%.1f", cd)) end
+            if body == nil then return tr("ChoreNoBrush") end
+            if BridgeTask.brushItem(body) == nil
+                    and not (BridgeFetch ~= nil and BridgeFetch.findItem ~= nil and BridgeFetch.findItem("toothbrush") ~= nil) then
+                return tr("ChoreNoBrush")
+            end
+            if brushSinkTarget(body, h) == nil then return tr("ChoreNoSink") end
+        elseif id == "smoke" then
+            local cd = 0
+            pcall(function() cd = BridgeTask.smokeCooldownLeft(rec) end)
+            if cd > 0 then return tr("ChoreCooldown", string.format("%.1f", cd)) end
+            if body == nil then return tr("ChoreNoSmoke") end
+            if BridgeTask.smokePick(body) == nil
+                    and not (BridgeFetch ~= nil and BridgeFetch.findItem ~= nil and BridgeFetch.findItem("cigarette") ~= nil) then
+                return tr("ChoreNoSmoke")
+            end
+            if select(1, BridgeTask.smokeFireSource(body)) == nil
+                    and not (BridgeFetch ~= nil and BridgeFetch.findItem ~= nil and BridgeFetch.findItem("lighter") ~= nil) then
+                return tr("ChoreNoSmoke")
+            end
+        end
+        if now < retryUntil(id) then
+            return tr("ChoreCooldown", string.format("%.1f", (retryUntil(id) - now) / (3600 * FLOOR)))
         end
         return tr("ChoreEnabled")
     end
@@ -2019,7 +2296,10 @@ local function computeStatus(id)
     if BridgeFetch ~= nil and type(BridgeFetch.jobMissing) == "function" then
         local missing = nil
         pcall(function() missing = BridgeFetch.jobMissing(kind, list) end)
-        if type(missing) == "table" and #missing > 0 then return tr("ChoreNoSupply") end
+        if type(missing) == "table" and #missing > 0 then return supplyStatus(missing) end
+    end
+    if now < retryUntil(id) then
+        return tr("ChoreCooldown", string.format("%.1f", (retryUntil(id) - now) / (3600 * FLOOR)))
     end
     return tr("ChoreReady", #list)
 end
@@ -2099,15 +2379,17 @@ function BridgeChores.debugReset(scope)
         S.statusCache = {}
         S.nextIdleAt = 0
         S.nextDecisionAt = 0
+        S.lastIdle = nil
         S.seatKey, S.seatList = nil, nil
         S.showerKey, S.showerObj, S.showerSq = nil, nil, nil
         S.bathKey, S.bathObj, S.bathTub, S.bathSq, S.bathFacing = nil, nil, nil, nil, nil
     elseif scope == "idle" then
         S.nextIdleAt = 0
+        S.lastIdle = nil
         S.seatKey, S.seatList = nil, nil
         S.showerKey, S.showerObj, S.showerSq = nil, nil, nil
         S.bathKey, S.bathObj, S.bathTub, S.bathSq, S.bathFacing = nil, nil, nil, nil, nil
-        for _, id in ipairs({ "wash", "shower", "bath", "exercise", "sit", "roam" }) do clearRow(id) end
+        for _, id in ipairs({ "wash", "shower", "bath", "exercise", "sit", "read", "brush", "smoke", "roam" }) do clearRow(id) end
     elseif BridgeData.CHORE_SET[scope] then
         clearRow(scope)
     else
@@ -2189,7 +2471,7 @@ function BridgeChores.debugForce(id, index)
     local row0 = ROWS[id]
     if id ~= "deposit" and row0 ~= nil and row0.idle ~= true then
         if choreKind(id) == nil then return "disabled" end
-        local doorRow = (id == "closeDoors" or id == "closeWindows")
+        local doorRow = (id == "closeWindows")
         if not doorRow then
             local sh0 = S.scan[id]
             if sh0 == nil or #sh0.list == 0 then
@@ -2234,7 +2516,7 @@ function BridgeChores.debugForce(id, index)
         local kind = choreKind(id)
         if kind == nil then return "disabled" end
         local z = bodyZ(body)
-        local doorRow = (id == "closeDoors" or id == "closeWindows")
+        local doorRow = (id == "closeWindows")
         local corpseRow = (id == "corpses")
         local list = nil
         if doorRow or corpseRow then
@@ -2249,9 +2531,7 @@ function BridgeChores.debugForce(id, index)
                 for _, fz in ipairs(ordered) do
                     local rect = { x1 = h.x, y1 = h.y, x2 = h.x + h.w - 1, y2 = h.y + h.h - 1, z = fz }
                     local got = nil
-                    if id == "closeDoors" and type(BridgeWorkSelect.doorsIn) == "function" then
-                        got = BridgeWorkSelect.doorsIn(rect, "close")
-                    elseif id == "closeWindows" and type(BridgeWorkSelect.windowsIn) == "function" then
+                    if id == "closeWindows" and type(BridgeWorkSelect.windowsIn) == "function" then
                         got = BridgeWorkSelect.windowsIn(rect, "close")
                     elseif corpseRow and type(BridgeWorkSelect.corpsesIn) == "function" then
                         got = BridgeWorkSelect.corpsesIn(rect)
@@ -2278,7 +2558,7 @@ function BridgeChores.debugForce(id, index)
         if #list == 0 then return "no targets" end
         local dest = nil
         if id == "corpses" then dest = BridgeData.corpseSpotOf(Bridge.store) end
-        ok, res = startRow(body, { row = id, kind = kind, list = list, need = #list, dest = dest }, h, true)
+        ok, res = startRow(body, { row = id, kind = kind, list = list, need = #list, dest = dest }, h, false, false)
     end
     local out = tostring(res or (ok and "started" or "failed"))
     S.statusCache[id] = nil
@@ -2304,7 +2584,7 @@ function BridgeChores.debugNext()
     if threat(body) then return "danger" end
     local cands = candidates(body)
     if #cands == 0 then return "no candidates" end
-    local ok, res = startRow(body, cands[1], h, true)
+    local ok, res = startRow(body, cands[1], h, false, false)
     local out = tostring(res or (ok and "started" or "failed"))
     log("debug next " .. tostring(cands[1].row) .. " -> " .. out)
     return out
@@ -2386,10 +2666,13 @@ function BridgeChores.selftest()
     check("choreOn default off", BridgeData.choreOn({}, "yard"), false, fails, checks)
     check("deposit registered", BridgeData.CHORE_SET.deposit, true, fails, checks)
     check("deposit default on", BridgeData.choreOn({}, "deposit"), true, fails, checks)
-    check("closeDoors registered", BridgeData.CHORE_SET.closeDoors, true, fails, checks)
     check("closeWindows registered", BridgeData.CHORE_SET.closeWindows, true, fails, checks)
-    check("closeDoors default off", BridgeData.choreOn({}, "closeDoors"), false, fails, checks)
     check("closeWindows default on", BridgeData.choreOn({}, "closeWindows"), true, fails, checks)
+    check("closeCurtains registered", BridgeData.CHORE_SET.closeCurtains, true, fails, checks)
+    check("closeCurtains default off", BridgeData.choreOn({}, "closeCurtains"), false, fails, checks)
+    check("read default on", BridgeData.choreOn({}, "read"), true, fails, checks)
+    check("brush default on", BridgeData.choreOn({}, "brush"), true, fails, checks)
+    check("smoke default off", BridgeData.choreOn({}, "smoke"), false, fails, checks)
     check("choreOn stored on", BridgeData.choreOn({ chores = { yard = true } }, "yard"), true, fails, checks)
     check("choreOn stored off", BridgeData.choreOn({ chores = { tend = false } }, "tend"), false, fails, checks)
     check("backoff 1", backoff(1), START_FAIL, fails, checks)

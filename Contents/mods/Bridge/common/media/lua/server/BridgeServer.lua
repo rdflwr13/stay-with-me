@@ -2004,6 +2004,13 @@ BridgeServer.Commands.state = function(player, args)
             changed = true
         end
     end
+    if args.smokeUntil ~= nil then
+        local v = tonumber(args.smokeUntil)
+        if v ~= nil and v >= 0 and (rec.smokeUntil == nil or math.abs(rec.smokeUntil - v) > 0.001) then
+            if v > 0 then rec.smokeUntil = v else rec.smokeUntil = nil end
+            changed = true
+        end
+    end
     if args.showerProgress ~= nil then
         local v = tonumber(args.showerProgress)
         if v ~= nil and v >= 0 then

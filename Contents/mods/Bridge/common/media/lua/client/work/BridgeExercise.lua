@@ -384,7 +384,7 @@ end
 BridgeExercise.busy = busyElsewhere
 
 
-function BridgeExercise.start(mirror, force)
+function BridgeExercise.start(mirror, force, chore)
     if BridgeTask == nil or BridgeTask.start == nil then return "no task" end
     if BridgeTask.active then
         if BridgeTask.kind == "exercise" then return "already" end
@@ -400,7 +400,7 @@ function BridgeExercise.start(mirror, force)
     if BridgeTask.dangerNear ~= nil and BridgeTask.dangerNear(Bridge.body) then return "danger" end
     local def = BridgeTask.kinds ~= nil and BridgeTask.kinds.exercise or nil
     if def == nil or (def.available ~= nil and not def.available(Bridge.body)) then return "unavailable" end
-    local res = BridgeTask.start("exercise", {})
+    local res = BridgeTask.start("exercise", {}, nil, { chore = chore == true, choreRow = "exercise" })
     if res == "started" then
         BridgeTask.exerciseMirror = mirror == true
         log("start mirror=" .. tostring(mirror))

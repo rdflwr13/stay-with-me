@@ -280,7 +280,7 @@ function BridgeBath.findNearest(centre, radius, rect)
 end
 
 
-function BridgeBath.startBath(faucetObj, tubObj, sink, sq, facing)
+function BridgeBath.startBath(faucetObj, tubObj, sink, sq, facing, chore)
     if BridgeTask == nil or BridgeTask.start == nil then return "no task" end
     if BridgeTask.active then
         if BridgeTask.kind == "bath" then return "already" end
@@ -337,6 +337,8 @@ function BridgeBath.startBath(faucetObj, tubObj, sink, sq, facing)
         sq = { x = target.x, y = target.y, z = target.z },
         sink = sink,
         facing = facing,
+        chore = chore == true,
+        choreRow = "bath",
     })
     log("start " .. tostring(res))
     return res

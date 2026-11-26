@@ -428,7 +428,7 @@ local function copyWaterList(src)
     return out
 end
 
-function BridgeWash.waterList(body, centre, radius, rect)
+function BridgeWash.waterList(body, centre, radius, rect, noProxy)
     local nowTick = Bridge ~= nil and tonumber(Bridge.tick) or nil
     local key = nil
     if body ~= nil then
@@ -516,7 +516,7 @@ function BridgeWash.waterList(body, centre, radius, rect)
             end
         end
     end)
-    if ranked and #list == 0 then
+    if ranked and #list == 0 and not noProxy then
         for i = 1, #proxies do list[#list + 1] = proxies[i] end
     end
     if ranked then
@@ -695,6 +695,18 @@ local function spotNear(body, sink)
     end
     return nil
 end
+BridgeWash.spotNear = spotNear
+
+function BridgeWash.findBrushWater(body, rect)
+    local list = BridgeWash.waterList(body, nil, nil, rect, true)
+    for i = 1, #list do
+        local spot = nil
+        pcall(function() spot = spotNear(body, list[i].o) end)
+        if spot ~= nil then return list[i].o, spot end
+    end
+    return nil, nil
+end
+
 
 function BridgeWash.stop(why)
     if (why == "menu" or why == "command") and BridgeChores ~= nil
@@ -705,6 +717,7 @@ function BridgeWash.stop(why)
     BridgeWash.sink = nil
     BridgeWash.spot = nil
     BridgeWash.queue = nil
+    BridgeWash.chore = nil
     BridgeWash.info = "stopped: " .. tostring(why)
 end
 
@@ -731,22 +744,24 @@ end
 
 
 
-function BridgeWash.start(why, centre, radius, rect, force)
+function BridgeWash.start(why, centre, radius, rect, force, chore)
+    BridgeWash.chore = nil
     if Bridge == nil or not Bridge.drivable() then return "no body here" end
+    local isChore = chore == true
     local body = Bridge.body
     if force ~= true and BridgeWash.dirtyParts(body) == 0 then
-        sayWash("WashClean", "AlreadyClean")
+        if not isChore then sayWash("WashClean", "AlreadyClean") end
         return "already clean"
     end
     local list = BridgeWash.waterList(body, centre, radius, rect)
     if #list == 0 then
-        sayWash("WashNoWater", "NoWater")
+        if not isChore then sayWash("WashNoWater", "NoWater") end
         return "no water nearby"
     end
     BridgeWash.queue = list
     if not nextWater(body) then
         BridgeWash.queue = nil
-        sayWash("WashNoPath", "CantReachWater")
+        if not isChore then sayWash("WashNoPath", "CantReachWater") end
         return "water not reachable"
     end
     pcall(function() BridgeHeal.stop("wash") end)
@@ -756,7 +771,12 @@ function BridgeWash.start(why, centre, radius, rect, force)
     BridgeWash.info = "going " .. tostring(why)
     Bridge.pose = nil
     BridgeWash.what = washWhat(body)
-    sayWash("WashGo" .. BridgeWash.what, "GoWash")
+    BridgeWash.chore = isChore
+    if isChore then
+        Bridge.speak("ChoreStartWash")
+    else
+        sayWash("WashGo" .. BridgeWash.what, "GoWash")
+    end
     return "going to wash"
 end
 
@@ -966,9 +986,10 @@ function BridgeWash.update(body)
         local water, washed = clean(body, sink)
         pcall(function() body:setBumpType("") end)
         log("washed, water used " .. tostring(water) .. ", items washed " .. tostring(washed))
+        local isChore = BridgeWash.chore == true
         BridgeWash.stop("done")
         BridgeWash.info = "done water=" .. tostring(water)
-        sayWash("WashDone" .. (BridgeWash.what or "Both"), "Washed")
+        if not isChore then sayWash("WashDone" .. (BridgeWash.what or "Both"), "Washed") end
         pcall(function() Bridge.saveOutfit() end)
 
 

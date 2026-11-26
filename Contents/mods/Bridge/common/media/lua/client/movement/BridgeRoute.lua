@@ -896,7 +896,7 @@ function BridgeRoute.openingWay(body, gx, gy, gz)
             bld_id = bldId, why = branch }, "BridgeRoute.openingWay")
     end
     enclosureEv("enter")
-    if bK == tK and not sticky then
+    if bK == tK then
         BridgeMove.openingWay = nil
         BridgeMove.openingBlocked = nil
         BridgeMove.doorFail = nil
@@ -905,8 +905,8 @@ function BridgeRoute.openingWay(body, gx, gy, gz)
         local now = Bridge.tick or 0
         if BridgeRoute.sameEnclSig ~= sameSig or (now % 15) == 0 then
             BridgeRoute.sameEnclSig = sameSig
-            log(sformat("openingWay skip=sameEnclosure bK=%s tK=%s body=%.1f,%.1f goal=%.1f,%.1f",
-                tostring(bK), tostring(tK), body:getX(), body:getY(), gx, gy))
+            log(sformat("openingWay skip=sameEnclosure bK=%s tK=%s sticky=%s body=%.1f,%.1f goal=%.1f,%.1f",
+                tostring(bK), tostring(tK), tostring(sticky), body:getX(), body:getY(), gx, gy))
         end
         return nil
     end
@@ -2329,6 +2329,15 @@ function BridgeRoute.jobPath(body, spec)
         BridgeMove.wasWalking = false
         if BridgeMove.onPath() then BridgeMove.stopPath(body) end
         return
+    end
+    if Bridge.target ~= nil and Bridge.target.x ~= nil and Bridge.target.y ~= nil then
+        local zeroD = dist2d(body:getX(), body:getY(), gx, gy)
+        local targetD = dist2d(body:getX(), body:getY(), Bridge.target.x, Bridge.target.y)
+        if zeroD <= 0.9 and targetD > 0.9 then
+            log(sformat("jobPath zero-length goal=%.2f,%.2f target=%.2f,%.2f body=%.2f,%.2f src=%s",
+                gx, gy, Bridge.target.x, Bridge.target.y, body:getX(), body:getY(),
+                BridgeMove.openingWay ~= nil and "opening" or "direct"))
+        end
     end
 
     local arrived = d <= 0.8

@@ -847,7 +847,15 @@ function BridgeTask.doorStand(body, door, label, farSide, preferOutside, sameSid
     end
     local function consider(sq, sameSide)
         if sq == nil or sq == dsq or (osq ~= nil and sq == osq) then return end
-        if sameSideOnly and not sameSide then reject(sq, "sameSideOnly") return end
+        if sameSideOnly then
+            if osq ~= nil then
+                local vx, vy = osq:getX() - dsq:getX(), osq:getY() - dsq:getY()
+                local cx, cy = sq:getX() - dsq:getX(), sq:getY() - dsq:getY()
+                local onOsqSide = (vx * cx + vy * cy) > 0
+                sameSide = (not onOsqSide) == preferDsq
+            end
+            if not sameSide then reject(sq, "sameSideOnly") return end
+        end
         if insideOnly and not sameSide then reject(sq, "insideOnly") return end
         if not relaxAxis then
             if axisX and sq:getX() ~= dsq:getX() then reject(sq, "axisX") return end
@@ -1504,10 +1512,10 @@ end
 
 
 function U.curtainStand(body, obj)
-    local stand = BridgeTask.doorStand(body, obj, "curtain", nil, nil, nil, true)
+    local stand = BridgeTask.doorStand(body, obj, "curtain", nil, nil, true, nil)
     if stand == nil and BridgeDoors ~= nil and type(BridgeDoors.curtainParent) == "function" then
         local parent = BridgeDoors.curtainParent(obj)
-        if parent ~= nil then stand = BridgeTask.doorStand(body, parent, "curtain", nil, nil, nil, true) end
+        if parent ~= nil then stand = BridgeTask.doorStand(body, parent, "curtain", nil, nil, true, nil) end
     end
     return stand
 end
@@ -3212,7 +3220,20 @@ function BridgeTask.requireGlass(sq)
     return true
 end
 
+function BridgeTask.choreStartKey()
+    local row = BridgeTask.choreRow or BridgeTask.kind
+    if type(row) == "string" and row ~= "" then
+        local suffix = "ChoreStart" .. string.upper(string.sub(row, 1, 1)) .. string.sub(row, 2)
+        if BridgeSpeech ~= nil and type(BridgeSpeech.exists) == "function"
+                and BridgeSpeech.exists("IGUI_NotAlone_Say_" .. suffix) then
+            return suffix
+        end
+    end
+    return "ChoreStart"
+end
+
 function BridgeTask.speakMissing(kind, missingOverride)
+    if BridgeTask.chore == true then return end
     local def = kind ~= nil and BridgeTask.kinds[kind] or nil
     local missing = nil
     if type(missingOverride) == "table" then
@@ -3279,6 +3300,7 @@ function BridgeTask.speakMissing(kind, missingOverride)
 end
 
 function BridgeTask.needRestSay()
+    if BridgeTask.chore == true then return true end
     local prof = U.exhaustionProfile()
     if prof ~= nil and prof.needRestPool == true then
         local said = false
@@ -3370,6 +3392,9 @@ function BridgeTask.reset()
     BridgeTask.current = nil
     BridgeTask.phase = nil
     BridgeTask.info = "reset"
+    BridgeTask.chore = nil
+    BridgeTask.choreRow = nil
+    BridgeTask.choreReady = nil
     BridgeTask.pendingStart = nil
     BridgeTask.depositFull, BridgeTask.depositCount = nil, nil
     BridgeTask.deferred = {}
@@ -3465,6 +3490,8 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     local def = BridgeTask.kinds[kind]
     if def == nil then return "unknown job" end
     if type(targets) ~= "table" then return "no targets" end
+    BridgeTask.chore = opts ~= nil and opts.chore == true
+    BridgeTask.choreRow = opts ~= nil and opts.choreRow or nil
     if #targets == 0 and def.noTargets ~= true then
         U.log("job reject kind=" .. tostring(kind) .. " reason=no-targets")
         return "no targets"
@@ -3482,7 +3509,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
             if rawWater or rawFeed then feedOnly = true end
         end
         if not anyNeed then
-            Bridge.speak(feedOnly and "JobTroughNoFeed" or "JobTroughFull")
+            if BridgeTask.chore ~= true then Bridge.speak(feedOnly and "JobTroughNoFeed" or "JobTroughFull") end
             return "unavailable"
         end
     end
@@ -3503,13 +3530,13 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
             end
         end
         if not anyNeed then
-            Bridge.speak("JobNoHutches")
+            if BridgeTask.chore ~= true then Bridge.speak("JobNoHutches") end
             return "unavailable"
         end
         if needEggs then
             local room = BridgeTask.hutchEggCapacity(Bridge.body)
             if room == nil or room <= 0 then
-                Bridge.speak("JobHutchFull")
+                if BridgeTask.chore ~= true then Bridge.speak("JobHutchFull") end
                 return "unavailable"
             end
         end
@@ -3570,14 +3597,14 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         if #keep == 0 then
             if droppedAnimal ~= nil then
                 if BridgeAnimalCare.stressOf(droppedAnimal) > 40 then
-                    Bridge.speak("JobProductStress", BridgeAnimalCare.nameOf(droppedAnimal))
+                    if BridgeTask.chore ~= true then Bridge.speak("JobProductStress", BridgeAnimalCare.nameOf(droppedAnimal)) end
                 else
-                    Bridge.speak("JobPetNotReady")
+                    if BridgeTask.chore ~= true then Bridge.speak("JobPetNotReady") end
                 end
             elseif hutchCount > 0 then
-                Bridge.speak("JobHutchFull")
+                if BridgeTask.chore ~= true then Bridge.speak("JobHutchFull") end
             else
-                Bridge.speak("JobNoAnimals")
+                if BridgeTask.chore ~= true then Bridge.speak("JobNoAnimals") end
             end
             return "unavailable"
         end
@@ -3606,9 +3633,9 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         end
         if #keep == 0 and droppedAnimal ~= nil then
             if BridgeAnimalCare.stressOf(droppedAnimal) > 40 then
-                Bridge.speak("JobProductStress", BridgeAnimalCare.nameOf(droppedAnimal))
+                if BridgeTask.chore ~= true then Bridge.speak("JobProductStress", BridgeAnimalCare.nameOf(droppedAnimal)) end
             else
-                Bridge.speak("JobPetNotReady")
+                if BridgeTask.chore ~= true then Bridge.speak("JobPetNotReady") end
             end
             return "unavailable"
         end
@@ -3621,12 +3648,60 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     BridgeTask.needPetrol, BridgeTask.needAshTool = nil, nil
     BridgeTask.needCut = nil
 
+    if BridgeTask.chore == true and kind == "tendCrops"
+            and BridgeGardening ~= nil and BridgeFetch ~= nil then
+        local level = 0
+        pcall(function() level = BridgeSkills.level("Agriculture") end)
+        local missing = nil
+        pcall(function() missing = BridgeFetch.jobMissing("tendCrops", targets) end)
+        local probe = { level = level, water = nil, compost = nil, fertilizer = nil, cures = {} }
+        pcall(function()
+            local ctx = BridgeGardening.tendContext(Bridge.body, level)
+            if ctx ~= nil then
+                probe.water, probe.compost, probe.fertilizer = ctx.water, ctx.compost, ctx.fertilizer
+                if type(ctx.cures) == "table" then
+                    for k, v in pairs(ctx.cures) do probe.cures[k] = v end
+                end
+            end
+        end)
+        local fetchable = true
+        if type(missing) == "table" then
+            for i = 1, #missing do
+                local id = missing[i]
+                local item = nil
+                pcall(function() item = BridgeFetch.findItem(id) end)
+                if item == nil then fetchable = false break end
+                if id == "waterContainer" then probe.water = true
+                elseif id == "cropFeed" then probe.fertilizer = true
+                else probe.cures[id] = true end
+            end
+        end
+        local ready = false
+        if fetchable then
+            for i = 1, #targets do
+                local t = targets[i]
+                local sq = nil
+                pcall(function() sq = BridgeGardening.squareAt(t) end)
+                local plant = nil
+                pcall(function() plant = BridgeGardening.plantAt(sq, false) end)
+                local action = nil
+                pcall(function() action = BridgeGardening.tendActionFor(plant, sq, probe) end)
+                if action ~= nil then ready = true break end
+            end
+        end
+        if not ready then
+            U.log(string.format("tend preflight skip fetchable=%s missing=%s",
+                tostring(fetchable), type(missing) == "table" and table.concat(missing, ",") or "-"))
+            return "unavailable"
+        end
+    end
+
     if BridgeFetch ~= nil and type(BridgeFetch.primeJob) == "function" then
         local fetch, fetchMissing, fetchWhy = nil, nil, nil
         pcall(function() fetch, fetchMissing, fetchWhy = BridgeFetch.primeJob(kind, targets) end)
         if fetch == "pending" then
             BridgeTask.pendingStart = { kind = kind, targets = targets, corpseDest = corpseDest,
-                missing = fetchMissing, since = Bridge.time }
+                missing = fetchMissing, since = Bridge.time, opts = opts }
     U.log("job defer kind=" .. tostring(kind) .. " reason=fetching")
     return "fetching"
         end
@@ -3634,7 +3709,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
             if fetchWhy == "noroom" then
                 local key = "JobLootFull"
                 if kind == "cleanUp" then key = "JobNoRoomForCleaner" end
-                Bridge.speak(key)
+                if BridgeTask.chore ~= true then Bridge.speak(key) end
                 return "unavailable"
             end
             if kind == "cleanUp" and type(fetchMissing) == "table" then
@@ -3651,15 +3726,17 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         end
     end
 
+    if kind == "tendCrops" then BridgeTask.tendHave = nil end
+
     local availScope = nil
     if kind == "washSink" then availScope = opts ~= nil and opts.scope or "self" end
     if def.available ~= nil and not def.available(Bridge.body, availScope) then
         if kind == "fillWater" then
-            Bridge.speak("JobFillNothing")
+            if BridgeTask.chore ~= true then Bridge.speak("JobFillNothing") end
             return "unavailable"
         end
         if kind == "emptyFluid" then
-            Bridge.speak("JobEmptyNothing")
+            if BridgeTask.chore ~= true then Bridge.speak("JobEmptyNothing") end
             return "unavailable"
         end
         BridgeTask.speakMissing(kind)
@@ -3670,7 +3747,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         local opening = kind == "openWindows"
         local pre = BridgeTask.windowPreflight(targets, opening and "open" or "close")
         if pre ~= "ok" then
-            Bridge.speak(opening and "JobNoWindowsClose" or "JobNoWindowsOpen")
+            if BridgeTask.chore ~= true then Bridge.speak(opening and "JobNoWindowsClose" or "JobNoWindowsOpen") end
             return "unavailable"
         end
     end
@@ -3679,7 +3756,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         local opening = kind == "openCurtains"
         local pre = BridgeTask.curtainPreflight(targets, opening and "open" or "close")
         if pre ~= "ok" then
-            Bridge.speak(opening and "JobNoCurtainsClose" or "JobNoCurtainsOpen")
+            if BridgeTask.chore ~= true then Bridge.speak(opening and "JobNoCurtainsClose" or "JobNoCurtainsOpen") end
             return "unavailable"
         end
     end
@@ -3733,13 +3810,13 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     if kind == "lootArea" then
         local wanted, fits = BridgeTask.lootScan(Bridge.body)
         if not wanted then
-            Bridge.speak("JobNoLoot")
+            if BridgeTask.chore ~= true then Bridge.speak("JobNoLoot") end
             BridgeTask.queue = {}
             BridgeTask.kind = nil
             return "unavailable"
         end
         if not fits then
-            Bridge.speak("JobLootFull")
+            if BridgeTask.chore ~= true then Bridge.speak("JobLootFull") end
             BridgeTask.queue = {}
             BridgeTask.kind = nil
             return "unavailable"
@@ -3758,7 +3835,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
             end
         end
         if not canAny and needCut then
-            Bridge.speak("JobNeedCutTool")
+            if BridgeTask.chore ~= true then Bridge.speak("JobNeedCutTool") end
             BridgeTask.queue = {}
             BridgeTask.kind = nil
             return "unavailable"
@@ -3949,6 +4026,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     end
     if kind == "brushTeeth" then
         BridgeTask.brushSink = opts ~= nil and opts.sink or nil
+        BridgeTask.brushSpot = nil
         BridgeTask.brushPhase = nil
         BridgeTask.brushSince = 0
         BridgeTask.brushTicks = nil
@@ -4174,83 +4252,109 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
 
 
 
-    local startText = nil
-    if kind == "cleanUp" then
-        local canAny = false
+    local choreReady = true
+    if BridgeTask.chore == true and kind == "tendCrops" then
+        choreReady = false
+        local level = 0
+        pcall(function() level = BridgeSkills.level("Agriculture") end)
+        local ctx = nil
+        pcall(function()
+            ctx = BridgeGardening ~= nil and BridgeGardening.tendContext(Bridge.body, level) or nil
+        end)
         for i = 1, #BridgeTask.queue do
             local t = BridgeTask.queue[i]
-            local sq = getCell():getGridSquare(t.x, t.y, t.z)
-            if BridgeTask.recordCleanNeeds(Bridge.body, sq) then canAny = true end
-        end
-        local needs = BridgeTask.cleanNeedsTable(
-            BridgeTask.needImplement, BridgeTask.needFluid,
-            BridgeTask.needPetrol, BridgeTask.needAshTool, BridgeTask.needCut)
-        if needs.implement or needs.fluid or needs.petrol or needs.ash or needs.cut then
-            startText = BridgeTask.cleanNeedText(needs, canAny and "start" or "need")
+            local sq = nil
+            pcall(function() sq = BridgeGardening.squareAt(t) end)
+            local plant = nil
+            pcall(function() plant = BridgeGardening.plantAt(sq, false) end)
+            local action = nil
+            pcall(function() action = BridgeGardening.tendActionFor(plant, sq, ctx) end)
+            if action ~= nil then choreReady = true break end
         end
     end
-    if kind == "clearPlants" then
-        BridgeTask.clearNeedCut = clearNeedPlants
-        Bridge.speak(clearNeedPlants and "JobStartNeedCutTool" or "JobStart")
-    elseif kind == "tendCrops" then
-        local needs = nil
-        pcall(function()
-            needs = BridgeGardening ~= nil and BridgeGardening.tendNeedScan(Bridge.body, BridgeTask.queue, nil) or nil
-        end)
-        if needs ~= nil then
-            BridgeTask.tendNeedFeed = needs.feed == true
-            BridgeTask.tendNeedWater = needs.water == true
-            BridgeTask.tendNeedSpray = needs.spray == true
-            BridgeTask.tendNeedSkill = needs.skill == true
-            startText = BridgeTask.tendNeedText(needs)
-        end
-    elseif kind == "exercise" then
-    elseif kind == "anim" then
-    elseif kind == "washSink" then
-    elseif kind == "brushTeeth" then
-        Bridge.speakText("Let me brush my teeth.")
-    elseif kind == "smoke" then
-        Bridge.speak("SmokeStart")
-    elseif kind == "fillWater" then
-    elseif kind == "emptyFluid" then
-    elseif kind == "shower" then
-    elseif kind == "bath" then
-    elseif kind == "climbLadder" then
-    elseif kind == "roam" then
-    elseif kind == "pryDoor" then
-        Bridge.speak("PryStart")
-    elseif kind == "openDoors" then
-        Bridge.speak("DoorsOpenStart")
-    elseif kind == "closeDoors" then
-        Bridge.speak("DoorsCloseStart")
-    elseif kind == "closeWindows" then
-        Bridge.speak("WindowsCloseStart")
-    elseif kind == "openWindows" then
-        Bridge.speak("WindowsOpenStart")
-    elseif kind == "openCurtains" then
-        Bridge.speak("CurtainsOpenStart")
-    elseif kind == "closeCurtains" then
-        Bridge.speak("CurtainsCloseStart")
-    elseif kind == "deposit" then
-        Bridge.speak("JobDepositStart")
-    elseif kind == "petAnimals" then
-        Bridge.speak("JobPetStart")
-    elseif kind == "tendAnimals" then
-        Bridge.speak("JobTendAnimalsStart")
-    elseif kind == "fillTroughs" then
-        Bridge.speak("JobTroughStart")
-    elseif kind == "animalCare" then
-        Bridge.speak("JobAnimalCareStart")
-    elseif kind == "read" then
-        local info = nil
-        if targets ~= nil and targets[1] ~= nil and targets[1].item ~= nil then
-            info = BridgeTask.readInfoOf(targets[1].item)
-        end
-        Bridge.speak((info ~= nil and info.kind == "lit") and "ReadStart" or "ReadStartSkill")
-    elseif startText ~= nil then
-        Bridge.speakText(startText)
+    BridgeTask.choreReady = BridgeTask.chore == true and choreReady or nil
+
+    if BridgeTask.chore == true then
+        if choreReady then Bridge.speak(BridgeTask.choreStartKey()) end
     else
-        Bridge.speak("JobStart")
+        local startText = nil
+        if kind == "cleanUp" then
+            local canAny = false
+            for i = 1, #BridgeTask.queue do
+                local t = BridgeTask.queue[i]
+                local sq = getCell():getGridSquare(t.x, t.y, t.z)
+                if BridgeTask.recordCleanNeeds(Bridge.body, sq) then canAny = true end
+            end
+            local needs = BridgeTask.cleanNeedsTable(
+                BridgeTask.needImplement, BridgeTask.needFluid,
+                BridgeTask.needPetrol, BridgeTask.needAshTool, BridgeTask.needCut)
+            if needs.implement or needs.fluid or needs.petrol or needs.ash or needs.cut then
+                startText = BridgeTask.cleanNeedText(needs, canAny and "start" or "need")
+            end
+        end
+        if kind == "clearPlants" then
+            BridgeTask.clearNeedCut = clearNeedPlants
+            Bridge.speak(clearNeedPlants and "JobStartNeedCutTool" or "JobStart")
+        elseif kind == "tendCrops" then
+            local needs = nil
+            pcall(function()
+                needs = BridgeGardening ~= nil and BridgeGardening.tendNeedScan(Bridge.body, BridgeTask.queue, nil) or nil
+            end)
+            if needs ~= nil then
+                BridgeTask.tendNeedFeed = needs.feed == true
+                BridgeTask.tendNeedWater = needs.water == true
+                BridgeTask.tendNeedSpray = needs.spray == true
+                BridgeTask.tendNeedSkill = needs.skill == true
+                startText = BridgeTask.tendNeedText(needs)
+            end
+        elseif kind == "exercise" then
+        elseif kind == "anim" then
+        elseif kind == "washSink" then
+        elseif kind == "brushTeeth" then
+            Bridge.speakText("Let me brush my teeth.")
+        elseif kind == "smoke" then
+            Bridge.speak("SmokeStart")
+        elseif kind == "fillWater" then
+        elseif kind == "emptyFluid" then
+        elseif kind == "shower" then
+        elseif kind == "bath" then
+        elseif kind == "climbLadder" then
+        elseif kind == "roam" then
+        elseif kind == "pryDoor" then
+            Bridge.speak("PryStart")
+        elseif kind == "openDoors" then
+            Bridge.speak("DoorsOpenStart")
+        elseif kind == "closeDoors" then
+            Bridge.speak("DoorsCloseStart")
+        elseif kind == "closeWindows" then
+            Bridge.speak("WindowsCloseStart")
+        elseif kind == "openWindows" then
+            Bridge.speak("WindowsOpenStart")
+        elseif kind == "openCurtains" then
+            Bridge.speak("CurtainsOpenStart")
+        elseif kind == "closeCurtains" then
+            Bridge.speak("CurtainsCloseStart")
+        elseif kind == "deposit" then
+            Bridge.speak("JobDepositStart")
+        elseif kind == "petAnimals" then
+            Bridge.speak("JobPetStart")
+        elseif kind == "tendAnimals" then
+            Bridge.speak("JobTendAnimalsStart")
+        elseif kind == "fillTroughs" then
+            Bridge.speak("JobTroughStart")
+        elseif kind == "animalCare" then
+            Bridge.speak("JobAnimalCareStart")
+        elseif kind == "read" then
+            local info = nil
+            if targets ~= nil and targets[1] ~= nil and targets[1].item ~= nil then
+                info = BridgeTask.readInfoOf(targets[1].item)
+            end
+            Bridge.speak((info ~= nil and info.kind == "lit") and "ReadStart" or "ReadStartSkill")
+        elseif startText ~= nil then
+            Bridge.speakText(startText)
+        else
+            Bridge.speak("JobStart")
+        end
     end
     local startExtra = ""
     if kind == "openDoors" or kind == "closeDoors" or kind == "closeWindows" or kind == "openWindows"
@@ -4365,11 +4469,15 @@ function BridgeTask.cancel(reason)
         Bridge.setMode(mode)
     end
     if reason == "danger" then Bridge.speak("JobDanger")
-    elseif reason == "noAxe" then Bridge.speak("JobNoAxe")
+    elseif reason == "noAxe" then
+        if BridgeTask.chore ~= true then Bridge.speak("JobNoAxe") end
     elseif reason == "noSupplies" then BridgeTask.speakMissing(ckind) end
     U.log(string.format("===== job end id=%s kind=%s outcome=cancel reason=%s =====",
         tostring(cid or "-"), tostring(ckind), tostring(reason)))
     BridgeTask.jobId = nil
+    BridgeTask.chore = nil
+    BridgeTask.choreRow = nil
+    BridgeTask.choreReady = nil
     return "cancelled"
 end
 
@@ -4492,7 +4600,8 @@ function BridgeTask.finish()
     end
 
 
-    if BridgeTask.quiet == true then
+    if BridgeTask.chore == true then
+    elseif BridgeTask.quiet == true then
     elseif depositCount ~= nil and depositCount > 0 then
         if depositFull then
             Bridge.speak(depositCount == 1 and "JobDepositDoneFullOne" or "JobDepositDoneFull", depositCount)
@@ -4568,6 +4677,9 @@ function BridgeTask.finish()
         tostring(finishId or "-"), tostring(finishKind),
         tostring(BridgeTask.doneCount), tostring(BridgeTask.failCount)))
     BridgeTask.jobId = nil
+    BridgeTask.chore = nil
+    BridgeTask.choreRow = nil
+    BridgeTask.choreReady = nil
     local nextJob = BridgeTask.nextJob
     BridgeTask.nextJob = nil
     if nextJob ~= nil then
@@ -6292,6 +6404,35 @@ function BridgeTask.brushReady(rec)
     return BridgeTask.brushCooldownLeft(rec) <= 0
 end
 
+BridgeTask.SMOKE_COOLDOWN_HOURS = 3
+
+function BridgeTask.smokeCooldownLeft(rec)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    if rec == nil then return 0 end
+    local untilH = tonumber(rec.smokeUntil)
+    local now = worldHours()
+    if untilH == nil or now == nil then return 0 end
+    local left = untilH - now
+    if left < 0 then left = 0 end
+    return left
+end
+
+function BridgeTask.setSmokeCooldown(rec, hours)
+    rec = rec or (Bridge ~= nil and Bridge.store) or nil
+    local now = worldHours()
+    if now == nil then return end
+    local h = tonumber(hours) or BridgeTask.SMOKE_COOLDOWN_HOURS
+    local untilH = now + h
+    if rec ~= nil then rec.smokeUntil = untilH end
+    if Bridge ~= nil and Bridge.mp and BridgeData ~= nil and BridgeData.owner ~= nil then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { smokeUntil = untilH }) end)
+    end
+end
+
+function BridgeTask.smokeReady(rec)
+    return BridgeTask.smokeCooldownLeft(rec) <= 0
+end
+
 local function smokeTypeOf(item)
     local t = nil
     pcall(function() t = item:getType() end)
@@ -6464,25 +6605,26 @@ function BridgeTask.kinds.brushTeeth.update(body)
     if BridgeMove ~= nil then BridgeMove.forcedWalk = "Walk" end
     if BridgeTask.BRUSH_TEETH_ENABLED ~= 1 then return BridgeTask.finish() end
     if not BridgeTask.brushReady() then
-        Bridge.speak("BrushedRecently")
+        if BridgeTask.chore ~= true then Bridge.speak("BrushedRecently") end
         return BridgeTask.finish()
     end
     local sink = BridgeTask.brushSink
-    if sink == nil then
+    local spot = BridgeTask.brushSpot
+    if sink == nil or spot == nil then
         local t = BridgeTask.current
-        if t ~= nil then
-            sink = washWaterOn(getCell():getGridSquare(t.x, t.y, t.z))
-            BridgeTask.brushSink = sink
+        if t ~= nil and t.sink ~= nil and t.spot ~= nil then
+            sink, spot = t.sink, t.spot
+        else
+            local s, p = nil, nil
+            pcall(function() s, p = BridgeWash.findBrushWater(body) end)
+            sink, spot = s, p
         end
+        BridgeTask.brushSink = sink
+        BridgeTask.brushSpot = spot
     end
-    local target = nil
-    if sink ~= nil then
-        local sq = nil
-        pcall(function() sq = sink:getSquare() end)
-        if sq ~= nil then target = { x = sq:getX(), y = sq:getY(), z = sq:getZ() } end
-    end
+    local target = spot
     if target == nil then
-        Bridge.speakText("I need a sink.")
+        if BridgeTask.chore ~= true then Bridge.speakText("I need a sink.") end
         return BridgeTask.finish()
     end
 
@@ -6494,12 +6636,12 @@ function BridgeTask.kinds.brushTeeth.update(body)
         local brush = brushItem(body)
         if brush == nil then
             U.log("brush: refuse no-brush")
-            Bridge.speakText("I don't have a toothbrush.")
+            if BridgeTask.chore ~= true then Bridge.speakText("I don't have a toothbrush.") end
             return BridgeTask.finish()
         end
         if avail < 1 then
             U.log("brush: refuse no-water")
-            Bridge.speakText("There's no water here.")
+            if BridgeTask.chore ~= true then Bridge.speakText("There's no water here.") end
             return BridgeTask.finish()
         end
         local info = "?"
@@ -6539,7 +6681,7 @@ function BridgeTask.kinds.brushTeeth.update(body)
             return true
         elseif res == "unreachable" then
             U.log("brush: refuse unreachable")
-            Bridge.speakText("I can't reach the sink.")
+            if BridgeTask.chore ~= true then Bridge.speakText("I can't reach the sink.") end
             return BridgeTask.finish()
         end
         BridgeTask.info = "brush walking"
@@ -6583,6 +6725,7 @@ end
 
 function BridgeTask.kinds.brushTeeth.leave(body)
     BridgeTask.brushSink = nil
+    BridgeTask.brushSpot = nil
     BridgeTask.brushPhase = nil
     BridgeTask.brushSince = 0
     BridgeTask.brushTicks = nil
@@ -6625,7 +6768,7 @@ function BridgeTask.kinds.smoke.update(body)
         if smoke.want ~= nil then pick = BridgeTask.smokePickFrom(body, smoke.want) end
         if pick == nil then pick = BridgeTask.smokePick(body) end
         if pick == nil then
-            Bridge.speak("SmokeNoCigarette")
+            if BridgeTask.chore ~= true then Bridge.speak("SmokeNoCigarette") end
             return BridgeTask.finish()
         end
         local single = pick.item
@@ -6633,14 +6776,14 @@ function BridgeTask.kinds.smoke.update(body)
             single = BridgeTask.smokeExtract(body, pick.pack)
         end
         if single == nil then
-            Bridge.speak("SmokeNoCigarette")
+            if BridgeTask.chore ~= true then Bridge.speak("SmokeNoCigarette") end
             return BridgeTask.finish()
         end
         smoke.item = single
         smoke.pack = pick.pack
         local tool, sound = BridgeTask.smokeFireSource(body, single)
         if tool == nil then
-            Bridge.speak("SmokeNoLighter")
+            if BridgeTask.chore ~= true then Bridge.speak("SmokeNoLighter") end
             return BridgeTask.finish()
         end
         smoke.soundTool = sound
@@ -6690,6 +6833,7 @@ function BridgeTask.kinds.smoke.update(body)
         smoke.consumed = true
         if Bridge ~= nil and type(Bridge.itemsChanged) == "function" then pcall(Bridge.itemsChanged) end
         BridgeTask.doneCount = (BridgeTask.doneCount or 0) + 1
+        BridgeTask.setSmokeCooldown()
         BridgeTask.info = "smoke done"
         return BridgeTask.finish()
     end
@@ -11565,7 +11709,9 @@ end
 
 function BridgeTask.readSpanHours(book, seated)
     local pages = 5
-    pcall(function() if book:getNumberOfPages() > 0 then pages = book:getNumberOfPages() end end)
+    if book ~= nil and type(book.getNumberOfPages) == "function" then
+        pcall(function() if book:getNumberOfPages() > 0 then pages = book:getNumberOfPages() end end)
+    end
     local mpp = 2.0
     pcall(function()
         local opt = getSandboxOptions():getOptionByName("MinutesPerPage")
@@ -11722,7 +11868,9 @@ function BridgeTask.readStartReading(body, book, posture)
     BridgeTask.readTickStart = Bridge.time
     BridgeTask.readTickSpan = BridgeTask.readSpanH * 3600
     BridgeTask.readPages = 0
-    pcall(function() BridgeTask.readPages = book:getNumberOfPages() end)
+    if type(book.getNumberOfPages) == "function" then
+        pcall(function() BridgeTask.readPages = book:getNumberOfPages() end)
+    end
     if BridgeTask.readPages == nil or BridgeTask.readPages < 1 then
         BridgeTask.readPages = 1
         if book.setNumberOfPages ~= nil then
@@ -11761,7 +11909,7 @@ function BridgeTask.kinds.read.update(body)
     local book = BridgeTask.readBook
     if book == nil then return BridgeTask.finish() end
     if not BridgeTask.readHasBook(body, book) then
-        Bridge.speak("ReadRejectGone")
+        if BridgeTask.chore ~= true then Bridge.speak("ReadRejectGone") end
         BridgeTask.info = "read: book gone"
         return BridgeTask.finish()
     end
@@ -11775,25 +11923,25 @@ function BridgeTask.kinds.read.update(body)
         if info.status == "read" then
             if not BridgeTask.readRejected then
                 BridgeTask.readRejected = true
-                Bridge.speak("ReadRejectAlready")
+                if BridgeTask.chore ~= true then Bridge.speak("ReadRejectAlready") end
             end
             BridgeTask.info = "read: already read"
             return BridgeTask.finish()
         end
         if info.status == "too_hard" then
-            Bridge.speak("ReadRejectTooHard")
+            if BridgeTask.chore ~= true then Bridge.speak("ReadRejectTooHard") end
             BridgeTask.info = "read: too hard"
             return BridgeTask.finish()
         end
         if info.status == "obsolete" then
-            Bridge.speak("ReadRejectObsolete")
+            if BridgeTask.chore ~= true then Bridge.speak("ReadRejectObsolete") end
             BridgeTask.info = "read: obsolete"
             return BridgeTask.finish()
         end
         local veh = nil
         pcall(function() veh = body:getVehicle() end)
         if veh ~= nil then
-            Bridge.speak("ReadRejectVehicle")
+            if BridgeTask.chore ~= true then Bridge.speak("ReadRejectVehicle") end
             BridgeTask.info = "read: in vehicle"
             return BridgeTask.finish()
         end
@@ -11804,7 +11952,7 @@ function BridgeTask.kinds.read.update(body)
             if e ~= nil and e.dark == true then dark = true end
         end
         if dark then
-            Bridge.speak("ReadRejectDark")
+            if BridgeTask.chore ~= true then Bridge.speak("ReadRejectDark") end
             BridgeTask.info = "read: too dark"
             return BridgeTask.finish()
         end
@@ -11945,7 +12093,9 @@ function BridgeTask.kinds.read.update(body)
         if milestone > (BridgeTask.readMilestone or 0) then
             BridgeTask.readMilestone = milestone
             local readPages = math.floor(pages * frac)
-            pcall(function() book:setAlreadyReadPages(readPages) end)
+            if type(book.setAlreadyReadPages) == "function" then
+                pcall(function() book:setAlreadyReadPages(readPages) end)
+            end
             pcall(function() Bridge.itemsChanged() end)
             if BridgeTask.readKind == "skill" then
                 BridgeTask.readApplyMult(book, frac)
@@ -11963,7 +12113,9 @@ function BridgeTask.kinds.read.update(body)
             end
         end
         if frac >= 1 then
-            pcall(function() book:setAlreadyReadPages(pages) end)
+            if type(book.setAlreadyReadPages) == "function" then
+                pcall(function() book:setAlreadyReadPages(pages) end)
+            end
             pcall(function() Bridge.itemsChanged() end)
             if BridgeTask.readKind == "skill" then
                 BridgeTask.readApplyMult(book, 1)
@@ -11974,7 +12126,9 @@ function BridgeTask.kinds.read.update(body)
                 tostring(BridgeTask.readKey), tostring(BridgeTask.readKind), tonumber(pages) or 0))
             if not BridgeTask.readSaidDone then
                 BridgeTask.readSaidDone = true
-                Bridge.speak(BridgeTask.readKind == "skill" and "ReadDoneSkill" or "ReadDone")
+                if BridgeTask.chore ~= true then
+                    Bridge.speak(BridgeTask.readKind == "skill" and "ReadDoneSkill" or "ReadDone")
+                end
             end
             BridgeTask.doneCount = (BridgeTask.doneCount or 0) + 1
             return BridgeTask.finish()
@@ -12714,7 +12868,7 @@ function BridgeTask.kinds.exercise.update(body)
                 BridgeTask.exerciseStowed = true
             end
         end
-        Bridge.speak("ExerciseStart")
+        if BridgeTask.chore ~= true then Bridge.speak("ExerciseStart") end
         BridgeTask.exerciseProgress()
         BridgeTask.info = "exercise: start"
         U.log(string.format("exercise start mirror=%s anim=%s stamina=%.2f", tostring(BridgeTask.exerciseMirror), tostring(anim), 1 - exerciseFatigue()))
@@ -12845,7 +12999,7 @@ function BridgeTask.kinds.exercise.stop(body)
     if BridgeExercise ~= nil and BridgeExercise.setBank ~= nil then
         pcall(function() BridgeExercise.setBank(Bridge.store, 0) end)
     end
-    Bridge.speak("ExerciseDone")
+    if BridgeTask.chore ~= true then Bridge.speak("ExerciseDone") end
     return BridgeTask.finish()
 end
 
@@ -13233,7 +13387,7 @@ function BridgeTask.kinds.shower.update(body)
         BridgeTask.showerSeen = false
         showerSetBump(body, BridgeShower.BUMP_START)
         pcall(function() body:playSound("tabas_turntap") end)
-        Bridge.speak("ShowerStart")
+        if BridgeTask.chore ~= true then Bridge.speak("ShowerStart") end
         BridgeTask.showerWashSaid = nil
         BridgeTask.info = "shower: turning on"
         U.log("shower: snapped in, turning on (walkIn=" .. tostring(BridgeTask.showerWalkIn) .. ")")
@@ -13476,7 +13630,7 @@ function BridgeTask.kinds.shower.stop(body)
             BridgeShower.restorePreShower(body)
         end
     end)
-    Bridge.speak("ShowerDone")
+    if BridgeTask.chore ~= true then Bridge.speak("ShowerDone") end
     U.log("shower: done")
     return BridgeTask.finish()
 end
@@ -13789,7 +13943,7 @@ function BridgeTask.kinds.bath.update(body)
         BridgeTask.bathSince = Bridge.time
         BridgeTask.bathSeen = false
         bathSetBump(body, "BathIn")
-        Bridge.speak("BathStart")
+        if BridgeTask.chore ~= true then Bridge.speak("BathStart") end
         pcall(function() BridgeSound.sfxAt(body, "tabas_bath_enter", 0.8) end)
         BridgeTask.info = "bath: stepping in"
         U.log("bath: stepping in")
@@ -13977,7 +14131,7 @@ function BridgeTask.kinds.bath.stop(body)
         end
     end)
     pcall(function() BridgeSound.sfxAt(body, "tabas_bath_getup", 0.8) end)
-    Bridge.speak("BathDone")
+    if BridgeTask.chore ~= true then Bridge.speak("BathDone") end
     U.log("bath: done")
     return BridgeTask.finish()
 end

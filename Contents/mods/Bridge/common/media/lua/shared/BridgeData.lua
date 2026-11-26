@@ -894,7 +894,7 @@ function BridgeData.lootMaxWeight(rec)
 end
 
 
-BridgeData.MENU_ORDER_IDS = { "cancel", "talk", "heal", "equip", "wait", "actions", "fight", "guns", "torch", "jobs", "home" }
+BridgeData.MENU_ORDER_IDS = { "cancel", "talk", "heal", "equip", "wait", "mind", "actions", "fight", "guns", "torch", "jobs", "home" }
 BridgeData.MENU_ORDER_SET = {}
 for _, id in ipairs(BridgeData.MENU_ORDER_IDS) do BridgeData.MENU_ORDER_SET[id] = true end
 
@@ -1053,8 +1053,8 @@ end
 
 BridgeData.CHORE_IDS = {
     "tend", "harvest", "animals", "troughs", "clean", "yard", "chop", "deposit",
-    "closeDoors", "closeWindows", "corpses",
-    "wash", "shower", "bath", "exercise", "sit", "roam",
+    "closeWindows", "closeCurtains", "corpses",
+    "wash", "shower", "bath", "exercise", "sit", "read", "brush", "smoke", "roam",
 }
 BridgeData.CHORE_SET = {}
 for _, id in ipairs(BridgeData.CHORE_IDS) do BridgeData.CHORE_SET[id] = true end
@@ -1063,7 +1063,7 @@ BridgeData.CHORE_DEFAULT_ON = {
     tend = true, harvest = true, animals = true, troughs = true,
     clean = true, wash = true, shower = true, bath = true, exercise = true,
     sit = true, roam = true, deposit = true, closeWindows = true,
-    corpses = true,
+    corpses = true, read = true, brush = true,
 }
 
 BridgeData.CHORE_LABELS = {
@@ -1072,8 +1072,9 @@ BridgeData.CHORE_LABELS = {
     chop = "ChoreChop", deposit = "ChoreDeposit", wash = "ChoreWash", shower = "ChoreShower",
     bath = "ChoreBath",
     exercise = "ChoreExercise", sit = "ChoreSit", roam = "ChoreRoam",
-    closeDoors = "ChoreCloseDoors", closeWindows = "ChoreCloseWindows",
-    corpses = "ChoreCorpses",
+    closeWindows = "ChoreCloseWindows",
+    closeCurtains = "ChoreCloseCurtains",
+    corpses = "ChoreCorpses", read = "ChoreRead", brush = "ChoreBrush", smoke = "ChoreSmoke",
 }
 
 

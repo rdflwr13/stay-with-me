@@ -368,9 +368,13 @@ function BridgeSkills.litInfo(item)
     local key = BridgeSkills.readKey(item)
     if key == nil then return nil end
     local pages = 0
-    pcall(function() pages = tonumber(item:getNumberOfPages()) or 0 end)
+    if type(item.getNumberOfPages) == "function" then
+        pcall(function() pages = tonumber(item:getNumberOfPages()) or 0 end)
+    end
     local read = 0
-    pcall(function() read = tonumber(item:getAlreadyReadPages()) or 0 end)
+    if type(item.getAlreadyReadPages) == "function" then
+        pcall(function() read = tonumber(item:getAlreadyReadPages()) or 0 end)
+    end
     local status = "ok"
     local rec = Bridge.store
     if rec ~= nil then
