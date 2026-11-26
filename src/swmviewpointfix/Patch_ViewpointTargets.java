@@ -55,7 +55,7 @@ public final class Patch_ViewpointTargets {
             if (!(id instanceof Integer)) {
                 return;
             }
-            float x = z.getX(), y = z.getY(), zz = z.getZ();
+            float x = z.getX(), y = z.getY(), zz = z.getZ() * 2.4494896f;
             grow.invoke(null, id, x - 0.3f, y - 0.3f, zz, x + 0.3f, y + 0.3f, zz + 1.6f);
             if (!bound) {
                 bound = true;

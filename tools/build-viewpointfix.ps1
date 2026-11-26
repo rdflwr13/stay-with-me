@@ -70,6 +70,9 @@ try {
     if ($entries -notcontains "swmviewpointfix/Patch_ViewpointTargets.class") {
         throw "Jar is missing swmviewpointfix/Patch_ViewpointTargets.class"
     }
+    if ($entries -notcontains "swmviewpointfix/Projection.class") {
+        throw "Jar is missing swmviewpointfix/Projection.class"
+    }
 
     Write-Output "Built $out"
     $entries | ForEach-Object { Write-Output $_ }
