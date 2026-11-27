@@ -4336,7 +4336,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         elseif kind == "anim" then
         elseif kind == "washSink" then
         elseif kind == "brushTeeth" then
-            Bridge.speakText("Let me brush my teeth.")
+            Bridge.speakText(U.sayGet("BrushTeethNow"))
         elseif kind == "smoke" then
             Bridge.speak("SmokeStart")
         elseif kind == "fillWater" then
@@ -4677,7 +4677,7 @@ function BridgeTask.finish()
                 or finishKind == "fertilizePlants" or finishKind == "tendCrops" or finishKind == "climbLadder"
                 or finishKind == "read" then
         elseif finishKind == "brushTeeth" then
-            if (BridgeTask.doneCount or 0) > 0 then Bridge.speakText("Minty fresh.") end
+            if (BridgeTask.doneCount or 0) > 0 then Bridge.speakText(U.sayGet("MintyFresh")) end
         elseif finishKind == "smoke" then
             if (BridgeTask.doneCount or 0) > 0 then Bridge.speak("SmokeDone") end
         elseif finishKind == "petAnimals" then
@@ -6649,7 +6649,7 @@ function BridgeTask.kinds.brushTeeth.update(body)
     end
     local target = spot
     if target == nil then
-        if BridgeTask.chore ~= true then Bridge.speakText("I need a sink.") end
+        if BridgeTask.chore ~= true then Bridge.speakText(U.sayGet("NeedSink")) end
         return BridgeTask.finish()
     end
 
@@ -6661,12 +6661,12 @@ function BridgeTask.kinds.brushTeeth.update(body)
         local brush = brushItem(body)
         if brush == nil then
             U.log("brush: refuse no-brush")
-            if BridgeTask.chore ~= true then Bridge.speakText("I don't have a toothbrush.") end
+            if BridgeTask.chore ~= true then Bridge.speakText(U.sayGet("NoToothbrush")) end
             return BridgeTask.finish()
         end
         if avail < 1 then
             U.log("brush: refuse no-water")
-            if BridgeTask.chore ~= true then Bridge.speakText("There's no water here.") end
+            if BridgeTask.chore ~= true then Bridge.speakText(U.sayGet("NoWaterHere")) end
             return BridgeTask.finish()
         end
         local info = "?"
@@ -6706,7 +6706,7 @@ function BridgeTask.kinds.brushTeeth.update(body)
             return true
         elseif res == "unreachable" then
             U.log("brush: refuse unreachable")
-            if BridgeTask.chore ~= true then Bridge.speakText("I can't reach the sink.") end
+            if BridgeTask.chore ~= true then Bridge.speakText(U.sayGet("CantReachSink")) end
             return BridgeTask.finish()
         end
         BridgeTask.info = "brush walking"

@@ -285,5 +285,17 @@
     "Sandbox_StayWithMe_SkillXpShare_Values_option2": "25%",
     "Sandbox_StayWithMe_SkillXpShare_Values_option3": "50% (по умолчанию)",
     "Sandbox_StayWithMe_SkillXpShare_Values_option4": "75%",
-    "Sandbox_StayWithMe_SkillXpShare_Values_option5": "100%"
+    "Sandbox_StayWithMe_SkillXpShare_Values_option5": "100%",
+    "Sandbox_StayWithMe_ShowerCooldown": "Перерыв между душем (часы)",
+    "Sandbox_StayWithMe_ShowerCooldown_tooltip": "Сколько часов пройдёт, прежде чем компаньон снова пойдёт в душ. 0 — когда захочет. По умолчанию: 24.",
+    "Sandbox_StayWithMe_ShowerWaterUsage": "Расход воды на душ",
+    "Sandbox_StayWithMe_ShowerWaterUsage_tooltip": "Сколько единиц воды уходит на один душ. 0 — душ только для вида, вода не тратится. По умолчанию: 10.",
+    "Sandbox_StayWithMe_ShowerDuration": "Длительность душа (игровые минуты)",
+    "Sandbox_StayWithMe_ShowerDuration_tooltip": "Сколько игровых минут длится душ. По умолчанию: 30.",
+    "Sandbox_StayWithMe_BathCooldown": "Перерыв между ваннами (часы)",
+    "Sandbox_StayWithMe_BathCooldown_tooltip": "Сколько часов пройдёт, прежде чем компаньон снова примет ванну. 0 — когда захочет. По умолчанию: 24.",
+    "Sandbox_StayWithMe_BathWaterUsage": "Расход воды на ванну",
+    "Sandbox_StayWithMe_BathWaterUsage_tooltip": "Сколько единиц воды уходит на одну ванну. 0 — ванна только для вида, вода не тратится. По умолчанию: 10.",
+    "Sandbox_StayWithMe_BathDuration": "Длительность ванны (игровые минуты)",
+    "Sandbox_StayWithMe_BathDuration_tooltip": "Сколько игровых минут компаньон лежит в ванне. По умолчанию: 30."
 }
