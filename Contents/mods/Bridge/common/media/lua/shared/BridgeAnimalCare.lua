@@ -19,6 +19,8 @@ local SHEAR_MIN_TICKS = 40
 local STRESS_LIMIT = 40
 local PRODUCT_SLACK = 4 * SECOND
 
+local function log(text) if BridgeLog ~= nil and BridgeLog.on() then print("[BridgeAnimalCare] " .. tostring(text)) end end
+
 local function ffMult()
     local m = 1
     if BridgeTask ~= nil and type(BridgeTask.ffMult) == "function" then
@@ -114,9 +116,7 @@ function BridgeAnimalCare.petNoPlayerXp(a, chr, serverSide)
     local beforeLvl = petXpLevel(chr)
     if not pcall(fn, a, chr) then return false end
     if petXpLevel(chr) ~= beforeLvl then
-        if BridgeLog ~= nil and BridgeLog.on() then
-            print("[BridgeAnimalCare] pet xp kept: player level gain")
-        end
+        log("pet xp kept: player level gain")
         return true
     end
     local scale = 1
@@ -137,31 +137,31 @@ function BridgeAnimalCare.petNoPlayerXp(a, chr, serverSide)
 end
 
 local function isTendedRaw(a)
-    if a == nil then return false end
+    if a == nil then return false, "nil" end
     local dead = false
     pcall(function() dead = a:isDead() == true end)
-    if dead then return false end
+    if dead then return false, "dead" end
     local exists = true
     pcall(function() exists = a:isExistInTheWorld() ~= false end)
-    if not exists then return false end
-    if sqOf(a) == nil then return false end
+    if not exists then return false, "notexist" end
+    if sqOf(a) == nil then return false, "nosquare" end
     local wild = false
     pcall(function() wild = a:isWild() == true end)
-    if wild then return false end
+    if wild then return false, "wild" end
     local companion = false
     pcall(function() companion = hasMod(a) and a:getModData().CompanionDogs ~= nil end)
-    if companion then return false end
+    if companion then return false, "companion" end
     local held, hook = false, false
     pcall(function() held = a:isHeld() == true end)
-    if held then return false end
+    if held then return false, "held" end
     local vehicle = nil
     pcall(function() vehicle = a:getVehicle() end)
-    if vehicle ~= nil then return false end
+    if vehicle ~= nil then return false, "vehicle" end
     local hutch = nil
     pcall(function() hutch = a:getHutch() end)
-    if hutch ~= nil then return false end
+    if hutch ~= nil then return false, "hutch" end
     pcall(function() hook = a:isOnHook() == true end)
-    if hook then return false end
+    if hook then return false, "hook" end
     local attachedPlayer, attachedTree = nil, nil
     pcall(function()
         local d = a:getData()
@@ -170,8 +170,8 @@ local function isTendedRaw(a)
             attachedTree = d:getAttachedTree()
         end
     end)
-    if attachedPlayer ~= nil or attachedTree ~= nil then return false end
-    return true
+    if attachedPlayer ~= nil or attachedTree ~= nil then return false, "attached" end
+    return true, "ok"
 end
 
 local tendedMemo = setmetatable({}, { __mode = "k" })
@@ -184,6 +184,11 @@ function BridgeAnimalCare.isTended(a)
     local v = isTendedRaw(a) == true
     tendedMemo[a] = { tick = tick, v = v }
     return v
+end
+
+function BridgeAnimalCare.tendReason(a)
+    local ok, reason = isTendedRaw(a)
+    return reason
 end
 
 function BridgeAnimalCare.cooldownLeft(a)
@@ -387,6 +392,18 @@ end
 
 function BridgeAnimalCare.canTend(a)
     return BridgeAnimalCare.taskFor(a) ~= nil
+end
+
+function BridgeAnimalCare.taskDebug(a)
+    if a == nil then return "nil" end
+    local task = BridgeAnimalCare.taskFor(a)
+    local canPet = BridgeAnimalCare.canPet(a)
+    local shear = BridgeAnimalCare.shearInfo(a) and "1" or "0"
+    local milk = BridgeAnimalCare.milkInfo(a) and "1" or "0"
+    local stress = stressOf(a)
+    local cd = BridgeAnimalCare.cooldownLeft(a)
+    return string.format("task=%s canPet=%s shear=%s milk=%s stress=%s cooldown=%.2f",
+        tostring(task or "-"), tostring(canPet), shear, milk, tostring(stress), cd)
 end
 
 function BridgeAnimalCare.taskReady(a, task)
@@ -593,6 +610,8 @@ function BridgeAnimalCare.targetsIn(b, cap)
     if list == nil then return out end
     local n = 0
     pcall(function() n = list:size() end)
+    local inBox, tended = 0, 0
+    local rejects = {}
     for i = 0, n - 1 do
         if #out >= cap then break end
         local a = nil
@@ -602,21 +621,39 @@ function BridgeAnimalCare.targetsIn(b, cap)
             if sq ~= nil then
                 local ax, ay, az = sq:getX(), sq:getY(), sq:getZ()
                 if ax >= b.x1 and ax <= b.x2 and ay >= b.y1 and ay <= b.y2
-                        and math.abs(az - b.z) < 1 and BridgeAnimalCare.canTend(a) then
-                    local fx, fy = ax, ay
-                    pcall(function() fx, fy = a:getX(), a:getY() end)
-                    out[#out + 1] = {
-                        x = ax,
-                        y = ay,
-                        z = math.floor(az),
-                        animal = a,
-                        ref = BridgeAnimalCare.refOf(a),
-                        fx = fx,
-                        fy = fy,
-                    }
+                        and math.abs(az - b.z) < 1 then
+                    inBox = inBox + 1
+                    if BridgeAnimalCare.canTend(a) then
+                        tended = tended + 1
+                        local fx, fy = ax, ay
+                        pcall(function() fx, fy = a:getX(), a:getY() end)
+                        out[#out + 1] = {
+                            x = ax,
+                            y = ay,
+                            z = math.floor(az),
+                            animal = a,
+                            ref = BridgeAnimalCare.refOf(a),
+                            fx = fx,
+                            fy = fy,
+                        }
+                    else
+                        if BridgeLog ~= nil and BridgeLog.on() then
+                            local reason = BridgeAnimalCare.tendReason(a) or "?"
+                            if reason == "ok" then reason = "notready" end
+                            rejects[reason] = (rejects[reason] or 0) + 1
+                        end
+                    end
                 end
             end
         end
+    end
+    if BridgeLog ~= nil and BridgeLog.on() then
+        local parts = {}
+        for k, v in pairs(rejects) do parts[#parts + 1] = tostring(k) .. ":" .. tostring(v) end
+        table.sort(parts)
+        log(string.format("targetsIn cell=%d inbox=%d tended=%d out=%d cap=%d reject=%s box=%s,%s,%s,%s,z%s",
+            n, inBox, tended, #out, cap, (#parts > 0 and table.concat(parts, ",") or "-"),
+            tostring(b.x1), tostring(b.y1), tostring(b.x2), tostring(b.y2), tostring(b.z)))
     end
     return out
 end
@@ -1165,6 +1202,9 @@ function BridgeAnimalCare.onPetResult(args)
     if BridgeTask == nil or not BridgeTask.active or not animalPart then return end
     local pending = BridgeTask.petPending
     if pending == nil then return end
+    if args == nil or args.ok ~= true then
+        log("pet result fail why=" .. tostring(args and args.why or "nil"))
+    end
     if pending.opId ~= nil then
         if args == nil or tostring(args.opId) ~= tostring(pending.opId) then return end
         onProductResult(args, pending)
@@ -1469,6 +1509,7 @@ local function jobUpdate(body)
             return BridgeTask.finish()
         end
         BridgeTask.current = picked
+        log(string.format("pick animal=%s task=%s", tostring(BridgeAnimalCare.nameOf(picked.animal)), tostring(picked.task or "-")))
         BridgeTask.phase = "walk"
         BridgeTask.petSaid = nil
         BridgeTask.petRetryTarget = nil
@@ -1586,9 +1627,11 @@ local function jobUpdate(body)
                 return true
             end
             BridgeTask.petRetryTarget = nil
+            log(string.format("walk unreachable animal=%s", tostring(BridgeAnimalCare.nameOf(a))))
             return dropWithSpeech(body, "unreachable")
         end
         if walk ~= "arrived" then return true end
+        log(string.format("walk arrived animal=%s", tostring(BridgeAnimalCare.nameOf(a))))
         pcall(function() BridgeMove.stopPath(body) end)
         BridgeTask.forceIdle(body)
         local task = target.task

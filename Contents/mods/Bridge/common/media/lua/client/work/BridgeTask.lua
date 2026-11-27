@@ -3548,6 +3548,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         local keep, hutchCount = {}, 0
         local needEggs = false
         local droppedAnimal = nil
+        local animalCount = 0
         for i = 1, #targets do
             local t = targets[i]
             if type(t) == "table" and t.hutch ~= nil then
@@ -3559,6 +3560,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
                     if info.needsEggs == true then needEggs = true end
                 end
             elseif type(t) == "table" and t.animal ~= nil then
+                animalCount = animalCount + 1
                 local a = t.animal
                 local task = t.task
                 if task == nil and BridgeAnimalCare ~= nil
@@ -3577,6 +3579,29 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
                 keep[#keep + 1] = t
             end
         end
+        local branch = "keep"
+        if #keep == 0 then
+            if droppedAnimal ~= nil then
+                local stress = 0
+                if BridgeAnimalCare ~= nil and type(BridgeAnimalCare.stressOf) == "function" then
+                    stress = BridgeAnimalCare.stressOf(droppedAnimal) or 0
+                end
+                branch = stress > 40 and "ProductStress" or "PetNotReady"
+            elseif hutchCount > 0 then
+                branch = "HutchFull"
+            else
+                branch = "NoAnimals"
+            end
+        end
+        local dropInfo = "-"
+        if droppedAnimal ~= nil and BridgeAnimalCare ~= nil then
+            dropInfo = tostring(BridgeAnimalCare.nameOf(droppedAnimal))
+            if BridgeLog ~= nil and BridgeLog.on() and type(BridgeAnimalCare.taskDebug) == "function" then
+                dropInfo = dropInfo .. " " .. tostring(BridgeAnimalCare.taskDebug(droppedAnimal))
+            end
+        end
+        U.log(string.format("tend filter in=%d hutches=%d animals=%d keep=%d dropped=%s needEggs=%s branch=%s",
+            #targets, hutchCount, animalCount, #keep, dropInfo, tostring(needEggs), branch))
         if needEggs then
             local room = BridgeTask.hutchEggCapacity(Bridge.body)
             if room == nil or room <= 0 then
@@ -15842,6 +15867,7 @@ BridgeTask.kinds.tendAnimals.update = function(body)
         T.queue = T.tendPart == "hutch" and hutch or animal
         T.current = nil
         T.phase = nil
+        U.log(string.format("tend part=%s hutches=%d animals=%d", tostring(T.tendPart), #hutch, #animal))
         T.tendContinue = function()
             if T.tendPart == "hutch" and #T.tendAnimal > 0 then
                 T.tendPart = "animal"
@@ -15850,6 +15876,7 @@ BridgeTask.kinds.tendAnimals.update = function(body)
                 T.current = nil
                 T.phase = nil
                 T.resetWalkDest()
+                U.log(string.format("tend part switch=animal animals=%d", #T.queue))
                 return true
             end
             return false

@@ -1212,10 +1212,11 @@ function BridgeWorkSelect.hutchesIn(b)
     if type(b) ~= "table" then return out end
     local seen = {}
     local z = math.floor(tonumber(b.z) or 0)
+    local found, needWork, needEggs, capHit = 0, 0, 0, false
     for x = b.x1, b.x2 do
-        if #out >= BridgeWorkSelect.MAX_HUTCHES then return out end
+        if #out >= BridgeWorkSelect.MAX_HUTCHES then capHit = true break end
         for y = b.y1, b.y2 do
-            if #out >= BridgeWorkSelect.MAX_HUTCHES then return out end
+            if #out >= BridgeWorkSelect.MAX_HUTCHES then capHit = true break end
             local sq = nil
             pcall(function() sq = getCell():getGridSquare(x, y, z) end)
             if sq ~= nil then
@@ -1238,8 +1239,11 @@ function BridgeWorkSelect.hutchesIn(b)
                     local key = tostring(mx) .. "," .. tostring(my) .. "," .. tostring(mz)
                     if seen[key] ~= true then
                         seen[key] = true
+                        found = found + 1
                         local info = BridgeWorkSelect.hutchInfo(m)
                         if info ~= nil and info.needsWork then
+                            needWork = needWork + 1
+                            if info.needsEggs == true then needEggs = needEggs + 1 end
                             local t = BridgeWorkSelect.hutchTarget(m)
                             if t ~= nil then out[#out + 1] = t end
                         end
@@ -1247,7 +1251,11 @@ function BridgeWorkSelect.hutchesIn(b)
                 end
             end
         end
+        if capHit then break end
     end
+    log(string.format("hutchesIn found=%d needWork=%d needEggs=%d out=%d capHit=%s box=%s,%s,%s,%s,z%s",
+        found, needWork, needEggs, #out, tostring(capHit),
+        tostring(b.x1), tostring(b.y1), tostring(b.x2), tostring(b.y2), tostring(b.z)))
     return out
 end
 
@@ -1379,15 +1387,20 @@ BridgeWorkSelect.kinds = {
     tendAnimals = {
         collect = function(b)
             local out = {}
+            local hutchN, animalN = 0, 0
             if BridgeTask ~= nil and BridgeTask.HUTCHCARE_ENABLED == 1 then
                 local list = BridgeWorkSelect.hutchesIn(b)
+                hutchN = #list
                 for i = 1, #list do out[#out + 1] = list[i] end
             end
             if BridgeTask ~= nil and BridgeTask.PET_ANIMALS_ENABLED == 1
                     and BridgeAnimalCare ~= nil and type(BridgeAnimalCare.targetsIn) == "function" then
                 local list = BridgeAnimalCare.targetsIn(b)
+                animalN = #list
                 for i = 1, #list do out[#out + 1] = list[i] end
             end
+            log(string.format("tend collect hutches=%d animals=%d total=%d box=%s,%s,%s,%s,z%s",
+                hutchN, animalN, #out, tostring(b.x1), tostring(b.y1), tostring(b.x2), tostring(b.y2), tostring(b.z)))
             return out
         end,
         max = (BridgeWorkSelect.MAX_HUTCHES or 10) + 10,

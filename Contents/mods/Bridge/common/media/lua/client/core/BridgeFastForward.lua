@@ -250,7 +250,7 @@ function BridgeFastForward.animalsNear(b, every)
     if at ~= nil and now >= at and now - at < (every or BridgeFastForward.ANIMAL_EVERY) then return BridgeFastForward.animals == true end
     BridgeFastForward.animalsAt = now
     local found = false
-    local total, nearest, scanned = 0, nil, false
+    local total, nearest, scanned, watched = 0, nil, false, 0
     pcall(function()
         local cell = getCell ~= nil and getCell() or nil
         if cell == nil then return end
@@ -266,6 +266,7 @@ function BridgeFastForward.animalsNear(b, every)
                 if nearest == nil or d < nearest then nearest = d end
                 if d <= r and math.abs(o:getZ() - bz) <= 1 and BridgeFastForward.watchAnimal(o) then
                     found = true
+                    watched = watched + 1
 
                     if BridgeFastForward.flagged ~= nil and not BridgeFastForward.recentlyExposed(now) then
                         BridgeFastForward.stress[o] = o:getStress()
@@ -279,8 +280,8 @@ function BridgeFastForward.animalsNear(b, every)
     if Bridge ~= nil and Bridge.verbose and (total > 0 or not scanned)
         and now - (BridgeFastForward.scanLogAt or -9999) >= 600 then
         BridgeFastForward.scanLogAt = now
-        log(string.format("animal scan: %s, %d animals in the cell, nearest %s", scanned and "ok" or "FAILED", total,
-            nearest and string.format("%.1f", nearest) or "none"))
+        log(string.format("animal scan: %s, %d animals in the cell, nearest %s, watched %d within %s", scanned and "ok" or "FAILED", total,
+            nearest and string.format("%.1f", nearest) or "none", watched, tostring(BridgeFastForward.ANIMAL_R)))
     end
 
 
