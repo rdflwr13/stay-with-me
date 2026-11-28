@@ -615,9 +615,9 @@ end
 
 
 function BridgeItems.make(container, rec)
-    local item = container:AddItem(rec.t)
+    local item, ws = nil, rec.ws if (type(ws) ~= "string" or ws == "") and type(rec.t) == "string" and string.find(rec.t, "_", 1, true) ~= nil then try(function() if getScriptManager():FindItem(rec.t) == nil then local s = string.match(rec.t, "^[^.]+%.(.+)$") if s ~= nil and getSprite(s) ~= nil then ws = s end end end) end if type(ws) == "string" and ws ~= "" then try(function() local it = instanceItem("Moveables." .. ws) if it ~= nil then item = container:AddItem(it) end end) end if item == nil then item = container:AddItem(rec.t) end
     if item == nil then return nil end
-    if type(rec.ws) == "string" and rec.ws ~= "" then try(function() item:ReadFromWorldSprite(rec.ws) if item:getWorldSprite() ~= rec.ws then item:setWorldSprite(rec.ws) end end) end BridgeItems.apply(item, rec)
+    BridgeItems.apply(item, rec)
     if rec["in"] ~= nil then
         try(function()
             local inner = item:getInventory()
