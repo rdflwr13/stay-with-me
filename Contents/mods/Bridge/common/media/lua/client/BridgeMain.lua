@@ -7617,7 +7617,7 @@ function Bridge.run(line)
         return "scenario " .. name .. ": " .. n .. " commands"
     end
     if cmd == "verbose" then
-        Bridge.verbose = (parts[3] ~= "off")
+        Bridge.verbose = (parts[3] ~= "off") Bridge.verboseOverride = Bridge.verbose
         return "verbose=" .. tostring(Bridge.verbose)
     end
     if cmd == "goto" then
