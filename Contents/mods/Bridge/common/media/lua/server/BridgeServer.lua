@@ -3909,16 +3909,16 @@ BridgeServer.Commands.clearPlants = function(player, args)
         if not BridgePlants.squareGrass(sq) then return end
         if BridgeItems == nil then return end
         local rec = record(player:getUsername())
-        if rec == nil or rec.bodyId == nil then return end
-        local item = InventoryItemFactory.CreateItem("Base.GrassTuft")
-        if item == nil then return end
+        if rec == nil or rec.bodyId == nil then pcall(function() BridgePlants.applyPlant(sq, "grass", nil) end) return end
+        local item = nil pcall(function() item = instanceItem("Base.GrassTuft") end) if item == nil and InventoryItemFactory ~= nil then pcall(function() item = InventoryItemFactory.CreateItem("Base.GrassTuft") end) end
+        if item == nil then pcall(function() BridgePlants.applyPlant(sq, "grass", nil) end) return end
         pcall(function() item:setCount(ZombRand(2, 4)) end)
         local one = BridgeItems.record(item, true)
         local list = BridgeItems.decode(rec.items or "")
         flatten(one, nil, list)
         local encoded = BridgeItems.encode(list)
         if BridgeItems.overBlock() or #BridgeItems.decode(encoded) ~= #list then
-            log("clearPlants: snapshot full, clipping skipped")
+            log("clearPlants: snapshot full, clipping skipped") pcall(function() BridgePlants.applyPlant(sq, "grass", nil) end)
             return
         end
         local ok, err = pcall(function() BridgePlants.applyPlant(sq, "grass", nil) end)
