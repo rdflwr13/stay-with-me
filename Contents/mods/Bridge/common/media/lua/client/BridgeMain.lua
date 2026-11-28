@@ -7158,7 +7158,7 @@ CFG.SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follo
     perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true, logdump = true, farmdebug = true,
     look = true, take = true, sizeselftest = true, chores = true, choresselftest = true,
     questsurvivorsselftest = true, questsurvivors = true, corpsespot = true, read = true, readselftest = true,
-    tp = true, ptp = true, job = true, target = true, ["assert"] = true, scenario = true, wait = true, verbose = true }
+    job = true, target = true, ["assert"] = true, scenario = true, wait = true, verbose = true, help = true, waitfor = true, shot = true, profile = true, give = true, wear = true }
 
 
 
@@ -7344,7 +7344,7 @@ function Bridge.run(line)
         return "corpsespot: here|set x y z [w h]|clear|status"
     end
 
-
+    if BridgeAgent ~= nil and BridgeAgent.handles(cmd) then return BridgeAgent.run(cmd, parts, line) end
 
 
 
@@ -8760,7 +8760,7 @@ end
 function Bridge.readCommands()
 
     if not Bridge.skipped then Bridge.skipOldCommands() return end
-    if Bridge.cmdWaitUntil ~= nil and (Bridge.tick or 0) < Bridge.cmdWaitUntil then return end
+    if BridgeAgent ~= nil then pcall(BridgeAgent.poll) end if Bridge.cmdWaitUntil ~= nil and (Bridge.tick or 0) < Bridge.cmdWaitUntil then return end
     local ran = false
     local ok, err = pcall(function()
         eachCommand(function(num, line)
@@ -8769,7 +8769,7 @@ function Bridge.readCommands()
                 Bridge.ack = num
                 local okRun, res = pcall(function() return Bridge.run(line) end)
                 if not okRun then res = "error: " .. tostring(res) end
-                Bridge.result = tostring(num) .. ": " .. tostring(res)
+                Bridge.result = tostring(num) .. ": " .. tostring(res) if BridgeAgent ~= nil then BridgeAgent.result(num, res) end
                 log("cmd " .. tostring(num) .. " -> " .. tostring(res))
                 if Bridge.cmdWaitUntil ~= nil and (Bridge.tick or 0) < Bridge.cmdWaitUntil then return false end
             end
