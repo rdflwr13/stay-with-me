@@ -317,7 +317,7 @@ function BridgeItems.record(item, deep)
         end
     end
 
-
+    if instanceof ~= nil and instanceof(item, "Moveable") then try(function() local ws = item:getWorldSprite() if type(ws) == "string" and ws ~= "" then rec.ws = ws end end) end
     try(function()
         if item.hasModData ~= nil and item:hasModData() == true then
             local md = plainCopy(item:getModData(), 1)
@@ -617,7 +617,7 @@ end
 function BridgeItems.make(container, rec)
     local item = container:AddItem(rec.t)
     if item == nil then return nil end
-    BridgeItems.apply(item, rec)
+    if type(rec.ws) == "string" and rec.ws ~= "" then try(function() item:ReadFromWorldSprite(rec.ws) if item:getWorldSprite() ~= rec.ws then item:setWorldSprite(rec.ws) end end) end BridgeItems.apply(item, rec)
     if rec["in"] ~= nil then
         try(function()
             local inner = item:getInventory()
@@ -652,10 +652,10 @@ local NUM = { h = true, p = true, c = true, u = true, a = true, la = true, r = t
               mi = true, pg = true, q = true, fp = true }
 local BOOL = { w = true, ck = true, bu = true, f = true, cl = true, ch = true, fe = true, as = true, cn = true }
 
-local TEXT = { n = true, lk = true, ga = true, gt = true, gp = true, ew = true }
+local TEXT = { n = true, lk = true, ga = true, gt = true, gp = true, ew = true, ws = true }
 local PACKED = { md = true, cp = true }
 local ORDER = { "t", "w", "h", "p", "c", "hc", "sh", "u", "a", "la", "fp", "r", "g", "b", "tc", "bt", "hue", "dec", "ho", "pa", "bl", "di", "k", "f", "ck", "bu",
-                "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp", "ew" }
+                "am", "cl", "ch", "fl", "fa", "fe", "wp", "as", "ga", "gt", "gp", "mi", "n", "cn", "pg", "lk", "md", "cp", "ew", "ws" }
 local FLOAT = { r = "%.4f", g = "%.4f", b = "%.4f", hue = "%.4f", u = "%.4f", a = "%.4f", la = "%.3f", fa = "%.3f", sh = "%.3f", fp = "%.4f" }
 BridgeItems.MAX_LENGTH = 60000
 BridgeItems.BLOCK_RATIO = 0.92
