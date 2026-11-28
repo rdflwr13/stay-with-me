@@ -103,7 +103,7 @@ One line per chat message: `<number> <author hex> <text hex>`. Decode both from 
 
 One line per event: `<tick> <kind> <text hex>`. Only after `events on`. Two kinds of lines:
 
-- Her own lines, spoken by the mod. Read them so you don't repeat her or talk over her. Use `quiet on` if you want to speak for her alone.
+- Her own lines. Without an agent the mod speaks them aloud. After `quiet on` it only writes them here: the kind tells you what happened, the text what she would have said. Say it your way, or stay silent.
 - World events, checked about every 2 seconds:
 
 | Kind | Text |
@@ -116,6 +116,15 @@ One line per event: `<tick> <kind> <text hex>`. Only after `events on`. Two kind
 | `world.task_start` | Job kind. |
 | `world.task_end` | Job kind and how it ended. |
 | `world.companion_gone`, `world.companion_here` | The companion left the world or came back. |
+
+## One voice
+
+As soon as you connect, send `quiet on`, before your first `say`. You are her voice now. If the mod keeps talking too, the player hears two people in one body, and they repeat each other.
+
+- Her automatic lines then stop and arrive in `events.txt` instead, so you still know when she would speak and why.
+- In a fight you hear about it a second or two later than the mod would shout. Keep combat lines very short.
+- `quiet` lasts until the game restarts. Send it again at the start of every session and after every restart (`tick` starting over from a low number).
+- When you disconnect for good, send `quiet off`, so she talks on her own again.
 
 ## Seeing the game
 
@@ -240,7 +249,7 @@ Arguments in `<>` are required, in `[]` optional. Coordinates are world tiles: `
 |---|---|
 | `say <text>` | She says it. Use `say hex:<hex>` for anything beyond plain English. |
 | `voice <name>` | Play a voice line, `ShoutHey` by default. |
-| `quiet on` / `quiet off` | Silence or allow her automatic lines. Your `say` still works. |
+| `quiet on` / `quiet off` | Silence or allow her automatic lines. Your `say` still works. Send `quiet on` when you connect. |
 | `sit` / `sleep` / `stand` | Pose. |
 | `anim <name> [seconds]` | Play an animation, 4 seconds by default. |
 | `name <text>` | Rename her. Only when the player asks. |
@@ -293,15 +302,15 @@ Any command with wrong arguments replies with its usage.
 
 ## Example: a session
 
-1. Append `1 diag on`, `2 events on`, `3 profile`.
-2. Wait until `results.txt` has line `3`. Read `profile.md` and `memory.md`, or meet the player if there is no profile.
-3. If you will speak for her yourself, append `4 quiet on`.
+1. Append `1 quiet on`, `2 diag on`, `3 events on`, `4 profile`.
+2. Wait until `results.txt` has line `4`. Read `profile.md` and `memory.md`, or meet the player if there is no profile.
+3. Check `results.txt` says `quiet true`.
 4. Loop every few seconds:
    - read new lines of `results.txt`, `chat.txt` and `events.txt`, then `out.txt`;
    - answer the player with `say` when they talk to her;
    - act on what you see: `heal` on `world.player_hurt`, `go` when the player leaves, `look` and `take` when they loot, `shot` when you need to see;
    - note what matters in `session.md`.
-5. When the player leaves, fold the session into memory.
+5. When the player leaves, fold the session into memory. If you are disconnecting for good, send `quiet off`.
 
 ## Example: reproduce a movement bug (test build)
 
