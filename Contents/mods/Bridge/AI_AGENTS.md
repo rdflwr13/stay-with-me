@@ -55,6 +55,7 @@ Each line is a number, a space, the command and its arguments:
 ```
 
 - The number must grow. A line whose number is not higher than the last executed one is ignored.
+- Before your first command, read `in.txt` and continue from its highest number. The file may already hold commands from earlier sessions or other tools.
 - Commands are read twice a second, all new lines at once, in order.
 - You may trim old lines from the file, but never restart the numbering while the game is running.
 - While the game is paused nothing is read or executed. A command that seems ignored may just be waiting for the pause to end.
