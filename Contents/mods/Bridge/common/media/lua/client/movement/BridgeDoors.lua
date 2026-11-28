@@ -10,6 +10,7 @@ BridgeDoors.CLOSED_PENALTY      = 1
 BridgeDoors.WINDOW_PENALTY      = 1
 BridgeDoors.CLOSED_WINDOW_PENALTY = 1
 BridgeDoors.DETOUR_CAP          = 8
+BridgeDoors.DOOR_MARGIN         = 8
 BridgeDoors.MAX_SCAN            = 6400
 BridgeDoors.MAX_GRAPH_SCAN      = 25000
 BridgeDoors.ROOMLESS_REACH      = 3
@@ -489,12 +490,6 @@ function BridgeDoors.curtainBlocked(curtain)
         idx = type(curtain.getObjectIndex) == "function" and tonumber(curtain:getObjectIndex()) or 0
     end)
     if gone or idx < 0 then return "gone" end
-    local parent = BridgeDoors.curtainParent(curtain)
-    local smashed = false
-    if parent ~= nil then
-        pcall(function() smashed = instanceof(parent, "IsoWindow") and parent:isSmashed() == true end)
-    end
-    if smashed then return "broken" end
     return nil
 end
 
@@ -867,25 +862,79 @@ function BridgeDoors.findOpening(building, z, fromX, fromY, toX, toY, leaving, d
         if cands[i].dNear < nearest then nearest = cands[i].dNear end
     end
     local cap = nearest + BridgeDoors.DETOUR_CAP
+    local nearW = leaving and 0.5 or 1.0
+    local reachFilter = false
+    if not leaving and BridgeDoors.canReachInterior ~= nil then
+        local toSq = nil
+        pcall(function() toSq = getCell():getGridSquare(math.floor(toX), math.floor(toY), z) end)
+        if toSq ~= nil then
+            local anyOk = false
+            for i = 1, #cands do
+                local p = cands[i]
+                local ok = false
+                pcall(function() ok = BridgeDoors.canReachInterior(p.far, toSq) end)
+                p.reachOk = ok
+                if ok then anyOk = true end
+            end
+            reachFilter = anyOk
+        end
+    end
     local bestDoor, bestDoorScore, bestWin, bestWinScore = nil, nil, nil, nil
     for i = 1, #cands do
         local p = cands[i]
-        if p.dNear <= cap then
-            local score = p.dNear + p.dFar + (p.extra or 0)
-            p.score = score
+        local score = (p.dNear * nearW) + p.dFar + (p.extra or 0)
+        p.score = score
+        p.inCap = p.dNear <= cap
+        if not reachFilter or p.reachOk then
             if p.kind == "door" and (bestDoorScore == nil or score < bestDoorScore) then
                 bestDoor, bestDoorScore = p, score
             elseif p.kind == "window" and (bestWinScore == nil or score < bestWinScore) then
                 bestWin, bestWinScore = p, score
             end
         end
+    end    local function candEv(p, why)
+        if not logOn() then return end
+        if BridgeDoors.candAt == nil then BridgeDoors.candAt = {} end
+        if not logRate(BridgeDoors.candAt, "cand", 60) then return end
+        BridgeLog.event("route.opening.candidates", {
+            from = { x = fromX, y = fromY }, to = { x = toX, y = toY },
+            leaving = leaving and 1 or 0, doors_first = doorsFirst and 1 or 0,
+            nearest = nearest, cap = cap, count = #cands,
+            bestDoor = bestDoorScore, bestWin = bestWinScore,
+            chosen = p ~= nil and p.key or nil, why = why,
+            fn = "BridgeDoors.findOpening" })
+        for i = 1, #cands do
+            local c = cands[i]
+            local tag = "-"
+            if p ~= nil and c == p then
+                tag = "chosen"
+            elseif c.kind == "door" and c == bestDoor then
+                tag = "bestDoor"
+            elseif c.kind == "window" and c == bestWin then
+                tag = "bestWin"
+            end
+            BridgeLog.event("route.opening.cand", {
+                i = i, kind = c.kind, key = c.key,
+                dNear = c.dNear, dFar = c.dFar, extra = c.extra,
+                score = c.score, inCap = c.dNear <= cap and 1 or 0,
+                tag = tag, fn = "BridgeDoors.findOpening" })
+        end
     end
-    if bestDoor ~= nil then openingEv(bestDoor, "door") return bestDoor end
-    if bestWin ~= nil then openingEv(bestWin, "window") return bestWin end
+    if bestDoor ~= nil and bestWin ~= nil then
+        local margin = BridgeDoors.DOOR_MARGIN or 8
+        if bestWinScore < bestDoorScore - margin then
+            candEv(bestWin, "window-far-door")
+            openingEv(bestWin, "window-far-door")
+            return bestWin
+        end
+    end
+    if bestDoor ~= nil then candEv(bestDoor, "door") openingEv(bestDoor, "door") return bestDoor end
+    if bestWin ~= nil then candEv(bestWin, "window") openingEv(bestWin, "window") return bestWin end
     local pick = cands[1]
     for i = 1, #cands do
         if cands[i].dNear < pick.dNear then pick = cands[i] end
     end
+    candEv(pick, "nearest")
     openingEv(pick, "nearest")
     return pick
 end
@@ -935,6 +984,20 @@ local function link(links, a, b)
     links[a][b], links[b][a] = true, true
 end
 
+local function addPortal(portals, a, b, ax, ay, bx, by, z, free)
+    portals[a] = portals[a] or {}
+    portals[a][b] = portals[a][b] or {}
+    local list = portals[a][b]
+    for i = 1, #list do
+        local p = list[i]
+        if p.ax == ax and p.ay == ay and p.bx == bx and p.by == by then
+            if free then p.free = true end
+            return
+        end
+    end
+    list[#list + 1] = { ax = ax, ay = ay, bx = bx, by = by, z = z, free = free == true }
+end
+
 local function stepGraph(p)
     local now = nowMs()
     local startMs = now
@@ -952,7 +1015,15 @@ local function stepGraph(p)
                     local b = roomNode(other, p.building)
                     if a ~= b then
                         local open, free = edgeOpen(sq, other)
-                        if open then link(p.links, a, b) end
+                        if open then
+                            link(p.links, a, b)
+                            if a ~= OUTSIDE and b ~= OUTSIDE then
+                                addPortal(p.portals, a, b, sq:getX(), sq:getY(),
+                                    other:getX(), other:getY(), p.z, free)
+                                addPortal(p.portals, b, a, other:getX(), other:getY(),
+                                    sq:getX(), sq:getY(), p.z, free)
+                            end
+                        end
                         if free then link(p.free, a, b) end
                     end
                 end
@@ -985,13 +1056,13 @@ local function roomGraph(building, z)
             graphCache[key] = g
             return g
         end
-        p = { links = {}, free = {}, rooms = {}, building = building, z = z,
+        p = { links = {}, free = {}, rooms = {}, portals = {}, building = building, z = z,
               x1 = x1, y1 = y1, x2 = x2, y2 = y2, x = x1, y = y1, at = now }
         pendingGraphs[key] = p
     end
     if not stepGraph(p) then return g or UNKNOWN end
     pendingGraphs[key] = nil
-    g = { at = now, links = p.links, free = p.free, rooms = p.rooms, reach = {} }
+    g = { at = now, links = p.links, free = p.free, rooms = p.rooms, portals = p.portals, reach = {} }
     graphCache[key] = g
     return g
 end
@@ -1030,6 +1101,25 @@ local function reachSet(g, start)
     return set
 end
 
+local function reachSetInterior(g, start)
+    local key = "i" .. tostring(start)
+    local set = g.reach[key]
+    if set ~= nil then return set end
+    set = { [start] = true }
+    local queue = { start }
+    while #queue > 0 do
+        local node = table.remove(queue)
+        for other in pairs(g.links[node] or {}) do
+            if other ~= OUTSIDE and not set[other] then
+                set[other] = true
+                queue[#queue + 1] = other
+            end
+        end
+    end
+    g.reach[key] = set
+    return set
+end
+
 local function reachableIn(building, z, fromNode, toNode)
     local g = roomGraph(building, z)
     if g.tooBig then return true end
@@ -1054,6 +1144,82 @@ function BridgeDoors.canReach(fromSq, toSq)
     end)
     if not ok then return true end
     return result == true
+end
+
+function BridgeDoors.canReachInterior(fromSq, toSq)
+    local ok, result = pcall(function()
+        if fromSq == nil or toSq == nil then return true end
+        local z = fromSq:getZ()
+        if toSq:getZ() ~= z then return true end
+        local b = fromSq:getBuilding()
+        if b == nil or toSq:getBuilding() ~= b then return true end
+        local fromNode, toNode = roomNode(fromSq, b), roomNode(toSq, b)
+        if fromNode == OUTSIDE or toNode == OUTSIDE then return true end
+        if fromNode == toNode then return true end
+        local g = roomGraph(b, z)
+        if g.tooBig then return true end
+        if reachSetInterior(g, fromNode)[toNode] == true then return true end
+        if recheckGraph(b, z) then return true end
+        return false
+    end)
+    if not ok then return true end
+    return result == true
+end
+
+function BridgeDoors.findInteriorPortal(building, z, fromRoom, toRoom, fromX, fromY, toX, toY)
+    if building == nil or fromRoom == nil or toRoom == nil then return nil end
+    if fromRoom == OUTSIDE or toRoom == OUTSIDE or fromRoom == toRoom then return nil end
+    local g = roomGraph(building, z)
+    if g == nil or g.tooBig or g.portals == nil then return nil end
+    local prev, seen, queue = {}, { [fromRoom] = true }, { fromRoom }
+    while #queue > 0 do
+        local node = table.remove(queue, 1)
+        if node == toRoom then break end
+        for other in pairs(g.links[node] or {}) do
+            if other ~= OUTSIDE and not seen[other] then
+                seen[other] = true
+                prev[other] = node
+                queue[#queue + 1] = other
+            end
+        end
+    end
+    if not seen[toRoom] then return nil end
+    local hop = toRoom
+    while prev[hop] ~= nil and prev[hop] ~= fromRoom do hop = prev[hop] end
+    if prev[hop] == nil then return nil end
+    local nextRoom = hop
+    local list = g.portals[fromRoom] ~= nil and g.portals[fromRoom][nextRoom] or nil
+    if list == nil or #list == 0 then return nil end
+    local cell = getCell()
+    if cell == nil then return nil end
+    local goalX = toX or fromX
+    local goalY = toY or fromY
+    local best, bestScore = nil, math.huge
+    for i = 1, #list do
+        local p = list[i]
+        local farSq = cell:getGridSquare(p.bx, p.by, p.z)
+        local standable = false
+        if farSq ~= nil then pcall(function() standable = farSq:isFree(false) == true end) end
+        if standable then
+            local dNow = dist2d(fromX, fromY, p.ax + 0.5, p.ay + 0.5)
+            local dGoal = dist2d(p.bx + 0.5, p.by + 0.5, goalX, goalY)
+            local score = dNow + dGoal
+            if not p.free then score = score + 4 end
+            if score < bestScore then best, bestScore = p, score end
+        end
+    end
+    if best == nil then return nil end
+    local near = cell:getGridSquare(best.ax, best.ay, best.z)
+    local far = cell:getGridSquare(best.bx, best.by, best.z)
+    if near == nil or far == nil then return nil end
+    local door = nil
+    pcall(function() door = near:getDoorTo(far) end)
+    local key = "room:" .. tostring(fromRoom) .. ">" .. tostring(nextRoom)
+        .. "@" .. best.ax .. "," .. best.ay
+    return { obj = door, kind = door ~= nil and "door" or "arch", near = near, far = far,
+        key = key, nextRoom = nextRoom, interior = true,
+        dNear = dist2d(fromX, fromY, best.ax + 0.5, best.ay + 0.5),
+        dFar = dist2d(best.bx + 0.5, best.by + 0.5, goalX, goalY), extra = 0 }
 end
 
 function BridgeDoors.debugInfo(body, door)

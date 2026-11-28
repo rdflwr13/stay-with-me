@@ -27,11 +27,11 @@ local SPOT = { SIDE = 1.3, BACK = 0.35, FAR = 1.0, REACH = 6, TURN = math.cos(ma
 
 local MEM = {}
 
-local function log(text)
+local LOG_COOLDOWN = 60
+
+local function log(text, force)
     if BridgeLog == nil or not BridgeLog.on() then return end
     text = tostring(text)
-    if text == MEM.lastLogText then return end
-    MEM.lastLogText = text
     if not string.find(text, " t=", 1, true) then
         if string.find(text, "seat:", 1, true) == 1 or string.find(text, "door", 1, true) == 1
                 or string.find(text, "cross", 1, true) == 1 or string.find(text, "edge", 1, true) == 1
@@ -39,7 +39,20 @@ local function log(text)
             text = text .. " t=" .. tostring(Bridge.tick or 0)
         end
     end
-    print("[BridgeRoute] " .. text)
+    local key = string.gsub(text, "t=%d+", "t=*")
+    key = string.gsub(key, "stepAge=[%d%.]+", "stepAge=*")
+    local tag = string.match(key, "^%S+") or key
+    local now = Bridge.tick or 0
+    local rec = MEM.logByTag ~= nil and MEM.logByTag[tag] or nil
+    if not force and rec ~= nil and rec.key == key and (now - rec.at) < LOG_COOLDOWN then
+        rec.count = rec.count + 1
+        return
+    end
+    local suffix = ""
+    if rec ~= nil and rec.count > 1 then suffix = " (x" .. tostring(rec.count) .. ")" end
+    MEM.logByTag = MEM.logByTag or {}
+    MEM.logByTag[tag] = { key = key, at = now, count = 1 }
+    print("[BridgeRoute] " .. text .. suffix)
 end
 
 local function ev(name, fields, fn)
@@ -152,15 +165,19 @@ local function progressEv(state, reason)
     if BridgeLog == nil or not BridgeLog.on() then return end
     local sig = tostring(reason)
     local now = Bridge.tick or 0
-    if BridgeRoute.progressSig == sig and (now % 15) ~= 0 then return end
+    local last = BridgeRoute.progressSig
+    local quiet = (now - (BridgeRoute.progressLogAt or -9999)) < 60
+    if sig == "ok" and last == "detour" and state.detour ~= nil and quiet then return end
+    if last == sig and quiet then return end
     BridgeRoute.progressSig = sig
+    BridgeRoute.progressLogAt = now
     local body = Bridge.body
     local goal = state.goal
     local dGoal = -1
     if body ~= nil and goal ~= nil then dGoal = dist2d(body:getX(), body:getY(), goal.x, goal.y) end
     ev("route.progress", {
         progressAt = state.progressAt, since = state.since, bestD = state.bestD,
-        dSpot = state.dSpot, dGoal = dGoal,
+        dSpot = state.dSpot, dStateGoal = dGoal,
         age = Bridge.time - (state.progressAt or Bridge.time),
         sinceAge = Bridge.time - (state.since or Bridge.time),
         verdict = state.status or "-", refresh_reason = reason or "unknown",
@@ -176,6 +193,12 @@ end
 
 function BridgeRoute.progress(state, opts)
     opts = opts or {}
+    if opts.exempt ~= nil and resolve(opts.exempt) == true then
+        state.progressAt = Bridge.time
+        state.since = Bridge.time
+        progressEv(state, "exempt")
+        return "ok"
+    end
     local since = state.progressAt or state.since or Bridge.time
     if (Bridge.time - since) > (opts.noProgress or 300)
             or (Bridge.time - (state.since or Bridge.time)) > (opts.timeout or 1200) then
@@ -259,17 +282,33 @@ function BridgeRoute.detour(body, x, y, z, state, opts)
     local lineToPlayer = red ~= nil and BridgeMove.lineClear(body, red:getX(), red:getY(), red:getZ()) or false
     local bodyToPlayer = red ~= nil and dist2d(bx, by, red:getX(), red:getY()) or nil
     state.detourSide = -(state.detourSide or 1)
+    local bodyK, goalK = -1, -1
+    if BridgeDoors ~= nil and BridgeDoors.enclosureKey ~= nil then
+        pcall(function()
+            local bsq = body:getCurrentSquare()
+            if bsq ~= nil then bodyK = BridgeDoors.enclosureKey(bsq) end
+            local gsq = cell:getGridSquare(math.floor(x), math.floor(y), gz)
+            if gsq ~= nil then goalK = BridgeDoors.enclosureKey(gsq) end
+        end)
+    end
     for _, s in ipairs({ state.detourSide, -state.detourSide }) do
         local px = math.floor(bx + (-ddy * s) * (opts.step or 1.6))
         local py = math.floor(by + (ddx * s) * (opts.step or 1.6))
         local cand = cell:getGridSquare(px, py, gz)
         local free = false
         if cand ~= nil then pcall(function() free = cand:isFree(false) == true end) end
+        local candK = -1
+        if cand ~= nil and BridgeDoors ~= nil and BridgeDoors.enclosureKey ~= nil then
+            pcall(function() candK = BridgeDoors.enclosureKey(cand) end)
+        end
+        local wrongEnclosure = (candK ~= -1 and candK ~= bodyK and candK ~= goalK)
+            or (bodyK ~= -1 and bodyK == goalK and candK == -1)
         local farther = false
         if red ~= nil and lineToPlayer and bodyToPlayer ~= nil then
             if dist2d(px + 0.5, py + 0.5, red:getX(), red:getY()) > bodyToPlayer + 0.6 then farther = true end
         end
-        if free and not farther and (opts.passable == nil or opts.passable(px, py, gz) ~= false) then
+        if free and not farther and not wrongEnclosure
+                and (opts.passable == nil or opts.passable(px, py, gz) ~= false) then
             local point = { x = px + 0.5, y = py + 0.5, z = z,
                 expires = Bridge.time + (opts.ticks or 150) }
             state.detour = point
@@ -292,7 +331,8 @@ BridgeRoute.lastStatus = nil
 BridgeRoute.traceArm = -9999
 BridgeRoute.traceUntil = 0
 BridgeRoute.traceLast = nil
-BridgeRoute.traceSig = nil
+BridgeRoute.traceKey = nil
+BridgeRoute.traceAt = -9999
 
 function BridgeRoute.reset()
     BridgeRoute.att = (BridgeRoute.att or 0) + 1
@@ -304,9 +344,15 @@ function BridgeRoute.reset()
     s.mode = nil
     s.stepTick = nil
     s.lastStatus = nil
+    s.exitedBld = nil
     BridgeRoute.state = s
     BridgeRoute.stepTick = -9999
     BridgeRoute.lastStatus = nil
+    BridgeRoute.traceKey = nil
+    BridgeRoute.progressSig = nil
+    BridgeRoute.pathNeedWhy = nil
+    BridgeRoute.srcTag = nil
+    BridgeRoute.lastSrcTag = nil
     if BridgeTask ~= nil then
         BridgeTask.spot = nil
         BridgeTask.since = nil
@@ -345,23 +391,43 @@ function BridgeRoute.trace(body, d, needPath, stalled)
             local dGoal = goal ~= nil and dist2d(bx, by, goal.x, goal.y) or -1
             local op = BridgeMove.openingWay
             local det = BridgeRoute.state.detour
+            local st = BridgeRoute.state
+            local followOn = Bridge.follow == true
+            local key = table.concat({
+                tostring(body:getActionStateName()), tostring(body:getBumpType()),
+                tostring(BridgeMove.walkType), tostring(st.owner or "-"), tostring(st.status or "-"),
+                tostring(BridgeMove.follow ~= nil and BridgeMove.follow.kind or "-"),
+                tostring(BridgeMove.pathing), tostring(BridgeMove.steering), tostring(BridgeMove.pathResult),
+                op ~= nil and tostring(op.key) or "-",
+                det ~= nil and sformat("%d,%d", math.floor(det.x), math.floor(det.y)) or "-",
+                tostring(st.pathFails or 0),
+                tostring(math.floor(bx)) .. "," .. tostring(math.floor(by)),
+            }, "|")
+            local nowTick = Bridge.tick or 0
+            local changed = key ~= BridgeRoute.traceKey
+            local beat = (nowTick - (BridgeRoute.traceAt or -9999)) >= 30
+            if not changed and not beat then return end
+            BridgeRoute.traceKey = key
+            BridgeRoute.traceAt = nowTick
             local msg = sformat("st=%s bump=%s %s wt=%s stype=%d d=%.2f bstep=%.3f rstep=%.3f player=%s path=%s need=%s stall=%s res=%s restarts=%d ws=%.2f smod=%.3f anim=%s fk=%s fs=%.2f ferr=%.2f fk1=%.3f tx=%.2f ty=%.2f bx=%.2f by=%.2f rx=%.2f ry=%.2f owner=%s status=%s src=%s dGoal=%.2f opening=%s detour=%s pf=%d still=%d guard=%s",
                 tostring(body:getActionStateName()), tostring(body:getBumpType()),
                 BridgeMove.walkType, wt, stype, d, bstep, rstep, mode ~= "" and mode or "-", tostring(BridgeMove.pathing),
                 tostring(needPath), tostring(stalled), BridgeMove.pathResult, BridgeMove.restarts, BridgeMove.walkSpeedVar, smod, BridgeMove.animOld and "old" or "new",
-                tostring(BridgeMove.follow.kind), BridgeMove.follow.s or 0, BridgeMove.follow.gap or 0, BridgeMove.stepPerMul or 0,
-                BridgeMove.follow.tx or 0, BridgeMove.follow.ty or 0, bx, by, rx, ry,
+                followOn and tostring(BridgeMove.follow.kind) or "-",
+                followOn and (BridgeMove.follow.s or 0) or 0,
+                followOn and (BridgeMove.follow.gap or 0) or 0,
+                followOn and (BridgeMove.stepPerMul or 0) or 0,
+                followOn and (BridgeMove.follow.tx or 0) or 0,
+                followOn and (BridgeMove.follow.ty or 0) or 0,
+                bx, by, rx, ry,
                 tostring(BridgeRoute.state.owner or "-"), tostring(BridgeRoute.state.status or "-"),
                 tostring(BridgeRoute.src or "-"), dGoal,
                 op ~= nil and tostring(op.key) or "-",
                 det ~= nil and sformat("%.1f,%.1f", det.x, det.y) or "-",
                 BridgeRoute.state.pathFails or 0, BridgeRoute.state.still or 0,
                 tostring(BridgeRoute.guardHit == Bridge.tick))
-            if msg == BridgeRoute.traceSig then return end
-            BridgeRoute.traceSig = msg
-            log("trace t=" .. tostring(Bridge.tick) .. " " .. msg)
+            log("trace t=" .. tostring(Bridge.tick) .. " " .. msg, true)
             if BridgeLog ~= nil and BridgeLog.on() then
-                local st = BridgeRoute.state
                 local lineF = false
                 if red ~= nil then
                     pcall(function() lineF = BridgeMove.lineClear(body, red:getX(), red:getY(), red:getZ()) end)
@@ -369,19 +435,20 @@ function BridgeRoute.trace(body, d, needPath, stalled)
                 local fields = {
                     __order = {
                         "mode", "owner", "status", "reason", "branch",
-                        "body", "player", "goal", "spot", "stand", "aim", "target", "opening", "detour",
-                        "d", "dGoal", "dSpot", "bestD", "age", "since", "progressAt", "pathFails", "pathFailTick",
+                        "body", "player", "stateGoal", "spot", "stand", "aim", "target", "opening", "detour",
+                        "d", "dStateGoal", "dSpot", "bestD", "age", "since", "progressAt", "pathFails", "pathFailTick",
                         "still", "checkX", "checkY", "guard", "line", "hold", "res", "restarts",
                         "path", "need", "pathing", "steering", "forceCross", "climbUntil", "pendingClimb", "cross", "door",
+                        "holdPos", "moving", "kicking",
                         "bstep", "rstep", "ws", "smod", "anim", "fk", "fs", "ferr", "fk1", "tx", "ty", "bump", "wt", "stype" },
                     mode = mode ~= "" and mode or "-",
                     owner = st.owner,
                     status = st.status,
                     reason = st.reason,
-                    branch = BridgeMove.follow ~= nil and BridgeMove.follow.kind or nil,
+                    branch = followOn and BridgeMove.follow.kind or nil,
                     body = { x = bx, y = by, z = body:getZ() },
                     player = red ~= nil and { x = rx, y = ry } or nil,
-                    goal = goal,
+                    stateGoal = goal,
                     spot = st.spot,
                     stand = st.stand,
                     aim = st.aim,
@@ -389,7 +456,7 @@ function BridgeRoute.trace(body, d, needPath, stalled)
                     opening = op ~= nil and op.key or nil,
                     detour = det,
                     d = d,
-                    dGoal = dGoal,
+                    dStateGoal = dGoal,
                     dSpot = st.dSpot,
                     bestD = st.bestD,
                     age = Bridge.time - (st.progressAt or Bridge.time),
@@ -414,17 +481,20 @@ function BridgeRoute.trace(body, d, needPath, stalled)
                     pendingClimb = BridgeMove.pendingClimb ~= nil,
                     cross = BridgeMove.cross ~= nil,
                     door = BridgeMove.doorAct ~= nil,
+                    holdPos = Bridge.holdPos ~= nil,
+                    moving = BridgeMove.moving,
+                    kicking = BridgeMove.kickAt ~= nil,
                     bstep = bstep,
                     rstep = rstep,
                     ws = BridgeMove.walkSpeedVar,
                     smod = smod,
                     anim = BridgeMove.animOld and "old" or "new",
-                    fk = BridgeMove.follow ~= nil and BridgeMove.follow.kind or nil,
-                    fs = BridgeMove.follow ~= nil and BridgeMove.follow.s or nil,
-                    ferr = BridgeMove.follow ~= nil and BridgeMove.follow.gap or nil,
-                    fk1 = BridgeMove.stepPerMul,
-                    tx = BridgeMove.follow ~= nil and BridgeMove.follow.tx or nil,
-                    ty = BridgeMove.follow ~= nil and BridgeMove.follow.ty or nil,
+                    fk = followOn and BridgeMove.follow.kind or nil,
+                    fs = followOn and BridgeMove.follow.s or nil,
+                    ferr = followOn and BridgeMove.follow.gap or nil,
+                    fk1 = followOn and BridgeMove.stepPerMul or nil,
+                    tx = followOn and BridgeMove.follow.tx or nil,
+                    ty = followOn and BridgeMove.follow.ty or nil,
                     bump = body:getBumpType(),
                     wt = wt,
                     stype = stype,
@@ -467,7 +537,7 @@ function BridgeRoute.stuckTick(body)
                 pcall(function() asn = tostring(body:getActionStateName()) end)
                 ev("route.stuck", { phase = "clear", owner = BridgeRoute.state.owner,
                     kind = BridgeMove.follow ~= nil and BridgeMove.follow.kind or nil,
-                    goal = BridgeRoute.state.goal, dGoal = S.dGoal,
+                    stateGoal = BridgeRoute.state.goal, dStateGoal = S.dGoal,
                     body = { x = body:getX(), y = body:getY() }, bodyZ = body:getZ(),
                     bstep = 0, still = BridgeRoute.state.still,
                     path = BridgeMove.pathing, steer = BridgeMove.steering,
@@ -497,7 +567,7 @@ function BridgeRoute.stuckTick(body)
         if BridgeLog ~= nil and BridgeLog.on() then
             ev("route.stuck", { phase = "start", owner = BridgeRoute.state.owner,
                 kind = BridgeMove.follow ~= nil and BridgeMove.follow.kind or nil,
-                goal = goal, dGoal = dGoal,
+                stateGoal = goal, dStateGoal = dGoal,
                 body = { x = body:getX(), y = body:getY() }, bodyZ = bodyZ,
                 bstep = step / math.max(1, dt), still = BridgeRoute.state.still,
                 path = BridgeMove.pathing, steer = BridgeMove.steering,
@@ -525,7 +595,7 @@ function BridgeRoute.stuckTick(body)
                 pcall(function() asn = tostring(body:getActionStateName()) end)
                 ev("route.stuck", { phase = "recover", owner = BridgeRoute.state.owner,
                     kind = BridgeMove.follow ~= nil and BridgeMove.follow.kind or nil,
-                    goal = BridgeRoute.state.goal, dGoal = S.dGoal,
+                    stateGoal = BridgeRoute.state.goal, dStateGoal = S.dGoal,
                     body = { x = body:getX(), y = body:getY() }, bodyZ = body:getZ(),
                     bstep = 0, still = BridgeRoute.state.still,
                     path = BridgeMove.pathing, steer = BridgeMove.steering,
@@ -537,25 +607,46 @@ function BridgeRoute.stuckTick(body)
                     "BridgeRoute.stuckTick")
             end
             BridgeRoute.stuckRecoverAt = Bridge.tick
-            BridgeRoute.stuckRecoverOpening = BridgeMove.openingWay ~= nil and BridgeMove.openingWay.key or nil
+            local op = BridgeMove.openingWay
+            local prevOpening = BridgeRoute.stuckRecoverOpening
+            BridgeRoute.stuckRecoverOpening = op ~= nil and op.key or nil
             BridgeRoute.stuckRecoverChecked = false
+            local wasPathing, wasSteering = BridgeMove.pathing, BridgeMove.steering
             pcall(function() BridgeMove.stopPath(body) end)
             BridgeRoute.state.spot = nil
-            if BridgeMove.pathing and BridgeRoute.state.goal ~= nil then
+            if op ~= nil and op.obj ~= nil then
+                pcall(function() BridgeMove.blacklistDoor(body, op.obj, "stuck") end)
+            end
+            if wasPathing and BridgeRoute.state.goal ~= nil then
                 local g = BridgeRoute.state.goal
                 pcall(function() BridgeRoute.detour(body, g.x, g.y, g.z or 0, BridgeRoute.state, { ticks = 150 }) end)
             end
-            if BridgeMove.steering then
+            if wasSteering then
                 BridgeMove.steering = false
                 BridgeMove.pathing = false
                 BridgeMove.unPathfindUntil = 0
-            elseif BridgeMove.pathing then
+            elseif wasPathing then
                 BridgeMove.steerMode = true
                 BridgeMove.steering = true
                 BridgeMove.pathing = false
                 BridgeMove.unPathfindUntil = 0
             end
-            BridgeRoute.noteProgress(BridgeRoute.state, "stuck")
+            local st = BridgeRoute.state
+            st.stuckRefreshes = (st.stuckRefreshes or 0) + 1
+            if st.stuckRefreshes <= 2 then
+                BridgeRoute.noteProgress(st, "stuck")
+            end
+            if BridgeTask ~= nil then
+                BridgeTask.progressAt = st.progressAt
+                BridgeTask.since = st.since
+                BridgeTask.bestD = st.bestD
+                BridgeTask.still = st.still
+                BridgeTask.checkX = st.checkX
+                BridgeTask.checkY = st.checkY
+                BridgeTask.pathFails = st.pathFails
+                BridgeTask.pathFailTick = st.pathFailTick
+                BridgeTask.detour = st.detour
+            end
             S.active = false
             S.x, S.y, S.tick = body:getX(), body:getY(), Bridge.tick
             return
@@ -592,7 +683,7 @@ function BridgeRoute.diag()
         s.still or 0, s.pathFails or 0,
         Bridge.time - (s.since or Bridge.time), Bridge.time - (s.progressAt or Bridge.time)))
     if BridgeLog ~= nil and BridgeLog.on() then
-        ev("route.diag", { owner = s.owner, status = s.status, goal = goal,
+        ev("route.diag", { owner = s.owner, status = s.status, stateGoal = goal,
             stand = stand, target = s.target,
             opening = opening ~= nil and opening.key or nil, detour = detour,
             stall = s.still or 0, pathFails = s.pathFails or 0,
@@ -973,6 +1064,110 @@ function BridgeRoute.viaDoor(body, gx, gy, gz)
     return best.x, best.y, best.z
 end
 
+local SKIRT_SAMPLE_STEP = 0.5
+local SKIRT_SAMPLE_CAP = 24
+local SKIRT_BFS_NODES = 160
+local SKIRT_MAX_LEGS = 2
+local SKIRT_STALL_TICKS = 180
+local SKIRT_REACH = 1.0
+
+local function lineHitsBuilding(ax, ay, bx, by, z, bldId)
+    if bldId == nil or BridgeDoors == nil or BridgeDoors.enclosureKey == nil then return false end
+    local cell = getCell()
+    if cell == nil then return false end
+    local dx, dy = bx - ax, by - ay
+    local len = math.sqrt(dx * dx + dy * dy)
+    if len < 0.01 then return false end
+    local capped = math.min(len, SKIRT_SAMPLE_CAP)
+    local steps = math.max(1, math.ceil(capped / SKIRT_SAMPLE_STEP))
+    for i = 1, steps do
+        local t = (i / steps) * (capped / len)
+        local sx = math.floor(ax + dx * t)
+        local sy = math.floor(ay + dy * t)
+        local sq = cell:getGridSquare(sx, sy, z)
+        if sq ~= nil then
+            local k = -1
+            pcall(function() k = BridgeDoors.enclosureKey(sq) end)
+            if k == bldId then return true end
+        end
+    end
+    return false
+end
+BridgeRoute.lineHitsBuilding = lineHitsBuilding
+
+local function skirtStepOk(body, curSq, nb, bldId)
+    local k = -1
+    pcall(function() k = BridgeDoors.enclosureKey(nb) end)
+    if k == bldId then return false end
+    local blocked = false
+    pcall(function() blocked = curSq:isBlockedTo(nb) == true end)
+    if blocked then return false end
+    local edge = nil
+    pcall(function() edge = BridgeMove.edgeBetween(body, curSq, nb) end)
+    if edge ~= nil then return false end
+    local free = false
+    pcall(function() free = nb:isFree(false) == true end)
+    if not free then return false end
+    local veh = false
+    pcall(function() veh = nb:isVehicleIntersecting() == true end)
+    if veh then return false end
+    return true
+end
+
+local function findExteriorSkirt(body, startSq, gx, gy, z, bldId)
+    if startSq == nil or bldId == nil then return nil end
+    local cell = getCell()
+    if cell == nil then return nil end
+    local sx, sy = startSq:getX(), startSq:getY()
+    local dirs = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+    local seen = { [sx * 100000 + sy] = true }
+    local queue = { { sq = startSq, depth = 0 } }
+    local head = 1
+    local visited = 0
+    local bestClear, bestClearScore = nil, math.huge
+    local bestDeep, bestDeepDist = nil, math.huge
+    while head <= #queue and visited < SKIRT_BFS_NODES do
+        local node = queue[head]
+        head = head + 1
+        visited = visited + 1
+        local curSq = node.sq
+        local cx, cy = curSq:getX(), curSq:getY()
+        local wx, wy = cx + 0.5, cy + 0.5
+        if node.depth > 0 then
+            local clears = not lineHitsBuilding(wx, wy, gx, gy, z, bldId)
+            if clears then
+                local score = node.depth + dist2d(wx, wy, gx, gy)
+                if score < bestClearScore then
+                    bestClear, bestClearScore = { x = wx, y = wy, z = z }, score
+                end
+            elseif node.depth >= 3 then
+                local dd = dist2d(wx, wy, gx, gy)
+                if dd < bestDeepDist then
+                    bestDeep, bestDeepDist = { x = wx, y = wy, z = z }, dd
+                end
+            end
+        end
+        for i = 1, 4 do
+            local nx, ny = cx + dirs[i][1], cy + dirs[i][2]
+            local key = nx * 100000 + ny
+            if not seen[key] then
+                local nb = cell:getGridSquare(nx, ny, z)
+                if nb ~= nil and skirtStepOk(body, curSq, nb, bldId) then
+                    seen[key] = true
+                    queue[#queue + 1] = { sq = nb, depth = node.depth + 1 }
+                end
+            end
+        end
+    end
+    local pick = bestClear or bestDeep
+    if pick ~= nil then
+        pick.visited = visited
+        pick.clears = bestClear ~= nil
+    end
+    return pick
+end
+BridgeRoute.findExteriorSkirt = findExteriorSkirt
+
 function BridgeRoute.openingWay(body, gx, gy, gz)
     if BridgeDoors == nil or BridgeDoors.enclosureKey == nil or BridgeDoors.findOpening == nil then return nil end
     local bsq = nil
@@ -1004,8 +1199,7 @@ function BridgeRoute.openingWay(body, gx, gy, gz)
         local bldId = nil
         pcall(function() bldId = BridgeDoors.buildingId(bsq) end)
         local sig = tostring(bK) .. "|" .. tostring(tK) .. "|" .. math.floor(bx) .. "," .. math.floor(by)
-        local now = Bridge.tick or 0
-        if not force and BridgeRoute.enclSig == sig and (now % 15) ~= 0 then return end
+        if not force and BridgeRoute.enclSig == sig then return end
         BridgeRoute.enclSig = sig
         ev("route.enclosure", {
             bsq = { x = bx, y = by, z = bz }, bsq_room = bRoom, bsq_bld = bK,
@@ -1026,6 +1220,13 @@ function BridgeRoute.openingWay(body, gx, gy, gz)
         end
         local phase = "none"
         if curPlan ~= nil then phase = curPlan.arrived and "cross" or "approach" end
+        local sig = tostring(branch) .. "|" .. tostring(phase) .. "|" .. tostring(ret)
+            .. "|" .. tostring(atFar) .. "|" .. tostring(curPlan ~= nil and curPlan.arrived == true)
+            .. "|" .. tostring(bK) .. "|" .. tostring(tK)
+        local now = Bridge.tick or 0
+        if BridgeRoute.openingStateSig == sig and (now - (BridgeRoute.openingStateAt or -9999)) < 60 then return end
+        BridgeRoute.openingStateSig = sig
+        BridgeRoute.openingStateAt = now
         ev("route.opening.state", {
             branch = branch, phase = phase, ret = ret,
             bK = bK, tK = tK,
@@ -1042,15 +1243,215 @@ function BridgeRoute.openingWay(body, gx, gy, gz)
         }, "BridgeRoute.openingWay")
     end
     enclosureEv("enter")
-    if bK == tK then
+    local windowExited = false
+    if cur ~= nil and cur.kind == "window" and cur.arrived and cur.climbAt ~= nil then
+        pcall(function()
+            local csq = body:getCurrentSquare()
+            windowExited = BridgeMove.pendingClimb == nil and csq ~= nil
+                and BridgeDoors.enclosureKey(csq) ~= cur.bld
+        end)
+    end
+    if cur ~= nil and (cur.kind == "door" or windowExited) and cur.arrived and cur.far ~= nil
+            and cur.bld ~= nil and tK ~= cur.bld then
+        if cur.skirt ~= nil then
+            if tK == cur.bld then
+                cur.skirt = nil
+                BridgeMove.openingWay = nil
+                stateEv("exit-skirt-cancel", "nil")
+                log(sformat("skirt cancel: target back inside bld=%s", tostring(cur.bld)))
+                return nil
+            end
+            local dSkirt = dist2d(body:getX(), body:getY(), cur.skirt.x, cur.skirt.y)
+            if dSkirt < (cur.skirt.best or math.huge) - 0.3 then
+                cur.skirt.best, cur.skirt.bestAt = dSkirt, Bridge.time
+            end
+            if Bridge.time - (cur.skirt.bestAt or Bridge.time) > SKIRT_STALL_TICKS then
+                BridgeRoute.state.exitedBld = cur.bld
+                BridgeMove.openingWay = nil
+                stateEv("exit-skirt-timeout", "nil")
+                log(sformat("skirt timeout at %.1f,%.1f d=%.2f", body:getX(), body:getY(), dSkirt))
+                return nil
+            end
+            if dSkirt <= SKIRT_REACH then
+                local legs = cur.skirtCount or 1
+                if lineHitsBuilding(body:getX(), body:getY(), gx, gy, math.floor(gz), cur.bld)
+                        and legs < SKIRT_MAX_LEGS then
+                    local nextSq = nil
+                    pcall(function() nextSq = body:getCurrentSquare() end)
+                    local sk = nil
+                    pcall(function() sk = findExteriorSkirt(body, nextSq, gx, gy, math.floor(gz), cur.bld) end)
+                    if sk ~= nil then
+                        sk.best, sk.bestAt = math.huge, Bridge.time
+                        cur.skirt = sk
+                        cur.skirtCount = legs + 1
+                        stateEv("exit-skirt-chain", "skirt")
+                        log(sformat("skirt chain leg=%d to %.1f,%.1f clears=%s visited=%d",
+                            cur.skirtCount, sk.x, sk.y, tostring(sk.clears), tonumber(sk.visited) or -1))
+                        return sk.x, sk.y, sk.z
+                    end
+                end
+                BridgeRoute.state.exitedBld = cur.bld
+                BridgeMove.openingWay = nil
+                stateEv("exit-skirt-done", "nil")
+                log(sformat("skirt done legs=%d at %.1f,%.1f goal=%.1f,%.1f",
+                    legs, body:getX(), body:getY(), gx, gy))
+                return nil
+            end
+            stateEv("exit-skirt", "skirt")
+            return cur.skirt.x, cur.skirt.y, cur.skirt.z
+        end
+        local fx, fy = cur.far:getX() + 0.5, cur.far:getY() + 0.5
+        local doorSq = nil
+        if cur.obj ~= nil then pcall(function() doorSq = cur.obj:getSquare() end) end
+        local off, sign = 0, 0
+        if doorSq ~= nil then
+            local dx = cur.far:getX() - doorSq:getX()
+            local dy = cur.far:getY() - doorSq:getY()
+            if math.abs(dx) >= math.abs(dy) then
+                sign = dx >= 0 and 1 or -1
+                off = (body:getX() - doorSq:getX()) * sign
+            else
+                sign = dy >= 0 and 1 or -1
+                off = (body:getY() - doorSq:getY()) * sign
+            end
+        end
+        local passedOff = BridgeMove.DOOR ~= nil and BridgeMove.DOOR.PASSED or 0.5
+        if cur.exitedAt == nil then cur.exitedAt = Bridge.time end
+        if BridgeLog ~= nil and BridgeLog.on() then
+            ev("route.opening.off", {
+                off = off, sign = sign, passedOff = passedOff,
+                doorSq = doorSq ~= nil and { x = doorSq:getX(), y = doorSq:getY(), z = doorSq:getZ() } or nil,
+                far = { x = cur.far:getX(), y = cur.far:getY() },
+                body = { x = body:getX(), y = body:getY() },
+                objNil = cur.obj == nil and 1 or 0,
+                fn = "BridgeRoute.openingWay" })
+        end
+        if off >= passedOff or (Bridge.time - cur.exitedAt) > 240 then
+            local z = math.floor(gz)
+            local hits = false
+            pcall(function() hits = lineHitsBuilding(body:getX(), body:getY(), gx, gy, z, cur.bld) end)
+            if hits then
+                local startSq = nil
+                pcall(function() startSq = body:getCurrentSquare() end)
+                local sk = nil
+                pcall(function() sk = findExteriorSkirt(body, startSq, gx, gy, z, cur.bld) end)
+                if sk ~= nil then
+                    sk.best, sk.bestAt = math.huge, Bridge.time
+                    cur.skirt = sk
+                    cur.skirtCount = 1
+                    stateEv("exit-skirt-start", "skirt")
+                    log(sformat("skirt start bld=%s body=%.1f,%.1f skirt=%.1f,%.1f clears=%s visited=%d goal=%.1f,%.1f",
+                        tostring(cur.bld), body:getX(), body:getY(), sk.x, sk.y,
+                        tostring(sk.clears), tonumber(sk.visited) or -1, gx, gy))
+                    return sk.x, sk.y, sk.z
+                end
+                log(sformat("skirt none found bld=%s body=%.1f,%.1f goal=%.1f,%.1f",
+                    tostring(cur.bld), body:getX(), body:getY(), gx, gy))
+            end
+            BridgeRoute.state.exitedBld = cur.bld
+            BridgeMove.openingWay = nil
+            stateEv("exit-done", "nil")
+            return nil
+        end
+        local obj = cur.obj
+        if obj ~= nil then
+            local isOpen = false
+            pcall(function() isOpen = obj:IsOpen() == true end)
+            if not isOpen then
+                if not BridgeMove.openDoor(body, obj) then
+                    stateEv("exit-door-fail", "nil")
+                    return nil
+                end
+            end
+        end
+        stateEv("exit-far", "far")
+        return fx, fy, cur.far:getZ()
+    end
+    if bK == tK or (bK ~= -1 and tK ~= bK and BridgeRoute.state.exitedBld == bK) then
+        local bRoom, tRoom = -1, -1
+        pcall(function() if bsq:getRoom() ~= nil then bRoom = bsq:getRoomID() end end)
+        pcall(function() if tsq:getRoom() ~= nil then tRoom = tsq:getRoomID() end end)
+        local hop = BridgeMove.openingWay
+        if hop ~= nil and hop.interior then
+            local cRoom = -1
+            pcall(function() if bsq:getRoom() ~= nil then cRoom = bsq:getRoomID() end end)
+            if hop.nextRoom ~= nil and cRoom == hop.nextRoom then
+                BridgeMove.openingWay = nil
+                stateEv("interior-done", "nil")
+                log(sformat("opening interior done room=%s", tostring(cRoom)))
+                return nil
+            end
+            if Bridge.time - (hop.builtAt or Bridge.time) > 600 then
+                BridgeMove.openingWay = nil
+                BridgeMove.interiorFailKey = hop.key
+                BridgeMove.interiorFailUntil = Bridge.time + 600
+                stateEv("interior-timeout", "nil")
+                log(sformat("opening interior timeout key=%s", tostring(hop.key)))
+                return nil
+            end
+            if hop.arrived and hop.far ~= nil then
+                stateEv("interior-far", "far")
+                return hop.far:getX() + 0.5, hop.far:getY() + 0.5, hop.far:getZ()
+            end
+            local dHop = dist2d(body:getX(), body:getY(), hop.x, hop.y)
+            if dHop <= 0.9 then
+                hop.arrived = true
+                hop.arrivedAt = Bridge.time
+                if hop.obj ~= nil then
+                    local isOpen = false
+                    pcall(function() isOpen = hop.obj:IsOpen() == true end)
+                    if not isOpen then pcall(function() BridgeMove.openDoor(body, hop.obj) end) end
+                end
+                if hop.far ~= nil then
+                    stateEv("interior-arrive", "far")
+                    return hop.far:getX() + 0.5, hop.far:getY() + 0.5, hop.far:getZ()
+                end
+            end
+            if dHop < (hop.best or math.huge) - 0.3 then hop.best, hop.bestAt = dHop, Bridge.time end
+            stateEv("interior-near", "near")
+            return hop.x, hop.y, hop.z
+        end
+        if bK ~= -1 and bK == tK and bRoom ~= -1 and tRoom ~= -1 and bRoom ~= tRoom
+                and BridgeDoors ~= nil and BridgeDoors.findInteriorPortal ~= nil then
+            local plan = nil
+            pcall(function()
+                plan = BridgeDoors.findInteriorPortal(BridgeDoors.buildingOf(bsq), bsq:getZ(),
+                    bRoom, tRoom, body:getX(), body:getY(), gx, gy)
+            end)
+            if plan ~= nil and plan.near ~= nil and plan.far ~= nil
+                    and not (BridgeMove.interiorFailKey == plan.key
+                        and Bridge.time < (BridgeMove.interiorFailUntil or 0)) then
+                local nx, ny = plan.near:getX() + 0.5, plan.near:getY() + 0.5
+                BridgeMove.openingWay = { x = nx, y = ny, z = bz, key = plan.key, bld = bK,
+                    obj = plan.obj, kind = plan.kind, far = plan.far, interior = true,
+                    nextRoom = plan.nextRoom, builtAt = Bridge.time,
+                    best = math.huge, bestAt = Bridge.time }
+                stateEv("interior-new", "near")
+                log(sformat("opening interior key=%s near=%d,%d far=%d,%d room=%s>%s dFar=%.2f",
+                    tostring(plan.key), plan.near:getX(), plan.near:getY(),
+                    plan.far:getX(), plan.far:getY(), tostring(bRoom), tostring(plan.nextRoom),
+                    plan.dFar or -1))
+                if BridgeLog ~= nil and BridgeLog.on() then
+                    ev("route.opening", { action = "interior", bK = bK, tK = tK, leaving = 0,
+                        key = plan.key, near = { x = plan.near:getX(), y = plan.near:getY() },
+                        far = { x = plan.far:getX(), y = plan.far:getY() },
+                        room = bRoom, nextRoom = plan.nextRoom }, "BridgeRoute.openingWay")
+                end
+                if dist2d(body:getX(), body:getY(), nx, ny) <= 0.9 then
+                    BridgeMove.openingWay.arrived = true
+                    BridgeMove.openingWay.arrivedAt = Bridge.time
+                    return plan.far:getX() + 0.5, plan.far:getY() + 0.5, plan.far:getZ()
+                end
+                return nx, ny, bz
+            end
+        end
         stateEv("sameEnclosure", "nil")
         BridgeMove.openingWay = nil
         BridgeMove.openingBlocked = nil
         BridgeMove.doorFail = nil
         local sameSig = tostring(bK) .. "|" .. tostring(tK) .. "|"
             .. math.floor(body:getX()) .. "," .. math.floor(body:getY())
-        local now = Bridge.tick or 0
-        if BridgeRoute.sameEnclSig ~= sameSig or (now % 15) == 0 then
+        if BridgeRoute.sameEnclSig ~= sameSig then
             BridgeRoute.sameEnclSig = sameSig
             log(sformat("openingWay skip=sameEnclosure bK=%s tK=%s sticky=%s body=%.1f,%.1f goal=%.1f,%.1f",
                 tostring(bK), tostring(tK), tostring(sticky), body:getX(), body:getY(), gx, gy))
@@ -1167,8 +1568,18 @@ function BridgeRoute.openingWay(body, gx, gy, gz)
         if d <= 0.9 then
             way.arrived = true
             way.arrivedAt = Bridge.time
-            stateEv("reuse-arrive", "nil")
-            return nil
+            if way.kind == "door" and way.obj ~= nil and way.far ~= nil then
+                local isOpen = false
+                pcall(function() isOpen = way.obj:IsOpen() == true end)
+                if isOpen or BridgeMove.openDoor(body, way.obj) then
+                    stateEv("reuse-arrive-door", "far")
+                    return way.far:getX() + 0.5, way.far:getY() + 0.5, way.far:getZ()
+                end
+                stateEv("reuse-arrive-door", "nil")
+                return nil
+            end
+            stateEv("reuse-arrive", "near")
+            return way.x, way.y, way.z
         end
         if Bridge.time - way.bestAt > 240 then
             if dist2d(body:getX(), body:getY(), way.x, way.y) <= 1.5 then
@@ -1270,6 +1681,23 @@ function BridgeRoute.openingWay(body, gx, gy, gz)
     pcall(function()
         log("openings: " .. tostring(BridgeDoors.debugOpenings(building, bz, leaving)))
     end)
+    local way = BridgeMove.openingWay
+    if dist2d(body:getX(), body:getY(), nx, ny) <= 0.9 then
+        way.arrived = true
+        way.arrivedAt = Bridge.time
+        if plan.kind == "door" and plan.obj ~= nil then
+            local isOpen = false
+            pcall(function() isOpen = plan.obj:IsOpen() == true end)
+            if not isOpen and not BridgeMove.openDoor(body, plan.obj) then
+                stateEv("select-door-fail", "near")
+                return nx, ny, bz
+            end
+        end
+        if plan.far ~= nil then
+            stateEv("select-arrived", "far")
+            return plan.far:getX() + 0.5, plan.far:getY() + 0.5, plan.far:getZ()
+        end
+    end
     stateEv("select", "near")
     return nx, ny, bz
 end
@@ -2201,6 +2629,12 @@ function BridgeRoute.request(spec)
     spec.targetSq = targetSq
     spec.sameFloor = targetSq == nil or math.floor(targetSq:getZ()) == math.floor(body:getZ())
     if switched then
+        state.since = Bridge.time
+        state.progressAt = Bridge.time
+        if BridgeTask ~= nil then
+            BridgeTask.since = Bridge.time
+            BridgeTask.progressAt = Bridge.time
+        end
         log(sformat("req owner=%s target=%d,%d,%d reach=%.1f onTarget=%s sameFloor=%s body=%.1f,%.1f,%.1f",
             tostring(owner), tx, ty, tz, tonumber(spec.reach) or -1, tostring(spec.onTarget == true),
             tostring(spec.sameFloor), body:getX(), body:getY(), body:getZ()))
@@ -2359,7 +2793,6 @@ function BridgeRoute.jobPolicy(body, spec)
     end
     if detour ~= nil then
         wx, wy = detour.x, detour.y
-        BridgeRoute.noteProgress(state, "detour")
     elseif not onTarget then
         local ndx, ndy = (target.x + 0.5) - sx, (target.y + 0.5) - sy
         local nlen = math.sqrt(ndx * ndx + ndy * ndy)
@@ -2384,8 +2817,11 @@ function BridgeRoute.jobPolicy(body, spec)
     end
 
     if BridgeMove ~= nil and BridgeMove.openingWay ~= nil then
-        BridgeRoute.noteProgress(state, "opening")
         state.pathFails = 0
+        if state.openingKey ~= BridgeMove.openingWay.key then
+            state.openingKey = BridgeMove.openingWay.key
+            BridgeRoute.noteProgress(state, "opening")
+        end
     end
 
     local pathStatus = BridgeRoute.notePathFail(state, { limit = BridgeTask.PATH_FAIL_LIMIT })
@@ -2400,6 +2836,10 @@ function BridgeRoute.jobPolicy(body, spec)
     local progress = BridgeRoute.progress(state, {
         noProgress = opts.noProgress ~= nil and opts.noProgress or BridgeTask.WALK_NO_PROGRESS,
         timeout = opts.timeout ~= nil and opts.timeout or BridgeTask.WALK_TIMEOUT,
+        exempt = function()
+            return BridgeMove.cross ~= nil or BridgeMove.doorAct ~= nil
+                or BridgeMove.window ~= nil or BridgeMove.pendingClimb ~= nil
+        end,
         onSpot = function() return sameFloor and BridgeTask.playerOnSquare(state.spot) end })
     if progress == "waiting" then
         BridgeTask.info = "waiting for player"
@@ -2499,14 +2939,18 @@ function BridgeRoute.jobPath(body, spec)
         if wx ~= nil then
             gx, gy, gz = wx, wy, wz
             BridgeRoute.logSrc("opening", { x = gx, y = gy, z = gz })
+            local ow = BridgeMove.openingWay
+            BridgeRoute.srcTag = ow ~= nil and (ow.skirt ~= nil and "opening:skirt" or (ow.arrived and "opening:far" or "opening:near")) or "opening"
         else
             local px, py, pz = nil, nil, nil
             pcall(function() px, py, pz = BridgeRoute.gapGoal(body) end)
             if px ~= nil then
                 gx, gy, gz = px, py, pz
                 BridgeRoute.logSrc("gap", { x = gx, y = gy, z = gz })
+                BridgeRoute.srcTag = "gap"
             else
                 BridgeRoute.logSrc("direct", { x = gx, y = gy, z = gz })
+                BridgeRoute.srcTag = "direct"
             end
         end
     end
@@ -2519,9 +2963,16 @@ function BridgeRoute.jobPath(body, spec)
         local zeroD = dist2d(body:getX(), body:getY(), gx, gy)
         local targetD = dist2d(body:getX(), body:getY(), Bridge.target.x, Bridge.target.y)
         if zeroD <= 0.9 and targetD > 0.9 then
-            log(sformat("jobPath zero-length goal=%.2f,%.2f target=%.2f,%.2f body=%.2f,%.2f src=%s",
-                gx, gy, Bridge.target.x, Bridge.target.y, body:getX(), body:getY(),
-                BridgeMove.openingWay ~= nil and "opening" or "direct"))
+            local zsig = sformat("%.1f,%.1f|%.1f,%.1f", gx, gy, Bridge.target.x, Bridge.target.y)
+            local nowZ = Bridge.tick or 0
+            if BridgeRoute.zeroLenSig ~= zsig
+                    or (nowZ - (BridgeRoute.zeroLenAt or -9999)) >= 60 then
+                BridgeRoute.zeroLenSig = zsig
+                BridgeRoute.zeroLenAt = nowZ
+                log(sformat("jobPath zero-length goal=%.2f,%.2f target=%.2f,%.2f body=%.2f,%.2f src=%s",
+                    gx, gy, Bridge.target.x, Bridge.target.y, body:getX(), body:getY(),
+                    BridgeMove.openingWay ~= nil and "opening" or "direct"))
+            end
         end
     end
 
@@ -2612,7 +3063,10 @@ function BridgeRoute.jobPath(body, spec)
             pf_target = BridgeMove.goal, pf_result = BridgeMove.pathResult, pf_stopped = not BridgeMove.pathing,
             path_len = plen, bstep = bstep, rstep = rstep, collided = collided,
             collidedDoor = collidedDoor, collidedFrame = collidedFrame,
-            goal = { x = gx, y = gy }, why = why }, "BridgeRoute.jobPath")
+            pfGoal = { x = gx, y = gy }, why = why,
+            needWhy = why == "start" and BridgeRoute.pathNeedWhy or nil,
+            holdPos = Bridge.holdPos ~= nil, moving = BridgeMove.moving,
+            kicking = BridgeMove.kickAt ~= nil }, "BridgeRoute.jobPath")
     end
 
     local replan = true
@@ -2627,14 +3081,27 @@ function BridgeRoute.jobPath(body, spec)
         pcall(function() asnNow = tostring(body:getActionStateName()) end)
         local ramp = bump == BridgeMove.KICK
         local onTheMove = (Bridge.time - BridgeMove.stepTick) < 10
-        if not ramp and not onTheMove and (bump == "Stand" or asnNow == "idle" or asnNow == "bumped"
-            or (not BridgeMove.pathing and (not BridgeMove.wasWalking or BridgeMove.startBump == "on"))) then
+        local kicked = false
+        if not ramp and (bump == "Stand" or asnNow == "idle" or asnNow == "bumped"
+            or (not onTheMove and not BridgeMove.pathing
+                and (not BridgeMove.wasWalking or BridgeMove.startBump == "on"))) then
             BridgeMove.startKick(body)
+            kicked = true
         end
         pf:pathToLocationF(gx, gy, gz)
         BridgeMove.goal = { x = gx, y = gy }
         BridgeMove.pathing = true
-        log(sformat("path start body=%.1f,%.1f goal=%.1f,%.1f", body:getX(), body:getY(), gx, gy))
+        local psig = sformat("%.0f,%.0f|%s|%s|%s", gx, gy, asnNow, bump, tostring(kicked))
+        local nowP = Bridge.tick or 0
+        if BridgeRoute.pathStartSig ~= psig
+                or (nowP - (BridgeRoute.pathStartAt or -9999)) >= 60 then
+            BridgeRoute.pathStartSig = psig
+            BridgeRoute.pathStartAt = nowP
+            log(sformat("path start body=%.1f,%.1f goal=%.1f,%.1f asn=%s bump=%s stepAge=%.1f kicked=%s why=%s",
+                body:getX(), body:getY(), gx, gy, asnNow, bump,
+                Bridge.time - BridgeMove.stepTick, tostring(kicked),
+                tostring(BridgeRoute.pathNeedWhy or "-")))
+        end
         pathEv("start")
     end
 
@@ -2646,8 +3113,12 @@ function BridgeRoute.jobPath(body, spec)
 
     local failedRecently = BridgeMove.lastFailed ~= nil and (Bridge.time - (BridgeMove.lastFailedAt or -9999)) < BridgeMove.pathEvery
     local every = BridgeMove.walkType == "Run" and BridgeMove.runEvery or BridgeMove.pathEvery
-    local needPath = (not BridgeMove.pathing and not failedRecently) or stalled
-        or (replan and (Bridge.time - BridgeMove.lastPath) >= every)
+    local needIdle = not BridgeMove.pathing and not failedRecently
+    local srcChanged = BridgeRoute.srcTag ~= BridgeRoute.lastSrcTag
+    BridgeRoute.lastSrcTag = BridgeRoute.srcTag
+    local needReplan = replan and ((Bridge.time - BridgeMove.lastPath) >= every or srcChanged)
+    local needPath = needIdle or stalled or needReplan
+    BridgeRoute.pathNeedWhy = stalled and "stalled" or (needIdle and "notPathing" or (needReplan and "replan" or nil))
     if needPath then startPath() end
     local res = pf:update()
     BridgeMove.kickStep(body, pf)
@@ -2720,8 +3191,10 @@ function BridgeRoute.jobPath(body, spec)
                     clear = BridgeTask.adjacentClear(body, spec.targetSq),
                     path = BridgeMove.pathResult,
                     stall = state.still,
-                    goal = { x = gx2, y = gy2 },
-                    dGoal = gdGoal,
+                    pfGoal = { x = gx2, y = gy2 },
+                    dPfGoal = gdGoal,
+                    holdPos = Bridge.holdPos ~= nil, moving = BridgeMove.moving,
+                    kicking = BridgeMove.kickAt ~= nil,
                     bld = tostring(bldBody) .. "/" .. tostring(bldTarget),
                     bestD = state.bestD,
                     age = age,
@@ -2963,6 +3436,31 @@ function BridgeRoute.followPath(body)
     BridgeRoute.trace(body, d, needPath, stalled)
 end
 
+function BridgeRoute.traceCross(body)
+    if BridgeLog == nil or not BridgeLog.on() then return end
+    local nowTick = Bridge.tick or 0
+    if (nowTick - (BridgeRoute.traceCrossAt or -9999)) < 30 then return end
+    local c = BridgeMove.cross
+    if c == nil then return end
+    BridgeRoute.traceCrossAt = nowTick
+    local red = BridgeData.owner()
+    local asn, bump, ed = "-", "-", -1
+    pcall(function() asn = tostring(body:getActionStateName()) end)
+    pcall(function() bump = tostring(body:getBumpType()) end)
+    pcall(function() ed = BridgeMove.edgeDist(body, c.from, c.to) end)
+    local starved = Bridge.time - (c.lastFrame or c.tick)
+    local d = red ~= nil and dist2d(body:getX(), body:getY(), red:getX(), red:getY()) or -1
+    log(sformat("trace-cross t=%d kind=%s from=%d,%d to=%d,%d asn=%s bump=%s edgeDist=%.2f starved=%.1f started=%s d=%.2f",
+        nowTick, tostring(c.kind), c.from:getX(), c.from:getY(), c.to:getX(), c.to:getY(),
+        asn, bump, ed, starved, tostring(c.started), d), true)
+    ev("move.cross.trace", {
+        kind = c.kind, from = { x = c.from:getX(), y = c.from:getY() },
+        to = { x = c.to:getX(), y = c.to:getY() },
+        asn = asn, bump = bump, edgeDist = ed, starved = starved,
+        started = c.started == true and 1 or 0, d = d,
+        fn = "BridgeRoute.traceCross" }, "BridgeRoute.traceCross")
+end
+
 function BridgeRoute.step(body)
     if BridgeRoute.stepTick == Bridge.tick then
         BridgeRoute.guardHit = Bridge.tick
@@ -2984,6 +3482,8 @@ function BridgeRoute.step(body)
             cross = BridgeMove.cross ~= nil and BridgeMove.cross.kind or nil,
             doorAct = BridgeMove.doorAct ~= nil and BridgeMove.doorAct.want or nil,
             pendingClimb = BridgeMove.pendingClimb ~= nil and BridgeMove.pendingClimb.kind or nil,
+            holdPos = Bridge.holdPos ~= nil, moving = BridgeMove.moving,
+            kicking = BridgeMove.kickAt ~= nil,
             task = BridgeTask ~= nil and BridgeTask.kind or nil, mode = Bridge.mode }, "BridgeRoute.step")
         if s.owner ~= nil and s.since == nil and BridgeRoute.i3At ~= BridgeRoute.att then
             BridgeRoute.i3At = BridgeRoute.att
@@ -3081,6 +3581,15 @@ function BridgeRoute.step(body)
         pcall(function() body:setVariable("bPathfind", false) end)
     end
     if BridgeMove.climbStep(body) then
+        if BridgeMove.cross ~= nil and (Bridge.tick % 10 == 0 or BridgeRoute.stepDiagBranch ~= "climb") then
+            BridgeRoute.stepDiagBranch = "climb"
+            local c = BridgeMove.cross
+            local asn0, pc = "-", "-"
+            pcall(function() asn0 = tostring(body:getActionStateName()) end)
+            if BridgeMove.pendingClimb ~= nil then pc = tostring(BridgeMove.pendingClimb.kind) end
+            log(sformat("step exit=climb cross=%s age=%.1f pending=%s asn=%s bx=%.2f by=%.2f",
+                tostring(c.kind), Bridge.time - (c.lastFrame or c.tick), pc, asn0, body:getX(), body:getY()))
+        end
         BridgeMove.followDebug("update-exit", body, "climb")
         BridgeRoute.lastStatus = "walking"
         return "walking"
@@ -3091,10 +3600,23 @@ function BridgeRoute.step(body)
         BridgeMove.cross = nil
         pcall(function() body:setVariable("bPathfind", false) end)
     elseif crossing then
+        BridgeRoute.stepDiagBranch = "cross"
         BridgeMove.followDebug("update-exit", body, "cross")
         trackStep(body)
         BridgeRoute.lastStatus = "walking"
+        BridgeRoute.traceCross(body)
         return "walking"
+    end
+
+    if BridgeMove.cross ~= nil and (Bridge.tick % 10 == 0 or BridgeRoute.stepDiagBranch ~= "crossfalse") then
+        BridgeRoute.stepDiagBranch = "crossfalse"
+        local c = BridgeMove.cross
+        local asn0, pc = "-", "-"
+        pcall(function() asn0 = tostring(body:getActionStateName()) end)
+        if BridgeMove.pendingClimb ~= nil then pc = tostring(BridgeMove.pendingClimb.kind) end
+        log(sformat("step exit=crossfalse cross=%s age=%.1f pending=%s asn=%s pathing=%s steer=%s bx=%.2f by=%.2f",
+            tostring(c.kind), Bridge.time - (c.lastFrame or c.tick), pc, asn0,
+            tostring(BridgeMove.pathing), tostring(BridgeMove.steering), body:getX(), body:getY()))
     end
 
     local okDoor, atDoor = pcall(function() return BridgeMove.doorStep(body) end)
