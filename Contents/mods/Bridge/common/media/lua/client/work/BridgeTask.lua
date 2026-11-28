@@ -782,6 +782,21 @@ function U.doorNeighbors(sq, cardinalOnly)
 end
 
 
+function BridgeTask.doorNearSide(body, door)
+    if body == nil or door == nil then return true end
+    local dsq, osq = nil, nil
+    pcall(function() dsq = door:getSquare() end)
+    pcall(function() osq = door:getOppositeSquare() end)
+    if dsq == nil or osq == nil then return true end
+    local from = nil
+    pcall(function() from = body:getCurrentSquare() end)
+    if from == nil then return true end
+    local ddx, ddy = from:getX() - dsq:getX(), from:getY() - dsq:getY()
+    local odx, ody = from:getX() - osq:getX(), from:getY() - osq:getY()
+    return (ddx * ddx + ddy * ddy) <= (odx * odx + ody * ody)
+end
+
+
 function BridgeTask.doorStand(body, door, label, farSide, preferOutside, sameSideOnly, preferInside)
     if body == nil or door == nil then return nil end
     label = label or "door"
@@ -792,12 +807,7 @@ function BridgeTask.doorStand(body, door, label, farSide, preferOutside, sameSid
     local from = nil
     pcall(function() from = body:getCurrentSquare() end)
     local fx, fy = body:getX(), body:getY()
-    local nearDsq = true
-    if from ~= nil and osq ~= nil then
-        local ddx, ddy = from:getX() - dsq:getX(), from:getY() - dsq:getY()
-        local odx, ody = from:getX() - osq:getX(), from:getY() - osq:getY()
-        nearDsq = (ddx * ddx + ddy * ddy) <= (odx * odx + ody * ody)
-    end
+    local nearDsq = BridgeTask.doorNearSide(body, door)
     local bodySideDsq = nearDsq
     if farSide then nearDsq = not nearDsq end
     local preferDsq = nearDsq
@@ -5752,7 +5762,22 @@ function BridgeTask.kinds.pryDoor.update(body)
         pcall(function() BridgeInventory.redress(body) end)
     end
 
-    local walk, why = BridgeTask.walkTo(body, target, BridgeTask.PRY_RANGE, nil, true)
+    if BridgeTask.openingStandTarget ~= target then
+        BridgeTask.openingStand = nil
+        BridgeTask.openingStandTarget = target
+    end
+    local stand = BridgeTask.openingStand
+    if stand == nil then
+        local dsq, osq = nil, nil
+        pcall(function() dsq = door:getSquare() end)
+        pcall(function() osq = door:getOppositeSquare() end)
+        local pick = BridgeTask.doorNearSide(body, door) and dsq or osq
+        if pick ~= nil then stand = { x = pick:getX(), y = pick:getY(), z = pick:getZ() } end
+        if stand == nil then stand = { x = target.x, y = target.y, z = target.z } end
+        BridgeTask.openingStand = stand
+    end
+
+    local walk, why = BridgeTask.walkTo(body, stand, BridgeTask.PRY_RANGE, nil, true)
     if walk == "unreachable" then return BridgeTask.dropTarget(why) end
     if walk == "walking" then return true end
 
@@ -5879,6 +5904,8 @@ end
 
 function BridgeTask.kinds.pryDoor.leave(body)
     if body == nil then return end
+    BridgeTask.openingStand = nil
+    BridgeTask.openingStandTarget = nil
     pcall(function()
         body:setVariable("BumpAnimFinished", true)
         body:changeState(ZombieIdleState.instance())
@@ -12942,6 +12969,7 @@ Events.OnTickEvenPaused.Add(function()
         if BridgeTask.isLying ~= nil and BridgeTask.isLying(body) then posed = true end
         if posed then return end
     end
+    if BridgeTask.swingStart ~= nil then return end
     pcall(function() BridgeMove.stopPath(body) end)
     pcall(function() BridgeTask.clearChop(body) end)
 

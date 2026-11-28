@@ -2735,6 +2735,11 @@ function BridgeRoute.jobPolicy(body, spec)
     if BridgeMove ~= nil and BridgeMove.openingBlocked ~= nil then
         local why = BridgeMove.openingBlocked
         BridgeMove.openingBlocked = nil
+        local reachOk = "?"
+        pcall(function() reachOk = tostring(BridgeTask.reachOk(body, targetSq) == true) end)
+        log(sformat("openingBlocked why=%s onTarget=%s reachOk=%s sameFloor=%s d=%.2f tgt=%d,%d,%d body=%.2f,%.2f,%.2f owner=%s",
+            tostring(why), tostring(spec.onTarget == true), reachOk, tostring(sameFloor),
+            d, tx, ty, tz, body:getX(), body:getY(), body:getZ(), tostring(state.owner)))
         BridgeTask.info = "openings exhausted"
         BridgeTask.routeAbort("openingBlocked", why, body, target)
         return "unreachable", why
