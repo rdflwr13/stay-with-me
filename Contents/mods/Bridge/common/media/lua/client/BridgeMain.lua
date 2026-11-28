@@ -59,6 +59,7 @@ Bridge.mode = "follow"
 Bridge.pose = nil
 Bridge.target = nil
 Bridge.ack = 0
+Bridge.cmdWaitUntil = 0
 Bridge.tick = 0
 
 
@@ -2684,6 +2685,31 @@ function Bridge.teleportToRed(prefer)
 end
 
 
+function Bridge.teleportTo(x, y, z)
+    if Bridge.body == nil then return "no body" end
+    local square = nil
+    pcall(function() square = getCell():getGridSquare(math.floor(x), math.floor(y), math.floor(z)) end)
+    local moved = pcall(function()
+        Bridge.body:setX(x)
+        Bridge.body:setY(y)
+        Bridge.body:setZ(z)
+    end)
+    pcall(function() Bridge.body:setLastX(x) end)
+    pcall(function() Bridge.body:setLastY(y) end)
+    local attached = false
+    if square ~= nil then attached = pcall(function() Bridge.body:setCurrent(square) end) end
+    if not attached then pcall(function() Bridge.body:setCurrentSquareFromPosition() end) end
+    pcall(function() BridgeMove.reset(Bridge.body) end)
+    pcall(function() BridgeRoute.reset() end)
+    pcall(function() BridgeFight.reset(Bridge.body) end)
+    Bridge.holdPos = nil
+    if not moved then return "teleport failed: cannot set position" end
+    Bridge.result = string.format("teleported to %.1f,%.1f,%.1f", x, y, z)
+    log(Bridge.result)
+    return Bridge.result
+end
+
+
 
 
 function Bridge.setMode(mode)
@@ -2906,6 +2932,73 @@ function Bridge.clearCorpseSpot()
     end
     log("corpse spot cleared")
     return "corpse spot cleared"
+end
+
+
+function Bridge.bedObject()
+    local st = Bridge.store
+    if st == nil or type(st.bed) ~= "table" then return nil end
+    local bed = st.bed
+    local sq = nil
+    pcall(function() sq = getCell():getGridSquare(bed.x, bed.y, bed.z) end)
+    if sq == nil then return nil end
+    local found = nil
+    pcall(function()
+        local objs = sq:getObjects()
+        if objs == nil then return end
+        local n = objs:size()
+        for i = 0, n - 1 do
+            local o = objs:get(i)
+            if o ~= nil and BridgeTask ~= nil and BridgeTask.layTarget ~= nil
+                    and BridgeTask.layTarget(o) == true then
+                found = o
+                return
+            end
+        end
+    end)
+    return found
+end
+
+
+function Bridge.saveBed(t)
+    local clean = BridgeData.cleanBed(t)
+    if clean == nil then
+        log("bed save rejected: bad bed")
+        return "bad bed"
+    end
+    local st = Bridge.store
+    if st ~= nil then st.bed = clean end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { bed = clean }) end)
+    end
+    log(string.format("bed saved %d,%d z%d mp=%s", clean.x, clean.y, clean.z, tostring(Bridge.mp == true)))
+    return "bed set"
+end
+
+
+function Bridge.setBed(obj)
+    if obj == nil then return false end
+    local ok = false
+    pcall(function()
+        ok = BridgeTask ~= nil and BridgeTask.sitIsRealBed ~= nil and BridgeTask.sitIsRealBed(obj) == true
+    end)
+    if not ok then return false end
+    local sq = nil
+    pcall(function() sq = obj:getSquare() end)
+    if sq == nil then return false end
+    local res = Bridge.saveBed({ x = sq:getX(), y = sq:getY(), z = sq:getZ() })
+    return res == "bed set"
+end
+
+
+function Bridge.clearBed()
+    local st = Bridge.store
+    if st ~= nil then st.bed = nil end
+    if Bridge.mp then
+        pcall(function() sendClientCommand(BridgeData.owner(), "Bridge", "state", { clearBed = true }) end)
+    end
+    log("bed cleared")
+    return "bed cleared"
 end
 
 
@@ -7064,7 +7157,8 @@ CFG.SAFE_COMMANDS = { say = true, voice = true, quiet = true, come = true, follo
     exercise = true, endurance = true, exhaustion = true, skills = true, task = true, shower = true, bath = true, sound = true, meet = true,
     perf = true, gunstate = true, loscombatselftest = true, mourn = true, diag = true, events = true, logdump = true, farmdebug = true,
     look = true, take = true, sizeselftest = true, chores = true, choresselftest = true,
-    questsurvivorsselftest = true, questsurvivors = true, corpsespot = true, read = true, readselftest = true }
+    questsurvivorsselftest = true, questsurvivors = true, corpsespot = true, read = true, readselftest = true,
+    tp = true, ptp = true, job = true, target = true, ["assert"] = true, scenario = true, wait = true, verbose = true }
 
 
 
@@ -7305,6 +7399,11 @@ function Bridge.run(line)
     end
     if cmd == "go" then return Bridge.setMode("follow") end
     if cmd == "wait" then
+        local n = tonumber(parts[3])
+        if n ~= nil then
+            Bridge.cmdWaitUntil = (Bridge.tick or 0) + n
+            return "wait " .. n
+        end
         if parts[3] == "car" then return "car disabled: crash in engine with body inside" end
         return Bridge.setMode("wait")
     end
@@ -7435,6 +7534,91 @@ function Bridge.run(line)
     if cmd == "update" then
         Bridge.manualUpdate = (parts[3] == "on")
         return "manualUpdate=" .. tostring(Bridge.manualUpdate)
+    end
+    if cmd == "target" then cmd = "goto" end
+    if cmd == "tp" then
+        local x, y, z = tonumber(parts[3]), tonumber(parts[4]), tonumber(parts[5])
+        if x == nil or y == nil then return "tp <x> <y> <z>" end
+        if not Bridge.alive() then return "no body" end
+        return Bridge.teleportTo(x, y, z or 0)
+    end
+    if cmd == "ptp" then
+        local x, y, z = tonumber(parts[3]), tonumber(parts[4]), tonumber(parts[5])
+        if x == nil or y == nil then return "ptp <x> <y> <z>" end
+        local red = BridgeData.owner()
+        if red == nil then return "no player" end
+        pcall(function() red:setX(x) red:setY(y) red:setZ(z or 0) end)
+        pcall(function() red:setLastX(x) red:setLastY(y) red:setLastZ(z or 0) end)
+        return string.format("player teleported to %.1f,%.1f,%.1f", x, y, z or 0)
+    end
+    if cmd == "job" then
+        if BridgeTask == nil then return "no task module" end
+        local kind = parts[3]
+        local x, y, z = tonumber(parts[4]), tonumber(parts[5]), tonumber(parts[6])
+        if kind == nil or x == nil or y == nil then return "job <kind> <x> <y> <z>" end
+        if BridgeTask.kinds == nil or BridgeTask.kinds[kind] == nil then return "job: unknown kind " .. tostring(kind) end
+        if not Bridge.alive() then return "no body" end
+        return BridgeTask.start(kind, { { x = x, y = y, z = z or 0 } })
+    end
+    if cmd == "assert" then
+        local name = parts[3] or "bestd"
+        local st = BridgeRoute ~= nil and BridgeRoute.state or nil
+        local target = Bridge.target or (st ~= nil and st.target) or nil
+        local body = Bridge.body
+        local function dist()
+            if body == nil or target == nil then return nil end
+            local dx, dy = body:getX() - target.x, body:getY() - target.y
+            return math.sqrt(dx * dx + dy * dy)
+        end
+        if name == "arrived" then
+            local d = dist()
+            if d == nil then return "assert arrived FAIL no_target" end
+            local reach = (st ~= nil and st.spec ~= nil and tonumber(st.spec.reach)) or 0.7
+            return string.format("assert arrived %s d=%.2f reach=%.2f", d <= reach and "PASS" or "FAIL", d, reach)
+        elseif name == "moving" then
+            local ok = BridgeMove ~= nil and BridgeMove.pathing == true and BridgeMove.pathResult == "Working"
+            return "assert moving " .. (ok and "PASS" or "FAIL") .. " pathing=" .. tostring(BridgeMove ~= nil and BridgeMove.pathing) .. " res=" .. tostring(BridgeMove ~= nil and BridgeMove.pathResult)
+        elseif name == "stuck" then
+            local still = st ~= nil and (st.still or 0) or 0
+            return string.format("assert stuck %s still=%d", still >= 60 and "PASS" or "FAIL", still)
+        elseif name == "nostuck" then
+            local still = st ~= nil and (st.still or 0) or 0
+            return string.format("assert nostuck %s still=%d", still < 60 and "PASS" or "FAIL", still)
+        elseif name == "clear" then
+            local ok = (BridgeTask == nil or BridgeTask.active ~= true) and (BridgeMove == nil or BridgeMove.pathing ~= true)
+            return "assert clear " .. (ok and "PASS" or "FAIL")
+        else
+            local d = dist()
+            return string.format("assert bestd d=%s bestD=%s dSpot=%s still=%s pathFails=%s",
+                d ~= nil and string.format("%.2f", d) or "-", tostring(st ~= nil and st.bestD or nil),
+                tostring(st ~= nil and st.dSpot or nil), tostring(st ~= nil and st.still or 0),
+                tostring(st ~= nil and st.pathFails or 0))
+        end
+    end
+    if cmd == "scenario" then
+        local name = parts[3]
+        if name == nil then return "scenario <name>" end
+        local reader = getFileReader("bridge/scenario-" .. name .. ".txt", false)
+        if reader == nil then return "scenario: no bridge/scenario-" .. name .. ".txt" end
+        local n, firstErr = 0, nil
+        while true do
+            local line = reader:readLine()
+            if line == nil then break end
+            line = string.gsub(line, "^%s+", "")
+            line = string.gsub(line, "%s+$", "")
+            if line ~= "" and string.sub(line, 1, 1) ~= "#" then
+                local ok, res = pcall(function() return Bridge.run("0 " .. line) end)
+                n = n + 1
+                if not ok and firstErr == nil then firstErr = tostring(res) end
+            end
+        end
+        reader:close()
+        if firstErr ~= nil then return "scenario " .. name .. ": " .. n .. " commands, error: " .. firstErr end
+        return "scenario " .. name .. ": " .. n .. " commands"
+    end
+    if cmd == "verbose" then
+        Bridge.verbose = (parts[3] ~= "off")
+        return "verbose=" .. tostring(Bridge.verbose)
     end
     if cmd == "goto" then
         local x, y, z = tonumber(parts[3]), tonumber(parts[4]), tonumber(parts[5])
@@ -8546,7 +8730,9 @@ local function eachCommand(handler)
         line = string.gsub(line, "^%s+", "")
         if line ~= "" then
             local num = tonumber(string.match(line, "^(%d+)"))
-            if num ~= nil then handler(num, line) end
+            if num ~= nil then
+                if handler(num, line) == false then reader:close() return end
+            end
         end
     end
 end
@@ -8574,6 +8760,7 @@ end
 function Bridge.readCommands()
 
     if not Bridge.skipped then Bridge.skipOldCommands() return end
+    if Bridge.cmdWaitUntil ~= nil and (Bridge.tick or 0) < Bridge.cmdWaitUntil then return end
     local ran = false
     local ok, err = pcall(function()
         eachCommand(function(num, line)
@@ -8584,6 +8771,7 @@ function Bridge.readCommands()
                 if not okRun then res = "error: " .. tostring(res) end
                 Bridge.result = tostring(num) .. ": " .. tostring(res)
                 log("cmd " .. tostring(num) .. " -> " .. tostring(res))
+                if Bridge.cmdWaitUntil ~= nil and (Bridge.tick or 0) < Bridge.cmdWaitUntil then return false end
             end
         end)
     end)

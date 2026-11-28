@@ -240,6 +240,9 @@ BridgeTask.WINDOWS_ENABLED = 1
 BridgeTask.WINDOW_HAND_CLOSE = 20
 BridgeTask.WINDOW_ACT_GAP_CLOSE = 30
 BridgeTask.CURTAINS_ENABLED = 1
+BridgeTask.LIGHTS_ENABLED = 1
+BridgeTask.LIGHT_HAND_TICKS = 4
+BridgeTask.LIGHT_ACT_GAP = 10
 
 
 BridgeTask.CLEAN_SOUND = "CleanBloodScrub"
@@ -1571,6 +1574,181 @@ function BridgeTask.curtainPreflight(targets, mode)
         local obj = U.curtainObjectAt(targets[i])
         if obj ~= nil and BridgeDoors.curtainOpen(obj) == wantOpen then
             local blocked = BridgeDoors.curtainBlocked(obj)
+            if blocked == nil then return "ok" end
+            if blocked ~= "gone" and reason == nil then reason = blocked end
+        end
+    end
+    if reason ~= nil then return reason end
+    return "none"
+end
+
+
+function U.lightOn(obj)
+    local on = false
+    pcall(function() on = obj:isActivated() == true end)
+    return on
+end
+
+
+function U.lightBlocked(obj, mode)
+    if obj == nil then return "gone" end
+    local dead, idx = false, 0
+    pcall(function()
+        dead = obj:isDestroyed() == true
+        idx = tonumber(obj:getObjectIndex()) or 0
+    end)
+    if dead or idx < 0 then return "gone" end
+    local can = false
+    pcall(function() can = obj:canSwitchLight() == true end)
+    if not can then return "noPower" end
+    return nil
+end
+
+
+function U.lightInList(list)
+    if list == nil then return nil end
+    local n = 0
+    pcall(function() n = list:size() end)
+    for i = 0, n - 1 do
+        local o = nil
+        pcall(function() o = list:get(i) end)
+        if o ~= nil then
+            local ok = false
+            pcall(function() ok = instanceof(o, "IsoLightSwitch") end)
+            if ok then return o end
+        end
+    end
+    return nil
+end
+
+
+function U.lightObjectAt(target)
+    if target == nil then return nil end
+    local obj = target.obj
+    if obj ~= nil then
+        local live = false
+        pcall(function()
+            live = instanceof(obj, "IsoLightSwitch") and obj:getObjectIndex() ~= -1 and obj:isDestroyed() ~= true
+        end)
+        if live then return obj end
+    end
+    local sq = nil
+    pcall(function() sq = getCell():getGridSquare(target.x, target.y, target.z) end)
+    if sq == nil then return nil end
+    local found = nil
+    pcall(function() found = U.lightInList(sq:getObjects()) end)
+    if found == nil then pcall(function() found = U.lightInList(sq:getSpecialObjects()) end) end
+    if found == nil then pcall(function() found = U.lightInList(sq:getWorldObjects()) end) end
+    return found
+end
+
+
+function U.lightStand(body, obj)
+    local stand = BridgeTask.doorStand(body, obj, "light")
+    local dsq = nil
+    pcall(function() dsq = obj:getSquare() end)
+    local from = nil
+    pcall(function() from = body:getCurrentSquare() end)
+    local function usable(sq)
+        if sq == nil then return false end
+        local wall = false
+        pcall(function() wall = dsq ~= nil and sq:isWallTo(dsq) end)
+        if wall then return false end
+        local ok = false
+        pcall(function() ok = Bridge.standSquareOk(sq, from) == true end)
+        return ok
+    end
+    local standSq = nil
+    if stand ~= nil then pcall(function() standSq = getCell():getGridSquare(stand.x, stand.y, stand.z) end) end
+    if usable(standSq) then return stand end
+    if dsq == nil then return stand end
+    local best, bestD = nil, nil
+    local bx, by = body:getX(), body:getY()
+    local dirs = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+    for i = 1, #dirs do
+        local nx, ny = dsq:getX() + dirs[i][1], dsq:getY() + dirs[i][2]
+        local nsq = nil
+        pcall(function() nsq = getCell():getGridSquare(nx, ny, dsq:getZ()) end)
+        if usable(nsq) then
+            local d = (nx - bx) ^ 2 + (ny - by) ^ 2
+            if best == nil or d < bestD then
+                best, bestD = { x = nx, y = ny, z = dsq:getZ() }, d
+            end
+        end
+    end
+    return best or stand
+end
+
+
+function U.toggleLight(body, obj, want)
+    if obj == nil then return false end
+    local before = U.lightOn(obj)
+    if before ~= want then
+        pcall(function() obj:toggle() end)
+    end
+    local sq = nil
+    pcall(function() sq = obj:getSquare() end)
+    local street = false
+    pcall(function()
+        local props = obj:getProperties()
+        street = props ~= nil and props:has("streetlight") == true
+    end)
+    if not street and sq ~= nil then
+        if BridgeSound ~= nil and type(BridgeSound.world) == "function" then
+            BridgeSound.world("LightSwitch", sq, 10, 1.0)
+        else
+            pcall(function() sq:playSound("LightSwitch") end)
+        end
+    end
+    return U.lightOn(obj) == want
+end
+
+
+function U.lightDebugState(obj)
+    local on, can, idx = false, false, -1
+    pcall(function() on = obj:isActivated() == true end)
+    pcall(function() can = obj:canSwitchLight() == true end)
+    pcall(function() idx = obj:getObjectIndex() end)
+    return string.format("activated=%s canSwitch=%s idx=%s", tostring(on), tostring(can), tostring(idx))
+end
+
+
+U.lightSpec = {
+    label = "light",
+    reach = BridgeTask.DOOR_REACH,
+    objectAt = function(target) return U.lightObjectAt(target) end,
+    isOpen = function(obj) return U.lightOn(obj) end,
+    blocked = function(obj, mode) return U.lightBlocked(obj, mode) end,
+    stand = function(body, obj) return U.lightStand(body, obj) end,
+    beginAct = function(body, obj, mode)
+        if BridgeTask.windowProgressSaid ~= true then
+            BridgeTask.windowProgressSaid = true
+            Bridge.speak(mode == "open" and "LightsOnProgress" or "LightsOffProgress")
+        end
+    end,
+    finishAct = function(body, obj, mode) return U.toggleLight(body, obj, mode == "open") end,
+    handTicks = function(mode) return BridgeTask.LIGHT_HAND_TICKS end,
+    actGap = function(mode) return BridgeTask.LIGHT_ACT_GAP end,
+    playerInOpening = nil,
+    blockedSpeech = false,
+    debug = function(body, obj) return U.lightDebugState(obj) end,
+}
+
+
+function U.lightUpdate(body, mode)
+    if BridgeTask.LIGHTS_ENABLED ~= 1 then return BridgeTask.finish() end
+    return U.openingUpdate(body, mode, U.lightSpec)
+end
+
+
+function BridgeTask.lightPreflight(targets, mode)
+    if type(targets) ~= "table" then return "none" end
+    local wantOn = mode == "open"
+    local reason = nil
+    for i = 1, #targets do
+        local obj = U.lightObjectAt(targets[i])
+        if obj ~= nil and U.lightOn(obj) ~= wantOn then
+            local blocked = U.lightBlocked(obj, mode)
             if blocked == nil then return "ok" end
             if blocked ~= "gone" and reason == nil then reason = blocked end
         end
@@ -3786,6 +3964,17 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         end
     end
 
+    if kind == "lightsOn" or kind == "lightsOff" then
+        local opening = kind == "lightsOn"
+        local pre = BridgeTask.lightPreflight(targets, opening and "open" or "close")
+        if pre ~= "ok" then
+            if BridgeTask.chore ~= true then
+                Bridge.speak(pre == "noPower" and "JobNoPower" or "JobNoLights")
+            end
+            return "unavailable"
+        end
+    end
+
     if kind == "chopTree" and BridgeFight ~= nil
             and (1 - (BridgeFight.fatigue or 0)) < U.workValue("chopStart", BridgeTask.CHOP_REFUSE_STAMINA) then
         BridgeTask.needRestSay()
@@ -4030,9 +4219,9 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
         BridgeTask.corpseDest = corpseDest
     end
     if kind == "openDoors" or kind == "closeDoors" or kind == "closeWindows" or kind == "openWindows"
-            or kind == "closeCurtains" or kind == "openCurtains" then
+            or kind == "closeCurtains" or kind == "openCurtains" or kind == "lightsOn" or kind == "lightsOff" then
         Bridge.speakGraceUntil = 0
-        BridgeTask.doorMode = (kind == "openDoors" or kind == "openWindows" or kind == "openCurtains") and "open" or "close"
+        BridgeTask.doorMode = (kind == "openDoors" or kind == "openWindows" or kind == "openCurtains" or kind == "lightsOn") and "open" or "close"
         BridgeTask.doorOrdered = false
         BridgeTask.doorGreeted = false
         BridgeTask.doorActAt = nil
@@ -4359,6 +4548,10 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
             Bridge.speak("CurtainsOpenStart")
         elseif kind == "closeCurtains" then
             Bridge.speak("CurtainsCloseStart")
+        elseif kind == "lightsOn" then
+            Bridge.speak("LightsOnStart")
+        elseif kind == "lightsOff" then
+            Bridge.speak("LightsOffStart")
         elseif kind == "deposit" then
             Bridge.speak("JobDepositStart")
         elseif kind == "petAnimals" then
@@ -4383,7 +4576,7 @@ function BridgeTask.start(kind, targets, corpseDest, opts)
     end
     local startExtra = ""
     if kind == "openDoors" or kind == "closeDoors" or kind == "closeWindows" or kind == "openWindows"
-            or kind == "closeCurtains" or kind == "openCurtains" then
+            or kind == "closeCurtains" or kind == "openCurtains" or kind == "lightsOn" or kind == "lightsOff" then
         local reach = BridgeTask.DOOR_REACH
         if kind == "closeWindows" or kind == "openWindows" then reach = BridgeTask.WINDOW_REACH end
         startExtra = " reach=" .. tostring(reach) .. " mode=" .. tostring(BridgeTask.doorMode)
@@ -4642,7 +4835,8 @@ function BridgeTask.finish()
     elseif finishKind == "roam" then
     elseif (BridgeTask.failCount or 0) > 0 then
         if (finishKind == "closeWindows" or finishKind == "openWindows"
-                or finishKind == "closeCurtains" or finishKind == "openCurtains")
+                or finishKind == "closeCurtains" or finishKind == "openCurtains"
+                or finishKind == "lightsOn" or finishKind == "lightsOff")
                 and (BridgeTask.doneCount or 0) == 0 then
             Bridge.speak("JobNoPath")
         elseif finishKind == "openDoors" or finishKind == "closeDoors" then
@@ -4658,11 +4852,15 @@ function BridgeTask.finish()
         end
     else
         if finishKind == "closeWindows" or finishKind == "openWindows"
-                or finishKind == "closeCurtains" or finishKind == "openCurtains" then
-            local opening = finishKind == "openWindows" or finishKind == "openCurtains"
+                or finishKind == "closeCurtains" or finishKind == "openCurtains"
+                or finishKind == "lightsOn" or finishKind == "lightsOff" then
+            local opening = finishKind == "openWindows" or finishKind == "openCurtains" or finishKind == "lightsOn"
             local curtain = finishKind == "openCurtains" or finishKind == "closeCurtains"
+            local light = finishKind == "lightsOn" or finishKind == "lightsOff"
             if (BridgeTask.doneCount or 0) > 0 then
-                if curtain then
+                if light then
+                    Bridge.speak(opening and "LightsOnDone" or "LightsOffDone")
+                elseif curtain then
                     Bridge.speak(opening and "CurtainsOpenDone" or "CurtainsCloseDone")
                 else
                     Bridge.speak(opening and "WindowsOpenDone" or "WindowsCloseDone")
@@ -5779,6 +5977,20 @@ function BridgeTask.kinds.closeCurtains.available(body) return BridgeTask.CURTAI
 function BridgeTask.kinds.closeCurtains.missing(body) return nil end
 function BridgeTask.kinds.closeCurtains.update(body) return U.curtainUpdate(body, "close") end
 function BridgeTask.kinds.closeCurtains.leave(body) BridgeTask.openingLeave(body, "curtain") end
+
+BridgeTask.kinds.lightsOn = {}
+BridgeTask.kinds.lightsOn.dangerRadius = BridgeTask.DOOR_DANGER_RADIUS
+function BridgeTask.kinds.lightsOn.available(body) return BridgeTask.LIGHTS_ENABLED == 1 end
+function BridgeTask.kinds.lightsOn.missing(body) return nil end
+function BridgeTask.kinds.lightsOn.update(body) return U.lightUpdate(body, "open") end
+function BridgeTask.kinds.lightsOn.leave(body) BridgeTask.openingLeave(body, "light") end
+
+BridgeTask.kinds.lightsOff = {}
+BridgeTask.kinds.lightsOff.dangerRadius = BridgeTask.DOOR_DANGER_RADIUS
+function BridgeTask.kinds.lightsOff.available(body) return BridgeTask.LIGHTS_ENABLED == 1 end
+function BridgeTask.kinds.lightsOff.missing(body) return nil end
+function BridgeTask.kinds.lightsOff.update(body) return U.lightUpdate(body, "close") end
+function BridgeTask.kinds.lightsOff.leave(body) BridgeTask.openingLeave(body, "light") end
 
 BridgeTask.kinds.cleanUp = {}
 BridgeTask.kinds.cleanUp.unavailableSpeech = "JobNoSupplies"

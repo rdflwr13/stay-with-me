@@ -131,6 +131,13 @@ local function log(text)
     text = tostring(text)
     if text == MEM.lastLogText then return end
     MEM.lastLogText = text
+    if not string.find(text, " t=", 1, true) then
+        if string.find(text, "seat:", 1, true) == 1 or string.find(text, "door", 1, true) == 1
+                or string.find(text, "cross", 1, true) == 1 or string.find(text, "edge", 1, true) == 1
+                or string.find(text, "toggleDoor", 1, true) == 1 then
+            text = text .. " t=" .. tostring(Bridge.tick or 0)
+        end
+    end
     print("[BridgeMove] " .. text)
 end
 local function warn(text) print("[BridgeMove] " .. tostring(text)) end
@@ -3200,6 +3207,11 @@ function BridgeMove.walkReach(body, tx, ty, tz, maxNodes, passDoors, blockSeats)
             math.floor(tx or 0), math.floor(ty or 0), math.floor(tz or 0),
             tostring(ok), visited, doorHits, maxNodes or 240,
             tostring(passDoors == true), tostring(blockSeats == true)))
+        if BridgeLog ~= nil and BridgeLog.on() then
+            ev("move.walkReach", { found = ok, visited = visited, doorHits = doorHits,
+                budget = maxNodes or 240, doors = passDoors == true,
+                seats = blockSeats == true }, "BridgeMove.walkReach")
+        end
     end
     return ok
 end

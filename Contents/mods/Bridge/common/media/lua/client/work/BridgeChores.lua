@@ -984,7 +984,11 @@ local function scanStep(body)
                 due.empty = #list == 0
                 due.at = nowMs()
                 rebuild(id)
+                local wasReady = S.scanReady
                 if scanIsComplete() then S.scanReady = true end
+                if S.scanReady and not wasReady and BridgeLog ~= nil and type(BridgeLog.scanSummary) == "function" then
+                    pcall(BridgeLog.scanSummary)
+                end
                 return
             end
         end
@@ -996,29 +1000,27 @@ local function collectSeatChunk(ch)
     pcall(function() cell = getCell() end)
     if cell == nil or BridgeTask == nil or type(BridgeTask.seatIsSeat) ~= "function" then return end
     local list = {}
-    for x = ch.x1, ch.x2 do
-        for y = ch.y1, ch.y2 do
-            local sq = nil
-            pcall(function() sq = cell:getGridSquare(x, y, ch.z) end)
-            if sq ~= nil then
-                local objects = nil
-                pcall(function() objects = sq:getObjects() end)
-                if objects ~= nil then
-                    for i = 0, objects:size() - 1 do
-                        local o = objects:get(i)
-                        local isSeat = false
-                        pcall(function() isSeat = BridgeTask.seatIsSeat(o) == true end)
-                        if isSeat then
-                            local room = nil
-                            pcall(function()
-                                if BridgeDoors ~= nil and BridgeDoors.enclosureKey ~= nil then
-                                    room = BridgeDoors.enclosureKey(sq)
-                                end
-                            end)
-                            list[#list + 1] = { obj = o, x = x, y = y, z = ch.z, room = room }
-                        end
+    local squares = nil
+    if BridgeWorkSelect ~= nil and type(BridgeWorkSelect.objectChunk) == "function" then
+        local rect = { x1 = ch.x1, y1 = ch.y1, x2 = ch.x2, y2 = ch.y2, z = ch.z }
+        squares = BridgeWorkSelect.objectChunk(rect, 120000)
+    end
+    if squares == nil then return end
+    for i = 1, #squares do
+        local rec = squares[i]
+        local sq = rec.sq
+        for j = 1, #rec.objects do
+            local o = rec.objects[j]
+            local isSeat = false
+            pcall(function() isSeat = BridgeTask.seatIsSeat(o) == true end)
+            if isSeat then
+                local room = nil
+                pcall(function()
+                    if BridgeDoors ~= nil and BridgeDoors.enclosureKey ~= nil then
+                        room = BridgeDoors.enclosureKey(sq)
                     end
-                end
+                end)
+                list[#list + 1] = { obj = o, x = rec.x, y = rec.y, z = ch.z, room = room }
             end
         end
     end
@@ -1066,8 +1068,12 @@ local function seatScanStep(h)
     for i = 1, #order do
         if S.seatChunks[order[i]] == nil then ready = false break end
     end
+    local wasReady = S.seatReady
     S.seatReady = ready
     if ready then S.seatNextRefresh = now + 120000 end
+    if ready and not wasReady and BridgeLog ~= nil and type(BridgeLog.scanSummary) == "function" then
+        pcall(BridgeLog.scanSummary)
+    end
 end
 
 local function seatTargets(body, h)
@@ -2610,6 +2616,22 @@ function BridgeChores.debugTargets(id)
     return table.concat(out, "; ")
 end
 
+function BridgeChores.chunkDump()
+    local parts = {}
+    if BridgeWorkSelect ~= nil and type(BridgeWorkSelect.chunkStats) == "table" then
+        local s = BridgeWorkSelect.chunkStats
+        parts[#parts + 1] = string.format("obj rebuild=%d hit=%d squares=%d",
+            tonumber(s.rebuild) or 0, tonumber(s.hit) or 0, tonumber(s.squares) or 0)
+    end
+    if BridgeGardening ~= nil and type(BridgeGardening.chunkStats) == "table" then
+        local s = BridgeGardening.chunkStats
+        parts[#parts + 1] = string.format("plant rebuild=%d hit=%d ttl0=%d plants=%d",
+            tonumber(s.rebuild) or 0, tonumber(s.hit) or 0, tonumber(s.ttl0) or 0, tonumber(s.plants) or 0)
+    end
+    if #parts == 0 then return "chunkdump: no stats" end
+    return "chunkdump " .. table.concat(parts, " ")
+end
+
 function BridgeChores.command(parts)
     local sub = parts ~= nil and parts[3] or "status"
     local arg = parts ~= nil and parts[4] or nil
@@ -2630,7 +2652,8 @@ function BridgeChores.command(parts)
     if sub == "force" then return BridgeChores.debugForce(arg, parts ~= nil and parts[5] or nil) end
     if sub == "next" then return BridgeChores.debugNext() end
     if sub == "targets" then return BridgeChores.debugTargets(arg) end
-    return "chores [status|debug [id]|reset [all|idle|id]|blacklist clear|rescan [all|id]|cancel|force <id> [n]|next|targets <id>|on <id>|off <id>|selftest]"
+    if sub == "chunkdump" then return BridgeChores.chunkDump() end
+    return "chores [status|debug [id]|reset [all|idle|id]|blacklist clear|rescan [all|id]|cancel|force <id> [n]|next|targets <id>|chunkdump|on <id>|off <id>|selftest]"
 end
 
 function BridgeChores.invalidate()

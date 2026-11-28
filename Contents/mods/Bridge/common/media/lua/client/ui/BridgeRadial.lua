@@ -368,6 +368,7 @@ local CONTAINER_WORK = {
     animals = { label = "Animals", icon = ICONS.animals },
     gardening = { label = "Gardening", icon = ICONS.gardening },
     doors = { label = "Openings", icon = ICONS.doors },
+    lights = { label = "Lights", icon = ICONS.doors },
 }
 
 local function lootEntries(playerNum)
@@ -498,21 +499,53 @@ local function workEntries(playerNum)
     return out
 end
 
-local function doorEntries()
+local function lightEntries(playerNum)
     local out = {}
     if BridgeTask == nil then return out end
     if BridgeTask.active then return out end
-    if BridgeTask.DOORS_ENABLED == 1 then
-        out[#out + 1] = make(tr("JobOpenDoors"), ICONS.doors, BridgeMenu.onJobOpenDoors)
-        out[#out + 1] = make(tr("JobCloseDoors"), ICONS.doors, BridgeMenu.onJobCloseDoors)
+    if BridgeTask.LIGHTS_ENABLED == 1 and not (BridgeCar ~= nil and BridgeCar.isInside()) then
+        out[#out + 1] = make(tr("JobLightsOn"), ICONS.doors, BridgeMenu.onJobLightsOn)
+        out[#out + 1] = make(tr("JobLightsOff"), ICONS.doors, BridgeMenu.onJobLightsOff)
     end
-    if BridgeTask.WINDOWS_ENABLED == 1 and not (BridgeCar ~= nil and BridgeCar.isInside()) then
-        out[#out + 1] = make(tr("JobOpenWindows"), ICONS.doors, BridgeMenu.onJobOpenWindows)
-        out[#out + 1] = make(tr("JobCloseWindows"), ICONS.doors, BridgeMenu.onJobCloseWindows)
+    return out
+end
+
+local function doorGroupEntries(group)
+    local out = {}
+    if BridgeTask == nil then return out end
+    if group == "doors" then
+        if BridgeTask.DOORS_ENABLED == 1 then
+            out[#out + 1] = make(tr("JobOpenDoors"), ICONS.doors, BridgeMenu.onJobOpenDoors)
+            out[#out + 1] = make(tr("JobCloseDoors"), ICONS.doors, BridgeMenu.onJobCloseDoors)
+        end
+    elseif group == "windows" then
+        if BridgeTask.WINDOWS_ENABLED == 1 and not (BridgeCar ~= nil and BridgeCar.isInside()) then
+            out[#out + 1] = make(tr("JobOpenWindows"), ICONS.doors, BridgeMenu.onJobOpenWindows)
+            out[#out + 1] = make(tr("JobCloseWindows"), ICONS.doors, BridgeMenu.onJobCloseWindows)
+        end
+    elseif group == "curtains" then
+        if BridgeTask.CURTAINS_ENABLED == 1 and not (BridgeCar ~= nil and BridgeCar.isInside()) then
+            out[#out + 1] = make(tr("JobOpenCurtains"), ICONS.doors, BridgeMenu.onJobOpenCurtains)
+            out[#out + 1] = make(tr("JobCloseCurtains"), ICONS.doors, BridgeMenu.onJobCloseCurtains)
+        end
     end
-    if BridgeTask.CURTAINS_ENABLED == 1 and not (BridgeCar ~= nil and BridgeCar.isInside()) then
-        out[#out + 1] = make(tr("JobOpenCurtains"), ICONS.doors, BridgeMenu.onJobOpenCurtains)
-        out[#out + 1] = make(tr("JobCloseCurtains"), ICONS.doors, BridgeMenu.onJobCloseCurtains)
+    return out
+end
+
+local function doorEntries(playerNum)
+    local out = {}
+    if BridgeTask == nil then return out end
+    if BridgeTask.active then return out end
+    local groups = {
+        { ring = "doorsDoors", group = "doors", label = "Doors" },
+        { ring = "doorsWindows", group = "windows", label = "Windows" },
+        { ring = "doorsCurtains", group = "curtains", label = "Curtains" },
+    }
+    for i = 1, #groups do
+        local g = groups[i]
+        if #doorGroupEntries(g.group) > 0 then
+            out[#out + 1] = make(tr(g.label), ICONS.doors, function() BridgeRadial.showRing(g.ring, playerNum) end)
+        end
     end
     return out
 end
@@ -652,7 +685,11 @@ function BridgeRadial.ringEntries(ring, playerNum)
     if ring == "animals" then return animalEntries(playerNum) end
     if ring == "gardening" then return gardenEntries(playerNum) end
     if ring == "seeds" then return seedEntries(playerNum) end
-    if ring == "doors" then return doorEntries() end
+    if ring == "lights" then return lightEntries(playerNum) end
+    if ring == "doors" then return doorEntries(playerNum) end
+    if ring == "doorsDoors" then return doorGroupEntries("doors") end
+    if ring == "doorsWindows" then return doorGroupEntries("windows") end
+    if ring == "doorsCurtains" then return doorGroupEntries("curtains") end
     if ring == "self" then return selfEntries(playerNum) end
     if ring == "gear" then return gearEntries(playerNum) end
     if ring == "guns" then return gunEntries() end
@@ -1168,7 +1205,7 @@ function BridgeRadial.openTop(playerNum)
     guarded(fillTop, playerNum)
 end
 
-local RING_PARENT = { loot = "work", animals = "work", gardening = "work", seeds = "gardening", doors = "work" }
+local RING_PARENT = { loot = "work", animals = "work", gardening = "work", seeds = "gardening", doors = "work", doorsDoors = "doors", doorsWindows = "doors", doorsCurtains = "doors", lights = "work" }
 
 local function fillRing(ring, playerNum)
     local menu = getPlayerRadialMenu(playerNum)

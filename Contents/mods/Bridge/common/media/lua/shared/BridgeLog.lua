@@ -9,6 +9,29 @@ function BridgeLog.on()
     return false
 end
 
+function BridgeLog.scan()
+    if Bridge ~= nil and Bridge.verboseScan == true then return true end
+    if BridgeServer ~= nil and BridgeServer.verboseScan == true then return true end
+    return BridgeLog.on()
+end
+
+function BridgeLog.scanSummary()
+    if not BridgeLog.scan() then return end
+    local parts = {}
+    if BridgeWorkSelect ~= nil and type(BridgeWorkSelect.takeChunkStats) == "function" then
+        local s = BridgeWorkSelect.takeChunkStats()
+        parts[#parts + 1] = string.format("obj rebuild=%d hit=%d squares=%d",
+            tonumber(s.rebuild) or 0, tonumber(s.hit) or 0, tonumber(s.squares) or 0)
+    end
+    if BridgeGardening ~= nil and type(BridgeGardening.takeChunkStats) == "function" then
+        local s = BridgeGardening.takeChunkStats()
+        parts[#parts + 1] = string.format("plant rebuild=%d hit=%d ttl0=%d plants=%d",
+            tonumber(s.rebuild) or 0, tonumber(s.hit) or 0, tonumber(s.ttl0) or 0, tonumber(s.plants) or 0)
+    end
+    if #parts == 0 then return end
+    print("[BridgeLog] scan " .. table.concat(parts, " "))
+end
+
 -- Structured movement trace. One `key=value` line per decision event, gated by
 -- BridgeLog.on() like every other log line in the mod. The ring buffer only
 -- fills while logging is on, so it never costs anything in a normal session.
@@ -67,9 +90,17 @@ function BridgeLog.event(ev, fields)
     fields = fields or {}
     BridgeLog.seq = BridgeLog.seq + 1
 
+    local order = fields.__order
+    local ordered = type(order) == "table"
     local keys = {}
-    for k in pairs(fields) do keys[#keys + 1] = k end
-    table.sort(keys)
+    if ordered then
+        for i = 1, #order do keys[#keys + 1] = order[i] end
+    else
+        for k in pairs(fields) do
+            if k ~= "__order" then keys[#keys + 1] = k end
+        end
+        table.sort(keys)
+    end
 
     local parts = {}
     local sig = ev
@@ -91,11 +122,14 @@ function BridgeLog.event(ev, fields)
 
     for i = 1, #keys do
         local k = keys[i]
-        if k ~= "fn" and k ~= "sig" then
+        if k ~= "fn" and k ~= "sig" and k ~= "__order" then
             local v = fmt(fields[k])
             if v ~= nil then
                 parts[#parts + 1] = clean(k) .. "=" .. v
                 sig = sig .. "|" .. k .. "=" .. v
+            elseif ordered then
+                parts[#parts + 1] = clean(k) .. "=-"
+                sig = sig .. "|" .. k .. "=-"
             end
         end
     end

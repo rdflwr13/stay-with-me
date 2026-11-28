@@ -2132,6 +2132,22 @@ BridgeServer.Commands.state = function(player, args)
         rec.corpseSpot = nil
         changed = true
     end
+    if args.bed ~= nil then
+        local bed = BridgeData.cleanBed(args.bed)
+        local near = false
+        if bed ~= nil then
+            near = dist(player, bed.x, bed.y) <= 20
+        end
+        if bed ~= nil and near then
+            rec.bed = bed
+            changed = true
+        else
+            log("bed rejected from " .. tostring(player:getUsername()))
+        end
+    elseif args.clearBed then
+        rec.bed = nil
+        changed = true
+    end
     if genderDenied ~= nil then
         pcall(function()
             sendServerCommand(player, "Bridge", "genderDenied",

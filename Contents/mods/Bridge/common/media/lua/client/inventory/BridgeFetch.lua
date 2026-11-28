@@ -1217,13 +1217,28 @@ function BridgeFetch.jobMissing(kind, targets)
             end
         elseif kind == "tendCrops" then
             if BridgeGardening == nil then return end
-            local more = BridgeGardening.tendNeeds(b, targets) or {}
-            for i = 1, #more do
-                local dup = false
-                for j = 1, #out do
-                    if out[j] == more[i] then dup = true break end
+            local level = 0
+            pcall(function() level = BridgeSkills.level("Agriculture") end)
+            local ctx = nil
+            pcall(function() ctx = BridgeGardening.tendContext(b, level) end)
+            local canAny = false
+            for i = 1, #targets do
+                local t = targets[i]
+                local sq = BridgeGardening.squareAt(t)
+                local plant = BridgeGardening.plantAt(sq, false)
+                local action = nil
+                pcall(function() action = BridgeGardening.tendActionFor(plant, sq, ctx) end)
+                if action ~= nil then canAny = true break end
+            end
+            if not canAny then
+                local more = BridgeGardening.tendNeeds(b, targets) or {}
+                for i = 1, #more do
+                    local dup = false
+                    for j = 1, #out do
+                        if out[j] == more[i] then dup = true break end
+                    end
+                    if not dup then out[#out + 1] = more[i] end
                 end
-                if not dup then out[#out + 1] = more[i] end
             end
         elseif kind == "clearPlants" then
             local needCut = false

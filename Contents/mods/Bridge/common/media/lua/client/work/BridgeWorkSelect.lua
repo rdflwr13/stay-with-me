@@ -20,6 +20,7 @@ BridgeWorkSelect.MAX_CORPSES = 40
 BridgeWorkSelect.MAX_DOORS = 25
 BridgeWorkSelect.MAX_WINDOWS = 25
 BridgeWorkSelect.MAX_CURTAINS = 25
+BridgeWorkSelect.MAX_LIGHTS = 25
 
 local function acquireLock()
     if BridgeWorkSelect.lockCount == 0 then
@@ -916,6 +917,77 @@ local function addWindow(list, seen, obj, sq, north, inside, wantOpen)
 end
 
 
+local objectChunkCache = {}
+
+BridgeWorkSelect.chunkStats = { rebuild = 0, hit = 0, squares = 0 }
+
+function BridgeWorkSelect.takeChunkStats()
+    local s = BridgeWorkSelect.chunkStats
+    BridgeWorkSelect.chunkStats = { rebuild = 0, hit = 0, squares = 0 }
+    return s
+end
+
+local function objectChunkNowMs()
+    local v = 0
+    pcall(function() v = getTimestampMs() end)
+    v = tonumber(v) or 0
+    if v <= 0 and Bridge ~= nil then v = math.floor((Bridge.time or 0) * 1000 / 60) end
+    return v
+end
+
+local function objectChunkKey(rect)
+    return tostring(rect.x1) .. ":" .. tostring(rect.y1) .. ":" .. tostring(rect.x2)
+        .. ":" .. tostring(rect.y2) .. ":" .. tostring(rect.z)
+end
+
+function BridgeWorkSelect.objectChunk(rect, ttl)
+    if rect == nil then return {} end
+    local key = objectChunkKey(rect)
+    local now = objectChunkNowMs()
+    local st = BridgeWorkSelect.chunkStats
+    local hit = objectChunkCache[key]
+    if hit ~= nil and ttl ~= nil and ttl > 0 and (now - hit.at) < ttl then
+        st.hit = st.hit + 1
+        return hit.squares
+    end
+    local squares = {}
+    local cell = nil
+    pcall(function() cell = getCell() end)
+    if cell == nil then return squares end
+    local function copyList(list, out)
+        if list == nil then return end
+        local n = 0
+        pcall(function() n = list:size() end)
+        for i = 0, n - 1 do
+            local o = nil
+            pcall(function() o = list:get(i) end)
+            if o ~= nil then out[#out + 1] = o end
+        end
+    end
+    for x = rect.x1, rect.x2 do
+        for y = rect.y1, rect.y2 do
+            local sq = nil
+            pcall(function() sq = cell:getGridSquare(x, y, rect.z) end)
+            if sq ~= nil then
+                local rec = { x = x, y = y, z = rect.z, sq = sq, objects = {}, special = {}, world = {}, winNorth = nil, winSouth = nil }
+                pcall(function() copyList(sq:getObjects(), rec.objects) end)
+                pcall(function() copyList(sq:getSpecialObjects(), rec.special) end)
+                pcall(function() copyList(sq:getWorldObjects(), rec.world) end)
+                if BridgeDoors ~= nil and type(BridgeDoors.windowOnEdge) == "function" then
+                    pcall(function() rec.winNorth = BridgeDoors.windowOnEdge(sq, true) end)
+                    pcall(function() rec.winSouth = BridgeDoors.windowOnEdge(sq, false) end)
+                end
+                squares[#squares + 1] = rec
+            end
+        end
+    end
+    objectChunkCache[key] = { at = now, squares = squares }
+    st.rebuild = st.rebuild + 1
+    st.squares = st.squares + #squares
+    return squares
+end
+
+
 function BridgeWorkSelect.windowsIn(b, mode)
     local list = {}
     if b == nil then return list end
@@ -924,54 +996,30 @@ function BridgeWorkSelect.windowsIn(b, mode)
         return x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2
     end
     local seen = {}
-    local cell = getCell()
-    for x = b.x1 - 1, b.x2 + 1 do
-        for y = b.y1 - 1, b.y2 + 1 do
-            local sq = nil
-            pcall(function() sq = cell:getGridSquare(x, y, b.z) end)
-            if sq ~= nil and #list < BridgeWorkSelect.MAX_WINDOWS then
-                for _, north in ipairs({ true, false }) do
-                    local obj = nil
-                    if BridgeDoors ~= nil and type(BridgeDoors.windowOnEdge) == "function" then
-                        pcall(function() obj = BridgeDoors.windowOnEdge(sq, north) end)
-                    end
-                    if obj ~= nil then addWindow(list, seen, obj, sq, north, inside, wantOpen) end
+    local rect = { x1 = b.x1 - 1, y1 = b.y1 - 1, x2 = b.x2 + 1, y2 = b.y2 + 1, z = b.z }
+    local squares = BridgeWorkSelect.objectChunk(rect, 5000)
+    local function scanObjects(objs, sq)
+        for j = 1, #objs do
+            local o = objs[j]
+            if o ~= nil then
+                local isWin = false
+                pcall(function() isWin = instanceof(o, "IsoWindow") end)
+                if isWin then
+                    local north = false
+                    pcall(function() north = o:getNorth() == true end)
+                    addWindow(list, seen, o, sq, north, inside, wantOpen)
                 end
-                pcall(function()
-                    local objs = sq:getObjects()
-                    if objs == nil then return end
-                    local n = objs:size()
-                    for i = 0, n - 1 do
-                        local o = objs:get(i)
-                        if o ~= nil and instanceof(o, "IsoWindow") then
-                            addWindow(list, seen, o, sq, o:getNorth() == true, inside, wantOpen)
-                        end
-                    end
-                end)
-                pcall(function()
-                    local objs = sq:getSpecialObjects()
-                    if objs == nil then return end
-                    local n = objs:size()
-                    for i = 0, n - 1 do
-                        local o = objs:get(i)
-                        if o ~= nil and instanceof(o, "IsoWindow") then
-                            addWindow(list, seen, o, sq, o:getNorth() == true, inside, wantOpen)
-                        end
-                    end
-                end)
-                pcall(function()
-                    local objs = sq:getWorldObjects()
-                    if objs == nil then return end
-                    local n = objs:size()
-                    for i = 0, n - 1 do
-                        local o = objs:get(i)
-                        if o ~= nil and instanceof(o, "IsoWindow") then
-                            addWindow(list, seen, o, sq, o:getNorth() == true, inside, wantOpen)
-                        end
-                    end
-                end)
             end
         end
+    end
+    for i = 1, #squares do
+        if #list >= BridgeWorkSelect.MAX_WINDOWS then return list end
+        local rec = squares[i]
+        if rec.winNorth ~= nil then addWindow(list, seen, rec.winNorth, rec.sq, true, inside, wantOpen) end
+        if rec.winSouth ~= nil then addWindow(list, seen, rec.winSouth, rec.sq, false, inside, wantOpen) end
+        scanObjects(rec.objects, rec.sq)
+        scanObjects(rec.special, rec.sq)
+        scanObjects(rec.world, rec.sq)
     end
     return list
 end
@@ -1007,40 +1055,77 @@ function BridgeWorkSelect.curtainsIn(b, mode)
         return x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2
     end
     local seen = {}
+    local rect = { x1 = b.x1 - 1, y1 = b.y1 - 1, x2 = b.x2 + 1, y2 = b.y2 + 1, z = b.z }
+    local squares = BridgeWorkSelect.objectChunk(rect, 45000)
+    local function scanCurtains(objs, sq)
+        for j = 1, #objs do
+            local o = objs[j]
+            if o ~= nil then
+                local isCur = false
+                pcall(function() isCur = instanceof(o, "IsoCurtain") end)
+                if isCur then addCurtain(list, seen, o, sq, mode, inside) end
+            end
+        end
+    end
+    local function scanParent(objs, sq)
+        for j = 1, #objs do
+            local o = objs[j]
+            if o ~= nil then
+                local isParent = false
+                pcall(function() isParent = instanceof(o, "IsoWindow") or instanceof(o, "IsoDoor") end)
+                if isParent then
+                    local c = nil
+                    pcall(function() c = o:HasCurtains() end)
+                    if c ~= nil then addCurtain(list, seen, c, sq, mode, inside) end
+                end
+            end
+        end
+    end
+    for i = 1, #squares do
+        if #list >= BridgeWorkSelect.MAX_CURTAINS then return list end
+        local rec = squares[i]
+        scanCurtains(rec.objects, rec.sq)
+        scanCurtains(rec.special, rec.sq)
+        scanCurtains(rec.world, rec.sq)
+        scanParent(rec.objects, rec.sq)
+        scanParent(rec.special, rec.sq)
+        scanParent(rec.world, rec.sq)
+    end
+    return list
+end
+
+
+function BridgeWorkSelect.lightsIn(b, mode)
+    local list = {}
+    if b == nil then return list end
+    local wantOn = mode == "open"
+    local seen = {}
     local cell = getCell()
     for x = b.x1 - 1, b.x2 + 1 do
         for y = b.y1 - 1, b.y2 + 1 do
             local sq = nil
             pcall(function() sq = cell:getGridSquare(x, y, b.z) end)
-            if sq ~= nil and #list < BridgeWorkSelect.MAX_CURTAINS then
+            if sq ~= nil and #list < BridgeWorkSelect.MAX_LIGHTS then
                 local function scan(listObj)
                     if listObj == nil then return end
                     local n = listObj:size()
                     for i = 0, n - 1 do
                         local o = listObj:get(i)
-                        if o ~= nil and instanceof(o, "IsoCurtain") then
-                            addCurtain(list, seen, o, sq, mode, inside)
+                        if o ~= nil and instanceof(o, "IsoLightSwitch") and not seen[o] then
+                            seen[o] = true
+                            local can, on, idx = false, false, -1
+                            pcall(function() can = o:canSwitchLight() == true end)
+                            pcall(function() on = o:isActivated() == true end)
+                            pcall(function() idx = o:getObjectIndex() end)
+                            if can and idx >= 0 and on ~= wantOn then
+                                list[#list + 1] = { x = sq:getX(), y = sq:getY(), z = sq:getZ(), obj = o }
+                            end
                         end
                     end
                 end
                 pcall(function() scan(sq:getObjects()) end)
                 pcall(function() scan(sq:getSpecialObjects()) end)
                 pcall(function() scan(sq:getWorldObjects()) end)
-                local function scanParent(listObj)
-                    if listObj == nil then return end
-                    local n = listObj:size()
-                    for i = 0, n - 1 do
-                        local o = listObj:get(i)
-                        if o ~= nil and (instanceof(o, "IsoWindow") or instanceof(o, "IsoDoor")) then
-                            local c = nil
-                            pcall(function() c = o:HasCurtains() end)
-                            if c ~= nil then addCurtain(list, seen, c, sq, mode, inside) end
-                        end
-                    end
-                end
-                pcall(function() scanParent(sq:getObjects()) end)
-                pcall(function() scanParent(sq:getSpecialObjects()) end)
-                pcall(function() scanParent(sq:getWorldObjects()) end)
             end
         end
     end
@@ -1355,6 +1440,20 @@ BridgeWorkSelect.kinds = {
         maxSide = 12,
         min = 1,
         noneSay = "JobNoCurtainsOpen",
+    },
+    lightsOn = {
+        collect = function(b) return BridgeWorkSelect.lightsIn(b, "open") end,
+        max = BridgeWorkSelect.MAX_LIGHTS,
+        maxSide = 12,
+        min = 1,
+        noneSay = "JobNoLights",
+    },
+    lightsOff = {
+        collect = function(b) return BridgeWorkSelect.lightsIn(b, "close") end,
+        max = BridgeWorkSelect.MAX_LIGHTS,
+        maxSide = 12,
+        min = 1,
+        noneSay = "JobNoLights",
     },
     digFurrows = {
         collect = function(b) return BridgeGardening.furrowSpots(b) end,

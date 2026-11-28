@@ -984,7 +984,7 @@ function BridgeData.menuOrder(rec)
 end
 
 
-BridgeData.WORK_ORDER_IDS = { "loot", "animals", "gardening", "doors", "cleanUp", "clearPlants", "chopTree", "moveCorpses" }
+BridgeData.WORK_ORDER_IDS = { "loot", "animals", "gardening", "doors", "lights", "cleanUp", "clearPlants", "chopTree", "moveCorpses" }
 BridgeData.WORK_ORDER_SET = {}
 for _, id in ipairs(BridgeData.WORK_ORDER_IDS) do BridgeData.WORK_ORDER_SET[id] = true end
 
@@ -1263,6 +1263,18 @@ function BridgeData.cleanCorpseSpot(t)
 end
 
 
+function BridgeData.cleanBed(t)
+    if type(t) ~= "table" then return nil end
+    local out = {}
+    for _, k in ipairs({ "x", "y", "z" }) do
+        local v = tonumber(t[k])
+        if v == nil or v ~= v then return nil end
+        out[k] = math.floor(v)
+    end
+    return out
+end
+
+
 function BridgeData.corpseHas(spot, x, y, z, margin)
     if type(spot) ~= "table" or x == nil or y == nil or z == nil then return false end
     if math.floor(z) ~= spot.z then return false end
@@ -1412,6 +1424,7 @@ BridgeData.GENDERED_KEYS = {
     OptHomeResources = true, OptHomeResourcesTip = true,
     OptTorchTip = true,
     OptEquipScale = true, OptEquipScaleTip = true,
+    SetBed = true, ClearBed = true, HerBed = true,
 }
 
 function BridgeData.text(key, a, b)
@@ -2390,7 +2403,7 @@ function BridgeData.selftest()
         check("fert cap x", BridgeData.cleanHutchFertCap("x"), nil)
         check("fert cap default", BridgeData.hutchFertCap({}), 5)
         check("fert cap stored", BridgeData.hutchFertCap({ hutchFertCap = 2 }), 2)
-        check("work order default", #BridgeData.workOrder(nil), 8)
+        check("work order default", #BridgeData.workOrder(nil), 9)
         check("work order clean", #BridgeData.cleanWorkOrder({ "doors", "bogus", "loot" }), 2)
         check("work hidden clean", #BridgeData.cleanWorkHidden({ "doors", "bogus" }), 1)
         local function eggEntries(fertCount, normCount)

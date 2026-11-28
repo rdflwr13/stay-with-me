@@ -142,6 +142,63 @@ function BridgeGardening.plantAt(sq, server)
     return plant
 end
 
+local plantChunkCache = {}
+
+BridgeGardening.chunkStats = { rebuild = 0, hit = 0, ttl0 = 0, plants = 0 }
+
+function BridgeGardening.takeChunkStats()
+    local s = BridgeGardening.chunkStats
+    BridgeGardening.chunkStats = { rebuild = 0, hit = 0, ttl0 = 0, plants = 0 }
+    return s
+end
+
+local function plantChunkKey(rect)
+    return tostring(rect.x1) .. ":" .. tostring(rect.y1) .. ":" .. tostring(rect.x2)
+        .. ":" .. tostring(rect.y2) .. ":" .. tostring(rect.z)
+end
+
+local function copyPlantList(src)
+    local out = {}
+    for i = 1, #src do out[i] = src[i] end
+    return out
+end
+
+function BridgeGardening.plantChunk(rect, ttl)
+    if rect == nil then return {} end
+    local key = plantChunkKey(rect)
+    local now = Bridge ~= nil and tonumber(Bridge.tick) or 0
+    local st = BridgeGardening.chunkStats
+    local hit = plantChunkCache[key]
+    if hit ~= nil and ttl ~= nil and ttl > 0 and (now - hit.at) < ttl then
+        st.hit = st.hit + 1
+        return copyPlantList(hit.list)
+    end
+    local list = {}
+    local cell = nil
+    pcall(function() cell = getCell() end)
+    if cell == nil then return list end
+    for x = rect.x1, rect.x2 do
+        for y = rect.y1, rect.y2 do
+            local sq = nil
+            pcall(function() sq = cell:getGridSquare(x, y, rect.z) end)
+            if sq ~= nil then
+                local plant = BridgeGardening.plantAt(sq, false)
+                if plant ~= nil then
+                    local state = nil
+                    pcall(function() state = plant.state end)
+                    list[#list + 1] = { x = x, y = y, z = rect.z, sq = sq, plant = plant, state = state }
+                end
+            end
+        end
+    end
+    plantChunkCache[key] = { at = now, list = list }
+    st.rebuild = st.rebuild + 1
+    st.plants = st.plants + #list
+    if ttl == 0 then st.ttl0 = st.ttl0 + 1 end
+    return copyPlantList(list)
+end
+
+
 function BridgeGardening.propsOf(plant)
     if plant == nil or farming_vegetableconf == nil then return nil end
     local props = nil
@@ -160,17 +217,12 @@ function BridgeGardening.cropsIn(b)
     local list = {}
     if b == nil then return list end
     local cap = BridgeGardening.MAX_HARVESTS
-    for x = b.x1, b.x2 do
-        for y = b.y1, b.y2 do
-            if #list >= cap then return list end
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
-            if sq ~= nil then
-                local plant = BridgeGardening.plantAt(sq, false)
-                if BridgeGardening.canHarvest(plant) then
-                    list[#list + 1] = { x = x, y = y, z = b.z }
-                end
-            end
+    local plants = BridgeGardening.plantChunk(b, 0)
+    for i = 1, #plants do
+        if #list >= cap then return list end
+        local rec = plants[i]
+        if BridgeGardening.canHarvest(rec.plant) then
+            list[#list + 1] = { x = rec.x, y = rec.y, z = rec.z }
         end
     end
     return list
@@ -1646,19 +1698,12 @@ function BridgeGardening.sowSpots(b)
         end
     end
     if cap < 1 then return list end
-    for x = b.x1, b.x2 do
-        for y = b.y1, b.y2 do
-            if #list >= cap then return list end
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
-            if sq ~= nil then
-                local plant = BridgeGardening.plantAt(sq, false)
-                local state = nil
-                pcall(function() state = plant ~= nil and plant.state or nil end)
-                if state == "plow" then
-                    list[#list + 1] = { x = x, y = y, z = b.z }
-                end
-            end
+    local plants = BridgeGardening.plantChunk(b, 0)
+    for i = 1, #plants do
+        if #list >= cap then return list end
+        local rec = plants[i]
+        if rec.state == "plow" then
+            list[#list + 1] = { x = rec.x, y = rec.y, z = rec.z }
         end
     end
     return list
@@ -2298,17 +2343,12 @@ function BridgeGardening.waterSpots(b)
         return copySpotList(spotCacheList.water)
     end
     local cap = BridgeGardening.MAX_WATER_PLANTS or 80
-    for x = b.x1, b.x2 do
-        for y = b.y1, b.y2 do
-            if #list >= cap then return cacheSpots("water", key, now, list) end
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
-            if sq ~= nil then
-                local plant = BridgeGardening.plantAt(sq, false)
-                if BridgeGardening.needsWater(plant) then
-                    list[#list + 1] = { x = x, y = y, z = b.z }
-                end
-            end
+    local plants = BridgeGardening.plantChunk(b, SPOT_CACHE_TTL)
+    for i = 1, #plants do
+        if #list >= cap then return cacheSpots("water", key, now, list) end
+        local rec = plants[i]
+        if BridgeGardening.needsWater(rec.plant) then
+            list[#list + 1] = { x = rec.x, y = rec.y, z = rec.z }
         end
     end
     return cacheSpots("water", key, now, list)
@@ -2616,17 +2656,12 @@ function BridgeGardening.feedSpots(b)
         return copySpotList(spotCacheList.feed)
     end
     local cap = BridgeGardening.MAX_FEED_PLANTS or 80
-    for x = b.x1, b.x2 do
-        for y = b.y1, b.y2 do
-            if #list >= cap then return cacheSpots("feed", key, now, list) end
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
-            if sq ~= nil then
-                local plant = BridgeGardening.plantAt(sq, false)
-                if BridgeGardening.needsFeed(plant) then
-                    list[#list + 1] = { x = x, y = y, z = b.z }
-                end
-            end
+    local plants = BridgeGardening.plantChunk(b, SPOT_CACHE_TTL)
+    for i = 1, #plants do
+        if #list >= cap then return cacheSpots("feed", key, now, list) end
+        local rec = plants[i]
+        if BridgeGardening.needsFeed(rec.plant) then
+            list[#list + 1] = { x = rec.x, y = rec.y, z = rec.z }
         end
     end
     return cacheSpots("feed", key, now, list)
@@ -3000,15 +3035,15 @@ function BridgeGardening.tendActionFor(plant, sq, ctx)
 
     if BridgeGardening.needsWeed(sq, plant) then return "weed", nil, entry, advice end
 
+    if BridgeGardening.needsWater(plant) then
+        if ctx.water ~= nil then return "water", nil, entry, advice end
+        advice = advice or "nowater"
+    end
+
     if BridgeGardening.needsFeed(plant) then
         local kind = BridgeGardening.feedKindFor(plant, ctx.compost ~= nil, ctx.fertilizer ~= nil)
         if kind ~= nil then return "feed", kind, entry, advice end
         advice = advice or "nofeed"
-    end
-
-    if BridgeGardening.needsWater(plant) then
-        if ctx.water ~= nil then return "water", nil, entry, advice end
-        advice = advice or "nowater"
     end
 
     return nil, advice or "none", entry, advice
@@ -3024,18 +3059,13 @@ function BridgeGardening.tendSpots(b)
         return copySpotList(spotCacheList.tend)
     end
     local cap = BridgeGardening.MAX_TEND_PLANTS or 80
-    for x = b.x1, b.x2 do
-        for y = b.y1, b.y2 do
-            if #list >= cap then return cacheSpots("tend", key, now, list) end
-            local sq = nil
-            pcall(function() sq = getCell():getGridSquare(x, y, b.z) end)
-            if sq ~= nil then
-                local plant = BridgeGardening.plantAt(sq, false)
-                if BridgeGardening.needsCure(plant) or BridgeGardening.needsWeed(sq, plant)
-                        or BridgeGardening.needsFeed(plant) or BridgeGardening.needsWater(plant) then
-                    list[#list + 1] = { x = x, y = y, z = b.z }
-                end
-            end
+    local plants = BridgeGardening.plantChunk(b, SPOT_CACHE_TTL)
+    for i = 1, #plants do
+        if #list >= cap then return cacheSpots("tend", key, now, list) end
+        local rec = plants[i]
+        if BridgeGardening.needsCure(rec.plant) or BridgeGardening.needsWeed(rec.sq, rec.plant)
+                or BridgeGardening.needsFeed(rec.plant) or BridgeGardening.needsWater(rec.plant) then
+            list[#list + 1] = { x = rec.x, y = rec.y, z = rec.z }
         end
     end
     return cacheSpots("tend", key, now, list)
@@ -3166,7 +3196,7 @@ function BridgeGardening.tendUpdate(body)
             local sq = BridgeGardening.squareAt(t)
             local plant = BridgeGardening.plantAt(sq, false)
             local action, reason, entry, advice = BridgeGardening.tendActionFor(plant, sq, ctx)
-            local keep = action ~= nil or advice ~= nil or reason == "nofeed" or reason == "nowater"
+            local keep = action ~= nil
             if keep then i = i + 1 else table.remove(T.queue, i) end
         end
         if #T.queue == 0 then

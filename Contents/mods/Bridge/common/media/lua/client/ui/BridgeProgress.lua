@@ -50,8 +50,17 @@ end
 
 local function visibleNow()
     if BridgeProgress.seenAt == nil or now() - BridgeProgress.seenAt > BridgeProgress.HOLD_MS then return false end
-    if body() == nil then return false end
+    local b = body()
+    if b == nil then return false end
     if BridgeProgress.forceUntil ~= nil and now() <= BridgeProgress.forceUntil then return true end
+    if Bridge ~= nil and type(Bridge.view3D) == "function" and Bridge.view3D(0) then
+        local seen = false
+        pcall(function()
+            local sq = b:getCurrentSquare()
+            seen = sq ~= nil and sq:isCanSee(0)
+        end)
+        if not seen then return false end
+    end
     local on = true
     pcall(function() on = getCore():isOptionProgressBar() end)
     return on
@@ -85,7 +94,7 @@ local function create()
         if Bridge ~= nil and type(Bridge.screenPoint) == "function" and Bridge.screenProject ~= nil
             and type(Bridge.view3D) == "function" and Bridge.view3D(0) then
             ok, sx, sy = pcall(function()
-                local x, y = Bridge.screenPoint(0, b:getX(), b:getY(), b:getZ(), 1.5)
+                local x, y = Bridge.screenPoint(0, b:getX(), b:getY(), b:getZ(), 0.816)
                 if x == nil or y == nil then return nil end
                 return x - w / 2, y - h
             end)

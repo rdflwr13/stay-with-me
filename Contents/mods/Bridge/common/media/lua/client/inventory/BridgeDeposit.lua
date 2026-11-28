@@ -1469,8 +1469,14 @@ local function depositTake(body, item, target, available, home, job, actor)
     pcall(function() src = item:getContainer() end)
     if src == nil or dest == nil then return nil, nil end
     local chr = actor or owner()
+    local actChr = chr
+    if actChr ~= nil then
+        local hasUser = false
+        pcall(function() hasUser = type(actChr.getUsername) == "function" end)
+        if not hasUser then actChr = owner() end
+    end
     local act = nil
-    pcall(function() act = ISInventoryTransferAction:new(chr, item, src, dest) end)
+    pcall(function() act = ISInventoryTransferAction:new(actChr, item, src, dest) end)
     if act == nil then return nil, nil end
     local group = { item }
     local weightMode = BridgeTask == nil or BridgeTask.transferMode ~= "legacy"

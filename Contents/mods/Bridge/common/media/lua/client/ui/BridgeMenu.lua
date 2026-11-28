@@ -847,28 +847,50 @@ local function buildWorkDoors(jobs)
     local windowsOn = BridgeTask.WINDOWS_ENABLED == 1
     local curtainsOn = BridgeTask.CURTAINS_ENABLED == 1
     if not doorsOn and not windowsOn and not curtainsOn then return end
-    local doorsOption = jobs:addOption(tr("Openings"))
-    local doors = BridgeMenu.submenu(jobs)
-    jobs:addSubMenu(doorsOption, doors)
+    local openingsOption = jobs:addOption(tr("Openings"))
+    local openings = BridgeMenu.submenu(jobs)
+    jobs:addSubMenu(openingsOption, openings)
     if doorsOn then
+        local doorsOption = openings:addOption(tr("Doors"))
+        local doors = BridgeMenu.submenu(openings)
+        openings:addSubMenu(doorsOption, doors)
         local open = doors:addOption(tr("JobOpenDoors"), nil, BridgeMenu.onJobOpenDoors)
         local close = doors:addOption(tr("JobCloseDoors"), nil, BridgeMenu.onJobCloseDoors)
         if BridgeTask.active then open.notAvailable = true; close.notAvailable = true end
     end
     if windowsOn then
+        local windowsOption = openings:addOption(tr("Windows"))
+        local windows = BridgeMenu.submenu(openings)
+        openings:addSubMenu(windowsOption, windows)
         local inCar = BridgeCar ~= nil and BridgeCar.isInside()
         local blocked = BridgeTask.active or inCar or Bridge == nil or not Bridge.alive()
-        local openWin = doors:addOption(tr("JobOpenWindows"), nil, BridgeMenu.onJobOpenWindows)
-        local shut = doors:addOption(tr("JobCloseWindows"), nil, BridgeMenu.onJobCloseWindows)
+        local openWin = windows:addOption(tr("JobOpenWindows"), nil, BridgeMenu.onJobOpenWindows)
+        local shut = windows:addOption(tr("JobCloseWindows"), nil, BridgeMenu.onJobCloseWindows)
         if blocked then openWin.notAvailable = true; shut.notAvailable = true end
     end
     if curtainsOn then
+        local curtainsOption = openings:addOption(tr("Curtains"))
+        local curtains = BridgeMenu.submenu(openings)
+        openings:addSubMenu(curtainsOption, curtains)
         local inCar = BridgeCar ~= nil and BridgeCar.isInside()
         local blocked = BridgeTask.active or inCar or Bridge == nil or not Bridge.alive()
-        local openCur = doors:addOption(tr("JobOpenCurtains"), nil, BridgeMenu.onJobOpenCurtains)
-        local shutCur = doors:addOption(tr("JobCloseCurtains"), nil, BridgeMenu.onJobCloseCurtains)
+        local openCur = curtains:addOption(tr("JobOpenCurtains"), nil, BridgeMenu.onJobOpenCurtains)
+        local shutCur = curtains:addOption(tr("JobCloseCurtains"), nil, BridgeMenu.onJobCloseCurtains)
         if blocked then openCur.notAvailable = true; shutCur.notAvailable = true end
     end
+end
+
+
+local function buildWorkLights(jobs)
+    if BridgeTask == nil or BridgeTask.LIGHTS_ENABLED ~= 1 then return end
+    local lightsOption = jobs:addOption(tr("Lights"))
+    local lights = BridgeMenu.submenu(jobs)
+    jobs:addSubMenu(lightsOption, lights)
+    local inCar = BridgeCar ~= nil and BridgeCar.isInside()
+    local blocked = BridgeTask.active or inCar or Bridge == nil or not Bridge.alive()
+    local on = lights:addOption(tr("JobLightsOn"), nil, BridgeMenu.onJobLightsOn)
+    local off = lights:addOption(tr("JobLightsOff"), nil, BridgeMenu.onJobLightsOff)
+    if blocked then on.notAvailable = true; off.notAvailable = true end
 end
 
 
@@ -917,6 +939,7 @@ BridgeMenu.WORK_ORDERABLE = {
     { id = "animals", label = "Animals", build = addAnimalMenu },
     { id = "gardening", label = "Gardening", build = addGardeningMenu },
     { id = "doors", label = "Openings", build = buildWorkDoors },
+    { id = "lights", label = "Lights", build = buildWorkLights },
     { id = "cleanUp", label = "JobCleanUp", build = buildWorkCleanUp },
     { id = "clearPlants", label = "JobClearPlants", build = buildWorkClearPlants },
     { id = "chopTree", label = "JobChopTree", build = buildWorkChopTree },
@@ -1843,6 +1866,20 @@ function BridgeMenu.onJobCloseCurtains()
     if not Bridge.alive() then return end
     if BridgeCar ~= nil and BridgeCar.isInside() then return end
     BridgeWorkSelect.begin(BridgeData.owner(), "closeCurtains")
+end
+
+function BridgeMenu.onJobLightsOn()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() then return end
+    if BridgeCar ~= nil and BridgeCar.isInside() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "lightsOn")
+end
+
+function BridgeMenu.onJobLightsOff()
+    if BridgeTask == nil or BridgeWorkSelect == nil then return end
+    if not Bridge.alive() then return end
+    if BridgeCar ~= nil and BridgeCar.isInside() then return end
+    BridgeWorkSelect.begin(BridgeData.owner(), "lightsOff")
 end
 
 function BridgeMenu.onJobHarvestCrops()
@@ -2868,6 +2905,39 @@ function BridgeMenu.onLaySleep()
     if BridgeTask ~= nil and BridgeTask.layToggleSleep ~= nil then BridgeTask.layToggleSleep() end
 end
 
+local function bedDesignation(context, bed)
+    if BridgeTask == nil or BridgeTask.sitIsRealBed == nil then return end
+    if BridgeTask.sitIsRealBed(bed) ~= true then return end
+    local bs = nil
+    pcall(function() bs = bed:getSquare() end)
+    if bs == nil then return end
+    local herBed = nil
+    pcall(function() herBed = Bridge.bedObject() end)
+    local isHerBed = false
+    if herBed ~= nil then
+        local hs = nil
+        pcall(function() hs = herBed:getSquare() end)
+        if hs ~= nil then
+            isHerBed = hs:getX() == bs:getX() and hs:getY() == bs:getY() and hs:getZ() == bs:getZ()
+        end
+    end
+    if not isHerBed then
+        addCompanion(context, bed, tr("SetBed", name()), nil, function()
+            if Bridge.setBed(bed) == true then Bridge.speak("BedSet") end
+        end)
+    else
+        local her = addCompanion(context, bed, tr("HerBed", name()), nil, function() end)
+        if her ~= nil then
+            her.notAvailable = true
+            tip(her, tr("HerBedTip"))
+        end
+        addCompanion(context, bed, tr("ClearBed", name()), nil, function()
+            Bridge.clearBed()
+            Bridge.speak("BedCleared")
+        end)
+    end
+end
+
 function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
     if test or Bridge == nil or Bridge.store == nil then return end
     if playerNum ~= nil and playerNum ~= 0 then return end
@@ -2875,6 +2945,8 @@ function BridgeMenu.onLayMenu(playerNum, context, worldobjects, test)
     if not present() then return end
     local bed = bedUnder(worldobjects)
     if bed == nil then return end
+
+    bedDesignation(context, bed)
 
     if BridgeTask.isLying ~= nil and BridgeTask.isLying() then
         addCompanion(context, bed, tr("GetUp"), nil, BridgeMenu.onLayGetUp)

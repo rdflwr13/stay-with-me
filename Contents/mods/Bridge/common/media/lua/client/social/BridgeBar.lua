@@ -79,9 +79,15 @@ local function drawBar(self)
     local lift = 128 * Core.getTileScale() / 2 / zoom
     local x, y
     if Bridge ~= nil and Bridge.view3D ~= nil and Bridge.view3D(pn) then
+        local seen = false
+        pcall(function()
+            local sq = z:getCurrentSquare()
+            seen = sq ~= nil and sq:isCanSee(pn)
+        end)
+        if not seen then return end
         local px, py = nil, nil
         if Bridge.screenProject ~= nil and Bridge.screenPoint ~= nil then
-            px, py = Bridge.screenPoint(pn, z:getX(), z:getY(), z:getZ(), 1.5)
+            px, py = Bridge.screenPoint(pn, z:getX(), z:getY(), z:getZ(), 0.816)
         end
         if px ~= nil and py ~= nil then
             x, y = px, py - BAR_H - LIFT_EXTRA
