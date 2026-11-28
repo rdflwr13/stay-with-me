@@ -349,7 +349,7 @@ function BridgeAgent.watch()
     if s.car ~= nil and car ~= s.car then event(car and "world.car_in" or "world.car_out", "") end
     s.car = car
 
-    local alive = Bridge.alive ~= nil and Bridge.alive() == true
+    local alive = (Bridge.alive ~= nil and Bridge.alive() == true) or Bridge.parked == true
     if s.alive ~= nil and alive ~= s.alive then event(alive and "world.companion_here" or "world.companion_gone", "") end
     s.alive = alive
 

@@ -65,6 +65,8 @@ Each line is a number, a space, the command and its arguments:
 
 One line per executed command: `<number> <reply>`. This is how you learn what each command did. `waitfor` writes a second line under its own number when the wait ends.
 
+`results.txt`, `chat.txt` and `events.txt` only grow. Remember how far you have read each of them and read only the new part. Between sessions you may delete `results.txt` and `events.txt`.
+
 ### out.txt
 
 Lines of `key=value`. It is written:
@@ -102,7 +104,7 @@ One line per chat message: `<number> <author hex> <text hex>`. Decode both from 
 One line per event: `<tick> <kind> <text hex>`. Only after `events on`. Two kinds of lines:
 
 - Her own lines, spoken by the mod. Read them so you don't repeat her or talk over her. Use `quiet on` if you want to speak for her alone.
-- World events, checked every 2 seconds:
+- World events, checked about every 2 seconds:
 
 | Kind | Text |
 |---|---|
