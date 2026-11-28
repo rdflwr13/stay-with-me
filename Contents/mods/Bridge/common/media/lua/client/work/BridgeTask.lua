@@ -1654,7 +1654,12 @@ end
 
 
 function U.lightStand(body, obj)
-    local stand = BridgeTask.doorStand(body, obj, "light")
+    local stand = nil
+    local opp = nil
+    pcall(function() opp = obj.getOppositeSquare end)
+    if type(opp) == "function" then
+        stand = BridgeTask.doorStand(body, obj, "light")
+    end
     local dsq = nil
     pcall(function() dsq = obj:getSquare() end)
     local from = nil

@@ -1101,11 +1101,16 @@ function BridgeWorkSelect.lightsIn(b, mode)
     local wantOn = mode == "open"
     local seen = {}
     local cell = getCell()
+    local inside = function(x, y)
+        return x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2
+    end
+    local scanned, kept = 0, 0
     for x = b.x1 - 1, b.x2 + 1 do
         for y = b.y1 - 1, b.y2 + 1 do
             local sq = nil
             pcall(function() sq = cell:getGridSquare(x, y, b.z) end)
             if sq ~= nil and #list < BridgeWorkSelect.MAX_LIGHTS then
+                scanned = scanned + 1
                 local function scan(listObj)
                     if listObj == nil then return end
                     local n = listObj:size()
@@ -1117,7 +1122,8 @@ function BridgeWorkSelect.lightsIn(b, mode)
                             pcall(function() can = o:canSwitchLight() == true end)
                             pcall(function() on = o:isActivated() == true end)
                             pcall(function() idx = o:getObjectIndex() end)
-                            if can and idx >= 0 and on ~= wantOn then
+                            if can and idx >= 0 and on ~= wantOn and inside(sq:getX(), sq:getY()) then
+                                kept = kept + 1
                                 list[#list + 1] = { x = sq:getX(), y = sq:getY(), z = sq:getZ(), obj = o }
                             end
                         end
@@ -1128,6 +1134,10 @@ function BridgeWorkSelect.lightsIn(b, mode)
                 pcall(function() scan(sq:getWorldObjects()) end)
             end
         end
+    end
+    if BridgeLog ~= nil and BridgeLog.on() then
+        log(string.format("lightsIn rect=%d,%d..%d,%d z%d squares=%d mode=%s kept=%d",
+            b.x1, b.y1, b.x2, b.y2, b.z, scanned, tostring(mode), kept))
     end
     return list
 end
